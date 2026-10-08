@@ -24,6 +24,21 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER == 'self-hosted' && 'kv-ci' || 'ubuntu-24.04' }}
     timeout-minutes: 20
     environment: npm
+    env:
+      DATABASE_URL: postgres://dev:devpassword@127.0.0.1:5432/ketjs_ci
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: dev
+          POSTGRES_PASSWORD: devpassword
+          POSTGRES_DB: ketjs_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:

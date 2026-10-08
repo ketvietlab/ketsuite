@@ -46,7 +46,9 @@ on a sync branch, then open a pull request into public `integration`.
 - After the release gate passes and the PR is merged, create GitHub release
   `v<version>` at that exact `master` commit. The tag must match the root version.
 - `release.yml` checks that the tagged commit belongs to `master`, runs verification
-  and clean-room package checks, then publishes with npm provenance.
+  against its disposable Postgres service and runs clean-room package checks,
+  then publishes with npm provenance. The publish job supplies `DATABASE_URL` so
+  live-Postgres contracts do not skip because the runner has no local database.
 
 The first snapshot prepares `0.1.41`; preparing the version does not publish it.
 Source changes made while reviewing a snapshot must be fixed in KetViet and exported
