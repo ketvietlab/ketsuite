@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": false
+  },
+  "include": [
+    "packages/*/src/**/*",
+    "packages/website-client/client/**/*",
+    "packages/website-client/server/**/*",
+    "apps/**/*",
+    "ket.workspace.ts",
+    "examples/**/*",
+    "test/**/*",
+    "tools/**/*",
+    "bench/**/*"
+  ]
+}

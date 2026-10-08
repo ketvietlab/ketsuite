@@ -1,0 +1,205 @@
+// The dependency rules, enforced per package.
+//
+// Splitting into a monorepo turned the fence from a rule into a shape: the
+// Postgres driver is not "allowed in one file" any more, it lives in the one
+// package that declares it, and every other package is structurally incapable of
+// reaching it. This checks that the shape is still what it claims to be.
+//
+// It also enforces the rule that keeps the framework honest: KetSuite may only use
+// the public entry point, the same one a third-party module has. If the suite needs
+// a deep import, so does everyone else — and it should be exported, not smuggled.
+
+import { readFileSync } from 'node:fs'
+import { glob } from 'node:fs/promises'
+
+type Pkg = {
+  name?: string
+  private?: boolean
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
+  optionalDependencies?: Record<string, string>
+  peerDependencies?: Record<string, string>
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>
+}
+
+type Rule = {
+  /** Packages this one may depend on and import. */
+  allow: string[]
+  /** External packages it may declare as an optional peer, and import. */
+  optionalPeers?: string[]
+  /** Only the package's own entry point may be imported, never a path inside it. */
+  publicOnly?: boolean
+  /** Also scan .mjs sources: set for packages authored in JavaScript with JSDoc types. */
+  sourceDirectory?: string
+  javascript?: boolean
+}
+
+const RULES: Record<string, Rule> = {
+  'design-system': { allow: ['@ketvietlab/ketjs-view'] },
+  // Spec renders with the design system's components and binds its runtime
+  // (`@ketvietlab/design-system/runtime`) in the browser bundle.
+  ketspec: { allow: ['@ketvietlab/design-system', '@ketvietlab/ketjs-view'] },
+  // yjs, chart.js and ioredis are the accepted breaches of ketsuite's own
+  // allowance, mirroring how ketjs-postgres is the framework's one accepted
+  // breach of rule 1: named, narrow exceptions rather than an open door. yjs
+  // backs the Flow collaborative editor's CRDT merge, in the browser bundle
+  // and on the server that flattens the document; chart.js draws the
+  // analytical screens, in the browser bundle only; ioredis backs
+  // `cache.ts`'s shared cache when `REDIS_URL` is set, on the server only —
+  // unset, it is installed but never connected to, and ketsuite behaves
+  // exactly as it did before this entry existed. None of the three is ever
+  // reached by ketjs/ketjs-view — so the framework core stays untouched, and
+  // a deployment that installs the framework alone still installs nothing
+  // else.
+  //
+  // sharp is the fourth: storage's rendition job resizes uploaded images to WebP
+  // through it, on the worker only — Node ships no image codec, and a hand-written
+  // JPEG decoder is not a fence worth keeping. Since 0.33 it installs prebuilt
+  // libvips from npm (@img/*) with no install script or source build; the lockfile
+  // records every platform's package, so a Linux image installs from a macOS lock.
+  //
+  // One entry point, like everything else here: nothing imports a path inside
+  // them. For chart.js that also decides the bundle — `chart.js/auto` would
+  // register every controller ever written, while the root entry makes each
+  // screen register the two or three it actually draws.
+  ketsuite: {
+    allow: [
+      '@ketvietlab/design-system',
+      '@ketvietlab/ketjs',
+      '@ketvietlab/ketjs-view',
+      'chart.js',
+      'sharp',
+      'yjs',
+      'ioredis',
+    ],
+    publicOnly: true,
+  },
+  // Flow's component kit sits on top of the suite rather than inside it: the
+  // view runtime, the translator, the design tokens it styles with, and one
+  // suite export, the live document binding at `@ketvietlab/ketsuite/livedoc`.
+  // Written as .mjs with JSDoc types, so its .mjs sources are scanned.
+  'flow-client': {
+    allow: [
+      '@ketvietlab/design-system',
+      '@ketvietlab/flow-ui',
+      '@ketvietlab/ketjs',
+      '@ketvietlab/ketjs-view',
+      '@ketvietlab/ketsuite',
+    ],
+    javascript: true,
+    sourceDirectory: 'client',
+  },
+  'flow-ui': {
+    allow: [
+      '@ketvietlab/design-system',
+      '@ketvietlab/ketjs',
+      '@ketvietlab/ketjs-view',
+      '@ketvietlab/ketsuite',
+    ],
+    javascript: true,
+  },
+}
+const ALLOWED_DEV = new Set(['typescript', 'tsx', '@types/node', '@biomejs/biome', 'postgres', 'esbuild'])
+
+const problems: string[] = []
+const IMPORT_RE =
+  /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^'"\n]*?\s+from\s+)?['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g
+
+const root = JSON.parse(readFileSync('package.json', 'utf8')) as Pkg
+if (!root.private) problems.push('the workspace root must be private so it is never published')
+if (Object.keys(root.dependencies ?? {}).length)
+  problems.push(`the workspace root declares dependencies: ${Object.keys(root.dependencies!).join(', ')}`)
+
+const summary: string[] = []
+
+for (const [name, rule] of Object.entries(RULES)) {
+  const dir = `packages/${name}`
+  const pkg = JSON.parse(readFileSync(`${dir}/package.json`, 'utf8')) as Pkg
+
+  const deps = Object.keys(pkg.dependencies ?? {})
+  for (const d of deps)
+    if (!rule.allow.includes(d))
+      problems.push(
+        `${name}: depends on "${d}", which is outside its allowance (${rule.allow.join(', ') || 'nothing'})`,
+      )
+
+  const stillOptional = Object.keys(pkg.optionalDependencies ?? {})
+  if (stillOptional.length)
+    problems.push(
+      `${name}: optionalDependencies are installed by npm anyway — use peerDependenciesMeta.optional (${stillOptional.join(', ')})`,
+    )
+
+  const peers = Object.keys(pkg.peerDependencies ?? {})
+  for (const p of peers) {
+    if (!(rule.optionalPeers ?? []).includes(p))
+      problems.push(
+        `${name}: declares peer "${p}", which only ${
+          Object.entries(RULES)
+            .filter(([, r]) => r.optionalPeers?.includes(p))
+            .map(([n]) => n)
+            .join('/') || 'no package'
+        } may`,
+      )
+    if (!pkg.peerDependenciesMeta?.[p]?.optional)
+      problems.push(`${name}: peer "${p}" is not optional, so npm installs it for every consumer`)
+  }
+  for (const d of Object.keys(pkg.devDependencies ?? {})) {
+    if (!ALLOWED_DEV.has(d)) problems.push(`${name}: devDependency "${d}" is outside the allowed set`)
+  }
+
+  let files = 0
+  let external = 0
+  const source = `${dir}/${rule.sourceDirectory ?? 'src'}`
+  const patterns = [`${source}/**/*.ts`, `${source}/**/*.tsx`]
+  if (rule.javascript) patterns.push(`${source}/**/*.mjs`)
+  for (const pattern of patterns) {
+    for await (const file of glob(pattern)) {
+      files++
+      const src = readFileSync(file, 'utf8')
+      for (const m of src.matchAll(IMPORT_RE)) {
+        const spec = (m[1] ?? m[2] ?? m[3]) as string
+        if (spec.startsWith('node:') || spec.startsWith('./') || spec.startsWith('../')) continue
+
+        const parts = spec.split('/')
+        const target = spec.startsWith('@') ? parts.slice(0, 2).join('/') : (parts[0] as string)
+        const isSibling = rule.allow.includes(target)
+        const isPeer = (rule.optionalPeers ?? []).includes(target)
+        if (!isSibling && !isPeer) {
+          problems.push(
+            `${file} imports "${spec}" — ${name} may only reach ${[...rule.allow, ...(rule.optionalPeers ?? [])].join(', ') || 'node: builtins'}`,
+          )
+          continue
+        }
+        if (isSibling && rule.publicOnly && spec !== target) {
+          problems.push(
+            `${file} imports "${spec}" — ${name} must use the public entry "${target}" alone. If the suite needs it, export it; do not reach past the contract everyone else has.`,
+          )
+          continue
+        }
+        external++
+      }
+      if (/\bnew Function\s*\(/.test(src) || /(?<![\w.])eval\s*\(/.test(src)) {
+        problems.push(
+          `${file} uses eval/new Function — the theme sandbox argument depends on this staying absent`,
+        )
+      }
+    }
+  }
+  summary.push(
+    `  ${name.padEnd(16)} ${String(files).padStart(2)} files  deps: ${deps.join(', ') || 'none'}${peers.length ? `  optional peer: ${peers.join(', ')}` : ''}  cross-package imports: ${external}`,
+  )
+}
+
+console.log('dependency audit, per package:')
+for (const line of summary) console.log(line)
+if (problems.length) {
+  console.log('')
+  for (const p of problems) console.error(`  FAIL  ${p}`)
+  process.exit(1)
+}
+console.log('')
+console.log('  design-system reaches only the browser-safe public ketjs-view entry')
+console.log(
+  '  ketsuite reaches the framework only through its public entry, exactly as a third-party module would',
+)
+console.log('  eval / new Function: absent')

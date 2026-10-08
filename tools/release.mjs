@@ -1,0 +1,429 @@
+// Release preparation is executable evidence, not a checklist someone can forget.
+// It verifies every public workspace, packs exactly what npm would receive,
+// installs those tarballs into a clean consumer, and boots a generated project.
+
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const node = process.execPath
+const command = process.argv[2] ?? 'check'
+
+// Publish order: every package comes after the packages it depends on.
+const workspaces = [
+  {
+    name: '@ketvietlab/design-system',
+    dir: 'packages/design-system',
+    // 0.1.41 packs 1,926,353 bytes: 139 catalogue components, the public runtime,
+    // inventory and relocatable stylesheet with embedded Inter fonts. Raw font assets
+    // remain for the separate token stylesheets. Audited archive contains only dist,
+    // notices, docs and metadata; no tests, dependencies or build caches.
+    maxPackedBytes: 2_000_000,
+  },
+  {
+    name: '@ketvietlab/ketspec',
+    dir: 'packages/ketspec',
+    // 0.1.40 packs 139,014 bytes: the server renderer, CLI, typings and the self-contained
+    // browser bundle (design system and ketjs-view included), styles and three logo SVGs.
+    maxPackedBytes: 150_000,
+    requiredPaths: [
+      'LICENSE',
+      'README.md',
+      'package.json',
+      'dist/index.js',
+      'dist/index.d.ts',
+      'dist/cli.js',
+      'dist/styles.css',
+      'dist/browser/ketspec.mjs',
+      'dist/assets/logo-light.svg',
+      'dist/assets/logo-dark.svg',
+      'dist/assets/mark.svg',
+    ],
+  },
+  // 0.1.24 packed 4,046,454 bytes: the record-modal tabs, the data-table pattern and the
+  // filter menu, with no stray files — about half the package is source maps.
+  // 0.1.26 packs 4.95 MB; new user/CRM record-modal bundles include source maps.
+  // 0.1.29 packs 6,150,837 bytes: reviewed user/access-policy, product and CRM client bundles,
+  // their source maps and the two brand images; no test/build caches in the 3,623-file archive.
+  // 0.1.30 packs 7,249,173 bytes (3,863 files): reviewed chart/LiveDoc and record
+  // bundles with source maps; no source, test, node_modules or build-cache directories.
+  // 0.1.32: 7,625,068 bytes / 3,942 files, including Website Studio bundles and maps;
+  // inspected archive contains no test, node_modules, atlas or build-cache directories.
+  // 0.1.41 packs 8,941,683 bytes / 4,094 files: current public modules and their
+  // generated client bundles/source maps. Audited archive has no tests or dependencies.
+  { name: '@ketvietlab/ketsuite', dir: 'packages/ketsuite', maxPackedBytes: 9_200_000 },
+  {
+    name: '@ketvietlab/website-client',
+    dir: 'packages/website-client',
+    // Measured typed Website Studio package: 292,248 bytes / 258 files.
+    maxPackedBytes: 350_000,
+    requiredPaths: [
+      'LICENSE',
+      'README.md',
+      'package.json',
+      'dist/client/index.js',
+      'dist/client/index.d.ts',
+      'dist/client/styles.css',
+      'dist/server/extensions.js',
+      'dist/server/extensions.d.ts',
+    ],
+  },
+  // Flow's component kit ships JavaScript modules; 0.1.27 packs 128 KB with its stylesheet and icons.
+  {
+    name: '@ketvietlab/flow-ui',
+    dir: 'packages/flow-ui',
+    maxPackedBytes: 160_000,
+    requiredPaths: [
+      'LICENSE',
+      'README.md',
+      'package.json',
+      'dist/index.mjs',
+      'dist/index.d.mts',
+      'dist/styles.css',
+    ],
+  },
+  {
+    name: '@ketvietlab/flow-client',
+    dir: 'packages/flow-client',
+    // Measured import: 305 KB, including the bundled brand assets and three message catalogs.
+    maxPackedBytes: 350_000,
+    requiredPaths: [
+      'LICENSE',
+      'README.md',
+      'package.json',
+      'dist/index.mjs',
+      'dist/workspace.mjs',
+      'dist/server-extensions.mjs',
+      'EXTENSIONS.md',
+      'NOTICE',
+    ],
+  },
+]
+
+/** @param {string} message @returns {never} */
+const fail = (message) => {
+  throw new Error(`release check failed: ${message}`)
+}
+
+/** @param {string} path */
+const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'))
+
+/**
+ * @param {string} executable
+ * @param {string[]} args
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, capture?: boolean }} [options]
+ */
+const run = (executable, args, options = {}) => {
+  const result = spawnSync(executable, args, {
+    cwd: options.cwd ?? ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, ...options.env },
+    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    if (options.capture) process.stderr.write(`${result.stdout ?? ''}${result.stderr ?? ''}`)
+    fail(`${basename(executable)} ${args.join(' ')} exited with ${result.status}`)
+  }
+  return result.stdout ?? ''
+}
+
+/** @param {unknown} value @returns {string[]} */
+const exportedPaths = (value) => {
+  if (typeof value === 'string') return [value]
+  if (!value || typeof value !== 'object') return []
+  return Object.values(/** @type {Record<string, unknown>} */ (value)).flatMap(exportedPaths)
+}
+
+const verifyMetadata = () => {
+  const rootPackage = readJson(join(ROOT, 'package.json'))
+  const version = rootPackage.version
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) fail(`invalid root version ${version}`)
+  const license = readFileSync(join(ROOT, 'LICENSE'), 'utf8')
+
+  for (const workspace of workspaces) {
+    const directory = join(ROOT, workspace.dir)
+    const manifest = readJson(join(directory, 'package.json'))
+    if (manifest.name !== workspace.name) fail(`${workspace.dir} declares name ${manifest.name}`)
+    if (manifest.version !== version)
+      fail(`${workspace.name} is ${manifest.version}; all public packages must be ${version}`)
+    if (manifest.private === true) fail(`${workspace.name} is private`)
+    if (manifest.license !== 'MIT') fail(`${workspace.name} does not declare the MIT license`)
+    if (manifest.engines?.node !== '>=24.0.0') fail(`${workspace.name} must retain the Node >=24 contract`)
+    if (manifest.publishConfig?.access !== 'public') fail(`${workspace.name} is not configured public`)
+    if (manifest.publishConfig?.provenance !== true) fail(`${workspace.name} does not require provenance`)
+    if (manifest.publishConfig?.registry !== 'https://registry.npmjs.org/')
+      fail(`${workspace.name} does not pin the public npm registry`)
+    if (manifest.repository?.url !== 'git+https://github.com/ketvietlab/ketsuite.git')
+      fail(`${workspace.name} has the wrong repository URL`)
+    if (manifest.repository?.directory !== workspace.dir)
+      fail(`${workspace.name} has the wrong repository directory`)
+    if (!manifest.files?.includes('dist')) fail(`${workspace.name} does not restrict files to dist`)
+    if (manifest.scripts?.prepack !== 'npm run build --prefix ../..')
+      fail(`${workspace.name} does not build before packing`)
+    if (!existsSync(join(directory, 'README.md'))) fail(`${workspace.name} has no package README`)
+    // A package may append third-party notices, but must retain the full license.
+    if (!readFileSync(join(directory, 'LICENSE'), 'utf8').startsWith(license))
+      fail(`${workspace.name} does not carry the repository license`)
+    for (const target of exportedPaths(manifest.exports)) {
+      const path = join(directory, target)
+      if (!existsSync(path)) fail(`${workspace.name} export ${target} does not exist; run the build first`)
+    }
+    for (const target of Object.values(manifest.bin ?? {})) {
+      const path = join(directory, target)
+      if (!existsSync(path)) fail(`${workspace.name} bin ${target} does not exist`)
+    }
+  }
+
+  const byName = new Map(
+    workspaces.map((workspace) => [workspace.name, readJson(join(ROOT, workspace.dir, 'package.json'))]),
+  )
+  for (const [name, manifest] of byName) {
+    for (const [dependency, wanted] of Object.entries(manifest.dependencies ?? {})) {
+      if (byName.has(dependency) && wanted !== version)
+        fail(`${name} must depend on ${dependency}@${version}, not ${wanted}`)
+    }
+  }
+
+  const suiteScaffold = readFileSync(join(ROOT, 'packages/ketsuite/src/scaffold/index.ts'), 'utf8')
+  if (!suiteScaffold.includes(`const VERSION = '${version}'`))
+    fail(`ketsuite new does not scaffold the release version ${version}`)
+  const lock = readJson(join(ROOT, 'package-lock.json'))
+  if (lock.version !== undefined && lock.version !== version) fail(`package-lock root is ${lock.version}`)
+  for (const workspace of workspaces) {
+    const locked = lock.packages?.[workspace.dir]
+    if (locked?.version !== version)
+      fail(`package-lock has ${workspace.name}@${locked?.version ?? 'missing'}`)
+  }
+  return version
+}
+
+/** @param {string} destination @param {string} version */
+const pack = (destination, version) => {
+  mkdirSync(destination, { recursive: true })
+  /** @type {Map<string, string>} */
+  const tarballs = new Map()
+  for (const workspace of workspaces) {
+    const stdout = run(
+      npm,
+      ['pack', '--json', '--ignore-scripts', '--pack-destination', destination, join(ROOT, workspace.dir)],
+      { capture: true },
+    )
+    const start = stdout.indexOf('[')
+    const result =
+      /** @type {{ name: string, version: string, size: number, unpackedSize: number, entryCount: number, filename: string, files: Array<{ path: string }> }} */ (
+        JSON.parse(start >= 0 ? stdout.slice(start) : stdout)[0]
+      )
+    if (result.name !== workspace.name || result.version !== version)
+      fail(`npm packed ${result.name}@${result.version} from ${workspace.name}`)
+    if (result.size > workspace.maxPackedBytes)
+      fail(`${workspace.name} grew to ${result.size} packed bytes (limit ${workspace.maxPackedBytes})`)
+    const paths = new Set(result.files.map((file) => file.path))
+    const requiredPaths = workspace.requiredPaths ?? [
+      'LICENSE',
+      'README.md',
+      'package.json',
+      'dist/index.js',
+      'dist/index.d.ts',
+    ]
+    if (workspace.name === '@ketvietlab/design-system') {
+      requiredPaths.push('dist/styles.css', 'dist/foundations/tokens.css')
+    }
+    for (const required of requiredPaths)
+      if (!paths.has(required)) {
+        fail(`${workspace.name} tarball omitted ${required}`)
+      }
+    if (workspace.name === '@ketvietlab/flow-client') {
+      for (const path of paths)
+        if (/(^|\/)(atlas|test|client|node_modules)(\/|$)/.test(path))
+          fail(`core tarball includes development source: ${path}`)
+    }
+    const tarball = join(destination, result.filename)
+    if (!existsSync(tarball)) fail(`${workspace.name} tarball was not written`)
+    tarballs.set(workspace.name, tarball)
+    console.log(
+      `packed ${workspace.name}@${version}: ${result.size} bytes, ${result.unpackedSize} unpacked, ${result.entryCount} files`,
+    )
+  }
+  return tarballs
+}
+
+/** @param {Map<string, string>} tarballs @param {string} version @param {string} parent */
+const smoke = (tarballs, version, parent) => {
+  /** @param {string} name @returns {string} */
+  const tarball = (name) => {
+    return tarballs.get(name) ?? fail(`missing tarball for ${name}`)
+  }
+  const consumer = join(parent, 'consumer')
+  mkdirSync(consumer)
+  writeFileSync(
+    join(consumer, 'package.json'),
+    `${JSON.stringify({ name: 'ket-release-smoke', private: true, type: 'module' }, null, 2)}\n`,
+  )
+  run(
+    npm,
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--package-lock=false',
+      ...workspaces.map((workspace) => tarball(workspace.name)),
+    ],
+    { cwd: consumer },
+  )
+  run(
+    node,
+    [
+      '--input-type=module',
+      '--eval',
+      `await Promise.all([import('@ketvietlab/ketjs-view'), import('@ketvietlab/design-system'), import('@ketvietlab/design-system/contract'), import('@ketvietlab/design-system/catalogue'), import('@ketvietlab/ketspec'), import('@ketvietlab/ketjs'), import('@ketvietlab/ketjs/theme'), import('@ketvietlab/ketjs/testing'), import('@ketvietlab/ketsuite'), import('@ketvietlab/ketsuite/deployment'), import('@ketvietlab/ketsuite/ui'), import('@ketvietlab/ketsuite/record-modal-client'), import('@ketvietlab/ketsuite/backend'), import('@ketvietlab/flow-ui'), import('@ketvietlab/flow-ui/workspace'), import('@ketvietlab/flow-ui/documents'), import('@ketvietlab/flow-client'), import('@ketvietlab/flow-client/server'), import('@ketvietlab/website-client'), import('@ketvietlab/website-client/server')])`,
+    ],
+    { cwd: consumer },
+  )
+
+  // A tarball consumer has no private checkout or fixture runtime to fall back to.
+  run(
+    node,
+    [
+      '--input-type=module',
+      '--eval',
+      `
+    import assert from 'node:assert/strict';
+    import {createFlowWorkspace,routes} from '@ketvietlab/flow-client';
+    import {renderToStaticString} from '@ketvietlab/ketjs-view';
+    assert.equal(Object.keys(routes).length,76);
+    for(const key of ['performance','workload','goals','github','atlas','gantt','automations','epic-map']) assert.equal(routes[key],undefined);
+    assert.match(renderToStaticString(createFlowWorkspace({screen:'my-work'}).view()),/data-flow/);
+    assert.throws(()=>import.meta.resolve('@repo/flow-pro-client'));
+  `,
+    ],
+    { cwd: consumer },
+  )
+
+  // The ketspec command writes a static site from a tarball install alone.
+  const specSite = join(parent, 'spec-site')
+  const specDocument = join(parent, 'spec.openapi.json')
+  writeFileSync(
+    specDocument,
+    JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Release', version: '1' },
+      paths: { '/health': { get: { responses: { 200: { description: 'OK' } } } } },
+    }),
+  )
+  run(
+    node,
+    [
+      join(consumer, 'node_modules/@ketvietlab/ketspec/dist/cli.js'),
+      'build',
+      specDocument,
+      '--out',
+      specSite,
+    ],
+    {
+      cwd: consumer,
+    },
+  )
+  for (const path of [
+    'index.html',
+    'assets/ketspec.mjs',
+    'assets/design-system.css',
+    'assets/ketspec.css',
+    'assets/logo-light.svg',
+  ]) {
+    if (!existsSync(join(specSite, path))) fail(`ketspec build did not write ${path}`)
+  }
+
+  const generatedSuite = join(parent, 'generated-suite')
+  run(node, [
+    join(consumer, 'node_modules/@ketvietlab/ketsuite/dist/cli.js'),
+    'new',
+    'release_suite',
+    '--dir',
+    generatedSuite,
+  ])
+  const generatedSuitePackage = readJson(join(generatedSuite, 'package.json'))
+  if (generatedSuitePackage.dependencies?.['@ketvietlab/ketsuite'] !== `^${version}`)
+    fail(
+      `ketsuite new generated @ketvietlab/ketsuite dependency ${generatedSuitePackage.dependencies?.['@ketvietlab/ketsuite']}`,
+    )
+  run(
+    npm,
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--package-lock=false',
+      tarball('@ketvietlab/design-system'),
+      tarball('@ketvietlab/ketsuite'),
+    ],
+    { cwd: generatedSuite },
+  )
+  run(node, [join(generatedSuite, 'node_modules/@ketvietlab/ketsuite/dist/cli.js'), '--help'], {
+    cwd: generatedSuite,
+  })
+
+  console.log('tarball consumer imports and all generated application smoke tests passed')
+}
+
+/** @param {string} name @param {string} version */
+const publishedShasum = (name, version) => {
+  const result = spawnSync(npm, ['view', `${name}@${version}`, 'dist.shasum', '--json'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.error) throw result.error
+  if (result.status === 0) return JSON.parse(result.stdout)
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  if (output.includes('E404')) return undefined
+  process.stderr.write(output)
+  fail(`could not inspect ${name}@${version} on npm`)
+}
+
+/** @param {Map<string, string>} tarballs @param {string} version */
+const publish = (tarballs, version) => {
+  if (process.env.GITHUB_ACTIONS !== 'true') fail('publish is restricted to GitHub Actions')
+  if (process.env.GITHUB_REPOSITORY !== 'ketvietlab/ketsuite')
+    fail('publish is restricted to the public ketvietlab/ketsuite release repository')
+  if (process.env.RELEASE_TAG !== `v${version}`)
+    fail(`release tag ${process.env.RELEASE_TAG ?? 'missing'} does not match v${version}`)
+
+  for (const workspace of workspaces) {
+    const tarball = tarballs.get(workspace.name) ?? fail(`missing tarball for ${workspace.name}`)
+    const localShasum = createHash('sha1').update(readFileSync(tarball)).digest('hex')
+    const remoteShasum = publishedShasum(workspace.name, version)
+    if (remoteShasum !== undefined) {
+      if (remoteShasum !== localShasum)
+        fail(`${workspace.name}@${version} exists with different contents; refusing to continue`)
+      console.log(`already published ${workspace.name}@${version} with matching contents; skipping`)
+      continue
+    }
+    run(npm, ['publish', tarball, '--access', 'public', '--provenance'])
+  }
+}
+
+if (!['check', 'pack', 'publish'].includes(command)) fail('usage: node tools/release.mjs check|pack|publish')
+const version = verifyMetadata()
+const temporary = mkdtempSync(join(tmpdir(), 'ketsuite-release-'))
+const destination = command === 'pack' ? join(ROOT, '.release') : join(temporary, 'tarballs')
+if (command === 'pack') {
+  rmSync(destination, { recursive: true, force: true })
+  mkdirSync(destination, { recursive: true })
+}
+try {
+  const tarballs = pack(destination, version)
+  if (command === 'publish') publish(tarballs, version)
+  else smoke(tarballs, version, temporary)
+  if (command === 'pack') console.log(`release tarballs are ready in ${destination}`)
+} finally {
+  rmSync(temporary, { recursive: true, force: true })
+}

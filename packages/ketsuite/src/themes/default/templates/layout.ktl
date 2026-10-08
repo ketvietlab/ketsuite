@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="{{ locale | default: 'vi' }}"><head><meta charset="utf-8"><title>{{ site.title }}</title></head>
+<body class="ket" data-ket-section="layout">
+  <header><a href="/">{{ site.title }}</a></header>
+  {% if product %}
+  <main data-ket-slot="product.detail">{% region "product.detail" %}</main>
+  {% else %}
+  <main data-ket-slot="website.page">{% region "website.page" %}</main>
+  {% endif %}
+  <footer>{{ site.tagline | default: "Chạy trên Ket" }}</footer>
+</body></html>

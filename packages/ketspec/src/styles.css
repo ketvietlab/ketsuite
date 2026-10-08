@@ -1,0 +1,31 @@
+/*
+ * The document around a Spec page. Components own everything inside the
+ * design-system root; this only lets the shell meet the viewport edges, gives
+ * the canvas behind it the page colour in both schemes, and keeps the
+ * runtime's mount points out of the shell's layout.
+ */
+@layer ket.app {
+  html,
+  body {
+    margin: 0;
+    background: var(--kv-page-bg);
+  }
+
+  /*
+   * The runtime renders the navigation and the location bar into these
+   * wrappers. They generate no box, so the shell's sidebar and main column
+   * size and position their components exactly as if they were direct
+   * children. The main region keeps its box: it receives focus on navigation.
+   */
+  [data-ketspec] [data-spec-region="navigation"],
+  [data-ketspec] [data-spec-region="topbar"] {
+    display: contents;
+  }
+
+  /* A reference reads as a document: its content stops at the reading width and is
+     centred in the main column, while the location bar keeps the full column. */
+  [data-ketspec] [data-spec-region="main"] {
+    max-inline-size: var(--kv-reading-width);
+    margin-inline: auto;
+  }
+}
