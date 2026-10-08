@@ -399,6 +399,13 @@ responsibilities. Menu, popover, tooltip, dialog, toast, spinner and skeleton re
 retain native links/forms and useful no-script behavior. See the backend development
 guide for the full composition and integration contract.
 
+The shared adapter handles keyboard navigation only inside its attached root and
+respects keys already handled by an inner layer. Disposing an ordinary island
+does not move focus or release another overlay's inert lock. Modal Tab loops include
+native menu summaries and skip negative tab stops, disabled controls, inert/hidden
+content and the body of closed disclosures, even when the browser retains their
+layout rectangles.
+
 Typed form exports cover scalar and selection fields, controlled combobox/tag pickers,
 civil date and local-time values, native file inputs, and a generic relation renderer.
 Applications retain validation, query, permission, timezone, upload, and persistence

@@ -16,6 +16,7 @@ class Element {
   readonly id: string
   children: Element[] = []
   inert = false
+  tabIndex = 0
   isConnected = true
   parentElement: Element | null = null
   querySelector: (selector: string) => Element | null = () => null

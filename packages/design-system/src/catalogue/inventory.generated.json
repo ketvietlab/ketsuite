@@ -17,7 +17,7 @@
     "runtimeGaps": 6,
     "typeGaps": 159,
     "cssFiles": 82,
-    "cssLines": 17497
+    "cssLines": 17503
   },
   "rows": [
     {
@@ -236,7 +236,12 @@
         "packages/design-system/src/catalogue/specimens.tsx"
       ],
       "tests": "present",
-      "testFiles": ["test/backend-ui.test.ts", "test/design-system.test.tsx", "test/ui-refactor.test.tsx"],
+      "testFiles": [
+        "test/backend-ui.test.ts",
+        "test/design-system-normalization.test.tsx",
+        "test/design-system.test.tsx",
+        "test/ui-refactor.test.tsx"
+      ],
       "gapTask": "DS-009"
     },
     {
@@ -5313,7 +5318,11 @@
         "packages/design-system/src/catalogue/registry.ts"
       ],
       "tests": "present",
-      "testFiles": ["test/design-system-client-modal.test.ts", "test/design-system.test.tsx"],
+      "testFiles": [
+        "test/design-system-client-modal.test.ts",
+        "test/design-system-runtime-focus.test.ts",
+        "test/design-system.test.tsx"
+      ],
       "gapTask": "DS-009"
     },
     {
@@ -6123,7 +6132,7 @@
       "specimen": "gap",
       "specimenFiles": [],
       "tests": "present",
-      "testFiles": ["test/design-system-client-modal.test.ts"],
+      "testFiles": ["test/design-system-client-modal.test.ts", "test/design-system-runtime-focus.test.ts"],
       "gapTask": "DS-015"
     },
     {
@@ -6141,7 +6150,11 @@
       "specimen": "gap",
       "specimenFiles": [],
       "tests": "present",
-      "testFiles": ["test/design-system-atlas.test.ts", "test/global-search-launcher.test.ts"],
+      "testFiles": [
+        "test/design-system-atlas.test.ts",
+        "test/design-system-runtime-focus.test.ts",
+        "test/global-search-launcher.test.ts"
+      ],
       "gapTask": "DS-017"
     },
     {
@@ -9065,7 +9078,11 @@
       "specimen": "not-applicable",
       "specimenFiles": [],
       "tests": "present",
-      "testFiles": ["test/design-system-client-modal.test.ts", "test/design-system.test.tsx"],
+      "testFiles": [
+        "test/design-system-client-modal.test.ts",
+        "test/design-system-runtime-focus.test.ts",
+        "test/design-system.test.tsx"
+      ],
       "gapTask": "DS-009"
     },
     {
@@ -9671,6 +9688,7 @@
         "test/design-system-dates.test.tsx",
         "test/design-system-normalization.test.tsx",
         "test/design-system-primitives.test.tsx",
+        "test/design-system-runtime-focus.test.ts",
         "test/design-system.test.tsx",
         "test/flow-issue-detail-routes.test.ts",
         "test/flow-lifecycle.test.ts",
@@ -11923,6 +11941,7 @@
         "test/design-system-layout-audit.test.ts",
         "test/design-system-normalization.test.tsx",
         "test/design-system-primitives.test.tsx",
+        "test/design-system-runtime-focus.test.ts",
         "test/design-system.test.tsx",
         "test/flow-board-screen.test.tsx",
         "test/flow-epic-map-screen.test.tsx",
@@ -11990,6 +12009,8 @@
         "test/crm-configuration-screen.test.tsx",
         "test/crm-ux.test.ts",
         "test/design-system-atlas.test.ts",
+        "test/design-system-normalization.test.tsx",
+        "test/design-system-runtime-focus.test.ts",
         "test/design-system.test.tsx",
         "test/flow-all-epics-routes.test.ts",
         "test/flow-all-epics-screen.test.tsx",
@@ -12062,6 +12083,7 @@
         "test/backend-viewer-identity.test.ts",
         "test/collaboration-backend-e2e.test.ts",
         "test/design-system-demo.test.ts",
+        "test/design-system-normalization.test.tsx",
         "test/design-system.test.tsx",
         "test/flow-inbox.test.ts",
         "test/ketsuite-menu.test.ts",
@@ -12242,6 +12264,7 @@
         "test/crm-ux.test.ts",
         "test/design-system-normalization.test.tsx",
         "test/design-system-primitives.test.tsx",
+        "test/design-system-runtime-focus.test.ts",
         "test/design-system.test.tsx",
         "test/experience-collection-controls.test.tsx",
         "test/flow-collab-e2e.test.ts",
@@ -13035,7 +13058,7 @@
     {
       "layer": "public",
       "file": "packages/design-system/src/layouts/shell/styles.css",
-      "lines": 440,
+      "lines": 446,
       "hooks": [
         "app-brand",
         "app-location-bar",

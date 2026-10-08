@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { renderToString } from '@ketvietlab/ketjs-view'
 import {
   Avatar,
+  AppShell,
   Badge,
   Button,
   Checkbox,
@@ -291,4 +292,22 @@ test('page gutter and card gaps share the responsive layout token', () => {
   assert.match(css, /--kv-layout-gap: 0\.5rem;/)
   assert.match(css, /--kv-layout-gap: 0\.75rem;/)
   assert.match(css, /--kv-gap-section: var\(--kv-layout-gap\);/)
+})
+
+test('a mobile location shell reserves no grid height for its closed navigation', () => {
+  const html = render(<AppShell sidebar="Navigation" location="Location" main="Content" />)
+  assert.match(html, /data-has-location="true"/)
+  assert.doesNotMatch(html, /data-has-topbar="true"/)
+  assert.match(
+    html,
+    /<aside data-ui="app-sidebar">Navigation<\/aside><main data-ui="app-main">LocationContent/,
+  )
+  const css = readFileSync('packages/design-system/src/layouts/shell/styles.css', 'utf8')
+  // A zero-height sidebar still occupies an implicit auto grid row. Its track
+  // must stay zero, otherwise min-height: 100dvh distributes spare height to it.
+  // An explicit legacy topbar keeps its own two-row layout.
+  assert.match(
+    css,
+    /@media \(width < 48rem\) \{\s*:where\(\[data-kv-design-system\]\)\s*\[data-ui="app-shell"\]\[data-has-location="true"\]:not\(\[data-has-topbar="true"\]\)\s*\{(?:\s|\/\*[\s\S]*?\*\/)*grid-template-rows: 0 minmax\(0, 1fr\);/,
+  )
 })

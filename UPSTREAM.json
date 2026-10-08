@@ -1,8 +1,8 @@
 {
   "sourceRepository": "https://github.com/ketvietlab/ketviet",
   "sourcePath": "ketsuite",
-  "sourceCommit": "80916a1ef90468879b8e625f34269dfe5b35214c",
-  "sourceTree": "e447c4688f6e0b38edf1780f18d09af0497f6418",
+  "sourceCommit": "e45694181cdec3b96442817434e34fd673c09f61",
+  "sourceTree": "33d0f8502da373bb5f9ac2c68c8cd8dcc44eee23",
   "excludedPrefixes": [".claude/", ".codex/"],
   "version": "0.1.41"
 }
