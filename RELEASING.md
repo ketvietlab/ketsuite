@@ -38,6 +38,9 @@ on a sync branch, then open a pull request into public `integration`.
 - Require the stable `verification gate` check on `develop` and `master`, plus
   `permission coverage` on `develop`. The gate rejects failed, cancelled or skipped
   test jobs when the planner selected them; an unselected group may be skipped.
+  KétSuite runs its own product and producer tests against the npm framework;
+  framework S3-provider tests and their MinIO fixture belong to the KetJS repository.
+  The Suite storage benchmark's optional S3 endpoint is not part of this gate.
 - Create `release/<version>` from verified `develop`, then open a release PR into
   `master`. Keep the coordinated version and source provenance in that PR.
 - After the release gate passes and the PR is merged, create GitHub release
