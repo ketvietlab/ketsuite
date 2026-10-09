@@ -17,9 +17,11 @@ const focusables = (root) =>
   [...root.querySelectorAll(focusableSelector)].filter(
     (element) =>
       element instanceof HTMLElement &&
-      !element.hidden &&
-      element.getAttribute('aria-hidden') !== 'true' &&
-      (typeof element.checkVisibility !== 'function' || element.checkVisibility()),
+      element.tabIndex >= 0 &&
+      !element.matches(':disabled') &&
+      !element.closest('[hidden], [inert], [aria-hidden="true"], details:not([open]) > :not(summary)') &&
+      (typeof element.checkVisibility !== 'function' ||
+        element.checkVisibility({ visibilityProperty: true })),
   )
 
 /**
@@ -159,8 +161,10 @@ export const attachDesignSystemInteractions = (root = document) => {
   const modal = root.querySelector('[data-ui="modal-layer"][data-route-modal="true"] [role="dialog"]')
   const appShell = root.querySelector('[data-ui="app-shell"], [data-ui="shell"]')
   const priorInert = appShell instanceof HTMLElement ? appShell.inert : false
+  const ownsShellLock =
+    modal instanceof HTMLElement && appShell instanceof HTMLElement && !appShell.contains(modal)
   if (modal instanceof HTMLElement) {
-    if (appShell instanceof HTMLElement && !appShell.contains(modal)) appShell.inert = true
+    if (ownsShellLock && appShell instanceof HTMLElement) appShell.inert = true
     const first = focusables(modal)[0]
     ;(first instanceof HTMLElement ? first : modal).focus()
   }
@@ -340,6 +344,9 @@ export const attachDesignSystemInteractions = (root = document) => {
 
   /** @param {KeyboardEvent} event */
   const onKeydown = (event) => {
+    // A page and its islands may both attach the runtime. Only the owning root
+    // handles a key, and a key consumed by another layer must not move focus twice.
+    if (event.defaultPrevented || !root.contains(document.activeElement)) return
     const openNavigation = navigations.find((navigation) => navigationMedia.matches && navigation.open)
     if (openNavigation instanceof HTMLDetailsElement) {
       const drawer = openNavigation.querySelector('[data-ui="navigation-drawer"]')
@@ -638,7 +645,7 @@ export const attachDesignSystemInteractions = (root = document) => {
     for (const cleanup of navigationCleanups) cleanup()
     if (priorNavigationOpen === undefined) delete navigationRoot.dataset.kvNavigationOpen
     else navigationRoot.dataset.kvNavigationOpen = priorNavigationOpen
-    if (appShell instanceof HTMLElement) appShell.inert = priorInert
-    if (activeBeforeOpen?.isConnected) activeBeforeOpen.focus()
+    if (ownsShellLock && appShell instanceof HTMLElement) appShell.inert = priorInert
+    if (modal instanceof HTMLElement && activeBeforeOpen?.isConnected) activeBeforeOpen.focus()
   }
 }

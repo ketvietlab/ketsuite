@@ -397,6 +397,12 @@
   }
   @media (width < 48rem) {
     :where([data-kv-design-system])
+      [data-ui="app-shell"][data-has-location="true"]:not([data-has-topbar="true"]) {
+      /* A closed drawer has no in-flow height. Keep its grid track at zero so
+         the viewport's spare height belongs to main, not a blank navigation row. */
+      grid-template-rows: 0 minmax(0, 1fr);
+    }
+    :where([data-kv-design-system])
       [data-ui="app-shell"][data-has-location="true"]
       > [data-ui="app-sidebar"] {
       height: 0;

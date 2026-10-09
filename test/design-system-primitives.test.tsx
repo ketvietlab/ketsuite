@@ -32,6 +32,7 @@ test('primitive harness covers every registered primitive exactly once', () => {
     'avatar',
     'badge',
     'code',
+    'code-block',
     'count-badge',
     'media-label',
     'tag',
