@@ -7,6 +7,7 @@ import {
   Breadcrumbs,
   Button,
   Code,
+  CodeBlock,
   CountBadge,
   EmptyState,
   Field,
@@ -51,7 +52,7 @@ export const primitiveSections = [
   {
     id: 'status',
     label: 'Status & identity',
-    components: ['Avatar', 'Badge', 'Code', 'CountBadge', 'MediaLabel', 'Tag', 'Text'],
+    components: ['Avatar', 'Badge', 'Code', 'CodeBlock', 'CountBadge', 'MediaLabel', 'Tag', 'Text'],
   },
   { id: 'fields', label: 'Fields', components: ['Field'] },
   {
@@ -299,6 +300,9 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
               <Code value="PRJ-0042" context="project" />,
             ]}
           />
+        </Row>
+        <Row label="Code block" detail="Literal multiline text with an accessible, focusable region.">
+          <CodeBlock label="API response" language="json" value={'{\n  "status": "ready"\n}'} />
         </Row>
         <Row label="Content pressure" detail="Long names, unbroken identifiers and reserved media.">
           <Stack

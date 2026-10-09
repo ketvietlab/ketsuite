@@ -35,11 +35,14 @@ export const attachClientModalInteractions = (root = document) => {
     }
   }
   const focusables = () =>
-    [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter(
+    [...modal.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')].filter(
       (element) =>
         element instanceof HTMLElement &&
-        !element.matches(':disabled, [tabindex="-1"]') &&
-        !element.closest('[hidden], [inert]') &&
+        element.tabIndex >= 0 &&
+        !element.matches(':disabled') &&
+        !element.closest('[hidden], [inert], [aria-hidden="true"], details:not([open]) > :not(summary)') &&
+        (typeof element.checkVisibility !== 'function' ||
+          element.checkVisibility({ visibilityProperty: true })) &&
         element.getClientRects().length > 0,
     )
   const first = focusables()[0]
