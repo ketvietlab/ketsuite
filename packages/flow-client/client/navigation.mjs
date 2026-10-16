@@ -1,4 +1,9 @@
 import { tr } from './i18n.mjs'
+export const workspaceRecordRoutes = new Set(['workspace-edit', 'workspace-archive'])
+export function workspaceRecordTarget(route, record, explicit, workspace) {
+  if (!workspaceRecordRoutes.has(route)) return null
+  return explicit ? record : workspace || null
+}
 export const workspaceRoutes = new Set([
   'my-work',
   'inbox',

@@ -7,10 +7,27 @@
   :where([data-kv-design-system]) [data-ui="ket-table"][data-busy="true"] {
     opacity: 0.75;
   }
+  :where([data-kv-design-system]) [data-ui="kt-placeholder"] {
+    display: grid;
+    align-content: center;
+    min-block-size: var(--kv-line-sm);
+    inline-size: 100%;
+  }
+  :where([data-kv-design-system]) [data-ui="kt-placeholder"][data-lines="2"] {
+    min-block-size: calc(var(--kv-line-sm) + var(--kv-line-xs));
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-loading="true"]
+    :is([data-ui="kt-row-select"], [data-ui="kt-select-all"]) {
+    visibility: hidden;
+  }
 
   :where([data-kv-design-system]) [data-ui="kt-scroll"] {
     width: 100%;
     overflow-x: auto;
+    /* The region is the scroll boundary: its table never widens the parents, so a wrapper such as a
+     * client island stays within the page while each column still measures its own content. */
+    contain: inline-size;
     border: 1px solid var(--kv-panel-border);
     border-radius: var(--kv-radius-md);
     background: var(--kv-table-bg);
@@ -38,6 +55,10 @@
     font-size: var(--kv-text-sm);
     line-height: var(--kv-line-sm);
   }
+  :where([data-kv-design-system]) [data-ui="ket-table"][data-layout="fixed"] [data-ui="kt-grid"] {
+    table-layout: fixed;
+    min-inline-size: max(38rem, calc(var(--kt-column-units) * 4.5rem + var(--kt-selection-width)));
+  }
 
   :where([data-kv-design-system]) [data-ui="kt-col"] {
     height: var(--kv-table-header-height);
@@ -48,7 +69,7 @@
     font-size: var(--kv-text-sm);
     line-height: var(--kv-line-sm);
     font-weight: var(--kv-weight-medium);
-    text-align: left;
+    text-align: start;
     text-transform: none;
     white-space: nowrap;
   }
@@ -61,7 +82,7 @@
     white-space: nowrap;
   }
   :where([data-kv-design-system]) [data-ui="kt-col"][data-align="end"] {
-    text-align: right;
+    text-align: end;
   }
   :where([data-kv-design-system]) [data-ui="kt-sort-button"] {
     text-decoration: none;
@@ -90,7 +111,9 @@
     min-width: 2.5rem;
     text-align: center;
   }
-  :where([data-kv-design-system]) [data-ui="kt-select-col"] {
+  /* The header cell only: the <col> of the selection column shares the hook, and a
+     background on a column paints every body cell beneath it. */
+  :where([data-kv-design-system]) th[data-ui="kt-select-col"] {
     height: var(--kv-table-header-height);
     border-bottom: 1px solid var(--kv-table-border);
     background: var(--kv-table-header-bg);
@@ -125,6 +148,15 @@
   :where([data-kv-design-system]) [data-ui="kt-row"][data-selected="true"] {
     background: var(--kv-accent-subtle);
   }
+  /* The row the reader came back to from its record: a bar on the start edge of its first cell,
+     so it reads apart from selection and hover and keeps the row's fill. A pseudo-element on the
+     row itself would become a cell of its own and push the row's cells along one column. */
+  :where([data-kv-design-system]) [data-ui="kt-row"][data-current="true"] > :first-child {
+    box-shadow: inset var(--kv-space-0-5) 0 0 var(--kv-accent);
+  }
+  :where([data-kv-design-system]) [data-ui="kt-row"][data-current="true"]:dir(rtl) > :first-child {
+    box-shadow: inset calc(-1 * var(--kv-space-0-5)) 0 0 var(--kv-accent);
+  }
   :where([data-kv-design-system]) [data-ui="kt-cell"] {
     height: var(--kv-row-height);
     padding: var(--kv-space-1-5) var(--kv-space-3);
@@ -133,7 +165,7 @@
     vertical-align: middle;
   }
   :where([data-kv-design-system]) [data-ui="kt-cell"][data-align="end"] {
-    text-align: right;
+    text-align: end;
   }
   :where([data-kv-design-system]) [data-ui="kt-cell"][data-wrap="true"] {
     min-inline-size: var(--kv-table-text-min-width);
@@ -143,6 +175,49 @@
   }
   :where([data-kv-design-system]) [data-ui="kt-cell"][data-wrap="true"][data-width="wide"] {
     min-inline-size: var(--kv-table-text-wide-min-width);
+  }
+  /*
+   * A fixed grid shares its width by column units, so a one-line cell that runs out of room
+   * ends in an ellipsis instead of painting over the next column. The full text stays in the
+   * DOM for assistive technology; give long subjects `wrap` instead. A cell holding a menu or
+   * popover is left unclipped so its panel can open. The row link's overlay belongs to the
+   * row, not the cell, so the clip does not shrink the row's hit area.
+   */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-layout="fixed"]
+    [data-ui="kt-cell"]:not([data-wrap="true"], :has([data-ui="menu"], [data-ui="popover"])) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* A link or button directly in the cell is bounded and truncated itself, and draws its focus
+     ring inside its own box, so the cell's clip never hides the ring. */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-layout="fixed"]
+    [data-ui="kt-cell"]:not([data-wrap="true"], :has([data-ui="menu"], [data-ui="popover"]))
+    > :is(a, button) {
+    display: inline-block;
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
+  /* A cell that stacks lines (a name over its detail) ends each line in its own ellipsis; the
+     cell's own ellipsis only reaches text that sits directly in the cell. */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-layout="fixed"]
+    [data-ui="kt-cell"]:not([data-wrap="true"], :has([data-ui="menu"], [data-ui="popover"]))
+    > [data-ui="stack"]
+    > * {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-layout="fixed"]
+    [data-ui="kt-cell"]:not([data-wrap="true"], :has([data-ui="menu"], [data-ui="popover"]))
+    :is(a, button, input, select):focus-visible {
+    outline-offset: -2px;
+    box-shadow: none;
   }
   /* The viewport owns the outer boundary in flat, grouped and paged tables. */
   :where([data-kv-design-system])
@@ -245,6 +320,11 @@
 @media (max-width: 47.9375rem) {
   :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] [data-ui="kt-grid"] {
     min-width: 0;
+    min-inline-size: 0;
+    table-layout: auto;
+  }
+  :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] [data-ui="kt-colgroup"] {
+    display: none;
   }
   :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] thead {
     position: absolute;
@@ -263,6 +343,23 @@
     [data-ui="kt-row"]:last-child {
     border-bottom: 0;
   }
+  /* A stacked row is one block, so the bar runs along the whole row rather than its first line. */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"]
+    [data-ui="kt-row"][data-current="true"] {
+    box-shadow: inset var(--kv-space-0-5) 0 0 var(--kv-accent);
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"]
+    [data-ui="kt-row"][data-current="true"]:dir(rtl) {
+    box-shadow: inset calc(-1 * var(--kv-space-0-5)) 0 0 var(--kv-accent);
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"]
+    [data-ui="kt-row"][data-current="true"]
+    > :first-child {
+    box-shadow: none;
+  }
   :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] [data-ui="kt-cell"] {
     display: flex;
     min-height: var(--kv-row-height);
@@ -271,16 +368,39 @@
     justify-content: space-between;
     white-space: normal;
   }
+  /* A stacked row wraps its values, so the fixed grid's one-line clip does not apply. */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"][data-layout="fixed"]
+    :is([data-ui="kt-cell"], [data-ui="kt-cell"] > [data-ui="stack"] > *) {
+    overflow: visible;
+  }
   :where([data-kv-design-system])
     [data-ui="ket-table"][data-responsive="stack"]
     [data-ui="kt-cell"][data-wrap="true"] {
     min-inline-size: 0;
     max-inline-size: none;
   }
+  /*
+   * The label breaks between words only: a wrapping cell breaks anywhere, and beside a wide
+   * value (a row of tags) that would squeeze the label to a letter per line.
+   */
   :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] [data-ui="kt-cell"]::before {
     content: attr(data-label);
     color: var(--kv-text-secondary);
     font-weight: var(--kv-weight-semibold);
+    overflow-wrap: normal;
+  }
+  /*
+   * A stacked row is a summary that opens its record: it lists the primary and secondary
+   * columns and leaves `tertiary` ones to the record, so a wide table does not become a tall
+   * card. The cell that carries the row's link always stays, whatever its priority.
+   */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"]
+    :is([data-ui="kt-col"], [data-ui="kt-cell"])[data-priority="tertiary"]:not(
+      :has([data-ui="kt-row-link"])
+    ) {
+    display: none;
   }
 }
 

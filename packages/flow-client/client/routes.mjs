@@ -2,7 +2,7 @@ import { tr } from './i18n.mjs'
 export const routes = {
   'workspace-settings': {
     get title() {
-      return tr('flow.ui.workspace.setup')
+      return tr('flow.ui.workspace.settings')
     },
     get group() {
       return tr('flow.ui.workspace.844042')
@@ -279,7 +279,7 @@ export const routes = {
   },
   epic: {
     get title() {
-      return tr('flow.ui.epic.sales.channel.integration')
+      return tr('flow.ui.epic')
     },
     get group() {
       return tr('flow.ui.planning')

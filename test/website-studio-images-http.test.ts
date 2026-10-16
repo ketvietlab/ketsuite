@@ -233,7 +233,7 @@ test('a new unsaved post can stage an image and claim it only when its first rev
 })
 
 test('a site logo is uploaded against the site, kept by the style that names it and public while drawn', async (t) => {
-  const { app, fixture } = await bootWebsiteStudio(undefined, { worker: true })
+  const { app, fixture } = await bootWebsiteStudio(undefined, { worker: true, deployment: 'commerce' })
   t.after(() => app.close())
   const designer = app.client.anonymous()
   await designer.login({ login: 'studio-designer', password: 'studio-local' })

@@ -10,6 +10,8 @@ export const HOOKS = [
   'action-leading',
   'action-label',
   'action-spinner',
+  'action-logo',
+  'action-selection',
   'action-group',
   'link',
 ] as const
@@ -31,6 +33,8 @@ type ActionBase = {
   leading?: JSXChild
   disabled?: boolean
   loading?: boolean
+  /** Keep a long record value inside its control, with the whole value in the native tooltip. */
+  truncateLabel?: boolean
   describedBy?: string | null
   /**
    * Shows the action at one width only. A page header folds a secondary action
@@ -40,6 +44,8 @@ type ActionBase = {
 }
 
 export type ButtonProps = ActionBase & {
+  /** A brand-logo choice. The accessible label remains mandatory; the component owns logo geometry. */
+  logo?: { src: string }
   type?: 'button' | 'submit' | 'reset'
   name?: string | null
   value?: string | null
@@ -55,7 +61,7 @@ export type LinkButtonProps = Omit<ActionBase, 'pressed'> & {
   /** Keep native link navigation with the named, square icon-action contract. */
   iconOnly?: boolean
 }
-export type IconButtonProps = Omit<ButtonProps, 'leading' | 'icon'> & {
+export type IconButtonProps = Omit<ButtonProps, 'leading' | 'icon' | 'logo'> & {
   icon: JSXChild
   pressed?: boolean
 }
@@ -73,8 +79,12 @@ const ActionContent = (props: ActionBase & { iconOnly?: boolean }): TemplateResu
       </span>
     )}
     {!props.iconOnly && (
-      <span data-ui="action-label">
-        <Text>{props.label}</Text>
+      <span
+        data-ui="action-label"
+        data-truncate={props.truncateLabel ? 'true' : null}
+        title={props.truncateLabel ? props.label : undefined}
+      >
+        <Text truncate={props.truncateLabel}>{props.label}</Text>
       </span>
     )}
   </>
@@ -94,19 +104,35 @@ export const Button = (props: ButtonProps): TemplateResult => (
     data-ui="action"
     data-variant={props.variant ?? 'secondary'}
     data-size={props.size ?? 'default'}
+    data-logo={props.logo ? 'true' : null}
     type={props.type ?? 'button'}
     name={props.name ?? null}
     value={props.value ?? null}
     form={props.form ?? null}
     disabled={props.disabled === true || props.loading === true}
-    aria-label={props.loading ? props.label : null}
+    aria-label={props.loading || props.logo ? props.label : null}
+    title={props.logo ? props.label : undefined}
     aria-busy={props.loading === true ? 'true' : null}
     aria-pressed={props.pressed === undefined ? null : String(props.pressed)}
     aria-describedby={props.describedBy ?? null}
     aria-expanded={props.expanded === undefined ? null : String(props.expanded)}
     aria-controls={props.controls ?? null}
   >
-    <ActionContent {...props} />
+    {props.logo ? (
+      <>
+        {props.loading === true && (
+          <span data-ui="action-spinner" aria-hidden="true">
+            <Spinner label={props.label} size="small" decorative />
+          </span>
+        )}
+        <img data-ui="action-logo" src={props.logo.src} alt="" width="80" height="24" />
+        <span data-ui="action-selection" aria-hidden="true">
+          <Icon name="check" />
+        </span>
+      </>
+    ) : (
+      <ActionContent {...props} />
+    )}
   </button>
 )
 

@@ -46,6 +46,16 @@ test('the entry page is one card without the shell, a form only when it submits,
   )
 })
 
+test('embedded entry content leaves the main landmark and viewport height with its shell', () => {
+  const page = renderToStaticString(
+    FlowEntryPage({ embedded: true, brand: 'Flow', title: 'Sign in', children: html`<p>Content</p>` }),
+  )
+  assert.match(page, /^<section data-flow="entry-page" data-embedded="true">/)
+  assert.doesNotMatch(page, /<main/)
+  assert.equal((page.match(/<h1>/g) ?? []).length, 1)
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(css, /\[data-flow="entry-page"\]\[data-embedded="true"\]\s*\{\s*min-height:\s*auto;/)
+})
 test('the checklist shows progress, names each state for screen readers and drops the action of a finished step', () => {
   const out = renderToStaticString(
     FlowChecklist({

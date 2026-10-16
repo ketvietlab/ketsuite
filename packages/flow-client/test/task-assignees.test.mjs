@@ -35,7 +35,8 @@ test('multiple assignees persist by ID, appear in each person’s work', () => {
     taskUsers(d, now).map((u) => u.name),
     ['Mai Anh', 'Trần Quốc Bảo'],
   )
-  assert.ok(d.history.some((h) => h.taskId === t.id && h.text.includes('Mai Anh, Trần Quốc Bảo')))
+  const { history } = s.call('flow.issue.detail', { companyId: 'demo', id: t.id }).value
+  assert.ok(history.some((h) => h.taskId === t.id && h.text.includes('Mai Anh, Trần Quốc Bảo')))
   assert.equal(save(s, t.id, { assigneeIds: [] }).ok, true)
   assert.deepEqual(read(s).tasks.find((x) => x.id === t.id).assigneeIds, [])
 })

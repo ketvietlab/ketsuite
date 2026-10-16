@@ -7,8 +7,12 @@
   [data-ui="stack"] {
     display: grid;
     min-inline-size: 0;
-    grid-template-columns: minmax(0, 1fr);
     gap: var(--admin-gap);
+  }
+  /* The kit's own stacks fit their column. A design-system Stack keeps its auto column, so one in a
+     table cell stays as wide as its text instead of running into the next cell. */
+  [data-ui="stack"]:not([data-pattern="stack"]) {
+    grid-template-columns: minmax(0, 1fr);
   }
   [data-ui="stack"][data-gap="compact"] {
     gap: var(--admin-gap-xs);
@@ -56,6 +60,12 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--admin-gap-xs);
+  }
+
+  /* `between` spreads a row across its container, which an inline box sized to its
+     content cannot do. */
+  [data-ui="inline"][data-align="between"] {
+    display: flex;
   }
 
   [data-ui="code"] {

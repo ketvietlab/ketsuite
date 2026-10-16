@@ -1,3 +1,4 @@
+import { WorkspacePage } from '../page-regions.tsx'
 import {
   DescriptionList,
   EmptyState,
@@ -9,7 +10,6 @@ import {
   Stack,
   Status,
   Surface,
-  WorkspacePage,
 } from '@ketvietlab/design-system'
 import { icon } from '../ui.tsx'
 import { entryStatus, formatTime, publicationStatus } from './format.ts'

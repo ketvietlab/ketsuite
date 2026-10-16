@@ -3,6 +3,8 @@
 @import "./list-chrome/styles.css";
 @import "./record-form/styles.css";
 @import "./modal-sheet/styles.css";
+@import "./peek/styles.css";
+@import "./settings-directory/styles.css";
 @import "./list-page/responsive.css";
 @import "./pipeline/styles.css";
 @import "./board-page/styles.css";

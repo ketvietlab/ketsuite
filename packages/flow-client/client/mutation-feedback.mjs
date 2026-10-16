@@ -63,7 +63,8 @@ export function mutationFeedback(name, input, value, data) {
   if (name === 'flow.issue.save') {
     key = input.id ? 'saved' : 'created'
     target = { route: 'issue', params: { id, project: entity?.projectId ?? input.projectId } }
-  } else if (name === 'flow.entity.save' || action.endsWith('.save')) {
+  } else if (action === 'view.save' && input.archive === true) key = 'archived'
+  else if (name === 'flow.entity.save' || action.endsWith('.save')) {
     key = input.entityId || input.id || ['company', 'preferences'].includes(kind) ? 'saved' : 'created'
     if (route)
       target = {

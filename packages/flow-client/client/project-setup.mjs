@@ -1,6 +1,6 @@
 import { tr, flowLocaleTag } from './i18n.mjs'
 import { html, each, signal } from '@ketvietlab/ketjs-view'
-import { FlowInput, FlowButton, FlowTag } from '@ketvietlab/flow-ui'
+import { FlowInput, FlowButton, FlowTag, FlowEmpty } from '@ketvietlab/flow-ui'
 import {
   FlowDisclosure,
   FlowHint,
@@ -92,11 +92,19 @@ export function createProjectSetup(ctx) {
       catalogError.set('')
       editingCatalog.set('')
     },
-    view() {
+    view({ separateActions = false, layout = 'embedded' } = {}) {
       revision()
       const data = ctx.data(),
         editing = ctx.route() === 'project-profile',
         project = editing ? data.projects.find((p) => p.id === ctx.project()) : null
+      if (editing && !project) {
+        const body = FlowEmpty({
+          title: tr('flow.project.notFound'),
+          description: tr('flow.project.notFoundHelp'),
+          action: FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close }),
+        })
+        return separateActions ? { body, footer: null } : body
+      }
       const allowed =
         data.workspaces?.filter(
           (w) => !w.archived && (w.id === project?.workspaceId || canManageScope(data, 'workspace', w.id)),
@@ -133,7 +141,9 @@ export function createProjectSetup(ctx) {
           sprintCadence: ((c) => c && { ...c })(project ? sprintCadence(project) : DEFAULT_CADENCE),
         }
       const d = draft,
-        disabled = !ctx.canWrite() || ctx.busy()
+        permitted =
+          ctx.canWrite() && (editing ? canManageScope(data, 'project', project.id) : allowed.length > 0),
+        disabled = !permitted || ctx.busy()
       const input = (id, label, extra = {}) =>
         FlowInput({
           id,
@@ -366,7 +376,15 @@ export function createProjectSetup(ctx) {
             }),
           ),
         )
-      return FlowSetupForm({
+      const formId = 'flow-project-setup'
+      const actions = FlowInline({
+        align: 'end',
+        children: html`${FlowHint({ children: tr('flow.ui.people.with.initial.access', [accessCount]) })}${FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close, disabled: ctx.busy() })}${FlowButton({ label: editing ? tr('flow.ui.save.profile') : tr('flow.ui.create.project'), type: 'submit', form: formId, variant: 'primary', disabled: disabled || !w, loading: ctx.busy() })}`,
+      })
+      const body = FlowSetupForm({
+        id: formId,
+        layout,
+        feedback: layout === 'page' ? ctx.feedback?.() : null,
         onSubmit: (e) => {
           e.preventDefault()
           if (disabled) return
@@ -393,8 +411,9 @@ export function createProjectSetup(ctx) {
             editing,
           )
         },
-        actions: html`${FlowHint({ children: tr('flow.ui.people.with.initial.access', [accessCount]) })}${FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close })}${FlowButton({ label: editing ? tr('flow.ui.save.profile') : tr('flow.ui.create.project'), type: 'submit', variant: 'primary', disabled: disabled || !w, loading: ctx.busy() })}`,
+        actions: separateActions ? null : actions,
         children: html`
+        ${!permitted ? FlowNotice({ title: tr('flow.ui.view.only'), message: tr(editing ? 'flow.project.manageRequired' : 'flow.project.createRequired'), tone: 'yellow' }) : null}
         ${section(
           tr('flow.ui.project.information'),
           pair(
@@ -527,6 +546,7 @@ export function createProjectSetup(ctx) {
         ${catalogError() ? FlowHint({ tone: 'red', children: catalogError() }) : null}
       `,
       })
+      return separateActions ? { body, footer: actions } : body
     },
   }
 }

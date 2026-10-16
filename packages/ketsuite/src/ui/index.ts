@@ -1,3 +1,9 @@
+export {
+  placeholderApplications,
+  SETTINGS_PATH,
+  suiteApplications,
+  suiteMainMenu,
+} from './application-switcher.ts'
 // The KetSuite component kit.
 //
 // A module composes these and never writes a tag or a `data-ui` attribute itself —
@@ -150,6 +156,8 @@ export {
   recordModalHost,
   recordModalHref,
   recordPageLoading,
+  recordPanelLoading,
+  recordPanelFrame,
   recordPageFrame,
   recordPageShell,
 } from './record-modal.tsx'
@@ -160,12 +168,14 @@ export {
   callRecordFunction,
   createRecordModal,
   createRecordPage,
+  createRecordPanel,
   recordLayerHasDraft,
 } from './client/record-modal.tsx'
 export {
   RecordDialogTrigger,
   RecordStateTrigger,
   RecordModalForm,
+  recordDialogHref,
   recordStateSelectControl,
 } from './client/record-modal-form.tsx'
 export type {

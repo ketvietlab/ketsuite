@@ -1,3 +1,4 @@
+import { exampleApplications } from './application-switcher.ts'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { AppShell } from '../layouts/shell.tsx'
 import { Grid, Inline, Metric, Section, Stack, Surface } from '../layouts/index.tsx'
@@ -239,6 +240,7 @@ export const PageSurfacePreview = (props: PageSurfaceProps): TemplateResult => {
   return (
     <div data-kv-design-system data-ui="catalogue-surface-preview" data-theme={props.theme}>
       <AppShell
+        applications={exampleApplications}
         mode="viewport"
         sidebar={
           <NavList

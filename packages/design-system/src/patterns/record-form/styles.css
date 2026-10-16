@@ -55,6 +55,53 @@
     }
   }
 
+  /* A group of a larger form measures its own width, so three peer fields fit a default-size dialog
+     (56rem, its body a little narrower) without a record form around them. */
+  :where([data-kv-design-system]) [data-ui="form-fields"] {
+    min-width: 0;
+    container: form-fields / inline-size;
+  }
+
+  @media (min-width: 48rem) {
+    @container form-fields (min-width: 52rem) {
+      :where([data-kv-design-system]) [data-ui="form-fields"] > [data-ui="form-grid"][data-columns="3"] {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+  }
+
+  /* A full-row control of a three-column grid keeps the label track of the cells above it: 35% of one
+     cell, capped at 9rem, as every field's own track is. */
+  @media (min-width: 48rem) {
+    @container form-fields (min-width: 52rem) {
+      :where([data-kv-design-system])
+        [data-ui="form-fields"]
+        > [data-ui="form-grid"][data-columns="3"]
+        > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]):not(
+          [data-label-hidden="true"]
+        ) {
+        grid-template-columns: minmax(0, min(9rem, calc((100% - 2 * var(--kv-gap-form-column)) / 3 * 0.35))) minmax(
+            0,
+            1fr
+          );
+      }
+    }
+
+    @container record-form (min-width: 56rem) {
+      :where([data-kv-design-system])
+        [data-ui="record-form"]
+        > [data-ui="form-grid"][data-columns="3"]
+        > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]):not(
+          [data-label-hidden="true"]
+        ) {
+        grid-template-columns: minmax(0, min(9rem, calc((100% - 2 * var(--kv-gap-form-column)) / 3 * 0.35))) minmax(
+            0,
+            1fr
+          );
+      }
+    }
+  }
+
   :where([data-kv-design-system]) [data-ui="form-actions"] {
     display: flex;
     justify-content: flex-end;
@@ -63,11 +110,15 @@
   }
 
   /* Full-row controls share the label track of either half-row field. At
-     narrower desktop widths, 35% of a half-row is smaller than the 9rem cap. */
+     narrower desktop widths, 35% of a half-row is smaller than the 9rem cap.
+     A field whose label is hidden (a DropZone names itself) has no label track:
+     its control, help and error take the whole row. */
   @media (min-width: 48rem) {
     :where([data-kv-design-system])
       [data-ui="form-grid"]
-      > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]) {
+      > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]):not(
+        [data-label-hidden="true"]
+      ) {
       grid-template-columns: minmax(0, min(9rem, calc((100% - var(--kv-gap-form-column)) * 0.175))) minmax(
           0,
           1fr
@@ -80,7 +131,21 @@
   @container record-form (max-width: 42rem) {
     :where([data-kv-design-system])
       [data-ui="form-grid"]
-      > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]) {
+      > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]):not(
+        [data-label-hidden="true"]
+      ) {
+      grid-template-columns: minmax(0, min(35%, 9rem)) minmax(0, 1fr);
+    }
+  }
+
+  /* A two-column form narrower than 56.75rem gives every field a whole row (Field owns that rule), so
+     a full-row field takes the label track of the fields around it. */
+  @container (max-width: 56.75rem) {
+    :where([data-kv-design-system])
+      [data-ui="form-grid"]:not([data-columns="3"])
+      > [data-ui="field"][data-span="full"]:not([data-kind="group"]):not([data-kind="checkbox"]):not(
+        [data-label-hidden="true"]
+      ) {
       grid-template-columns: minmax(0, min(35%, 9rem)) minmax(0, 1fr);
     }
   }

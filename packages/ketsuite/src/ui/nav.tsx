@@ -5,7 +5,6 @@ import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import type { MenuNode, Translator } from '@ketvietlab/ketjs'
 import {
   AppNavigation,
-  AppBrand,
   IconButton,
   NavigationGroup,
   type NavigationGroupData,
@@ -67,6 +66,8 @@ export type Indicator = {
 
 export type SidebarOptions = {
   menu: MenuNode[]
+  /** Authorized open-work counts, keyed by menu node ID; zero/invalid values hide the badge. */
+  counts?: Readonly<Record<string, number>>
   /**
    * Whether to offer the list of root sections. `auto` shows it only when this
    * viewer has more than one root to move between; a chooser with one choice is
@@ -98,19 +99,27 @@ const navigationLeading = (node: MenuNode, root: boolean): JSXChild | undefined 
   return undefined
 }
 
-const navigationItem = (node: MenuNode, root = false): NavigationItemData => {
+const navigationItem = (
+  node: MenuNode,
+  root = false,
+  counts: SidebarOptions['counts'] = {},
+): NavigationItemData => {
   const leading = navigationLeading(node, root)
+  const value = counts[node.id]
+  const count = typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? { count: value } : {}
   if (node.children.length)
     return {
       id: node.id,
       label: node.label,
+      ...count,
       ...(leading === undefined ? {} : { leading }),
-      children: node.children.map((child) => navigationItem(child)),
+      children: node.children.map((child) => navigationItem(child, false, counts)),
       expanded: true,
     }
   return {
     id: node.id,
     label: node.label,
+    ...count,
     ...(leading === undefined ? {} : { leading }),
     href: destination(node),
     active: node.active,
@@ -162,8 +171,9 @@ const navigationModel = (
   const rootList = options.rootList ?? 'auto'
   const showRoots = menu.length > 0 && (rootList === 'always' || (rootList === 'auto' && menu.length > 1))
   const items = showRoots
-    ? menu.map((item) => navigationItem(item, true))
-    : (app?.children.map((item) => navigationItem(item)) ?? (app ? [navigationItem(app, true)] : []))
+    ? menu.map((item) => navigationItem(item, true, options.counts))
+    : (app?.children.map((item) => navigationItem(item, false, options.counts)) ??
+      (app ? [navigationItem(app, true, options.counts)] : []))
   const supplementary =
     menu.length === 0 || options.navItems !== undefined ? (
       <>
@@ -204,15 +214,13 @@ export const sidebarMain = (_: Translator, options: SidebarOptions): TemplateRes
       id={NAVIGATION_ID}
       label={_('backend.nav.sections')}
       externalTrigger
-      identity={
-        <AppBrand
-          label={_('backend.brand')}
-          href={`/admin?lang=${encodeURIComponent(_.locale)}`}
-          image="/_ket/asset/backend/brand/logo-light.png"
-          darkImage="/_ket/asset/backend/brand/logo-dark.png"
-          imageFit="cover"
-        />
-      }
+      identity={_('backend.apps.sales')}
+      tools={{
+        searchLabel: _('backend.apps.searchMenu'),
+        searchPlaceholder: _('backend.nav.search'),
+        emptyLabel: _('backend.nav.noMatch'),
+        collapseLabel: _('backend.apps.collapseMenu'),
+      }}
       groups={model.groups}
       supplementary={model.supplementary}
       menuLabel={_('backend.nav.open')}

@@ -1,8 +1,12 @@
 // @ketvietlab/website-client — the Website Studio core (MIT). Pro and deployments extend it only
 // through `registerWebsiteExtension`; nothing here knows an edition exists.
 export { createWebsiteStudio } from './studio.tsx'
+export type { StudioProps, StudioDependencies } from './studio.tsx'
+export type { Call } from './types.ts'
+export { ListPage, RecordPage, WorkspacePage, ModalSheet, createWebsiteRegion } from './page-regions.tsx'
 export { registerWebsiteExtension, routes, websiteExtensions, INSTANCE_HOOKS } from './extensions.ts'
 export { coreRoutes, navGroups, matchRoute, buildHref } from './routes.ts'
+export { catalogBuilderId } from './screens/catalog-builder.ts'
 export { createFnClient, WebsiteApiError } from './api.ts'
 export { tr } from './i18n.ts'
 export { h, icon, CommandButton, commandValue, parseCommand } from './ui.tsx'

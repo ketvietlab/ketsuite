@@ -14,7 +14,8 @@ export default defineModule({
   islands,
   routes,
   fills: {
-    'backend:sidebar.foot': `{% island "activity.indicator" %}`,
+    // Only for whoever may read their activities: the count would be refused, and the link with it.
+    'backend:sidebar.foot': `{% if may.activity.countDue %}{% island "activity.indicator" %}{% endif %}`,
   },
   messages: {
     vi: {

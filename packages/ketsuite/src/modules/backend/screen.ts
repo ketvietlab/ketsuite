@@ -14,8 +14,9 @@
 import { isNavigationRequest, isTimezone } from '@ketvietlab/ketjs'
 import type { Route, ServeContext, Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
-import { actionGroup, backendPage, linkButton } from '../../ui/index.ts'
+import { actionGroup, backendPage, linkButton, suiteApplications, suiteMainMenu } from '../../ui/index.ts'
 import type { Extras, Frame, FormField, Viewer } from '../../ui/index.ts'
+import { mayFor } from '../../ui/fill-needs.ts'
 
 /** The raw request a route handler is handed. */
 export type Req = Parameters<Route>[1]
@@ -95,11 +96,27 @@ export type FrameOptions = {
 }
 
 /**
+ * A joint as `ctx.joint` renders it, with the `may` prop its fills name in their
+ * conditions (`{% if may.mail.countUnread %}`): a fill that would show this viewer
+ * only a refusal is left out. See `ui/fill-needs.ts`.
+ */
+export const jointFor = async (
+  ctx: ServeContext,
+  url: URL,
+  req: Req,
+  joint: string,
+  props: Record<string, unknown> = {},
+) => {
+  const may = await mayFor((await ctx.live(req)).fills, joint, (name) => ctx.allows(name, url, req))
+  return ctx.joint(url, req, joint, { ...props, may })
+}
+
+/**
  * The shell's half of a screen.
  *
  * The historical `sidebar.foot` joint now renders inside the replaceable location bar.
  * Include it in navigation fragments so indicators and extension tools survive navigation.
- * Only the document runtime stays outside the replaceable slots.
+ * The island runtime is not part of a frame: `backendPage` places it with the document.
  */
 export const frameOf = async (
   ctx: ServeContext,
@@ -111,18 +128,20 @@ export const frameOf = async (
   const menuUrl = active === url.pathname ? url : Object.assign(new URL(url), { pathname: active })
   const navigation = isNavigationRequest(req)
   const lang = ctx.localeOf(url, req)
+  const menu = await ctx.menu(menuUrl, req)
   return {
     navigation,
+    locale: lang,
     globalSearchQuery: url.pathname === '/admin/search' ? (url.searchParams.get('q') ?? '') : '',
     collectionUrl: url.pathname + url.search,
     viewer: await viewerOf(ctx, url, req),
-    menu: await ctx.menu(menuUrl, req),
+    applications: suiteApplications(menu, ctx.translate(lang)),
+    menu: suiteMainMenu(menu),
     rootList: ctx.navigation?.rootList,
     extras: {
-      runtime: navigation ? undefined : await ctx.joint(url, req, 'backend:runtime'),
       'nav.items': await ctx.joint(url, req, 'backend:nav.items', { active, lang }),
       'topbar.end': await ctx.joint(url, req, 'backend:topbar.end'),
-      'sidebar.foot': await ctx.joint(url, req, 'backend:sidebar.foot', { lang }),
+      'sidebar.foot': await jointFor(ctx, url, req, 'backend:sidebar.foot', { lang }),
       ...options.extras,
     },
   }
@@ -156,6 +175,7 @@ export const adminPage = async (
     title: options.translate === false ? options.title : _(options.title),
     body: await options.body(_, frame),
     status: options.status,
+    url,
   })
 }
 

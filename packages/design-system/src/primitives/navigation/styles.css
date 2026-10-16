@@ -223,6 +223,19 @@
     overscroll-behavior: contain;
   }
 
+  /* A routed settings page grows with its content; its containing page owns
+     scrolling. Containment belongs only to a bounded modal/workspace panel. */
+  :where([data-kv-design-system]) [data-ui="tabbed-view"][data-scroll="page"] {
+    height: auto;
+    grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  :where([data-kv-design-system]) [data-ui="tab-panel"][data-scroll="page"] {
+    overflow: visible;
+    overscroll-behavior: auto;
+  }
+
   :where([data-kv-design-system]) [data-ui="tabs"][data-pattern="tabs"] [data-ui="tab"] {
     position: relative;
     display: inline-flex;

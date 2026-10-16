@@ -6,6 +6,8 @@ import { createSearchFilterView } from '../packages/design-system/src/interactio
 import { searchFilterDemoConfig } from '../packages/design-system/src/interactions/search-filter/demo.ts'
 import { attributeSearchFilterConfig } from '../packages/ketsuite/src/modules/product_backend/attributes-search.ts'
 import { attributesListPage } from '../packages/ketsuite/src/modules/product_backend/screens/attributes.tsx'
+import productBackend from '../packages/ketsuite/src/modules/product_backend/index.ts'
+import { messages as backendMessages } from '../packages/ketsuite/src/modules/backend/messages.ts'
 const translate = ((key: string) => key) as Translator
 translate.locale = 'vi'
 translate.has = () => true
@@ -47,6 +49,32 @@ test('attribute SearchFilter shares compact Product island with supported URL-ba
   assert.doesNotMatch(html, /data-ui="chrome-search"/)
   assert.match(html, /record=product.attribute%3Ablue-pill/)
   assert.doesNotMatch(html, /record=product.attribute%3Ablue-select|record=product.attribute%3Ablue-policy/)
+})
+test('attribute SearchFilter only asks for words both catalogues define', () => {
+  const catalogues: Record<string, Record<string, Record<string, unknown>>> = {
+    product_backend: productBackend.messages as Record<string, Record<string, unknown>>,
+    backend: backendMessages,
+  }
+  for (const locale of ['vi', 'en']) {
+    const defined = (key: string) => {
+      const [module, ...rest] = key.split('.')
+      return Object.hasOwn(catalogues[module!]?.[locale] ?? {}, rest.join('.'))
+    }
+    const asked = new Set<string>()
+    const recording = ((key: string) => {
+      asked.add(key)
+      return key
+    }) as Translator
+    recording.locale = locale
+    recording.has = defined
+    recording.resolves = defined
+    attributeSearchFilterConfig(recording, new URL('http://ket.local/admin/product/attributes'))
+    assert.ok(asked.size > 20)
+    assert.deepEqual(
+      [...asked].filter((key) => !defined(key)),
+      [],
+    )
+  }
 })
 test('existing full SearchFilter keeps grouping, favorites and custom rules by default', () => {
   const html = renderToString(

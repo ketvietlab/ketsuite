@@ -3,7 +3,8 @@ setFlowLocale('vi')
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
-import { workspaceInheritance } from '@ketvietlab/flow-client/project-setup.mjs'
+import { createProjectSetup, workspaceInheritance } from '@ketvietlab/flow-client/project-setup.mjs'
+import { renderToStaticString } from '@ketvietlab/ketjs-view'
 const read = (s) => s.call('flow.workspace.bootstrap', { companyId: 'demo' }).value
 const args = {
   companyId: 'demo',
@@ -33,6 +34,18 @@ test('inheritance preview uses selected Workspace grants and internal access', (
   assert.match(workspaceInheritance(d, 'lab')[0].value, /không gồm khách mời/)
   assert.deepEqual(workspaceInheritance(d, 'unknown'), [])
 })
+test('a removed project renders recovery instead of turning its profile into a creation form', () => {
+  const presenter = createProjectSetup({
+    data: () => read(createOrganizationSession()),
+    route: () => 'project-profile',
+    project: () => 'removed-project',
+    close: () => {},
+  }).view({ separateActions: true })
+  const output = renderToStaticString(presenter.body)
+  assert.match(output, /Dự án không còn khả dụng/)
+  assert.doesNotMatch(output, /<form|type="submit"/)
+  assert.equal(presenter.footer, null)
+})
 test('create, replay and edit preserve metadata and avoid duplicate grants', () => {
   const s = createOrganizationSession(),
     result = s.call('flow.entity.save', args).value
@@ -58,6 +71,14 @@ test('create, replay and edit preserve metadata and avoid duplicate grants', () 
   assert.ok(edit.id)
   assert.equal(read(s).grants.length, count)
   assert.equal(read(s).projects.find((x) => x.id === p.id).title, 'Website mới')
+})
+test('a task editor cannot edit a project profile or create a project without the required scope administration', () => {
+  const s = createOrganizationSession('member')
+  const before = read(s)
+  assert.equal(s.call('flow.entity.save', { ...args, entityId: 'core' }).value.ok, false)
+  assert.equal(s.call('flow.entity.save', args).value.ok, false)
+  assert.deepEqual(read(s).projects, before.projects)
+  assert.deepEqual(read(s).grants, before.grants)
 })
 test('invalid code, dates, owner, Team and cross-company Workspace fail without writes', () => {
   for (const patch of [
@@ -234,8 +255,12 @@ test('custom completion honors dependencies across move, reorder and bulk paths'
       idempotencyKey: crypto.randomUUID(),
       ...extra,
     }).value
-    assert.equal(result.ok, false, JSON.stringify(result))
-    assert.equal(result.errors[0].code, 'blocked')
+    if (name === 'flow.issue.bulk') {
+      assert.deepEqual(result, { ok: true, applied: 0, refused: [{ id, code: 'blocked' }] })
+    } else {
+      assert.equal(result.ok, false, JSON.stringify(result))
+      assert.equal(result.errors[0].code, 'blocked')
+    }
     assert.equal(read(s).tasks.find((t) => t.id === id).status, 'workflow-todo')
   }
   assert.equal(

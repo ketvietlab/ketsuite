@@ -79,6 +79,8 @@ export const searchFilterLabels = (
   close: _('backend.search.close'),
   valueFrom: _('backend.search.valueFrom'),
   valueTo: _('backend.search.valueTo'),
+  allValues: _('backend.search.allValues'),
+  noGrouping: _('backend.search.noGrouping'),
   operatorLabels: Object.fromEntries(
     [
       'contains',

@@ -190,79 +190,93 @@ const download =
         ? ((await ctx.call('storage.getAttachment', { id: params.id }, url, req)) as Attachment | null)
         : null)
     if (!attachment) return text('not found', { status: 404 })
-    const cacheControl = attachment.public ? 'public, max-age=3600' : 'private, no-store'
-    // A redirect carries no body but still hands out a capability, so it needs the
-    // same cache and sniff directives the proxied path sets.
-    const redirect = { 'x-content-type-options': 'nosniff', 'cache-control': cacheControl }
-    if (attachment.kind === 'url' && attachment.url)
-      return withHeaders(text('', { status: 302 }), { ...redirect, location: attachment.url })
-    if (!attachment.storeKey) return text('attachment has no stored object', { status: 404 })
-    // `?size=thumb|medium|large` serves the job-made WebP copy once it exists, and
-    // the original until then, so a page can always ask for the size it wants. The
-    // copy's key is derived from the original's company and checksum (policy.ts),
-    // so the access decision above — this attachment, for this caller — covers it.
-    const size = url.searchParams.get('size')
-    const company = /^blobs\/([^/]+)\//u.exec(attachment.storeKey)?.[1]
-    if (
-      size &&
-      isRenditionSize(size) &&
-      company &&
-      attachment.checksum &&
-      renderableTypes.has(attachment.mimetype)
-    ) {
-      const found = await (await ctx.storageOf(url, req)).get(
-        renditionKey(company, attachment.checksum, size),
-      )
-      if (found)
-        return withHeaders(streamed(found.body, { type: 'image/webp' }), {
-          'x-content-type-options': 'nosniff',
-          'content-disposition': disposition(`${attachment.name.replace(/\.[^.]+$/u, '')}.webp`, true),
-          // Keyed by checksum and size, so a public copy never changes behind this URL.
-          // A private one is not cached at all: the access check must run per request,
-          // exactly as it does for the original.
-          'cache-control': attachment.public ? 'public, max-age=86400' : 'private, no-store',
-          'content-length': String(found.meta.size),
-        })
-    }
-    const root = await ctx.storageOf(url, req)
-    const showInline = inlineTypes.has(attachment.mimetype)
-    const published = attachment.public && showInline && attachment.publicStoreKey ? root.public : undefined
-    const storage = published || root
-    const key = published ? attachment.publicStoreKey! : attachment.storeKey
-    const headers = {
-      'x-content-type-options': 'nosniff',
-      'content-disposition': disposition(attachment.name, showInline),
-      'cache-control': cacheControl,
-    }
-    if (req.method === 'HEAD') {
-      const found = await storage.head(key)
-      return found
-        ? withHeaders(text('', { type: showInline ? attachment.mimetype : 'application/octet-stream' }), {
-            ...headers,
-            'content-length': String(found.size),
-          })
-        : text('not found', { status: 404 })
-    }
-    if (published?.publicUrl)
-      return withHeaders(text('', { status: 302 }), { ...redirect, location: published.publicUrl(key) })
-    // A signed URL avoids proxying large, browser-safe files. Unknown active content
-    // always passes through the app so it receives attachment + nosniff headers.
-    if (showInline && attachment.size >= 1024 * 1024) {
-      const signed = await storage.signedUrl(key, { expiresIn: 60 })
-      if (signed)
-        return withHeaders(text('', { status: 302 }), {
-          ...redirect,
-          'cache-control': 'private, no-store',
-          location: signed,
-        })
-    }
-    const found = await storage.get(key)
-    if (!found) return text('not found', { status: 404 })
-    return withHeaders(
-      streamed(found.body, { type: showInline ? attachment.mimetype : 'application/octet-stream' }),
-      { ...headers, 'content-length': String(found.meta.size) },
-    )
+    return serveAttachment(ctx, url, req, attachment)
   }
+
+/**
+ * The bytes of an attachment the caller has already been found entitled to: a
+ * size's WebP copy when asked for and made, a published copy, a short-lived signed
+ * URL for a large file, or the stored object itself. A domain that owns which of
+ * its files a role may see (a product's images) decides access with its own read
+ * and hands the attachment here, so the file is served the same way either way.
+ */
+export const serveAttachment = async (
+  ctx: ServeContext,
+  url: URL,
+  req: Parameters<Route>[1],
+  attachment: Attachment,
+): Promise<Awaited<ReturnType<Route>>> => {
+  const cacheControl = attachment.public ? 'public, max-age=3600' : 'private, no-store'
+  // A redirect carries no body but still hands out a capability, so it needs the
+  // same cache and sniff directives the proxied path sets.
+  const redirect = { 'x-content-type-options': 'nosniff', 'cache-control': cacheControl }
+  if (attachment.kind === 'url' && attachment.url)
+    return withHeaders(text('', { status: 302 }), { ...redirect, location: attachment.url })
+  if (!attachment.storeKey) return text('attachment has no stored object', { status: 404 })
+  // `?size=thumb|medium|large` serves the job-made WebP copy once it exists, and
+  // the original until then, so a page can always ask for the size it wants. The
+  // copy's key is derived from the original's company and checksum (policy.ts),
+  // so the access decision above — this attachment, for this caller — covers it.
+  const size = url.searchParams.get('size')
+  const company = /^blobs\/([^/]+)\//u.exec(attachment.storeKey)?.[1]
+  if (
+    size &&
+    isRenditionSize(size) &&
+    company &&
+    attachment.checksum &&
+    renderableTypes.has(attachment.mimetype)
+  ) {
+    const found = await (await ctx.storageOf(url, req)).get(renditionKey(company, attachment.checksum, size))
+    if (found)
+      return withHeaders(streamed(found.body, { type: 'image/webp' }), {
+        'x-content-type-options': 'nosniff',
+        'content-disposition': disposition(`${attachment.name.replace(/\.[^.]+$/u, '')}.webp`, true),
+        // Keyed by checksum and size, so a public copy never changes behind this URL.
+        // A private one is not cached at all: the access check must run per request,
+        // exactly as it does for the original.
+        'cache-control': attachment.public ? 'public, max-age=86400' : 'private, no-store',
+        'content-length': String(found.meta.size),
+      })
+  }
+  const root = await ctx.storageOf(url, req)
+  const showInline = inlineTypes.has(attachment.mimetype)
+  const published = attachment.public && showInline && attachment.publicStoreKey ? root.public : undefined
+  const storage = published || root
+  const key = published ? attachment.publicStoreKey! : attachment.storeKey
+  const headers = {
+    'x-content-type-options': 'nosniff',
+    'content-disposition': disposition(attachment.name, showInline),
+    'cache-control': cacheControl,
+  }
+  if (req.method === 'HEAD') {
+    const found = await storage.head(key)
+    return found
+      ? withHeaders(text('', { type: showInline ? attachment.mimetype : 'application/octet-stream' }), {
+          ...headers,
+          'content-length': String(found.size),
+        })
+      : text('not found', { status: 404 })
+  }
+  if (published?.publicUrl)
+    return withHeaders(text('', { status: 302 }), { ...redirect, location: published.publicUrl(key) })
+  // A signed URL avoids proxying large, browser-safe files. Unknown active content
+  // always passes through the app so it receives attachment + nosniff headers.
+  if (showInline && attachment.size >= 1024 * 1024) {
+    const signed = await storage.signedUrl(key, { expiresIn: 60 })
+    if (signed)
+      return withHeaders(text('', { status: 302 }), {
+        ...redirect,
+        'cache-control': 'private, no-store',
+        location: signed,
+      })
+  }
+  const found = await storage.get(key)
+  if (!found) return text('not found', { status: 404 })
+  return withHeaders(
+    streamed(found.body, { type: showInline ? attachment.mimetype : 'application/octet-stream' }),
+    { ...headers, 'content-length': String(found.meta.size) },
+  )
+}
 
 const sweep =
   (ctx: ServeContext): Route =>

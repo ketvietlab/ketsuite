@@ -50,18 +50,7 @@ test('bulk-only slots hide on the server through nested empty extension fragment
     const afterHeader = html.slice(html.indexOf('</header>'))
     assert.doesNotMatch(afterHeader, /data-ui="(?:list-page-actions|list-page-tools|bulk-form)"/)
     const product = renderToString(
-      productsScreen(
-        translate,
-        [],
-        'list',
-        (id) => id,
-        {
-          chrome: { selection: selection('products') },
-        },
-        null,
-        0,
-        extra,
-      ),
+      productsScreen(translate, { chrome: { selection: selection('products') } }, null, extra),
     )
     assert.match(product, /data-ui="list-page-tools" hidden/)
   }

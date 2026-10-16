@@ -13,6 +13,7 @@
   "scripts": {
     "prepare": "test \"$(git rev-parse --show-toplevel 2>/dev/null)\" = \"$PWD\" && git config core.hooksPath .githooks || true",
     "build": "node tools/build.mjs",
+    "build:design-system": "node tools/build-design-system.mjs",
     "build:watch": "tsx tools/watch-build.ts",
     "check": "tsc -p tsconfig.json",
     "test": "npm run build --silent && node --test --test-timeout=120000 --test-force-exit \".build/test/*.test.js\"",
@@ -82,10 +83,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
-    "@ketvietlab/ketjs": "0.2.0",
-    "@ketvietlab/ketjs-postgres": "0.2.0",
-    "@ketvietlab/ketjs-view": "0.2.0",
+    "@ketvietlab/ketjs": "0.5.0",
+    "@ketvietlab/ketjs-postgres": "0.5.0",
+    "@ketvietlab/ketjs-view": "0.5.0",
     "@types/node": "^26.2.0",
+    "marked": "18.1.0",
+    "mermaid": "12.1.0",
     "postgres": "3.4.9",
     "tsx": "4.23.12",
     "typescript": "^7.0.2"

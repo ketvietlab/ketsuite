@@ -1,3 +1,4 @@
+import { RecordPage } from '../page-regions.tsx'
 import {
   Checkbox,
   DescriptionList,
@@ -5,7 +6,6 @@ import {
   Inline,
   LinkButton,
   Notice,
-  RecordPage,
   Select,
   Section,
   Stack,

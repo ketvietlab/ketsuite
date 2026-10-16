@@ -2270,6 +2270,7 @@ functions.validatePicking = defineFn({
   input: { id: 'id', backorder: 'text?' },
   output: { ok: 'bool', id: 'id?', backorderId: 'id?', errors: 'json?' },
   effects: functions.completePicking!.effects,
+  idempotent: true,
   agent: true,
   handler: async (ctx, args) => {
     const picking = (await ours(ctx, 'stock.Picking', { id: args.id }))[0]

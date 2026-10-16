@@ -19,8 +19,8 @@ through rem-based tokens so user text scaling remains possible.
 | --- | --- | --- | --- |
 | Page/modal title | 20/24/600 | 20/24/600 | Page/modal header |
 | Working surface title | 14/20/600 | 14/20/600 | Surface |
-| Modal group title | 14/20/600 | 14/20/600 | Section or flattened Surface directly in a modal |
-| Section/nested surface title | 13/20/600 | 13/20/600 | Section on a canvas, or an item heading nested in a group |
+| Group title | 14/20/600 | 14/20/600 | Section on a canvas or in a titled Surface; Section or flattened Surface directly in a modal |
+| Item heading | 13/20/600 | 13/20/600 | Section or Surface nested inside a group |
 | Body/table value | 13/20/400 | 13/20/400 | Content component |
 | Field/column label | 13/20/500 | 13/20/500 | Field/table |
 | Help/metadata | 12/16/400 | 12/16/400 | Field or content component |
@@ -84,7 +84,10 @@ compatibility aliases, not distinct density levels. Use pattern defaults before
 choosing generic gaps. Parent presentation/theme CSS must not override a child's gap.
 
 Labels sit beside controls at >=768px, and above controls below 768px or when their
-field container is narrower than 28rem. The component measures its container;
+field container is narrower than 28rem. A two-column Grid of fields or a default
+FormGrid gives every item a whole row while it is narrower than 56.75rem (twice 28rem
+plus the gap), because half the row would leave each field under 28rem; the labels
+stay beside the controls. The component measures its container;
 modules do not position labels. Help/errors align with the control column. Single
 checkbox labels stay beside their box. Align input/action rows by control boxes,
 not by wrappers whose label/help content differs.
@@ -97,6 +100,17 @@ the preferred maximum text width and row growth. In a scrolling table, descripti
 columns retain a readable minimum (12rem, or 18rem for `width: 'wide'`); mobile scrolls
 the table locally instead of squeezing words into one-character columns. Stacked
 tables release that minimum. Keep identifiers and numeric columns concise.
+
+For a paged/sortable collection whose columns must stay still as rows change, use
+KetTable `layout: 'fixed'`. Column `width` hints set stable relative weights:
+`narrow` 1, `medium` (default) 2, `wide` 3. The native colgroup owns the geometry;
+the table scrolls within its region below its readable minimum. A mobile `stack`
+releases the colgroup and minimum. Do not lock widths with product CSS or measurements
+of whichever rows happen to be on the first page. A single-line cell that runs out of room
+ends in an ellipsis instead of painting over the next column, and each line of a two-line
+Stack cell ends in its own; a link or button directly in
+the cell truncates itself and draws its focus ring inset. Cells with a Menu or popover stay
+unclipped. Give long subjects `wrap: true` rather than relying on the ellipsis.
 The list result footer is metadata on the canvas, not another framed surface.
 
 ## Application navigation
@@ -136,6 +150,15 @@ keyboard focus and native links remain component-owned. Verify long translations
 labels with/without icons and counts, nested levels, and crossing 767/768px while
 the drawer is open. Do not reduce all labels to one size merely to unify metrics.
 
+Write the phone boundary as `max-width: 47.9375rem` or `width < 48rem`; `max-width: 48rem`
+also matches 768px, where the desktop shell and sidebar are already showing. A layout that
+sits beside a sidebar decides on its own width (a container query on its pattern), not the
+viewport: `RecordPage` moves its commands below the record's identity (title, status,
+meta, path) under 48rem of page width, and the shared page band does the same on a phone.
+A status or description never sits between the title and the buttons.
+Text alignment is logical (`text-align: start|end`, inline-start edges), so tables, menus
+and current-row marks follow `dir="rtl"`.
+
 ## Surface and border levels
 
 | Level | Component | Treatment |
@@ -153,8 +176,9 @@ tint without border. Do not remove a table's row separators when flattening its 
 
 ContentCard and KanbanCard represent independently openable/movable/selectable objects;
 they keep their own boundaries even inside a surface. This exception does not apply
-to groups of form fields. A table on canvas can own one boundary; inside a modal it
-uses the modal's boundary. TabbedView/TabPanel add no second card or horizontal inset.
+to groups of form fields. A card with a link is pressed anywhere: its title link
+covers the card and other controls stay above it (DS README, ContentCard). A table
+on canvas can own one boundary; inside a modal it uses the modal's boundary. TabbedView/TabPanel add no second card or horizontal inset.
 
 Peer groups of one surface — the sections of one record or form, in a modal or a
 working Surface — are composed with `Stack({ divided: true })`:
@@ -163,14 +187,19 @@ stack gap above and below it. This is the rule, not an option: do not separate p
 groups with space alone, with a frame per group, or with module CSS. A single group
 needs no divider; a group's own inner parts (fields, notices, an item heading) are
 not peers of the groups and stay undivided inside it.
+Flattening a child Disclosure or Surface removes its frame, never its parent's
+divider. The divided Stack owns the edge in grouped and flat presentation.
 Do not draw both a parent's closing border and a child's opening border for one edge.
-A modal flattens its groups, so its group headings take the working-surface size
-(14/20/600), one step above the 13/20/400 body. A heading nested inside a group is an
-item heading at 13/20/600. A RecordPage body is canvas, not one surface: each block
-of the record is its own titled Surface (14/20/600), separated by the page's
-`--kv-layout-gap`, never wrapped in one card that then needs dividers. Inside a titled working Surface the Surface title is the
-14/20/600 tier, so its divided groups use the 13/20/600 section title. Do not draw
-the tier with weight alone at the same size.
+A group heading takes the working-surface size (14/20/600), one step above the
+13/20/400 body, wherever the group stands: on the canvas, inside a titled Surface, or
+flattened into a modal. A heading nested inside a group is an item heading at
+13/20/600. A RecordPage body is canvas, not one surface: each block of the record is
+its own titled Surface (14/20/600), separated by the page's `--kv-layout-gap`, never
+wrapped in one card that then needs dividers. Inside a titled Surface the block title
+and its divided groups share 14/20/600 (decided 2026-10-07): the title's place at the
+top of the block and the hairline before each group carry the tier, so the groups are
+always divided (`Stack({ divided: true })`) and never sit flush under the title with
+space alone. Elsewhere, do not draw a tier with weight alone at the same size.
 Keep title and body on the same inset. Use the relevant semantic tokens for each:
 
 - **Boundary:** region against canvas, owned by Surface/Overlay.
@@ -202,15 +231,29 @@ consumers must not implement lane height by inserting a fake card.
 transitions, persistence and confirmation; it sets `data-drop-state` to `accept`
 or `reject` for feedback and must keep a keyboard-accessible move command.
 A drop must resolve the target lane, never require a target card.
+`KanbanCard.href` makes the whole card the hit target (the title link covers it);
+controls inside stay above it and drag still starts from the card. Consumers do
+not add their own card click handlers or wrapping links.
 
 ModalSheet dialog sizes: `small` (34rem) for short single-column forms,
 `default` (56rem) for two-column forms or modest tables, and `large` (75rem)
-for dense workspaces. Choose by content structure, not field count.
+for dense workspaces. `workspace` fills the available viewport width inside the
+overlay's 24px desktop margin; use it for an explicitly requested spatial modal
+with several working columns. On phones it follows the existing fullscreen
+dialog contract. Choose by content structure, not field count. The modal layer
+clips rather than scrolls: focus and in-body fragment navigation must leave the
+header and footer stationary while the body owns scrolling.
 Modal head and footer are bands around the work, as dense as a toolbar: about
 49px and 57px on desktop with a 20/24 title and 32px buttons. Do not pad them
 back to the 16px modal inset.
 ConfirmDialog is always a small centred dialog; below 768px it stays a card
 instead of becoming fullscreen.
+
+`Button.logo` is an opt-in brand choice, not a new default control size. It owns
+an 80×24px contained logo on a 112×48px minimum white stage, original brand colours,
+a named native button and a visible Lucide check for `pressed`. White is deliberate
+for third-party brand assets in both themes. Use a surrounding domain list for
+ordering and filtering; never restyle the action's private image or selection hooks.
 
 A checkbox or choice box aligns with the first line of its label, so a wrapped
 label hangs below the text, not around the box. A one-line checkbox still sits

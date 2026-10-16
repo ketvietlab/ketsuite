@@ -86,6 +86,7 @@ export type NavigateOptions = { replace?: boolean }
 
 /** Shared with every screen and extension instance. Nothing here grants authority. */
 export type StudioContext = {
+  applications?: import('@ketvietlab/design-system').AppSwitcherProps
   tr: (key: string, params?: Record<string, string | number>) => string
   call: Call
   uploadImage: ImageUpload

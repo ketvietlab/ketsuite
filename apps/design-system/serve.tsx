@@ -11,6 +11,7 @@ import {
   registerFunctions,
   sqliteAdapter,
 } from '@ketvietlab/ketjs'
+import { html } from '@ketvietlab/ketjs-view'
 import {
   ActionGroup,
   BulkActions,
@@ -22,6 +23,7 @@ import {
   Page,
   Stack,
   Surface,
+  WorkspacePage,
 } from '@ketvietlab/design-system'
 import {
   CatalogueHead,
@@ -42,6 +44,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demoBackendModule } from './demo-backend.ts'
 import { createDemo2Routes, createDemoRoutes } from './demo.tsx'
+import { HelpThemePreview } from './help-theme-preview.tsx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const designSystemSrc = (dir: string): string => {
@@ -69,8 +72,31 @@ const oneOf = <Value extends string>(
 const app = await createKetServer({
   manifest,
   adapter,
-  assets: { prefix: '/design-system/', dir: ASSETS },
+  // The catalogue bundle owns this island factory; allow it in navigation fragments.
+  islandNames: ['design-system.relation-select'],
+  assets: [
+    { prefix: '/design-system/vendor/', dir: join(HERE, 'vendor') },
+    { prefix: '/design-system/', dir: ASSETS },
+    { prefix: '/demo2/brand/', dir: join(ASSETS, '../../ketsuite/src/modules/backend/design/brand') },
+  ],
   routes: {
+    '/help-theme': (url) =>
+      page({
+        body: document({
+          lang: 'en',
+          title: 'Két Mermaid theme',
+          head: html`<link rel="stylesheet" href="/design-system/styles.css"><script type="module">import {configureMermaidLoader,attachDesignSystemInteractions} from '/design-system/runtime/index.js';configureMermaidLoader(async () => (await import('/design-system/vendor/mermaid.mjs')).default);attachDesignSystemInteractions(document);</script>`,
+          body: (
+            <div
+              data-kv-design-system
+              data-theme={oneOf(url.searchParams.get('theme'), ['light', 'dark'] as const, 'light')}
+              style="background: var(--kv-page-bg); color: var(--kv-text-main); min-height: 100dvh"
+            >
+              <WorkspacePage title="Mermaid theme" body={<HelpThemePreview />} />
+            </div>
+          ),
+        }),
+      }),
     ...createDemoRoutes(),
     ...createDemo2Routes(),
     '/_ket/health': () => json({ ok: true, app: 'design-system' }),

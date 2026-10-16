@@ -6,7 +6,8 @@
     display: grid;
     min-width: 0;
     justify-items: end;
-    overflow: hidden;
+    /* Focus/fragment scrolling belongs to the body, never the overlay frame. */
+    overflow: clip;
   }
 
   body:has([data-kv-design-system] [data-ui="modal-layer"][data-route-modal="true"]) {
@@ -84,7 +85,7 @@
     width: min(56rem, 100%);
     height: auto;
     max-height: calc(100dvh - var(--kv-space-12));
-    overflow: hidden;
+    overflow: clip;
     border: 1px solid var(--kv-color-line-strong);
     border-radius: var(--kv-radius-lg);
   }
@@ -94,6 +95,13 @@
     [data-ui="modal-sheet"][data-size="large"] {
     width: min(75rem, 100%);
     height: auto;
+  }
+
+  /* A spatial workspace fills the shared overlay inset. */
+  :where([data-kv-design-system])
+    [data-ui="modal-layer"][data-presentation="dialog"]
+    [data-ui="modal-sheet"][data-size="workspace"] {
+    width: 100%;
   }
 
   /* Short, single-column forms use the same width as the standard sheet. */

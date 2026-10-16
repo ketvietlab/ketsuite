@@ -1,6 +1,8 @@
 import { page, json, text, withHeaders } from '@ketvietlab/ketjs'
 import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'
-import { websiteStudioDocument } from '../../../ui/website-public.ts'
+import { buildHref, coreRoutes, catalogBuilderId } from '@ketvietlab/website-client'
+import { WebsiteStudioScreen } from './screens/index.ts'
+import { suiteApplications } from '../../../ui/application-switcher.ts'
 import { imageRoutes } from './images.ts'
 import { searchRoutes } from './search.ts'
 import { formRoutes } from './forms.ts'
@@ -14,20 +16,40 @@ const canOpenStudio = async (ctx: ServeContext, url: URL, req: Parameters<Route>
   (await ctx.allows('website_backend.studioContext', url, req)) &&
   (await ctx.allows('website.getEntry', url, req))
 const screen =
+  (options: StudioOptions) =>
   (ctx: ServeContext): Route =>
   async (url, req) => {
     if (req.method !== 'GET') return text('GET', { status: 405 })
     if (!(await ctx.requestIdentityOf(url, req)))
       return redirect(`/login?next=${encodeURIComponent(url.pathname + url.search)}`)
     if (!(await canOpenStudio(ctx, url, req))) return text('Forbidden', { status: 403 })
-    const props = JSON.stringify({
-      path: url.pathname.replace(/^\/website\/?/, '') || 'overview',
-      basePath: '/website/',
-      query: Object.fromEntries(url.searchParams),
-    })
+    const template = /^\/website\/catalog\/templates\/([^/]+)$/.exec(url.pathname)
+    if (template)
+      return redirect(
+        buildHref(
+          coreRoutes,
+          '/website/',
+          'builder',
+          {
+            id: catalogBuilderId(
+              'template',
+              decodeURIComponent(template[1]!),
+              url.searchParams.get('product') ?? undefined,
+            ),
+          },
+          Object.fromEntries(url.searchParams),
+        ),
+      )
+    const transport = studioTransport(ctx, url, req, options)
+    const applications = suiteApplications(
+      await ctx.menu(url, req),
+      // Studio's presenters and document currently use Vietnamese; keep its chrome in that locale.
+      ctx.translate('vi'),
+      'website',
+    )
     return withHeaders(
       page({
-        body: websiteStudioDocument(props),
+        body: await WebsiteStudioScreen(url, transport, applications),
       }),
       { 'cache-control': 'no-store' },
     )
@@ -83,9 +105,9 @@ const api =
     }
   }
 export const createStudioRoutes = (options: StudioOptions = {}): Record<string, RouteEntry> => ({
-  ...Object.fromEntries(studioPaths.map((path) => [path, screen])),
-  '/website': screen,
-  '/website/': screen,
+  ...Object.fromEntries(studioPaths.map((path) => [path, screen(options)])),
+  '/website': screen(options),
+  '/website/': screen(options),
   '/website/api/{operation}': api(options),
   '/website-client/theme/{file}': () => async (url) =>
     redirect(`/_ket/asset/website_backend/theme/${encodeURIComponent(url.pathname.split('/').at(-1)!)}`),

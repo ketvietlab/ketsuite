@@ -38,3 +38,22 @@ test('overdue dates retain only the date visually and expose urgency to assistiv
   assert.match(out, /aria-label="Due: 19\/09\/2026 · /)
   assert.doesNotMatch(out, /data-flow="tag"/)
 })
+test('a consumer-owned menu builds the date input only while open', () => {
+  const field = (open) =>
+    renderToStaticString(
+      FlowDateField({
+        id: 'row-due',
+        label: 'Hạn KV-142',
+        value: '2026-10-02',
+        menu: { open, onToggle: () => {} },
+        onChange: () => {},
+      }),
+    )
+  const closed = field(false),
+    open = field(true)
+  assert.doesNotMatch(closed, /type="date"|Bỏ hạn/)
+  assert.match(closed, /aria-label="Hạn KV-142: 02\/10\/2026"/)
+  assert.match(closed, /id="row-due-menu" data-flow="date-menu" popover="auto"/)
+  assert.match(open, /type="date"/)
+  assert.match(open, /Bỏ hạn/)
+})

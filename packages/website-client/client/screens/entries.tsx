@@ -1,3 +1,4 @@
+import { ListPage, ModalSheet } from '../page-regions.tsx'
 import { templateLayout } from './template-layout.ts'
 import { postFields, readPostFields } from './post-fields.tsx'
 import {
@@ -5,8 +6,6 @@ import {
   FilterBar,
   Grid,
   LinkButton,
-  ListPage,
-  ModalSheet,
   Notice,
   SearchBar,
   Select,

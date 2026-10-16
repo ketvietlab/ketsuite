@@ -117,12 +117,14 @@
     color: var(--admin-ink-secondary);
     text-align: center;
   }
-  [data-ui="media-gallery"] {
+  /* The legacy media widget's gallery only. The public MediaGallery (design system,
+     record/media) owns its own grid, items and image ratio wherever it stands alone. */
+  [data-ui="media"] > [data-ui="media-gallery"] {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(7rem, 100%), 1fr));
     gap: var(--admin-gap-sm);
   }
-  [data-ui="media-item"] {
+  [data-ui="media"] [data-ui="media-item"] {
     display: grid;
     inline-size: 100%;
     gap: var(--admin-gap-xs);
@@ -131,11 +133,11 @@
     border-radius: var(--admin-radius);
     background: var(--admin-card);
   }
-  [data-ui="media-item"][data-primary="true"] {
+  [data-ui="media"] [data-ui="media-item"][data-primary="true"] {
     border-color: var(--admin-accent-line);
     box-shadow: 0 0 0 2px var(--admin-focus-ring);
   }
-  [data-ui="media-item"] > img {
+  [data-ui="media"] [data-ui="media-item"] > img {
     display: block;
     inline-size: 100%;
     aspect-ratio: 1;
@@ -618,7 +620,7 @@
       max-inline-size: none;
       grid-template-columns: minmax(0, 1fr);
     }
-    [data-ui="media-gallery"],
+    [data-ui="media"] > [data-ui="media-gallery"],
     [data-ui="media-actions"],
     [data-ui="media-extension"],
     [data-ui="media"] > :is([data-ui="loading"], [data-ui="error"]) {

@@ -1,4 +1,5 @@
 import { defineModule } from '@ketvietlab/ketjs'
+import { productVendorFunctions } from './product-vendors.ts'
 import { functions } from './functions.ts'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
@@ -18,7 +19,7 @@ export default defineModule({
     'account.MoveLine': { purchaseLineId: 'ref:purchase.OrderLine?' },
   },
   relations,
-  functions: { ...functions, ...reportFunctions },
+  functions: { ...functions, ...reportFunctions, ...productVendorFunctions },
   reports,
   messages: {
     vi: {

@@ -1,0 +1,175 @@
+@layer ket.app {
+  /*
+   * The view and its peek are two cards on the canvas: the layout owns the gap between them,
+   * the peek owns its frame. The aside column appears only while it holds a peek.
+   */
+  :where([data-kv-design-system]) [data-ui="peek-layout"] {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--kv-layout-gap);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="peek-layout"]:has(> [data-ui="peek-layout-aside"] [data-ui="peek"]) {
+    /* A peek is a rail beside the work, not a record form: it takes the right-rail width. */
+    grid-template-columns: minmax(0, 1fr) var(--kv-right-rail-width);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-layout-main"],
+  :where([data-kv-design-system]) [data-ui="peek-layout-aside"] {
+    min-width: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-layout-aside"]:not(:has([data-ui="peek"])) {
+    display: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek"] {
+    display: grid;
+    min-width: 0;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+    border: 1px solid var(--kv-panel-border);
+    border-radius: var(--kv-radius-md);
+    background: var(--kv-panel-bg);
+  }
+
+  /* Docked, the peek stays in view while the work beside it scrolls. */
+  :where([data-kv-design-system]) [data-ui="peek-layout"][data-mode="docked"] [data-ui="peek"] {
+    position: sticky;
+    top: var(--kv-layout-gap);
+    max-height: calc(100dvh - 2 * var(--kv-layout-gap));
+  }
+
+  /* Opening moves focus to the panel for keyboard users; the frame itself shows no ring. */
+  :where([data-kv-design-system]) [data-ui="peek"]:focus {
+    outline: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek"]:focus-visible {
+    border-color: var(--kv-focus-border);
+    box-shadow: var(--kv-focus-ring);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-head"] {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--kv-space-2) var(--kv-space-2);
+    /* Same band as a modal head: 12px block, the surface inset on the reading edge. */
+    padding: var(--kv-space-3) var(--kv-space-3) var(--kv-space-3) var(--kv-surface-inset);
+    border-bottom: 1px solid var(--kv-color-line);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-heading"] {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--kv-space-1);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-eyebrow"] {
+    margin: 0;
+    overflow: hidden;
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    font-weight: var(--kv-weight-medium);
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-title"] {
+    min-width: 0;
+    margin: 0;
+    color: var(--kv-color-ink);
+    font-family: var(--kv-font-display);
+    font-size: var(--kv-text-xl);
+    line-height: var(--kv-line-xl);
+    font-weight: var(--kv-weight-semibold);
+    /* A long name wraps rather than hiding the part that tells two guests apart. */
+    overflow-wrap: anywhere;
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-tools"] {
+    display: flex;
+    align-items: center;
+    gap: var(--kv-space-1);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-status"] {
+    display: flex;
+    min-width: 0;
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--kv-space-2);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-body"] {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--kv-surface-inset);
+    overscroll-behavior: contain;
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-foot"] {
+    display: grid;
+    min-width: 0;
+    padding: var(--kv-space-3) var(--kv-surface-inset);
+    border-top: 1px solid var(--kv-color-line);
+  }
+
+  :where([data-kv-design-system]) [data-ui="peek-actions"] {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--kv-space-2);
+  }
+
+  /*
+   * Below 64rem (a tablet beside the shell's sidebar, or a phone) a rail would leave the view
+   * too narrow to work in, as the record-page rail also collapses there. The peek becomes a
+   * sheet over the lower part of the view instead. The view keeps scroll room under its last
+   * row equal to the sheet's cap, so any item can be brought above the sheet.
+   */
+  @media (max-width: 63.9375rem) {
+    :where([data-kv-design-system]) [data-ui="peek-layout"] {
+      --kv-peek-sheet-max-height: 60dvh;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="peek-layout"]:has(> [data-ui="peek-layout-aside"] [data-ui="peek"]) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="peek-layout"][data-mode="docked"]:has(> [data-ui="peek-layout-aside"] [data-ui="peek"]) {
+      padding-block-end: var(--kv-peek-sheet-max-height);
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="peek-layout"][data-mode="docked"]
+      > [data-ui="peek-layout-aside"] {
+      position: fixed;
+      z-index: var(--kv-z-popover);
+      inset-inline: 0;
+      bottom: 0;
+    }
+
+    :where([data-kv-design-system]) [data-ui="peek-layout"][data-mode="docked"] [data-ui="peek"] {
+      position: relative;
+      top: auto;
+      max-height: var(--kv-peek-sheet-max-height);
+      border-width: 1px 0 0;
+      border-color: var(--kv-color-line-strong);
+      border-radius: var(--kv-radius-lg) var(--kv-radius-lg) 0 0;
+      box-shadow: var(--kv-shadow-popover);
+      /* The foot is optional, so the sheet itself clears the home indicator. */
+      padding-block-end: env(safe-area-inset-bottom);
+    }
+  }
+}

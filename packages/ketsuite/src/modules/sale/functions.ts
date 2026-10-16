@@ -28,6 +28,7 @@ import { functions as pricingFunctions } from '../pricing/functions.ts'
 import { sellableProduct } from '../product/sellable.ts'
 import { functions as stockFunctions } from '../stock/functions.ts'
 import { company, companyKey, ours } from './scope.ts'
+import { type QuotationSendInput, quotationSendEffects, sendQuotationTo } from './functions/quotation-send.ts'
 
 export const SALE_STATES = ['draft', 'sent', 'sale', 'cancel'] as const
 export const SALE_INVOICE_STATUSES = ['upselling', 'invoiced', 'to invoice', 'no'] as const
@@ -876,20 +877,22 @@ export const functions: Record<string, FnSpec> = {
       return { ok: true, id: args.id }
     },
   }),
+  // On a channel (email, Zalo) it contacts the customer under one rule for every screen; without one it marks the
+  // quotation sent, as before. Either way the sending is recorded for whoever reads the order.
   sendQuotation: defineFn({
-    input: { id: 'id' },
-    output: { ok: 'bool', id: 'id?', errors: 'json?' },
-    effects: ['read:sale.Order', 'write:sale.Order'],
+    input: {
+      id: 'id',
+      channel: 'text?',
+      recipient: 'text?',
+      message: 'text?',
+      expectedRevision: 'int?',
+      idempotencyKey: 'text?',
+    },
+    output: { ok: 'bool', id: 'id?', sendId: 'text?', revision: 'int?', errors: 'json?' },
+    effects: [...quotationSendEffects],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const order = (await ours(ctx, 'sale.Order', { id: args.id }))[0]
-      if (!order || !['draft', 'sent'].includes(String(order.state)))
-        return invalid('state', 'only a draft quotation can be sent')
-      if (externalOrder(order)) return authorityRefusal()
-      await ctx.db.update('sale.Order', { id: args.id }, { state: 'sent', revision: n(order.revision) + 1 })
-      return { ok: true, id: args.id }
-    },
+    handler: (ctx, args) => ctx.tx((tx) => sendQuotationTo(tx, args as QuotationSendInput)),
   }),
   confirmOrder: defineFn({
     input: { id: 'id', expectedRevision: 'int?' },

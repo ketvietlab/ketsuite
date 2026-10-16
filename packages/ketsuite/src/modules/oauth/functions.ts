@@ -105,7 +105,16 @@ const providerValidation = async (ctx: Ctx, values: Row, id: string): Promise<Is
   const code = codeOf(values.code)
   if (!/^[a-z][a-z0-9_-]{1,63}$/.test(code)) errors.push(issue('code', 'oauth.error.codeInvalid'))
   if (!String(values.name ?? '').trim()) errors.push(issue('name', 'oauth.error.required'))
-  if (values.protocol !== 'oidc') errors.push(issue('protocol', 'oauth.error.protocolUnsupported'))
+  const brokered = values.protocol === 'oidc-broker'
+  if (values.protocol !== 'oidc' && !brokered)
+    errors.push(issue('protocol', 'oauth.error.protocolUnsupported'))
+  // A deployment-owned broker receiver verifies the ID token and nonce before
+  // resolveLogin. Generic routes must never start this provider directly.
+  if (
+    brokered &&
+    (values.autoProvision === true || values.defaultRoleId || values.clientAuthMethod !== 'none')
+  )
+    errors.push(issue('protocol', 'oauth.error.protocolUnsupported'))
   const authMethod = String(values.clientAuthMethod ?? '')
   if (!['none', 'client_secret_basic', 'client_secret_post'].includes(authMethod))
     errors.push(issue('clientAuthMethod', 'oauth.error.clientAuthMethod'))
@@ -122,7 +131,10 @@ const providerValidation = async (ctx: Ctx, values: Row, id: string): Promise<Is
   }
   try {
     const redirect = safeOidcUrl(String(values.redirectUri ?? '').trim(), 'redirectUri')
-    if (redirect.search || redirect.pathname !== `/auth/oauth/${code}/callback`)
+    if (
+      redirect.search ||
+      redirect.pathname !== (brokered ? '/api/auth/callback' : `/auth/oauth/${code}/callback`)
+    )
       errors.push(issue('redirectUri', 'oauth.error.redirectUri'))
   } catch (error) {
     errors.push(issue('redirectUri', (error as { code?: string }).code ?? 'oauth.error.redirectUri'))

@@ -12,6 +12,8 @@ import { json, page, sha256, text, withHeaders } from '@ketvietlab/ketjs'
 import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'
 import { loginScreen } from './login.ts'
 import { authTokenScreen } from '../../ui/auth.tsx'
+import { applicationIcon } from '../../ui/brand.ts'
+import { html as viewHtml } from '@ketvietlab/ketjs-view'
 
 type Verdict = {
   ok: boolean
@@ -133,7 +135,7 @@ export const routes: Record<string, RouteEntry> = {
             // Every composed module's stylesheets, exactly as the backend screens
             // get them. Passing nothing here shipped a sign-in page with no CSS at
             // all: the markup was right and the page looked broken.
-            head: styles,
+            head: viewHtml`${applicationIcon}${styles}`,
             body: loginScreen(_, { ...o, providers, locales, locale }),
           }),
         })
@@ -261,7 +263,7 @@ export const routes: Record<string, RouteEntry> = {
                 body: ctx.document({
                   lang: locale,
                   title: _(`user.token.${kind}Title`),
-                  head: await ctx.styles(req),
+                  head: viewHtml`${applicationIcon}${await ctx.styles(req)}`,
                   body: authTokenScreen(_, { kind, token, errors, complete }),
                 }),
               })

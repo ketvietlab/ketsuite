@@ -97,6 +97,31 @@ test('relation select: a local read-only catalogue has no create or manager acti
   view.dispose()
 })
 
+test('relation select: a picker seeded without a manager lists every match and offers no empty browse dialog', () => {
+  const options = Array.from({ length: 9 }, (_, i) => ({
+    value: `sku-${i}`,
+    label: `SKU ${i}`,
+    description: `REF-${i}`,
+  }))
+  const controller = createRelationSelectView({
+    id: 'seeded',
+    config: { ...relationSelectDemoConfig, value: null, options },
+  })
+  const host = countingHost()
+  const root = host.root()
+  const view = mount(host, root, controller.view)
+  try {
+    host.fire(byUi(root, 'relation-trigger')[0]!, 'click')
+    assert.equal(byUi(root, 'relation-option').length, 9, 'nothing past the seventh option is hidden')
+    assert.equal(byUi(root, 'relation-footer').length, 0, 'there is no manager to browse')
+    host.fire(byUi(root, 'relation-option')[8]!, 'click')
+    assert.equal(textOf(byUi(root, 'relation-value')[0]!), 'SKU 8')
+  } finally {
+    view.dispose()
+    controller.dispose?.()
+  }
+})
+
 test('relation select: Escape dismisses only the open picker and restores trigger focus', () => {
   const globals = globalThis as unknown as Record<string, unknown>
   const previous = globals.KeyboardEvent
@@ -147,7 +172,10 @@ test('relation select: Escape dismisses only the open picker and restores trigge
 
 test('relation select: closing the "more" dialog stays inside it so an enclosing record modal stays open', () => {
   for (const ui of ['modal-close', 'modal-backdrop']) {
-    const controller = createRelationSelectView({ id: `nested-${ui}`, config: relationSelectDemoConfig })
+    const controller = createRelationSelectView({
+      id: `nested-${ui}`,
+      config: { ...relationSelectDemoConfig, manager: { listFunction: 'demo.partners' } },
+    })
     const host = countingHost()
     const root = host.root()
     const view = mount(host, root, controller.view)

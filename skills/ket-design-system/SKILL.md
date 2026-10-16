@@ -23,6 +23,8 @@ typography, spacing, surface/border level and responsive behavior. Keep Két col
 Inter and Lucide. Desktop is dense. Read [the visual contract](references/visual-contract.md)
 for every UI task. Read [KetSuite composition](references/ketsuite.md) for Suite screens,
 and [Flow compatibility](references/flow.md) only when touching Flow.
+When touching shell, navigation, app switching or screen help, read the
+[shell integration guide for agents](references/shell.md).
 
 ## Choose the owner before writing markup
 
@@ -30,9 +32,12 @@ and [Flow compatibility](references/flow.md) only when touching Flow.
    appropriate pattern, then its component slots, then primitives. The repository's
    public source, generated inventory and catalogue show the available API; role names
    in this skill are design concepts, not a claim that new props already exist.
-2. A full collection uses ListPage/ListScreen. Record modals use the shared record
+2. A full collection uses ListPage/ListScreen, rendered as client islands over one
+   paged read ([KetSuite composition](references/ketsuite.md)). Record modals use the shared record
    runtime and form. Durable full-page records use RecordPage; spatial or master-detail
-   work uses WorkspacePage. FormPage, DashboardPage and BoardPage remain compatibility
+   work uses WorkspacePage; a first look at one item of a spatial view (tape chart,
+   timeline, board) is a non-modal Peek in a PeekLayout, never a drawer or side
+   ModalSheet. FormPage, DashboardPage and BoardPage remain compatibility
    patterns for existing consumers, not starting points for new screens.
    A working region on the canvas uses Surface; a group inside it
    uses Section. An independently actionable object uses ContentCard/KanbanCard.

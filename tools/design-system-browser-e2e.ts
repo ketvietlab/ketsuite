@@ -674,6 +674,47 @@ try {
     }
   }
 
+  // Stack: a wrapped wide table scrolls in its own region, and its two-line cells keep their text.
+  for (const width of [390, 1024]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height: 1000,
+      deviceScaleFactor: 1,
+      mobile: false,
+    })
+    const url = `http://127.0.0.1:${appPort}/components/layouts?theme=light&density=default`
+    await cdp.send('Page.navigate', { url })
+    await waitFor(
+      () =>
+        evaluate<boolean>(
+          cdp!,
+          `location.href === ${JSON.stringify(url)} && document.readyState === 'complete' && Boolean(document.querySelector('#stack-scroll-boundary [data-ui="kt-scroll"]'))`,
+        ),
+      'Stack scroll boundary specimen did not render',
+    )
+    const boundary: Json = await evaluate<Json>(
+      cdp,
+      `(() => {
+        const specimen = document.querySelector('#stack-scroll-boundary')
+        const stack = specimen.querySelector('[data-ui="stack"]')
+        const region = specimen.querySelector('[data-ui="kt-scroll"]')
+        const cells = [...region.querySelectorAll('tbody td [data-ui="stack"]')]
+        return {
+          pageOverflow: document.documentElement.scrollWidth > innerWidth + 1,
+          regionWithinStack: region.getBoundingClientRect().right <= stack.getBoundingClientRect().right + 1,
+          regionScrolls: region.scrollWidth > region.clientWidth + 1,
+          cells: cells.length,
+          clippedCells: cells.filter((cell) => cell.scrollWidth > cell.clientWidth + 1).length,
+        }
+      })()`,
+    )
+    assert.equal(boundary.pageOverflow, false, `${width}px: a wrapped table widened the page`)
+    assert.equal(boundary.regionWithinStack, true, `${width}px: the table region left its stack`)
+    assert.equal(boundary.regionScrolls, true, `${width}px: the wide table must scroll in its own region`)
+    assert.equal(boundary.cells, 40, `${width}px: the specimen's two-line cells changed`)
+    assert.equal(boundary.clippedCells, 0, `${width}px: a two-line cell collapsed below its text`)
+  }
+
   // Navigation owns optional slots, readable labels and the exact drawer boundary.
   for (const width of [390, 767, 768, 1440]) {
     for (const theme of ['light', 'dark']) {
@@ -934,7 +975,7 @@ try {
           cdp,
           `(() => {
             const navigation = document.querySelector('[data-navigation-id="enterprise-navigation"]')
-            const mobileTrigger = navigation?.querySelector(':scope > [data-ui="navigation-trigger"]')
+            const mobileTrigger = document.querySelector('[data-ui="navigation-toggle"][aria-controls="enterprise-navigation-drawer"]')
             if (${JSON.stringify(viewport.key)} === 'mobile' && navigation instanceof HTMLDetailsElement && !navigation.open)
               mobileTrigger?.click()
             const topBranches = [...document.querySelectorAll('[data-ui="navigation-branch"][data-level="1"]')]
@@ -972,7 +1013,11 @@ try {
               panelBelowParent: Boolean(triggerRect && childrenRect && childrenRect.top >= triggerRect.bottom - 1),
               horizontalSubmenuRemoved: document.querySelector('[data-demo-submenu]') === null,
               breadcrumbs: document.querySelectorAll('[data-ui="breadcrumbs"]').length,
-              currentCrumb: document.querySelector('[data-ui="breadcrumb"] [aria-current="page"]')?.textContent?.trim(),
+              locationHeight: document.querySelector('[data-ui="app-main"] [data-ui="app-location-bar"]')?.getBoundingClientRect().height,
+              globalSearch: Boolean(document.querySelector('[data-ui="app-location-bar"] [data-ui="global-search-trigger"]')),
+              accountMenu: Boolean(document.querySelector('[data-ui="app-location-bar"] #demo2-account-panel')),
+              brandImages: navigation?.querySelectorAll('[data-ui="navigation-header"] [data-ui="app-brand"] img').length,
+              sidebarTools: navigation?.querySelector('.demo-navigation-footer') !== null,
               topLevelMetrics: crmTrigger instanceof HTMLElement ? (() => {
                 const styles = getComputedStyle(crmTrigger)
                 const icon = crmTrigger.querySelector('[data-ui="navigation-item-leading"] [data-ui="icon"]')
@@ -1004,11 +1049,12 @@ try {
         assert.equal(submenuAudit.childBranchOpen, true)
         assert.equal(submenuAudit.panelBelowParent, true)
         assert.equal(submenuAudit.horizontalSubmenuRemoved, true)
-        assert.equal(submenuAudit.breadcrumbs, 1)
-        assert.equal(
-          submenuAudit.currentCrumb,
-          review.key === 'submenu-demo-vi' ? 'Hôm nay' : 'Nguồn khách hàng',
-        )
+        assert.equal(submenuAudit.breadcrumbs, 0)
+        assert.equal(submenuAudit.locationHeight, 48)
+        assert.equal(submenuAudit.globalSearch, true)
+        assert.equal(submenuAudit.accountMenu, true)
+        assert.equal(submenuAudit.brandImages, 2)
+        assert.equal(submenuAudit.sidebarTools, false)
         assert.deepEqual(submenuAudit.topLevelMetrics, {
           height: viewport.mobile ? 44 : 30,
           fontSize: '14px',

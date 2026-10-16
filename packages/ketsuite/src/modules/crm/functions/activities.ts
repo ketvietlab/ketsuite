@@ -102,6 +102,7 @@ export const activityFunctions: Record<string, FnSpec> = {
       id: 'id',
       caseId: 'id',
       typeId: 'id?',
+      category: 'text?',
       assigneeUserId: 'id?',
       summary: 'text',
       note: 'text?',
@@ -134,7 +135,7 @@ export const activityFunctions: Record<string, FnSpec> = {
   }),
 
   'plan.apply': defineFn({
-    input: { caseId: 'id', planId: 'id', anchorDate: 'date', idempotencyKey: 'text' },
+    input: { caseId: 'id', planId: 'id', anchorDate: 'date', assigneeUserId: 'id?', idempotencyKey: 'text' },
     output: { ok: 'bool', id: 'id?', activities: 'json?', errors: 'json?' },
     effects: [...activityEffects],
     idempotent: true,

@@ -1,5 +1,6 @@
 import { builderThemeFrame } from './builder-theme-frame.tsx'
 import { AttachmentImage } from '../image-upload.tsx'
+import { createThemeLogo } from '../theme-logo.tsx'
 import { BuilderRecords } from './builder-records.tsx'
 import { blockPicker } from './builder-library.tsx'
 import { templateLayout } from './template-layout.ts'
@@ -44,6 +45,7 @@ type EntryRow = { id: string; title: string }
 const THEME_KEYS = ['preset', 'accent', 'font', 'spacing', 'buttons', 'account'] as const
 
 export function createBuilderWorkspace(ctx: StudioContext, editor: BuilderEditor) {
+  const logo = createThemeLogo(ctx)
   const t = (key: string) => ctx.tr(`website.workspace.${key}`)
   let sharedMenus: SharedMenu[] = []
   let changes: RevisionChange[] = []
@@ -61,7 +63,7 @@ export function createBuilderWorkspace(ctx: StudioContext, editor: BuilderEditor
   const logoSettled = (form: FormData) => {
     if (
       form.has('logo') &&
-      Number(globalThis.document?.getElementById('workspace-theme')?.dataset.uploading ?? 0)
+      (logo.busy() || Number(globalThis.document?.getElementById('workspace-theme')?.dataset.uploading ?? 0))
     )
       throw Object.assign(new Error(ctx.tr('website.taxonomy.imageUploading')), { code: 'validation' })
   }
@@ -202,7 +204,10 @@ export function createBuilderWorkspace(ctx: StudioContext, editor: BuilderEditor
               kind: 'themes',
             })
           ).rows[0] ?? null
+      if (theme)
+        logo.load(ctx.site().id, theme.id ?? ctx.site().id, theme.revisionId ?? null, theme.logo ?? '')
     },
+    dispose: () => logo.dispose(),
     frame: (body: JSXChild) =>
       builderThemeFrame(
         themePreview ?? theme,
@@ -350,19 +355,7 @@ export function createBuilderWorkspace(ctx: StudioContext, editor: BuilderEditor
                     }[key].map((value) => ({ value, label: ctx.tr(`website.option.${value}`) }))}
                   />
                 )),
-                <fieldset class="website-theme-logo">
-                  <legend>{t('logo')}</legend>
-                  <p>{t('logoHelp')}</p>
-                  {AttachmentImage(ctx, {
-                    id: ctx.site().id,
-                    field: 'logo',
-                    value: (themePreview ?? theme)!.logo ?? '',
-                    alt: ctx.site().name,
-                    resModel: 'website.Site',
-                    disabled: !ctx.can('website.site.manage'),
-                    describe: false,
-                  })}
-                </fieldset>,
+                logo.view((themePreview ?? theme)!.logo ?? '', !ctx.can('website.site.manage')),
                 command(t('previewTheme'), 'workspace.theme.preview', {}, 'workspace-theme'),
                 command(t('resetThemePreview'), 'workspace.theme.reset'),
                 <Checkbox id="theme-confirm" name="confirmed" label={t('themeConfirm')} />,
@@ -614,6 +607,9 @@ export function createBuilderWorkspace(ctx: StudioContext, editor: BuilderEditor
       },
       'workspace.theme.reset': () => {
         themePreview = null
+        logo.dispose()
+        if (theme)
+          logo.load(ctx.site().id, theme.id ?? ctx.site().id, theme.revisionId ?? null, theme.logo ?? '')
         editor.touch()
       },
       'workspace.theme': async (_, form) => {

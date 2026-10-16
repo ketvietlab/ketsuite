@@ -58,13 +58,15 @@ const FlowDocTreeResize = () => {
       }
     }></div>`
 }
-/** @param {{sidebar:Child,top?:Child,title?:string,search?:Child,actions?:Child,navigation?:Child,tree:Child,toolbar:Child,inspector:Child,hideInspector?:boolean,children:Child,notice?:Child}} p */
+/** @param {{sidebar:Child,top?:Child,title?:string,search?:Child,actions?:Child,navigation?:Child,tree:Child,toolbar:Child,inspector:Child,hideInspector?:boolean,children:Child,notice?:Child,bodyOnly?:boolean}} p */
 export const FlowDocsShell = (p) =>
-  FlowFrame({
-    sidebar: p.sidebar,
-    children: html`<div data-flow-layout="documents" data-hide-inspector=${!!p.hideInspector} data-project-context=${!!p.navigation}>
-      ${p.title !== undefined ? FlowShellHeader({ title: p.title, search: p.search, actions: p.actions, documentTitle: true }) : html`<header data-flow="docs-top">${p.top}</header>`}
-      ${p.navigation ? html`<div data-flow="docs-context">${p.navigation}</div>` : null}
+  p.bodyOnly ? FlowDocsWorkspace(p) : FlowFrame({ sidebar: p.sidebar, children: FlowDocsWorkspace(p) })
+/** Data workspace inside a server-owned shell, or the complete legacy document layout.
+ * @param {Parameters<typeof FlowDocsShell>[0]} p */
+export const FlowDocsWorkspace = (p) =>
+  html`<div data-flow-layout="documents" data-chrome=${p.bodyOnly ? 'external' : 'internal'} data-hide-inspector=${!!p.hideInspector} data-project-context=${!p.bodyOnly && !!p.navigation}>
+      ${p.bodyOnly ? null : p.title !== undefined ? FlowShellHeader({ title: p.title, search: p.search, actions: p.actions, documentTitle: true }) : html`<header data-flow="docs-top">${p.top}</header>`}
+      ${!p.bodyOnly && p.navigation ? html`<div data-flow="docs-context">${p.navigation}</div>` : null}
       <aside data-flow="docs-tree" aria-label=${tr('flow.ui.document.library')}>
         <details data-flow="docs-tree-disclosure" open>
           <summary>${tr('flow.ui.document.library')}</summary>
@@ -80,9 +82,8 @@ export const FlowDocsShell = (p) =>
         <div data-flow="docs-scroll">${p.children}</div>
       </main>
       <aside data-flow="docs-inspector" aria-label=${tr('flow.ui.document.details')}>${p.inspector}</aside>
-    </div>`,
-  })
-/** @param {{items:{id:string,title:string,parentId?:string|null,projectId?:string|null,visibility?:string}[],active:string,collapsed:string[],onOpen:(id:string)=>void,onToggle:(id:string)=>void,onCreate?:()=>void,onAddChild?:(id:string)=>void,onReorder?:(id:string,targetId:string,position:"before"|"after")=>void}} p */
+    </div>`
+/** @param {{items:{id:string,title:string,parentId?:string|null,projectId?:string|null,visibility?:string}[],active:string,collapsed:string[],onOpen:(id:string)=>void,onToggle:(id:string)=>void,onCreate?:()=>void,onAddChild?:(id:string)=>void,onReorder?:(id:string,targetId:string,position:"before"|"after")=>void|Promise<unknown>}} p */
 export const FlowDocTree = (p) => {
   const ids = new Set(p.items.map((x) => x.id))
   let dragged = ''
@@ -170,9 +171,10 @@ export const FlowDocTree = (p) => {
               ><button
                 type="button"
                 data-flow="doc-tree-page"
+                data-page-id=${x.id}
                 aria-current=${x.id === p.active ? 'page' : null}
                 on:click=${() => p.onOpen(x.id)}
-                title=${p.onReorder ? tr('flow.ui.drag.to.reorder.siblings.alt.or.for.keyboard.control') : null}
+                title=${x.title + (p.onReorder ? '\n' + tr('flow.ui.drag.to.reorder.siblings.alt.or.for.keyboard.control') : '')}
                 on:keydown=${
                   /** @param {KeyboardEvent} e */ (e) => {
                     if (!p.onReorder || !e.altKey || !['ArrowUp', 'ArrowDown'].includes(e.key)) return
@@ -180,7 +182,19 @@ export const FlowDocTree = (p) => {
                     const siblings = p.items.filter((y) => peers(x, y))
                     const target =
                       siblings[siblings.findIndex((y) => y.id === x.id) + (e.key === 'ArrowUp' ? -1 : 1)]
-                    if (target) p.onReorder(x.id, target.id, e.key === 'ArrowUp' ? 'before' : 'after')
+                    if (target) {
+                      const completion = p.onReorder(
+                        x.id,
+                        target.id,
+                        e.key === 'ArrowUp' ? 'before' : 'after',
+                      )
+                      e.currentTarget?.dispatchEvent(
+                        new CustomEvent('flow-doc-reorder', {
+                          bubbles: true,
+                          detail: { id: x.id, completion },
+                        }),
+                      )
+                    }
                   }
                 }
               >
@@ -201,7 +215,7 @@ export const FlowDocTree = (p) => {
     </ul>`
   return html`<nav aria-label=${tr('flow.ui.document.tree')}>${branch(null, new Set())}${p.onCreate ? html`<div data-flow="doc-tree-create">${FlowButton({ label: tr('flow.ui.create.document'), icon: 'plus', size: 'sm', variant: 'ghost', onClick: p.onCreate })}</div>` : null}</nav>`
 }
-/** @param {{title:string,subtitle:Child,children?:Child,blocks:FlowDocBlock[],readOnly?:boolean,onTitle:(text:string)=>void,onText:(id:string,text:string,row?:number,col?:number)=>void,onFocus:(id:string)=>void,onBlur:()=>void,onCheck:(id:string,checked:boolean)=>void}} p */
+/** @param {{title:string,subtitle:Child,children?:Child,blocks:FlowDocBlock[],readOnly?:boolean,titleInContent?:boolean,onTitle:(text:string)=>void,onText:(id:string,text:string,row?:number,col?:number)=>void,onFocus:(id:string)=>void,onBlur:()=>void,onCheck:(id:string,checked:boolean)=>void}} p */
 export const FlowDocEditor = (p) => {
   /** @param {FlowDocBlock} b @param {string} text @param {number} [row] @param {number} [col] */
   const text = (b, text, row, col) =>
@@ -220,15 +234,19 @@ export const FlowDocEditor = (p) => {
   // Keep whitespace out of the plaintext-only title; browsers preserve it.
   // prettier-ignore
   return html`<article data-flow="doc-paper">
-    <h1
-      data-flow="doc-title"
+    <h1 data-flow="doc-title" data-in-content=${p.titleInContent ?? false}>${
+      p.readOnly || p.titleInContent
+        ? p.title
+        : html`<span
+      data-flow="doc-title-input"
       role="textbox"
       aria-label=${tr('flow.ui.document.title')}
       contenteditable=${p.readOnly ? 'false' : 'plaintext-only'}
       aria-readonly=${String(!!p.readOnly)}
       on:input=${/** @param {Event} e */ (e) => p.onTitle(/** @type {HTMLElement} */ (e.currentTarget).innerText)}
       on:blur=${p.onBlur}
-    >${p.title}</h1>
+    >${p.title}</span>`
+    }</h1>
     <div data-flow="doc-byline">${p.subtitle}</div>
     ${
       p.children ??
@@ -270,7 +288,7 @@ export const FlowDocEditor = (p) => {
                     </div>`
                   : b.type === 'check'
                     ? html`<div data-flow="doc-check">
-                        ${FlowCheckbox({ label: b.text ?? 'Checklist', checked: b.checked ?? false, disabled: p.readOnly, onChange: p.readOnly ? undefined : (e) => p.onCheck(b.id, /** @type {HTMLInputElement} */ (e.currentTarget).checked) })}${text(b, b.text ?? '')}
+                        ${FlowCheckbox({ target: 'standalone', label: b.text ?? 'Checklist', checked: b.checked ?? false, disabled: p.readOnly, onChange: p.readOnly ? undefined : (e) => p.onCheck(b.id, /** @type {HTMLInputElement} */ (e.currentTarget).checked) })}${text(b, b.text ?? '')}
                       </div>`
                     : b.type === 'divider'
                       ? html`<hr />`

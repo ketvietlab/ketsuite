@@ -1,3 +1,4 @@
+import { selectAssignmentMember } from './assignment-policy.ts'
 import { randomUUID } from 'node:crypto'
 import {
   and,
@@ -18,7 +19,13 @@ import {
 } from '@ketvietlab/ketjs'
 import type { Ctx, ListState, Row } from '@ketvietlab/ketjs'
 import { phoneKey } from '../../phone.ts'
-import { addDays, cancelActivity, completeActivity, scheduleActivity } from '../activity/index.ts'
+import {
+  addDays,
+  cancelActivity,
+  completeActivity,
+  rescheduleActivity,
+  scheduleActivity,
+} from '../activity/index.ts'
 import { ensureThread } from '../mail/index.ts'
 import { effectiveFunctionKeys } from '../user/authorization.ts'
 import { CASE_KINDS, CASE_PRIORITIES, MESSAGE_VISIBILITIES } from './types.ts'
@@ -63,6 +70,19 @@ export const closingValues = (held: Row, terminalState: unknown, timestamp: stri
     closedOwnershipRecordedAt: timestamp,
   }
 }
+/**
+ * When a record entered the stage it moves to, and the open stage a closed record left (cleared when it reopens).
+ * A record that stays in its stage keeps the time it entered it.
+ */
+export const stageValues = (held: Row | undefined, stage: Row, timestamp: string): Row => ({
+  ...(held && String(held.stageId) === String(stage.id) ? {} : { stageEnteredAt: timestamp }),
+  closedFromStageId:
+    stage.terminalState === 'open'
+      ? null
+      : !held || held.terminalState === 'open'
+        ? (held?.stageId ?? null)
+        : (held.closedFromStageId ?? null),
+})
 export const normalized = (value: unknown): string =>
   String(value ?? '')
     .normalize('NFKC')
@@ -142,7 +162,8 @@ const defaultStages = [
     code: 'lost',
     name: 'Lost',
     sequence: 100,
-    allowedKinds: ['opportunity'],
+    // A lead that goes nowhere is lost too; only an opportunity is won.
+    allowedKinds: ['lead', 'opportunity'],
     terminalState: 'lost',
     fold: true,
   },
@@ -167,19 +188,22 @@ export const seededId = async (ctx: Ctx, model: string, id: string): Promise<str
 export const crmActivityType = (ctx: Ctx): Promise<string | null> =>
   seededId(ctx, 'activity.Type', 'crm-next-action')
 
+/** Writes a standard row into this company once, under its plain id or, when another company holds that, its own. */
+export const seedCompanyRow = async (ctx: Ctx, model: string, row: Row): Promise<void> => {
+  // Already seeded here, under either id.
+  if (await seededId(ctx, model, String(row.id))) return
+  const inserted = await ctx.db.insertIfAbsent(model, row)
+  if ('dryRun' in inserted || inserted.inserted) return
+  // The plain id belongs to another company. Take the qualified one, which is
+  // the difference between a working pipeline and a company whose every case
+  // is refused for having no stage to sit in.
+  const company = String(ctx.scope.company ?? '')
+  if (company) await ctx.db.insertIfAbsent(model, { ...row, id: `${company}:${String(row.id)}` })
+}
+
 /** Idempotent seed used by named E2E fixtures and by the first write on a fresh company. */
 export async function ensureCrmDefaults(ctx: Ctx): Promise<void> {
-  const company = String(ctx.scope.company ?? '')
-  const seed = async (model: string, row: Row): Promise<void> => {
-    // Already seeded here, under either id.
-    if (await seededId(ctx, model, String(row.id))) return
-    const inserted = await ctx.db.insertIfAbsent(model, row)
-    if ('dryRun' in inserted || inserted.inserted) return
-    // The plain id belongs to another company. Take the qualified one, which is
-    // the difference between a working pipeline and a company whose every case
-    // is refused for having no stage to sit in.
-    if (company) await ctx.db.insertIfAbsent(model, { ...row, id: `${company}:${String(row.id)}` })
-  }
+  const seed = (model: string, row: Row) => seedCompanyRow(ctx, model, row)
   await seed('crm.Team', {
     id: 'crm-team-sales',
     code: 'sales',
@@ -296,14 +320,14 @@ export async function caseAudience(ctx: Ctx, action: CaseAction = 'view'): Promi
   return { actor: ctx.actor, action, scope, teams, queueTeams }
 }
 
-const liveSuperuser = async (ctx: Ctx): Promise<boolean> => {
+export const liveSuperuser = async (ctx: Ctx): Promise<boolean> => {
   const user = (await ctx.db.select('user.User', { id: ctx.actor, active: true }))[0]
   if (user?.superuser !== true) return false
   const expiresAt = user.superuserExpiresAt ? Date.parse(String(user.superuserExpiresAt)) : null
   return expiresAt === null || expiresAt > Date.now()
 }
 
-const audienceHolds = (audience: CaseAudience | null, row: Row): boolean => {
+export const audienceHolds = (audience: CaseAudience | null, row: Row): boolean => {
   if (!audience) return true
   const teamId = row.teamId ? String(row.teamId) : null
   if (teamId && audience.teams.includes(teamId)) return true
@@ -364,6 +388,8 @@ export type SaveCaseInput = {
   expectedClosing?: string | null
   forecastCategory?: string | null
   tagIds?: string[]
+  /** Whether the customer agreed to be contacted; unchanged when absent. */
+  contactConsent?: boolean | null
   expectedVersion?: number
   idempotencyKey: string
 }
@@ -438,7 +464,10 @@ export async function saveCase(
       utmSource: input.utmSource?.trim() || null,
       utmMedium: input.utmMedium?.trim() || null,
       utmCampaign: input.utmCampaign?.trim() || null,
+      contactConsent:
+        typeof input.contactConsent === 'boolean' ? input.contactConsent : (existing?.contactConsent ?? null),
       terminalState: stage.terminalState,
+      ...stageValues(existing, stage, now()),
       active: true,
       version: nextVersion,
       score: existing?.score ?? '0',
@@ -510,7 +539,12 @@ export async function saveCase(
       const CT = tx.table('crm.CaseTag')
       await tx.db.del(deleteFrom(CT).where(eq(CT.caseId, input.id)))
       for (const tagId of ids)
-        await tx.db.insert('crm.CaseTag', { id: `${input.id}:${tagId}`, caseId: input.id, tagId })
+        await tx.db.insert('crm.CaseTag', {
+          id: `${input.id}:${tagId}`,
+          caseId: input.id,
+          tagId,
+          createdAt: now(),
+        })
     }
     if (!existing)
       await addTimeline(tx, {
@@ -643,7 +677,10 @@ export async function serializeCaseList(ctx: Ctx, rows: Row[]): Promise<Row[]> {
             id: String(activity.id),
             summary: String(activity.summary ?? ''),
             dueDate: activity.dueDate == null ? null : String(activity.dueDate),
-            overdue: activity.dueDate != null && String(activity.dueDate) < today,
+            dueAt: activity.dueAt ?? null,
+            overdue: activity.dueAt
+              ? Date.parse(String(activity.dueAt)) < Date.now()
+              : activity.dueDate != null && String(activity.dueDate) < today,
           }
         : null,
     }
@@ -744,7 +781,7 @@ const caseAudienceCondition = async (ctx: Ctx, C: ReturnType<Ctx['table']>, acti
   return clauses.length === 1 ? clauses[0]! : or(...clauses)
 }
 
-const caseQuery = async (ctx: Ctx, args: Record<string, unknown>) => {
+export const caseQuery = async (ctx: Ctx, args: Record<string, unknown>) => {
   const C = ctx.table('crm.Case')
   const state = listStateOf(args.listState) ?? emptyCaseListState()
   const timezone = String(args.timezone ?? 'UTC')
@@ -1026,6 +1063,7 @@ export async function moveCase(
       version: n(held.version) + 1,
       updatedAt: timestamp,
       ...closingValues(held, stage.terminalState, timestamp),
+      ...stageValues(held, stage, timestamp),
     }
     const changed = await tx.db.compareAndSet(
       'crm.Case',
@@ -1038,7 +1076,11 @@ export async function moveCase(
     if (held.terminalState !== stage.terminalState) {
       const detail = (await tx.db.select('crm.SalesDetail', { caseId: input.id }))[0]
       if (detail)
-        await tx.db.update('crm.SalesDetail', { id: detail.id }, { lostReason: null, lostReasonCode: null })
+        await tx.db.update(
+          'crm.SalesDetail',
+          { id: detail.id },
+          { lostReason: null, lostReasonCode: null, lostReasonId: null },
+        )
     }
     await addTimeline(tx, {
       id: `timeline:${input.id}:move:${input.idempotencyKey}`,
@@ -1067,15 +1109,7 @@ async function routedAssignee(ctx: Ctx, team: Row): Promise<Row | null> {
   const members = await ctx.db.all(
     from(M).where(eq(M.teamId, team.id), eq(M.active, true)).orderBy(asc(M.sequence), asc(M.id)),
   )
-  if (!members.length) return null
-  if (team.assignmentMode === 'capacity')
-    return [...members].sort(
-      (a, b) =>
-        n(a.assignedCount) / Math.max(1, n(a.capacity)) - n(b.assignedCount) / Math.max(1, n(b.capacity)) ||
-        String(a.lastAssignedAt ?? '').localeCompare(String(b.lastAssignedAt ?? '')) ||
-        String(a.id).localeCompare(String(b.id)),
-    )[0]!
-  return members[n(team.assignmentCursor) % members.length]!
+  return selectAssignmentMember(team, members)
 }
 
 const assignmentTargetAllowed = async (
@@ -1242,6 +1276,9 @@ export async function reassignCase(
     expectedVersion: number
     idempotencyKey: string
   },
+  // An owning module may reuse assignment for its own Case kind. The public
+  // CRM function never accepts this argument from a request.
+  extensionKind?: string,
 ): Promise<CrmResult> {
   if (!actorRequired(ctx)) return invalid(issue('actor', 'crm.error.actorRequired'))
   if (!commandKey(input.idempotencyKey))
@@ -1251,7 +1288,11 @@ export async function reassignCase(
     return invalid(issue('reasonNote', 'crm.error.reassignReason'))
   return ctx.tx(async (tx) => {
     const held = (await tx.db.select('crm.Case', { id: input.id }))[0]
-    if (!held || !ownsKind(held.kind) || !(await canReadCase(tx, held)))
+    if (
+      !held ||
+      !(ownsKind(held.kind) || (extensionKind && held.kind === extensionKind)) ||
+      !(await canReadCase(tx, held))
+    )
       return invalid(issue('id', 'crm.error.notFound'))
     const auditId = `timeline:${input.id}:reassign:${input.idempotencyKey}`
     const replay = (await tx.db.select('crm.TimelineEntry', { id: auditId }))[0]
@@ -1318,6 +1359,8 @@ export async function scheduleCaseActivity(
     id: string
     caseId: string
     typeId?: string
+    /** The kind of activity (`call`, `email`, `meeting`, `todo`): the company's first active type of it. */
+    category?: string
     assigneeUserId?: string
     summary: string
     note?: string
@@ -1331,10 +1374,21 @@ export async function scheduleCaseActivity(
   return ctx.tx(async (tx) => {
     const held = (await tx.db.select('crm.Case', { id: input.caseId }))[0]
     if (!held || !(await canEditCase(tx, held))) return invalid(issue('caseId', 'crm.error.notFound'))
+    const typed = input.typeId
+      ? null
+      : input.category
+        ? (await tx.db.select('activity.Type', { category: input.category, active: true })).sort(
+            (a, b) => n(a.sequence) - n(b.sequence) || String(a.id).localeCompare(String(b.id)),
+          )[0]
+        : null
     const activity = await scheduleActivity(tx, {
       id: input.id,
       threadId: String(held.threadId),
-      typeId: input.typeId ?? (await crmActivityType(tx)) ?? 'crm-next-action',
+      typeId:
+        input.typeId ??
+        (typed?.id ? String(typed.id) : null) ??
+        (await crmActivityType(tx)) ??
+        'crm-next-action',
       assigneeUserId: input.assigneeUserId ?? String(held.assigneeUserId ?? tx.actor),
       summary: input.summary,
       note: input.note,
@@ -1356,6 +1410,15 @@ export async function scheduleCaseActivity(
   })
 }
 
+/**
+ * Whether an activity is still to do. A finished or cancelled one takes no second outcome: the activity module
+ * would replay the first, and the record's history would be written twice.
+ */
+const openActivity = async (ctx: Ctx, id: string): Promise<boolean> => {
+  const activity = (await ctx.db.select('activity.Activity', { id }))[0]
+  return !!activity && activity.active !== false && !activity.doneAt && !activity.canceledAt
+}
+
 export async function completeCaseActivity(
   ctx: Ctx,
   input: { id: string; feedback?: string; completedDate: string; idempotencyKey: string },
@@ -1368,6 +1431,7 @@ export async function completeCaseActivity(
     if (!link) return invalid(issue('id', 'crm.error.notFound'))
     const held = (await tx.db.select('crm.Case', { id: link.caseId }))[0]
     if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
+    if (!(await openActivity(tx, input.id))) return invalid(issue('id', 'crm.error.activityClosed'))
     const result = await completeActivity(tx, input.id, input.feedback ?? '', input.completedDate)
     await addTimeline(tx, {
       id: `timeline:${String(link.caseId)}:activity-done:${input.id}`,
@@ -1392,6 +1456,7 @@ export async function cancelCaseActivity(
     if (!link) return invalid(issue('id', 'crm.error.notFound'))
     const held = (await tx.db.select('crm.Case', { id: link.caseId }))[0]
     if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
+    if (!(await openActivity(tx, input.id))) return invalid(issue('id', 'crm.error.activityClosed'))
     const activity = await cancelActivity(tx, input.id, input.feedback)
     await addTimeline(tx, {
       id: `timeline:${String(link.caseId)}:activity-cancel:${input.id}`,
@@ -1404,9 +1469,42 @@ export async function cancelCaseActivity(
   })
 }
 
+/** A record's open activity moves to another day; the record's history says so. */
+export async function rescheduleCaseActivity(
+  ctx: Ctx,
+  input: { id: string; dueDate: string; idempotencyKey: string },
+): Promise<CrmResult> {
+  if (!commandKey(input.idempotencyKey))
+    return invalid(issue('idempotencyKey', 'crm.error.idempotencyRequired'))
+  if (!actorRequired(ctx)) return invalid(issue('actor', 'crm.error.actorRequired'))
+  return ctx.tx(async (tx) => {
+    const link = (await tx.db.select('crm.ActivityLink', { activityId: input.id }))[0]
+    if (!link) return invalid(issue('id', 'crm.error.notFound'))
+    const held = (await tx.db.select('crm.Case', { id: link.caseId }))[0]
+    if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
+    if (!(await openActivity(tx, input.id))) return invalid(issue('id', 'crm.error.activityClosed'))
+    const activity = await rescheduleActivity(tx, input.id, input.dueDate)
+    await addTimeline(tx, {
+      id: `timeline:${String(link.caseId)}:activity-reschedule:${input.id}:${input.idempotencyKey}`,
+      caseId: String(link.caseId),
+      eventType: 'activity_rescheduled',
+      body: String(activity.summary),
+      metadata: { activityId: input.id, dueDate: input.dueDate },
+    })
+    return { ok: true, id: input.id, activity }
+  })
+}
+
 export async function applyCasePlan(
   ctx: Ctx,
-  input: { caseId: string; planId: string; anchorDate: string; idempotencyKey: string },
+  input: {
+    caseId: string
+    planId: string
+    anchorDate: string
+    /** Who does every step, instead of each step's own rule. */
+    assigneeUserId?: string
+    idempotencyKey: string
+  },
 ): Promise<CrmResult> {
   if (!commandKey(input.idempotencyKey))
     return invalid(issue('idempotencyKey', 'crm.error.idempotencyRequired'))
@@ -1426,8 +1524,9 @@ export async function applyCasePlan(
         id,
         threadId: String(held.threadId),
         typeId: String(step.typeId),
-        assigneeUserId:
-          step.assigneeStrategy === 'specific'
+        assigneeUserId: input.assigneeUserId
+          ? input.assigneeUserId
+          : step.assigneeStrategy === 'specific'
             ? String(step.assigneeUserId)
             : step.assigneeStrategy === 'actor'
               ? String(tx.actor)

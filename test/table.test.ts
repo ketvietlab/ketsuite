@@ -171,7 +171,20 @@ test('table: the application table claims the data-table pattern, so the design 
   // it — otherwise the row swallows the click.
   assert.match(
     styles,
-    /:is\(a, button, summary, input, select, textarea\):not\(\[data-ui="row-link"\]\) \{\s*position: relative;\s*z-index: 1;/u,
+    /:is\(a, button, summary, input, select, textarea\):not\(\[data-ui="row-link"\]\):not\(\[aria-hidden="true"\]\):not\(\s*\[type="hidden"\]\s*\) \{\s*position: relative;\s*z-index: 1;/u,
+  )
+})
+
+test('table: row actions stay on one line on a wide screen, so every row keeps one height', () => {
+  // A tight table used to stack a row's buttons and double that row's height. The
+  // table scrolls instead; stacked phone rows are left free to wrap.
+  const styles = readFileSync(
+    new URL('../packages/design-system/src/patterns/data-table/styles.css', import.meta.url),
+    'utf8',
+  )
+  assert.match(
+    styles,
+    /@media \(min-width: 48rem\) \{\s*:where\(\[data-kv-design-system\]\)\s*\[data-ui="table-scroll"\]\[data-pattern="data-table"\]\s*\[data-ui="cell"\]\s*> \[data-ui="action-group"\] \{\s*flex-wrap: nowrap;/u,
   )
 })
 

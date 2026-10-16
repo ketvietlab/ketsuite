@@ -92,3 +92,29 @@ test('unavailable choices expose a separate explanation and cannot select a diff
   assert.match(out, /<span data-flow="choice-copy">Progress<small>Waiting for reviewer<\/small><\/span>/)
   assert.doesNotMatch(out, /<span id="pending-value">[^<]*Waiting/)
 })
+test('a consumer-owned menu builds its options only while open and keeps the trigger and listbox', () => {
+  const field = (open) =>
+    renderToStaticString(
+      FlowChoiceField({
+        id: 'row-status',
+        label: 'Trạng thái KV-142',
+        size: 'sm',
+        value: 'todo',
+        options: [
+          { value: 'todo', label: 'Cần làm', content: 'Cần làm' },
+          { value: 'done', label: 'Xong', content: 'Xong' },
+        ],
+        menu: { open, onToggle: () => {} },
+        onChange: () => {},
+      }),
+    )
+  const closed = field(false),
+    open = field(true)
+  assert.doesNotMatch(closed, /data-flow="choice-option"/)
+  for (const out of [closed, open]) {
+    assert.match(out, /popovertarget="row-status-menu"/)
+    assert.match(out, /id="row-status-menu" popover="auto" role="listbox"/)
+    assert.match(out, /<span id="row-status-value">Cần làm<\/span>/)
+  }
+  assert.equal((open.match(/data-flow="choice-option"/g) ?? []).length, 2)
+})

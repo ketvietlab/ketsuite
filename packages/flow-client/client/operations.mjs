@@ -24,8 +24,8 @@ import {
   FlowCalendar,
   FlowCalendarEvent,
 } from '@ketvietlab/flow-ui/workspace'
-import { calendarPeriod, projectTasks } from './operations-model.mjs'
-import { canManageScope } from './access-model.mjs'
+import { calendarPeriod } from './operations-model.mjs'
+import { canManageScope, accessFor } from './access-model.mjs'
 import { todayDate, shiftPeriod } from './timeline.mjs'
 export const operationRoutes = new Set(['forms', 'calendar', 'inbox', 'saved-views', 'personal-settings'])
 export function createOperations(ctx) {
@@ -75,14 +75,31 @@ export function createOperations(ctx) {
       done,
     )
   const input = (id, label, value = '', type = 'text', required = false) =>
-    FlowInput({ id, label, value, type, required, disabled: !ctx.canWrite() })
+    FlowInput({ id, label, value, type, required, error: ctx.formError()?.[id], disabled: !ctx.canWrite() })
   const select = (name, label, value, options, onChange) =>
-    FlowSelectField({ name, label, value, options, onChange, disabled: !ctx.canWrite() })
+    FlowSelectField({
+      name,
+      label,
+      value,
+      options,
+      onChange,
+      error: ctx.formError()?.[name],
+      disabled: !ctx.canWrite(),
+    })
   const canManage = () => ctx.canWrite() && canManageScope(d(), 'project', ctx.projectId())
-  const users = () =>
-    d()
-      .members.filter((m) => m.status === 'active' && m.role !== 'guest')
-      .map((m) => ({ value: m.id, label: m.name }))
+  const canManageView = (view) =>
+    ctx.canWrite() &&
+    (!view.ownerId || view.ownerId === d().user.id || canManageScope(d(), 'company', d().company.id))
+  const recipients = () => {
+    const project = d().projects.find((p) => p.id === ctx.projectId() && !p.archived)
+    return project
+      ? d()
+          .members.filter(
+            (m) => m.status === 'active' && m.role !== 'guest' && accessFor(d(), project, m.id).role,
+          )
+          .map((m) => ({ value: m.name, label: m.name }))
+      : []
+  }
   const list = (rows, empty = tr('flow.ui.no.data.yet')) =>
     rows.length
       ? FlowList({
@@ -94,11 +111,10 @@ export function createOperations(ctx) {
         })
       : FlowEmpty({ title: empty })
   const form = (body, fn, label = tr('flow.ui.save'), cancel = () => editor.set('')) =>
-    html`<form on:submit=${(e) => {
+    html`<form on:input=${() => ctx.clearCompletedFeedback?.()} on:submit=${(e) => {
       e.preventDefault()
       fn(Object.fromEntries(new FormData(e.currentTarget)))
-    }}>${stack(body, FlowInline({ align: 'end', children: html`${cancel ? btn(tr('flow.ui.cancel'), cancel) : null}${FlowButton({ label, type: 'submit', variant: 'primary', disabled: !ctx.canWrite() || ctx.busy() })}` }))}</form>`
-  const tasks = () => projectTasks(d(), ctx.workspaceId(), ctx.projectId())
+    }}>${stack(body, FlowInline({ align: 'end', children: html`${cancel ? FlowButton({ label: tr('flow.ui.cancel'), onClick: () => ctx.requestLeave(cancel), disabled: ctx.busy() }) : null}${FlowButton({ label, type: 'submit', variant: 'primary', disabled: !ctx.canWrite(), loading: ctx.busy() })}` }))}</form>`
   const openTask = (t) => ctx.navigate('issue', { id: t.id, project: t.projectId })
   const taskRow = (t) =>
     FlowListItem({
@@ -109,17 +125,18 @@ export function createOperations(ctx) {
   const forms = () => {
     const items = d().forms.filter((f) => f.projectId === ctx.projectId()),
       f = items.find((x) => x.id === selected())
-    const edit = (f) => {
-      selected.set(f?.id ?? '')
-      fields.set(
-        structuredClone(
-          f?.fields ?? [
-            { id: 'details', label: tr('flow.ui.request.details'), type: 'textarea', required: true },
-          ],
-        ),
-      )
-      formTab.set('design')
-    }
+    const edit = (f) =>
+      ctx.requestLeave(() => {
+        selected.set(f?.id ?? '')
+        fields.set(
+          structuredClone(
+            f?.fields ?? [
+              { id: 'details', label: tr('flow.ui.request.details'), type: 'textarea', required: true },
+            ],
+          ),
+        )
+        formTab.set('design')
+      })
     return FlowSection({
       title: tr('flow.ui.intake.forms'),
       actions: btn(tr('flow.ui.create.form'), () => edit(), true, !canManage()),
@@ -135,10 +152,11 @@ export function createOperations(ctx) {
               { value: 'preview', label: tr('flow.ui.preview.submit') },
               { value: 'responses', label: tr('flow.ui.responses') },
             ],
-            onChange: (v) => {
-              if (v === 'design' && !f) edit()
-              else formTab.set(v)
-            },
+            onChange: (v) =>
+              ctx.requestLeave(() => {
+                if (v === 'design' && !f) edit()
+                else formTab.set(v)
+              }),
           }),
         }),
         formTab() === 'manage'
@@ -188,8 +206,10 @@ export function createOperations(ctx) {
                 select(
                   'assignee',
                   tr('flow.ui.recipient'),
-                  f?.assignee ?? d().people[0],
-                  d().people.map((p) => ({ value: p, label: p })),
+                  f?.assignee ?? recipients()[0]?.value ?? '',
+                  f?.assignee && !recipients().some((p) => p.value === f.assignee)
+                    ? [{ value: f.assignee, label: f.assignee, disabled: true }, ...recipients()]
+                    : recipients(),
                 ),
                 select('priority', tr('flow.ui.default.priority'), f?.priority ?? 'normal', [
                   { value: 'normal', label: tr('flow.ui.normal') },
@@ -287,7 +307,13 @@ export function createOperations(ctx) {
                         input('request-title', tr('flow.ui.request.title'), '', 'text', true),
                         ...f.fields.map((x) =>
                           x.type === 'textarea'
-                            ? FlowTextarea({ id: 'answer-' + x.id, label: x.label, required: x.required })
+                            ? FlowTextarea({
+                                id: 'answer-' + x.id,
+                                label: x.label,
+                                required: x.required,
+                                error: ctx.formError()?.['answer-' + x.id],
+                                disabled: !ctx.canWrite(),
+                              })
                             : input(
                                 'answer-' + x.id,
                                 x.label,
@@ -506,12 +532,13 @@ export function createOperations(ctx) {
                 }),
                 btn(
                   tr('flow.ui.manage'),
-                  () => {
-                    selected.set(v.id)
-                    editor.set('view')
-                  },
+                  () =>
+                    ctx.requestLeave(() => {
+                      selected.set(v.id)
+                      editor.set('view')
+                    }),
                   false,
-                  !ctx.canWrite(),
+                  !canManageView(v),
                 ),
               ),
             }),
@@ -540,9 +567,16 @@ export function createOperations(ctx) {
                 ),
                 btn(
                   tr('flow.ui.archive.view'),
-                  () => run('view.save', { id: v.id, archive: true }, () => editor.set('')),
+                  () =>
+                    ctx.confirmAction({
+                      title: tr('flow.ui.archive.view'),
+                      message: tr('flow.ui.confirmArchiveView', [v.title]),
+                      label: tr('flow.ui.archive.view'),
+                      action: () =>
+                        run('view.save', { id: v.id, title: v.title, archive: true }, () => editor.set('')),
+                    }),
                   false,
-                  !ctx.canWrite(),
+                  !canManageView(v),
                 ),
               ),
             })

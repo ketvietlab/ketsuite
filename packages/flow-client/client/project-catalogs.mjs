@@ -1,6 +1,7 @@
 import { tr } from './i18n.mjs'
 export const catalogColors = ['neutral', 'blue', 'green', 'yellow', 'red']
 export const statusKinds = ['todo', 'progress', 'review', 'done']
+export const taskTypeIcons = ['list', 'flag', 'layers']
 export const defaultProjectStatuses = [
   {
     id: 'planned',

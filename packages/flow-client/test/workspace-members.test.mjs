@@ -9,13 +9,15 @@ const setup = ({
   canWrite = true,
   record = 'bao',
   params = { accessScope: 'workspace', target: 'product' },
+  errors = {},
 } = {}) => {
   const data = createOrganizationSession('baseline', undefined, { profile: 'realistic' }).call(
       'flow.workspace.bootstrap',
       { companyId: 'demo' },
     ).value,
     nav = [],
-    mutations = []
+    mutations = [],
+    confirms = []
   const org = createOrganization({
     data: signal(data),
     workspaceId: () => 'product',
@@ -23,16 +25,29 @@ const setup = ({
     record: () => record,
     params: () => params,
     canWrite: () => canWrite,
+    formError: () => errors,
     busy: () => false,
-    mutate: (fn, args) => mutations.push(args),
+    mutate: (_fn, args) => mutations.push(args),
     call: async () => {},
     navigate: (key, params) => nav.push([key, params]),
     close: () => {},
     isModal: () => true,
     switchWorkspace: () => {},
+    confirmAction: (request) => confirms.push(request),
   })
-  return { data, nav, mutations, org }
+  return { data, nav, mutations, confirms, org }
 }
+test('organization forms associate server field errors with the native editable control', () => {
+  const { org } = setup({
+    errors: { title: 'Enter a name with content.', description: 'Keep the description shorter.' },
+  })
+  const output = renderToStaticString(org.modal('workspace-new'))
+  assert.match(output, /id="title"[^>]*aria-invalid="true"[^>]*aria-describedby="title-error"/)
+  assert.match(output, /id="title-error"[^>]*>Enter a name with content\./)
+  assert.match(output, /id="description"[^>]*aria-invalid="true"[^>]*aria-describedby="description-error"/)
+  assert.match(output, /id="description-error"[^>]*>Keep the description shorter\./)
+})
+
 const handlers = (node, marker, event, out = []) => {
   if (!node || typeof node !== 'object') return out
   if (Array.isArray(node)) {
@@ -99,20 +114,8 @@ test('clicking a row, its name or its button opens that person in the access mod
   assert.deepEqual(nav.pop(), ['member-access', { id: 'mai', accessScope: 'workspace', target: 'product' }])
 })
 
-test('search narrows the table and explains an empty result', () => {
-  const { org } = setup()
-  handlers(org.topSearch('workspace-members'), 'type="search"', 'input')[0]({ target: { value: 'person9' } })
-  const html = renderToStaticString(org.view('workspace-members'))
-  assert.equal(html.match(/<tr data-open="true"/g)?.length, 1)
-  assert.match(html, /Nguyễn Thảo Vy/)
-  handlers(org.topSearch('workspace-members'), 'type="search"', 'input')[0]({
-    target: { value: 'nobody-here' },
-  })
-  assert.match(renderToStaticString(org.view('workspace-members')), /No member matches “nobody-here”/)
-})
-
 test('the member modal explains every source and scopes each change to that person', () => {
-  const { org, nav, mutations } = setup(),
+  const { org, nav, mutations, confirms } = setup(),
     html = renderToStaticString(org.modal('member-access'))
   assert.match(html, /Trần Quốc Bảo · bao@example\.test/)
   assert.match(html, /Workspace · Team Engineering/)
@@ -124,6 +127,10 @@ test('the member modal explains every source and scopes each change to that pers
   assert.deepEqual(nav.pop(), ['access-grant', { accessScope: 'workspace', target: 'product', user: 'bao' }])
   const remove = handlers(org.modal('member-access'), 'data-flow="button"', 'click')[0]
   remove()
+  assert.equal(mutations.length, 0, 'revoking access asks for confirmation first')
+  const confirm = confirms.pop()
+  assert.equal(confirm.tone, 'danger')
+  confirm.action()
   assert.equal(mutations.pop().action, 'access.revoke')
 })
 
@@ -171,7 +178,7 @@ test('the prefilled member is the one actually granted when the form is submitte
   assert.ok(data.members.some((m) => m.id === 'bao'))
 })
 
-test('search and the grant action sit in the shell topbar like tasks and documents', () => {
+test('the grant action sits in the shell topbar and people are found through the sidebar Spotlight', () => {
   const { org, nav } = setup()
   assert.doesNotMatch(
     renderToStaticString(org.view('workspace-members')),
@@ -185,9 +192,4 @@ test('search and the grant action sit in the shell topbar like tasks and documen
   assert.deepEqual(nav.pop(), ['access-grant', { accessScope: 'workspace', target: 'product' }])
   assert.equal(setup({ canWrite: false }).org.topAction('workspace-members'), null)
   assert.equal(org.topAction('organization-members'), null)
-  assert.match(
-    renderToStaticString(org.topSearch('workspace-members')),
-    /type="search"[^>]*aria-label="Search members"/,
-  )
-  assert.equal(org.topSearch('organization-members'), null)
 })

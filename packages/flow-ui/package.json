@@ -56,8 +56,8 @@
   },
   "dependencies": {
     "@ketvietlab/design-system": "0.1.41",
-    "@ketvietlab/ketjs": "0.2.0",
-    "@ketvietlab/ketjs-view": "0.2.0",
+    "@ketvietlab/ketjs": "0.5.0",
+    "@ketvietlab/ketjs-view": "0.5.0",
     "@ketvietlab/ketsuite": "0.1.41"
   },
   "devDependencies": {

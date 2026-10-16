@@ -242,7 +242,8 @@ test('the store keeps the cadence with the project and refuses sprints that brea
   )
   assert.match(sprint('core', 'Overlap', '2026-10-01', '2026-10-10').message, /Trùng lịch/)
   assert.match(
-    sprint('core', 'kv · sprint 13', '2027-01-04', '2027-01-17').message,
+    sprint('core', d.sprints.find((s) => s.id === 's13').title.toLowerCase(), '2027-01-04', '2027-01-17')
+      .message,
     /Tên sprint đã có/,
     'names are compared without case because tasks point at sprints by name',
   )
@@ -266,13 +267,13 @@ test('the store keeps the cadence with the project and refuses sprints that brea
       expectedVersion: task.version,
       idempotencyKey: 'to-kanban',
       projectId: kanban,
-      sprint: 'KV · Sprint 13',
+      sprint: 'Sprint 13',
     }).message,
     /Kanban/,
     'a Kanban project takes no sprint',
   )
   assert.equal(
-    c('flow.issue.assignSprint', { id: task.id, sprint: 'KV · Sprint 13', idempotencyKey: 'own' }).code,
+    c('flow.issue.assignSprint', { id: task.id, sprint: 'Sprint 13', idempotencyKey: 'own' }).code,
     undefined,
     'its own project sprint is fine',
   )
@@ -358,7 +359,7 @@ test('a Kanban project has no Sprint tab, field or form; a sprint project propos
     ...(/name="sprint"[\s\S]*?<\/select>/.exec(page)?.[0] ?? '').matchAll(/<option value="([^"]+)"/g),
   ].map((m) => m[1])
   assert.ok(
-    options.includes('KV · Sprint 13') && !options.some((o) => /^(OPS|DOC|MOB) /.test(o)),
+    options.includes('Sprint 13') && !options.some((o) => /^(OPS|DOC|MOB) /.test(o)),
     'only sprints of the task project are offered: ' + options.join(', '),
   )
   handlers(view.flow.view(), 'id=projectId', 'change')[0]({ target: { value: kanban } })
@@ -384,7 +385,7 @@ test('a Kanban project has no Sprint tab, field or form; a sprint project propos
     ...(/name="task-sprint"[\s\S]*?<\/select>/.exec(page)?.[0] ?? '').matchAll(/<option value="([^"]+)"/g),
   ].map((m) => m[1])
   assert.ok(
-    detail.includes('KV · Sprint 13') && !detail.some((o) => /^(OPS|DOC|MOB) /.test(o)),
+    detail.includes('Sprint 13') && !detail.some((o) => /^(OPS|DOC|MOB) /.test(o)),
     'task detail offers only its project sprints: ' + detail.join(', '),
   )
   view.close()

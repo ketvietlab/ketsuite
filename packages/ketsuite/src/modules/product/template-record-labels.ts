@@ -1,7 +1,10 @@
-/** Shared runtime copy for template context responses and the template page before its read completes. */
+/**
+ * Shared runtime copy for template context responses and the template page before its read completes.
+ * On the page `recordModal.close` names the close control of its dialogs; the way back is a page action.
+ */
 export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>> = {
   vi: {
-    'recordModal.close': 'Về danh sách',
+    'recordModal.close': 'Đóng',
     'recordModal.loading': 'Đang tải…',
     'recordModal.loadFailed': 'Không đọc được sản phẩm.',
     'recordModal.notFound': 'Sản phẩm không còn tồn tại hoặc bạn không có quyền xem.',
@@ -14,7 +17,7 @@ export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>>
     'recordModal.uploadFailed': 'Không tải được tệp lên. Hãy thử lại.',
   },
   en: {
-    'recordModal.close': 'Back to list',
+    'recordModal.close': 'Close',
     'recordModal.loading': 'Loading…',
     'recordModal.loadFailed': 'The product could not be read.',
     'recordModal.notFound': 'The product is gone or you cannot see it.',

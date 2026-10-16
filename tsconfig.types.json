@@ -14,5 +14,9 @@
     "packages/website-client/client/**/*",
     "packages/website-client/server/**/*"
   ],
-  "exclude": ["packages/*/dist", "node_modules"]
+  "exclude": [
+    "packages/*/dist",
+    "node_modules",
+    "packages/ketsuite/src/modules/backend/design/client/mermaid"
+  ]
 }

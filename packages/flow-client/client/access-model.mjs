@@ -13,7 +13,7 @@ export function accessFor(data, project, userId, workspaceId = project.workspace
   const member = data.members.find((m) => m.id === userId && m.status === 'active')
   if (!member || project.companyId !== data.company.id) return { role: null, sources: [] }
   const sources = []
-  const teamIds = data.teams.filter((t) => t.memberIds.includes(userId)).map((t) => t.id)
+  const teamIds = data.teams.filter((t) => !t.archived && t.memberIds.includes(userId)).map((t) => t.id)
   for (const grant of data.grants) {
     const direct = grant.subjectType === 'user' && grant.subjectId === userId
     const team = member.role !== 'guest' && grant.subjectType === 'team' && teamIds.includes(grant.subjectId)
@@ -89,6 +89,6 @@ export function canManageScope(data, scope, targetId, userId = data.user.id) {
       g.role === 'admin' &&
       (g.subjectType === 'user'
         ? g.subjectId === userId
-        : data.teams.some((t) => t.id === g.subjectId && t.memberIds.includes(userId))),
+        : data.teams.some((t) => !t.archived && t.id === g.subjectId && t.memberIds.includes(userId))),
   )
 }

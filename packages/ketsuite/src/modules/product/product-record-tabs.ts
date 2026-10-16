@@ -1,4 +1,5 @@
 import type { Ctx } from '@ketvietlab/ketjs'
+import { functionsNamedBy } from '../../ui/fill-needs.ts'
 
 type Lang = 'vi' | 'en'
 
@@ -25,3 +26,21 @@ export const recordTabsFor = (
       return [{ id: fill.by, label: message(`${fill.by}.productTemplateTab`) ?? fill.by, island }]
     })
 }
+
+/**
+ * The islands filled into a joint the record page places itself (activity, chatter),
+ * for this viewer: a fill naming a function they may not call in its condition
+ * (`{% if may.product_mail_backend.timeline %}`) is left out, as the server page
+ * leaves it out when it renders the joint (ui/fill-needs.ts).
+ */
+export const recordIslandsFor = (
+  ctx: Pick<Ctx, 'manifest'>,
+  joint: string,
+  can: (fn: string) => boolean,
+): Array<{ id: string; island: string }> =>
+  ctx.manifest.fills
+    .filter((fill) => fill.joint === joint && functionsNamedBy(fill.template).every(can))
+    .flatMap((fill) => {
+      const island = /\{%\s*island\s+"([^"]+)"\s*%\}/u.exec(fill.template)?.[1]
+      return island ? [{ id: fill.by, island }] : []
+    })

@@ -49,6 +49,7 @@ export const joints: Record<string, JointDef> = {
   /** The far end of the topbar, before the identity strip. */
   'topbar.end': { multiple: true },
   // The foot of the sidebar: a module with a queue of anything can put its count
-  // there, beside who you are signed in as.
-  'sidebar.foot': { props: { lang: 'text?' }, multiple: true },
+  // there, beside who you are signed in as. `may` answers the functions a fill
+  // names in its condition, so a count the viewer may not read is not placed.
+  'sidebar.foot': { props: { lang: 'text?', may: 'json?' }, multiple: true },
 }

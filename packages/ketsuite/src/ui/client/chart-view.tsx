@@ -4,7 +4,7 @@
 // every string already translated and already formatted in the company's
 // currency, because the translator and the currency both live on the server and
 // a browser bundle that reimplemented either would drift from the tables on the
-// same page. The same reason `crm-kanban-view` is handed its wording rather than
+// same page. The same reason a board island is handed its wording rather than
 // holding a second vocabulary.
 //
 // Colour is read from the stylesheet, not written here. A dataset carries a

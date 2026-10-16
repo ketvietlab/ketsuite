@@ -1,8 +1,9 @@
+import { applicationIcon } from './brand.ts'
 import { html, each, trustedMarkup } from '@ketvietlab/ketjs-view'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 
 // The public website and the Studio page that edits it are whole documents, not admin screens:
-// a visitor's page has no backend frame, and the Studio mounts its own client inside an empty one.
+// a visitor's page has no backend frame; Studio serves its own frame with hydrated data regions.
 // Every href and image arrives already checked; this file decides only how they read.
 
 export type WebsitePublicEntry = {
@@ -517,7 +518,13 @@ export function websitePublicDocument(p: WebsitePublicPage): TemplateResult {
   return html`<html lang=${p.locale}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${head.title}</title>${head.description ? html`<meta name="description" content=${head.description}>` : null}${openGraph}${head.noindex ? html`<meta name="robots" content="noindex">` : null}${head.canonical ? html`<link rel="canonical" href=${head.canonical}>` : null}<link rel="stylesheet" href="/_ket/asset/website_backend/public.css">${siteTheme ? html`<link rel="stylesheet" href=${siteTheme.stylesheet}>${siteTheme.script ? html`${trustedMarkup(`<script type="application/json" id="ket-theme-data">${siteTheme.data}</script>`)}<script type="module" src=${siteTheme.script}></script>` : null}` : null}${p.account || p.listing?.kind === 'signin' || p.listing?.kind === 'customer' ? html`<script type="module" src="/_ket/asset/website_backend/customer-account.mjs"></script>` : null}${p.listing?.kind === 'embed' ? html`${p.listing.style ? html`<link rel="stylesheet" href=${p.listing.style}>` : null}<script type="module" src=${p.listing.script}></script>` : null}${gtm}</head><body class="wt-public"><div class="wt-site" data-website-theme="default" data-site-theme=${siteTheme?.key ?? null} data-theme-accent=${siteTheme?.accent ?? null} data-theme-preset=${theme.preset} data-accent=${theme.accent} data-font=${theme.font} data-spacing=${theme.spacing} data-buttons=${theme.buttons}>${p.frame?.topbar ? trustedMarkup(p.frame.topbar) : null}${p.frame?.header ? trustedMarkup(p.frame.header) : html`<header class="wt-theme-header"><a href="/">${p.brand.logo ? html`<img class="wt-public-logo" src=${p.brand.logo} alt=${p.brand.title}>` : html`<strong>${p.brand.title}</strong>`}</a><nav aria-label=${vi ? 'Điều hướng chính' : 'Main navigation'}>${navigation(p.navigation)}</nav>${p.listing?.kind === 'search' ? null : html`<form class="wt-public-search-box" role="search" action="/search" method="get"><input type="search" name="q" maxlength="100" autocomplete="off" aria-label=${searchLabel} placeholder=${searchLabel}><button type="submit">${vi ? 'Tìm' : 'Search'}</button></form>`}${p.account ? html`<a class="wt-public-account" href=${p.account.href} data-customer-account>${vi ? 'Đăng nhập' : 'Sign in'}</a>` : null}</header>`}${p.frame?.beforeMain ? trustedMarkup(p.frame.beforeMain) : null}<main>${listing(p.listing, vi, p.brand)}${p.article ? html`<article class="wt-public-post"><h1>${p.article.title}</h1><div data-ui="flow-editor-content">${trustedMarkup(p.article.bodyHtml)}</div></article>` : null}${p.sections}</main>${p.frame?.afterMain ? trustedMarkup(p.frame.afterMain) : null}${p.frame?.footer ? trustedMarkup(p.frame.footer) : html`<footer class="wt-theme-footer">${p.footer}</footer>`}</div></body></html>`
 }
 
-/** The empty page the Studio client mounts into; `props` is its serialized starting state. */
-export function websiteStudioDocument(props: string): TemplateResult {
-  return html`<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Website · KétSuite</title><link rel="stylesheet" href="/_ket/asset/website_backend/website.css"><script type="module" src="/_ket/asset/website_backend/website.mjs"></script></head><body style="margin:0"><div data-kv-design-system data-theme="light" data-presentation="grouped" data-density="compact"><div id="website-studio" data-props=${props}></div></div></body></html>`
+/** The server owns the frame; the browser hydrates only the declared data regions. */
+export function WebsiteStudioDocument({
+  props,
+  frame,
+}: {
+  props: string
+  frame: TemplateResult
+}): TemplateResult {
+  return html`<html lang="vi" data-theme="light"><head>${applicationIcon}<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Website · KétSuite</title><link rel="stylesheet" href="/_ket/asset/website_backend/website.css"><script type="module" src="/_ket/asset/website_backend/website.mjs"></script></head><body style="margin:0"><div data-kv-design-system data-theme="light" data-presentation="grouped" data-density="compact"><div id="website-studio" data-props=${props}>${frame}</div></div></body></html>`
 }

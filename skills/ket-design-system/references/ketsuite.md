@@ -5,11 +5,33 @@ permissions, native routes and form behavior while applying the visual contract.
 
 ## Collection lists
 
+- A table's scroll region contains its inline size, so a wide table scrolls in that
+  region and a wrapping Stack or list island keeps the available width. `Stack` keeps
+  an `auto` column, so a Stack inside a table cell keeps its text width. Consumers must
+  not clip the stack, give it a `minmax(0, 1fr)` track, shrink its children or override
+  widths (DS README "Stack and local scrolling").
+
 - SearchFilter owns a 48rem maximum inline size for the complete search/filter
   group, including applied facets. It fills narrower containers, stays aligned
   to the start of the collection, and wraps long facet content. Lists and modules
   do not override that width or stretch the input across the remaining page.
 
+- Every AppShell requires an applications configuration and owns a 48px graphite
+  AppSwitcher before the primary sidebar: 18px Lucide icons, 36px desktop controls,
+  active app indicator, hover/focus names and native new-tab links. On mobile it is
+  hidden until the menu opens; 44px controls sit inside the drawer focus boundary.
+  KetSuite projects permitted deployment menus with `suiteApplications`: Kinh doanh/Sales and Website are enabled, Accounting/Flow/Phone/Chat are coming soon without URLs. Hide accounting and the duplicate Website destination from the principal menu; keep Website in the rail and put permitted administration links in its settings menu. Omit unavailable settings; never invent destinations or grant access through the registry.
+  Omit `helpLabel` when guides are not ready; otherwise the question-mark footer button emits `ket:screen-help-request` for
+  screen-owned HelpDrawer content. The standard drawer is modeless 512px on the
+  right for desktop, native fullscreen modal on mobile with focus/scroll return.
+  MarkdownContent renders safe GFM through a host lexer. All ecosystem Mermaid
+  diagrams use the public DS token-based light/dark theme and lazy rendering
+  lifetime: Inter 13px, semantic node states and consistent connectors. Content
+  may not override the theme; hosts supply pinned engines, the DS owns presentation. Below it, a settings
+  gear opens a shared right-side Menu on click/touch or keyboard, never hover.
+  Hosts supply `settings: { id, label, items }`; Escape closes this menu before the
+  mobile drawer.
+  Apps provide translated names and registry URLs; the DS never owns product URLs.
 - The KetSuite shell uses `AppBrand` in the sidebar header and `AppShell.location` for the
   main-column organisation context and tools. It does not show breadcrumbs or a full-width
   global topbar. Standalone page patterns retain their context contract. Do not recreate shell
@@ -19,6 +41,48 @@ permissions, native routes and form behavior while applying the visual contract.
   `docs/src/content/docs/ketsuite/design-system.md` for API examples.
 
 - Every full-page collection uses the KétSuite `ListPage`/`ListScreen` composition: app shell with its location band, title with primary creation and collection actions, filters and table tools, then `KetTable` and result footer.
+- `ListChrome.filterMenus` contains native Menu choices or DateRangePicker with
+  `variant="filter"`, not FormGrid. Check individual control/label width and the
+  opened phone disclosure; page overflow alone does not catch a collapsed input.
+  CSR date-boundary updates synchronize the saved range display without another
+  filter decision. The public runtime owns this observer and its disposal.
+- Every full-page collection is client islands over one paged read (DS README
+  "Collections are client islands"). Controls, results and footer islands share
+  one store; the server renders the frame and a loading state from the URL and
+  the first client render matches it. One read function returns `{ query, total,
+  page, pages, rows, counts, isEmpty }` for one page (`pageSize` ≤ 100), with
+  facet counts and the applied query so the URL can be corrected. Never load the
+  whole collection in the browser or read per row.
+- In a list island: real `href`s followed in place; push per decision; search
+  debounced, first keystroke pushes then replaces; `popstate` never writes; a
+  clamped page is replaced. Abort the previous read, ignore late answers, cache
+  recent queries, dim (`data-dimmed`, `aria-busy`) after about 150ms instead of
+  swapping to a skeleton; the first-load skeleton has the table's real height.
+  States: loading, failed + retry, offline + retry (and on `online`), denied,
+  empty on first use vs empty after filtering; omit counts after a failure. A
+  polite live region announces only the result range; focus stays on the
+  changed control. `PagerBar` keeps a step that reaches the end as the same
+  element, a disabled link (`role="link"`, `aria-disabled`, `tabindex="-1"`, no
+  `href`), so its focus outlasts the render; do not swap it for another element.
+  `KetTable` is rendered in its server form inside the
+  island; its `manager` mode is not the collection runtime.
+  Its `loading: { rows, lines? }` owns decorative rows and disables selection before
+  the first read; `busy` owns retained-result dimming. Client-only
+  `selectionState: { ids, anchor?, onChange }` keeps selection through pure renders.
+  Reset the associated native selection form on a new answer; `BulkActions` uses
+  native reset for its clear command. Do not style table placeholders in the product.
+  `ListChrome` wraps its filter controls within the available canvas at every width;
+  a long group must not widen the shell.
+  For controlled page selection use `bulkPresentation="replace"` so commands replace
+  the query toolbar and cleared selection restores the query.
+  Danger status badges use the component-owned `--kv-badge-danger-text` token for
+  small-text AA contrast on table/record surfaces; do not override its color in a list.
+- A filter `Menu` whose trigger shows the choice in effect is named for both
+  (`label: 'Cơ sở: Holiday Inn'`), as `DatePresetPicker` names its own. Its panel
+  stays in the viewport through the runtime; do not move panels with CSS.
+- New lists start as islands; an existing server-rendered list moves when it is
+  next changed. Verify with the read contract, server/client render equality,
+  a mutation-proven history harness and a slow read that dims.
 - Declare the create link in `frame.chrome.create`; the shared list wrapper places it at the right of the title, above filters. Use `headerActions` for an explicit permission-controlled primary action. Do not put a create link into `actions`, the filter region, or module-local positioned markup.
 - `actions` is for secondary collection commands beside the primary action in the header. Bulk operations go in `ListPage.selection` (KetSuite: `collectionSelection` with a `presentation: 'bar'` selection): while rows are selected, a `BulkActions` bar with the count and "Clear selection" replaces the filter row in place, beside the row checkboxes; it never adds a second bar or moves the primary action. Selection belongs to the visible page: server pagination, filtering and sorting start with nothing selected, as in Polaris and Gmail. Legacy screens may keep the header bulk menu until migrated. Preserve native links, permissions, query state and external bulk forms when moving controls. On narrow screens, the shared header stacks its action group beneath the title; modules must not override that layout.
 - Existing inline creation forms (such as period closing) may remain in their documented disclosure/body compatibility boundary. Do not move a whole form into the header to imitate a create button.
@@ -32,6 +96,64 @@ permissions, native routes and form behavior while applying the visual contract.
 - `TabPanel` has no left or right padding. Horizontal spacing comes from the containing modal/page or an explicit child layout. Do not add module-specific margin or padding to imitate a panel inset.
 - In a fixed-height tabbed surface, the tab bar stays visible and only `TabPanel` scrolls. The runtime sets that height from what it has actually rendered — the tallest tab shown so far, held as a min-height — so the surface never shrinks under the reader and a record whose tabs are all short is never given the height of the screen. Do not pin the height to the viewport.
 - A module supplies tab identity, translated label, URL, visibility, and panel view only. It must not wrap each tab in a custom body shell.
+
+## Opening a record: page, modal or peek
+
+- No presentation is mandatory. Choose once per record kind, by what the
+  record is, and use the same choice for its rows, cards and create action.
+- Record page (`RecordPage`/`WorkspacePage`) for a workspace: several tabs or
+  sections, money or line items, an activity log, work that outlasts a glance,
+  a URL people share or open from several places. Hospitality reservations,
+  stays and folios, orders and product templates are pages; creating one is a
+  page too (`/<collection>/new`), not a modal.
+- Record modal for a short record handled in the flow of a queue, where the
+  reader goes straight back to the next row: catalogue entries, configuration
+  items, triage tasks.
+- Peek (`Peek` in a `PeekLayout`, non-modal, no backdrop) only as a first
+  step from a dense spatial view (timeline, tape chart, board): summary, the
+  two or three commands taken there, and the way to the page. Never the only
+  way to edit the record. Contract below.
+- Whatever the choice, the collection keeps its state in the URL; a page goes
+  back through a header action carrying `returnTo`, a modal or peek closes onto
+  the same scroll position and selection. Child actions are nested dialogs.
+- The way back keeps the reader's place, not only the query: `returnTo` names
+  the row (`rowAnchorHref`, `#row=<id>`); the collection uses
+  `rememberRowAnchor` / `takeRowAnchor` / `restoreRowAnchor` and `KetTable`
+  `currentRow` (start-edge accent bar, `aria-current` on the row link). Back
+  and the page's native way back restore the row's position and table horizontal
+  scroll. On leave, the runtime adds measured `top`/`left` to the `returnTo`
+  fragment. An unmeasured shared link centres the row, focus lands on its
+  link (or stays on the row's own action that opened a modal), and a row that left
+  the results is announced. Do not keep the place
+  in storage or scroll offsets alone.
+- A stacked `KetTable` row is a phone summary: mark columns the record already
+  shows as `priority: 'tertiary'` and the stack hides them (never the cell
+  with the row link). Steps on a record page (amend, move, cancel) are dialogs
+  owned by the page URL (`dialog=<step>`); a rejected submit reopens the step
+  with `aria-invalid` on the field and the runtime focuses it.
+- Do not put a workspace record in a modal to keep the list visible, and do
+  not give a short catalogue entry a page of its own.
+
+## Peek
+
+Full contract: `packages/design-system/README.md` "Peek beside a spatial view".
+
+- `PeekLayout({ peekId, main, peek })` docks the peek: a `--kv-right-rail-width`
+  rail one layout gap from the view from 64rem, a bottom sheet capped at 60dvh
+  below 64rem. Do not build a drawer, side `ModalSheet` or custom rail for this.
+- Head: eyebrow (code), title, status badges, tools (previous, next, the record
+  as an expand icon, close) at the action target size with small glyphs. Body:
+  description lists and short notes only. Foot: the state's commands on one
+  row, at most one primary, omitted when none or while loading.
+- The peek is in the URL (`peek=<id>`): open pushes, another item or the pager
+  replaces, close pushes, Back/Forward restore without writing.
+- Invokers carry `aria-controls=<peekId>`, the shown item `aria-current="true"`.
+  The id sits on the layout's place, which stays in the DOM while closed, not on
+  the `Peek`. Attach `attachPeekInteractions(layout)` once from the island; it
+  owns focus, Escape and focus return. Do not hand-roll these.
+- Loading keeps the frame with a skeleton; failure is a `Notice` with retry;
+  a vanished record is an informational notice. Cache recent summaries and
+  read ahead on hover/focus.
 
 ## Record modals
 
@@ -61,6 +183,25 @@ permissions, native routes and form behavior while applying the visual contract.
   container is at least 56rem wide on desktop. Smaller desktop containers use
   the default two-column form; mobile stacks the fields. The form owns column
   and row gaps; fields retain their label, help, error and full-span contracts.
+- A form split into named `Section`s lays each section's fields with
+  `FormGrid({ columns: 3, items })`. It measures its own width and takes three
+  columns from 52rem on desktop, which a `default` dialog's body reaches; do
+  not enlarge the dialog for three columns. Below that it keeps two columns,
+  and a phone stacks them. Keep labels, options and field messages short enough
+  for a third of the dialog; put explanations once in muted section text or
+  the form notice. Give repeated sections an `id` so `Section` names its
+  region by its title (`aria-labelledby`). Source: design-system README
+  "Fields in the sections of a longer form".
+- The facts of a record page use `DescriptionList columns="auto"`: 12rem
+  columns fitted to the list's width, at most four, so a wide page fills its
+  row and its lists share their columns. A large record modal stacks its groups
+  at the dialog's full width and uses `auto` too; small and default dialogs and
+  cards keep a fixed count.
+- A rail of things to act on (what blocks the record) sets
+  `RecordPage asideWhenStacked="before"`: once the page stacks it leads the
+  record, in document and keyboard order; a wide page keeps it in the rail
+  column. Reference rails keep the default `after`. Source: design-system
+  README "Facts and the rail on a record page".
 
 - Define record modals with `RecordModalDefinition`; do not build a parallel overlay, history handler, loading state, or close flow in a module.
 - Use `RecordModalForm` for forms and named record commands for mutations. Views never call `fetch`, mutate history, query the document, or refresh the collection themselves.
@@ -72,11 +213,9 @@ permissions, native routes and form behavior while applying the visual contract.
 
 ## Record pages for administration profiles
 
-- Choose the presentation by what the record is. An administration profile —
-  a user, a role, an access policy — is read top to bottom, linked to, and
-  returned to, so it is a record page at its own URL (`/admin/<things>/{id}`).
-  A transactional record (order, invoice, task, lead) keeps the large record
-  modal over its collection, so the reader keeps their place in the queue.
+- An administration profile — a user, a role, an access policy — is read top
+  to bottom, linked to, and returned to, so it is a record page at its own URL
+  (`/admin/<things>/{id}`) in the shape below.
 - A record page uses `RecordPage` at `width="default"` (56rem, no aside) and no
   tabs. Its blocks follow the reader's questions in order — who this is and how
   they sign in, where they are admitted, what they can do there, why (the roles),
@@ -104,8 +243,12 @@ permissions, native routes and form behavior while applying the visual contract.
   client adopts the same markup, so the page neither fetches on arrival nor
   mismatches during hydration. The trail ends at the collection with the
   reader's `returnTo`, and the collection's rows link to the page carrying it.
-- Creating stays a modal over the collection (`record=<kind>:new`); after
-  creating, the command navigates to the new page. A link written for the old
+- A record page reads as one long page: each group a PMS or CRM would put on a
+  tab is a titled `Surface` block (title 14/20/600) on the canvas, and its peer
+  groups are `Section`s (title 14/20/600 too) in `Stack({ divided: true })`, one
+  hairline between them. Tabs stay only where a block is a separate workspace.
+- Creating a short profile may stay a modal over the collection
+  (`record=<kind>:new`); after creating, the command navigates to the new page. A link written for the old
   modal (`?record=<kind>:<id>`) redirects to the page.
 
 
@@ -146,3 +289,35 @@ selection on close, and discards an incomplete selection. Short scheduling dialo
 use ModalSheet small. DateTimePicker progressively enhances one native wall-time
 field into date/time controls; its disposable runtime owns synchronization and
 validation. Preserve the canonical name, permission state, help and validation.
+
+`EmptyState` keeps complete, unbroken search terms inside narrow panels. Its grid and wrapping
+are owned by the public component; do not clip or truncate the message in a list consumer.
+Catalogue specimen: `empty-long-content`.
+
+### CSR accounting consumers
+
+`AppTopbar.search.mode="link"` leads directly to a search workspace and emits no
+native dialog/template/noscript subtree; `dialog` remains the default. `ListPage`
+accepts `busy` and `dimmed`: an island owns delay, stale reads and disposal; the
+pattern owns `aria-busy` and `--kv-opacity-pending`. `Peek.closeControl` accepts a
+public client trigger while keeping the summary non-modal. `ConfirmDialog` accepts
+`mode="client"`; its cancel command is handled by the client modal owner.
+
+Client-read record pages own `tab`, `dialog` and `dialogId` in browser history and
+retain their list trail. Record commands retain an idempotency intent across an
+uncertain response; changed input receives another intent, and success clears it.
+`recordChanged` exposes captured parent edits to a child decision; a posting
+confirmation must require saving those edits first. Runtime effects remain in the
+island. Static SSR shell props never carry business data, rights or field options.
+Peer Sections inside one Surface or modal use `Stack({ divided: true })`; its
+existing token hairline is mandatory, including in CSR presenters.
+
+### Exact values in adaptive metric cards
+
+Compose financial metrics with `CardGrid({ minimum: "wide" })`. Metric owns the bounded text column and wraps long exact values. Keep full amounts; no consumer descendant override. Public contract: design-system README, specimen `metric-exact-long-value`, Account producer tests and mutations. Account mock records compose inline Surface cards without tabs by the explicit user decision; peer sections inside each card remain divided.
+
+### Sidebar island slot height
+
+AppShell gives its sidebar's only child the available block size, including a disposable island wrapper. Navigation keeps its viewport geometry and internal scrolling; consumers do not patch sidebar descendants. Producer CSS check/mutation and Account browser geometry cover this contract. Account's breadcrumb-free canvas is an explicit user choice and still exposes a separate list-return link.
+
+Record runtime exposes `draftScope` (`record` / `dialog`) to namespace input IDs by owning layer. Route dialog metadata is present on both layers and must not determine control IDs. A refused submit focuses the first invalid control after rendering the retained draft.

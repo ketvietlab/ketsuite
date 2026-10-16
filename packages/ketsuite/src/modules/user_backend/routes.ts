@@ -325,7 +325,12 @@ export const routes: Record<string, RouteEntry> = {
         active: '/admin/users',
         body: async (_, frame) => {
           // The collection step returns to the list as it was left.
-          const trail = pageTrailItems(title, frame).map((item) => ({
+          const items = pageTrailItems(title, frame)
+          // Settings live on the app rail, outside the main navigation tree.
+          // Keep the collection step even when that tree has no active user menu.
+          if (!items.some((item) => 'href' in item && item.href === '/admin/users'))
+            items.unshift({ id: 'users', label: _('user_backend.users.title'), href: '/admin/users' })
+          const trail = items.map((item) => ({
             label: item.label,
             href: 'href' in item && item.href ? (item.href === '/admin/users' ? returnTo : item.href) : null,
           }))

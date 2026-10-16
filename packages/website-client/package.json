@@ -24,7 +24,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@ketvietlab/ketjs-view": "0.2.0",
+    "@ketvietlab/ketjs-view": "0.5.0",
     "@ketvietlab/design-system": "0.1.41",
     "@ketvietlab/ketsuite": "0.1.41"
   },

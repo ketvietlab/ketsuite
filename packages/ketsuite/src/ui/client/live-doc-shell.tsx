@@ -49,6 +49,7 @@ const LABELS = {
     imageCenter: 'Căn giữa',
     imageRight: 'Căn phải',
     toolbar: 'Định dạng',
+    floatingHint: 'Chọn văn bản để định dạng, hoặc nhấn Alt+F10. Escape để quay lại tài liệu.',
     editor: 'Mô tả công việc',
     blockType: 'Kiểu khối',
     p: 'Đoạn văn',
@@ -82,6 +83,7 @@ const LABELS = {
     imageCenter: 'Align center',
     imageRight: 'Align right',
     toolbar: 'Formatting',
+    floatingHint: 'Select text to format, or press Alt+F10. Escape returns to the document.',
     editor: 'Issue description',
     blockType: 'Block type',
     p: 'Paragraph',
@@ -115,6 +117,7 @@ const LABELS = {
     imageCenter: '居中',
     imageRight: '右对齐',
     toolbar: '書式',
+    floatingHint: 'テキストを選択するか、Alt+F10で書式を開きます。Escapeで本文に戻ります。',
     editor: '本文',
     blockType: 'ブロック形式',
     p: '段落',
@@ -400,6 +403,9 @@ export function liveDocShell(o: {
   tables?: boolean
   images?: boolean
   imageDisabled?: boolean
+  toolbar?: 'top' | 'floating'
+  surface?: 'framed' | 'plain'
+  readOnly?: boolean
 }): TemplateResult {
   const labels = labelsOf(o.lang)
   const mark = (key: string, glyph: string | TemplateResult, label: string) => (
@@ -421,8 +427,13 @@ export function liveDocShell(o: {
     <option value={value}>{labels[value]}</option>
   )
   return (
-    <section data-ui="flow-editor">
-      <div data-ui="flow-editor-toolbar" role="toolbar" aria-label={labels.toolbar}>
+    <section data-ui="flow-editor" data-toolbar={o.toolbar ?? 'top'} data-surface={o.surface ?? 'framed'}>
+      <div
+        data-ui="flow-editor-toolbar"
+        role="toolbar"
+        aria-label={labels.toolbar}
+        hidden={o.readOnly || o.toolbar === 'floating'}
+      >
         <select
           data-ui="form-control"
           data-flow-editor-block
@@ -472,11 +483,14 @@ export function liveDocShell(o: {
       <div
         data-ui="flow-editor-content"
         id={o.containerId}
-        contenteditable="true"
+        contenteditable={o.readOnly ? 'false' : 'true'}
         role="textbox"
         tabindex="0"
         aria-multiline="true"
         aria-label={labels.editor}
+        aria-readonly={o.readOnly ? 'true' : undefined}
+        aria-keyshortcuts={o.toolbar === 'floating' && !o.readOnly ? 'Alt+F10' : undefined}
+        title={o.toolbar === 'floating' && !o.readOnly ? labels.floatingHint : undefined}
       />
       <dialog data-ui="flow-editor-link-dialog" data-flow-editor-link-dialog aria-label={labels.linkTitle}>
         <div data-ui="flow-editor-link-body">

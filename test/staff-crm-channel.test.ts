@@ -295,9 +295,10 @@ test('staff CRM channel returns one narrow actionable detail with the canonical 
     summary: 'Call the buyer',
     dueDate: '2026-08-27',
   })
+  // A lead may be lost, never won.
   assert.deepEqual(
     (response.data.stageOptions as Row[]).map((stage) => stage.id),
-    ['crm-stage-new', 'crm-stage-qualified'],
+    ['crm-stage-new', 'crm-stage-qualified', 'crm-stage-lost'],
   )
   assert.deepEqual(response.data.assigneeOptions, [
     { id: 'admin', name: 'Administrator' },

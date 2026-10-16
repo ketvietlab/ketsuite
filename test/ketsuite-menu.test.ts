@@ -10,8 +10,11 @@ const manifest = compose([
   ...(deployment.themes ?? []),
 ])
 
+// `admin.*` headings are the blocks of the settings page the rail's gear opens.
 const configurationGroups = new Set([
+  'admin.access',
   'admin.config',
+  'admin.crm',
   'accounting.configuration',
   'hospitality.configuration',
   'pos.configGroup',

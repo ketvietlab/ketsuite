@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@ketvietlab/design-system": "0.1.41",
-    "@ketvietlab/ketjs-view": "0.2.0"
+    "@ketvietlab/ketjs-view": "0.5.0"
   },
   "publishConfig": {
     "access": "public",

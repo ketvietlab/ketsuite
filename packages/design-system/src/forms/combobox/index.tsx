@@ -42,6 +42,10 @@ export type ComboboxProps = {
   loading?: boolean
   loadingLabel?: string
   noResultsLabel?: string
+  /** Names the toggle that opens the options; the default is English, so a page in another language passes it. */
+  openLabel?: string
+  /** Names the toggle that closes the open options. */
+  closeLabel?: string
   span?: 'half' | 'full'
 }
 
@@ -71,7 +75,7 @@ const ComboControl = (
       <a
         data-ui="combobox-toggle"
         href={props.open ? props.closeHref : props.openHref}
-        aria-label={props.open ? 'Close options' : 'Open options'}
+        aria-label={props.open ? (props.closeLabel ?? 'Close options') : (props.openLabel ?? 'Open options')}
       >
         ▾
       </a>

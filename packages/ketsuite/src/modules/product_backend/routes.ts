@@ -12,6 +12,7 @@ import {
 import type {
   FilterOperator,
   FilterRule,
+  ListSearchSpec,
   ListState,
   RouteEntry,
   Route,
@@ -22,21 +23,19 @@ import {
   favoriteModal,
   productDetailScreen,
   productsScreen,
-  templateColumns,
   templatePageScreen,
   VARIANT_DETAIL_TABS,
   variantScreen,
-  VIEWS,
 } from './screens/index.ts'
+import { html, renderIsland, trustedMarkup } from '@ketvietlab/ketjs-view'
+import type { SearchFilterConfig } from '@ketvietlab/design-system'
 import { uomControl } from './relation-control.ts'
-import type { TemplateRow, VariantDetailTab, View } from './screens/index.ts'
+import { productWorkspaceContext } from './modal/product-workspace-context.ts'
+import type { VariantDetailTab } from './screens/index.ts'
+import { unitRoutes } from './units/routes.ts'
 import type { AttributeListRow } from './screens/attributes.tsx'
 import { attributeSearchFilterConfig } from './attributes-search.ts'
-import { PAGE_SIZE, colsHref, colsOf, pager, withParam } from '../backend/paging.ts'
 import { listSearchFilterConfig, loadListFavorites, searchFilterBar } from '../backend/search-filter.ts'
-import { tableGrid } from '../backend/ket-table.ts'
-import type { KetTableGroup } from '../backend/ket-table.ts'
-import type { TableSelection } from '../../ui/index.ts'
 import { backendPage } from '../../ui/index.ts'
 import {
   RECORD_NEW_ID,
@@ -44,10 +43,15 @@ import {
   readRecordModalTarget,
   recordModalCreateHref,
 } from '../../ui/record-modal.tsx'
-import { receiveAttachment } from '../storage/routes.ts'
+import { receiveAttachment, serveAttachment } from '../storage/routes.ts'
+import type { Attachment } from '../storage/routes.ts'
+import { productImageUrl } from '../../ui/client/product-image.ts'
 import { errorsOf, readForm, seeOther } from '../backend/forms.ts'
-import { productListSearch } from '../product/search.ts'
-import { adminPage, frameOf, inLocale, localeQuery, timezoneOf } from '../backend/screen.ts'
+import { PRODUCT_LIST_PAGE_SIZE, productListShape } from './list/read.ts'
+import { PRODUCT_LIST_KEY, productList, productListControls, productListFooter } from './list/island.tsx'
+import type { ProductListProps } from './list/island.tsx'
+import { LIST_LABEL_KEYS } from './list/messages.ts'
+import { adminPage, frameOf, inLocale, jointFor, localeQuery, timezoneOf } from '../backend/screen.ts'
 
 type MediaRow = {
   id: string
@@ -108,6 +112,19 @@ const templatePageHref = (url: URL, id: string, tab?: string | null): string =>
     url,
     `/admin/product/templates/${encodeURIComponent(id)}${tab ? `?${RECORD_TAB_PARAM}=${encodeURIComponent(tab)}` : ''}`,
   )
+/**
+ * The way back from a product's page: the list the reader opened it from, with its
+ * filters and the row it named (`#row=<id>`), when that is this catalogue.
+ */
+const listReturnOf = (url: URL): string => {
+  const raw = url.searchParams.get('returnTo')
+  if (raw) {
+    const target = new URL(raw, 'http://ket.local')
+    if (target.origin === 'http://ket.local' && target.pathname === '/admin/product/templates')
+      return `${target.pathname}${target.search}${target.hash}`
+  }
+  return inLocale(url, '/admin/product/templates')
+}
 const seeProduct = (id: string, url: URL, tab: string = productTabOf(url)) =>
   withHeaders(text('', { status: 303 }), {
     location: inLocale(url, `/admin/product/templates/${id}?tab=${tab}`),
@@ -120,16 +137,12 @@ const seeVariant = (
 ) => seeOther(inLocale(url, `/admin/product/templates/${templateId}/variants/${productId}?tab=${tab}`))
 
 const optionsFor = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) => {
-  const live = await ctx.live(req)
-  const taxEnabled = Boolean(live.functions['account.listTaxes'])
-  const [units, categories, attributes, brands, taxes] = (await Promise.all([
+  const [units, categories, attributes, brands] = (await Promise.all([
     ctx.call('uom.listUnits', {}, url, req),
     ctx.call('product.listCategories', {}, url, req),
     ctx.call('product.listAttributes', {}, url, req),
     ctx.call('product.listBrands', {}, url, req),
-    taxEnabled ? ctx.call('account.listTaxes', { typeTaxUse: 'sale' }, url, req) : Promise.resolve([]),
   ])) as [
-    Array<Record<string, unknown>>,
     Array<Record<string, unknown>>,
     Array<Record<string, unknown>>,
     Array<Record<string, unknown>>,
@@ -148,8 +161,6 @@ const optionsFor = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]
       description: row.path == null ? null : String(row.path),
     })),
     brands: brands.map((row) => ({ value: String(row.id), label: String(row.name) })),
-    taxes: taxes.map((row) => ({ value: String(row.id), label: String(row.name) })),
-    taxEnabled,
     variantAttributes: variantAttributes.map((row) => ({
       value: String(row.id),
       label: String(row.name),
@@ -184,26 +195,6 @@ const unitRootOf = (units: Array<Record<string, unknown>>, uomId: unknown): stri
 const invalidErrors = (url: URL, _: ReturnType<ServeContext['translate']>) =>
   url.searchParams.has('invalid') ? [_('product_backend.error.invalid')] : undefined
 
-type ProductListRow = {
-  id: string
-  name: string
-  type: string
-  categoryId: string | null
-  uomId: string | null
-  listPrice: number | string
-  variants?: unknown[]
-}
-
-const templateRow = (row: ProductListRow): TemplateRow => ({
-  id: row.id,
-  name: row.name,
-  type: row.type,
-  categoryId: row.categoryId,
-  uomId: row.uomId,
-  listPrice: row.listPrice,
-  variants: Array.isArray(row.variants) ? row.variants.length : 0,
-})
-
 const cloneState = (state: ListState): ListState => ({
   ...state,
   presets: [...state.presets],
@@ -214,7 +205,7 @@ const cloneState = (state: ListState): ListState => ({
   groupPages: { ...state.groupPages },
 })
 
-const customRuleOf = (url: URL, spec: ReturnType<typeof productListSearch>): FilterRule | null => {
+const customRuleOf = (url: URL, spec: ListSearchSpec): FilterRule | null => {
   if (url.searchParams.get('applyFilter') !== '1') return null
   const field = spec.filterable?.find((candidate) => candidate.key === url.searchParams.get('filterField'))
   const operator = url.searchParams.get('filterOp') as FilterOperator | null
@@ -259,107 +250,6 @@ const productFieldLabel = (
   return message && _.resolves(message) ? _(message) : fallback
 }
 
-const pathStartsWith = (path: unknown[], prefix: unknown[]): boolean =>
-  prefix.every((value, index) => JSON.stringify(path[index]) === JSON.stringify(value))
-
-const loadProductGroups = async (
-  ctx: ServeContext,
-  url: URL,
-  req: Parameters<Route>[1],
-  state: ListState,
-  timezone: string,
-  labels: {
-    categories: Map<string, string>
-    units: Map<string, string>
-    /** Names and thumbnails for a group's rows, batched the same way a page is. */
-    decorate: (rows: ProductListRow[]) => Promise<TemplateRow[]>
-  },
-  path: unknown[] = [],
-): Promise<KetTableGroup[]> => {
-  const groups = (await ctx.call(
-    'product.groupTemplates',
-    { state, path, timezone, limit: PAGE_SIZE },
-    url,
-    req,
-  )) as Array<{ key: unknown[]; count: number }>
-  const selected = state.groupBy[path.length]!
-  return Promise.all(
-    groups.map(async (group) => {
-      const value = group.key[0]
-      const nextPath = [...path, value]
-      const open = state.openGroups.some(
-        (candidate) => pathStartsWith(candidate, nextPath) && candidate.length === nextPath.length,
-      )
-      const next = cloneState(state)
-      next.openGroups = open
-        ? next.openGroups.filter((candidate) => !pathStartsWith(candidate, nextPath))
-        : [...next.openGroups, nextPath]
-      const label =
-        value == null
-          ? '—'
-          : selected.key === 'type'
-            ? ctx.translate(ctx.localeOf(url, req))(`product_backend.type.${String(value)}`)
-            : selected.key === 'categoryId'
-              ? (labels.categories.get(String(value)) ?? String(value))
-              : selected.key === 'uomId'
-                ? (labels.units.get(String(value)) ?? String(value))
-                : typeof value === 'boolean'
-                  ? String(value ? '✓' : '×')
-                  : String(value)
-      const childGroups =
-        open && path.length + 1 < state.groupBy.length
-          ? await loadProductGroups(ctx, url, req, state, timezone, labels, nextPath)
-          : undefined
-      const rows =
-        open && path.length + 1 === state.groupBy.length
-          ? await labels.decorate(
-              (await ctx.call(
-                'product.listTemplates',
-                {
-                  state,
-                  path: nextPath,
-                  timezone,
-                  withVariants: true,
-                  limit: PAGE_SIZE,
-                  offset: ((state.groupPages[JSON.stringify(nextPath)] ?? 1) - 1) * PAGE_SIZE,
-                },
-                url,
-                req,
-              )) as ProductListRow[],
-            )
-          : undefined
-      const pageKey = JSON.stringify(nextPath)
-      const page = state.groupPages[pageKey] ?? 1
-      const pagerHref = (target: number) => {
-        const paged = cloneState(state)
-        if (target <= 1) delete paged.groupPages[pageKey]
-        else paged.groupPages[pageKey] = target
-        return encodeListState(paged, url)
-      }
-      const from = (page - 1) * PAGE_SIZE + 1
-      const to = Math.min(page * PAGE_SIZE, Number(group.count))
-      const pager =
-        rows && Number(group.count) > PAGE_SIZE
-          ? {
-              label: `${from}-${to} / ${Number(group.count)}`,
-              prev: page > 1 ? pagerHref(page - 1) : undefined,
-              next: to < Number(group.count) ? pagerHref(page + 1) : undefined,
-            }
-          : undefined
-      return {
-        id: JSON.stringify(nextPath),
-        label,
-        count: Number(group.count),
-        open,
-        href: encodeListState(next, url),
-        children: childGroups,
-        rows,
-        pager,
-      }
-    }),
-  )
-}
-
 const mediaFor = (ctx: ServeContext, url: URL, req: Parameters<Route>[1], templateId: string) =>
   ctx.call('product_media.listMedia', { templateId }, url, req) as Promise<MediaRow[]>
 
@@ -394,6 +284,25 @@ const ownsVariantMedia = async (
  * URL. Nothing here holds state between requests.
  */
 export const routes: Record<string, RouteEntry> = {
+  ...unitRoutes,
+  // A product's image, for whoever may see product images (ui/client/product-image.ts).
+  // Anything else, and any file no product image links, is not found: the same answer
+  // for a refusal as for a miss, so the route says nothing about other files.
+  '/admin/product/images/{id}':
+    (ctx: ServeContext): Route =>
+    async (url, req, params) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return text('GET or HEAD', { status: 405 })
+      if (!(await ctx.allows('product_media.getMediaAttachment', url, req)))
+        return text('not found', { status: 404 })
+      const { attachment } = (await ctx.call(
+        'product_media.getMediaAttachment',
+        { attachmentId: params.id },
+        url,
+        req,
+      )) as { attachment: Attachment | null }
+      if (!attachment) return text('not found', { status: 404 })
+      return serveAttachment(ctx, url, req, attachment)
+    },
   '/admin/product/templates':
     (ctx: ServeContext): Route =>
     async (url, req) => {
@@ -402,9 +311,18 @@ export const routes: Record<string, RouteEntry> = {
       if (legacy?.kind === 'product.template') return seeOther(templatePageHref(url, legacy.id, legacy.tab))
       const lang = ctx.localeOf(url, req)
       const _ = ctx.translate(lang)
-      const asked = url.searchParams.get('view')
-      const view: View = (VIEWS as readonly string[]).includes(asked ?? '') ? (asked as View) : 'list'
-      const spec = productListSearch(table(ctx.manifest, 'product.Template'))
+      const live = (await ctx.live(req)).functions
+      // `live` is the same for every viewer; what this one may do is their allow-list.
+      const may = async (name: string) => Boolean(live[name]) && (await ctx.allows(name, url, req))
+      // Stock answers the list for a viewer who may read it, and adds its column; a
+      // viewer or an installation without stock gets the catalogue's own read.
+      const read = (await may('stock_backend.searchProductTemplates'))
+        ? 'stock_backend.searchProductTemplates'
+        : 'product_backend.searchTemplates'
+      const spec = productListShape(
+        table(ctx.manifest, 'product.Template'),
+        read.startsWith('stock_backend.'),
+      )
       const parsed = parseListState(spec, url)
       const favorites = await loadListFavorites(ctx, url, req, spec, cloneState(parsed.state))
       const hasExpandedState = ['q', 'preset', 'filter', 'group', 'sort', 'archived'].some((key) =>
@@ -441,29 +359,8 @@ export const routes: Record<string, RouteEntry> = {
         return withHeaders(text('', { status: 303 }), { location: encodeListState(next, clean) })
       }
       const state = parsed.state
-      const current = state.page
       const timezone = await timezoneOf(ctx, url, req)
-      const grouped = view === 'list' && state.groupBy.length > 0
-      const rows = grouped
-        ? []
-        : ((await ctx.call(
-            'product.listTemplates',
-            {
-              state,
-              timezone,
-              withVariants: true,
-              limit: PAGE_SIZE,
-              offset: (current - 1) * PAGE_SIZE,
-            },
-            url,
-            req,
-          )) as ProductListRow[])
-      const { count } = (await ctx.call('product.countTemplates', { state, timezone }, url, req)) as {
-        count: number
-      }
-      // The names are needed by every row, not only by a group header: a table
-      // that prints a category id where it means a category name is showing its
-      // own plumbing.
+      // The bar's choices name categories and units, not their ids.
       const [categoryRows, unitRows] = (await Promise.all([
         ctx.call('product.listCategories', {}, url, req),
         ctx.call('uom.listUnits', {}, url, req),
@@ -477,148 +374,135 @@ export const routes: Record<string, RouteEntry> = {
       }
       collectCategories(categoryRows)
       const unitMap = new Map(unitRows.map((row) => [String(row.id), String(row.name)]))
-      const canReadStock = Boolean((await ctx.live(req)).functions['stock.listProductConfigs'])
-      /** One media call per batch of rows, whether that batch is a page or a group. */
-      const decorate = async (batch: ProductListRow[]): Promise<TemplateRow[]> => {
-        if (!batch.length) return []
-        const templateIds = batch.map((row) => row.id)
-        const [media, stockConfigs] = (await Promise.all([
-          ctx.call('product_media.listPrimaryMedia', { templateIds }, url, req),
-          canReadStock
-            ? ctx.call('stock.listProductConfigs', { templateIds }, url, req)
-            : Promise.resolve([]),
-        ])) as [Array<Record<string, unknown>>, Array<Record<string, unknown>>]
-        const images = new Map(media.map((row) => [String(row.templateId), String(row.attachmentId)]))
-        const inventory = new Map(
-          stockConfigs.map((row) => [String(row.templateId), Boolean(row.isStorable)]),
-        )
-        return batch.map((row) => {
-          const attachmentId = images.get(String(row.id))
-          return {
-            ...templateRow(row),
-            uomName: row.uomId ? (unitMap.get(String(row.uomId)) ?? row.uomId) : '—',
-            categoryName: row.categoryId ? (categoryMap.get(String(row.categoryId)) ?? row.categoryId) : '—',
-            isStorable: canReadStock ? (inventory.get(String(row.id)) ?? false) : null,
-            image: attachmentId ? { src: `/files/${attachmentId}`, alt: row.name } : null,
-          }
-        })
-      }
-      const decoratedRows = await decorate(rows)
-      const groups = grouped
-        ? await loadProductGroups(ctx, url, req, state, timezone, {
-            categories: categoryMap,
-            units: unitMap,
-            decorate,
-          })
-        : undefined
-      const selection: TableSelection | undefined =
-        view === 'list'
-          ? {
-              formId: 'product-template-bulk',
-              action: inLocale(url, '/admin/product/templates/bulk'),
-              hidden: { returnTo: `${url.pathname}${url.search}` },
-              actions: [
-                { id: 'archive', label: _('backend.chrome.archive') },
-                { id: 'delete', label: _('backend.chrome.delete'), tone: 'danger' },
-              ],
-            }
-          : undefined
       const extensionActions = await ctx.joint(url, req, 'product_backend:catalogue.actions', {
         locale: localeQuery(url),
       })
+      // What the island reads with: the list's own URL, less the route modal over it.
+      const listUrl = new URL(url)
+      for (const key of ['modal', 'favoriteError']) listUrl.searchParams.delete(key)
+      const listHref = `${listUrl.pathname}${listUrl.search}`
       return adminPage(ctx, url, req, {
-        title: 'KetSuite',
-        translate: false,
+        title: 'product_backend.screen.title',
         body: async (_, frame) => {
-          const filterBar = await searchFilterBar(
-            ctx,
-            url,
-            req,
-            'product-template-filter',
-            listSearchFilterConfig(_, {
-              name: 'product-template-filter',
-              favoriteHref: (() => {
-                const next = new URL(url)
-                next.searchParams.set('modal', 'favorite')
-                return `${next.pathname}${next.search}`
-              })(),
-              fieldChoices: {
-                type: ['goods', 'service'].map((value) => ({
-                  value,
-                  label: _(`product_backend.type.${value}`),
-                })),
-                categoryId: [...categoryMap].map(([value, label]) => ({ value, label })),
-                uomId: [...unitMap].map(([value, label]) => ({ value, label })),
-              },
-              bodyId: 'product-template-list',
-              spec,
-              state,
-              favorites,
-              fieldLabel: (key, fallback) => productFieldLabel(_, key, fallback),
-              presetLabel: (key, fallback) =>
-                key === 'goods' || key === 'service'
-                  ? _(`product_backend.type.${key}`)
+          const groupLabels: Record<string, string> = {
+            type: _('product_backend.list.group.type'),
+            state: _('product_backend.list.group.state'),
+            stock: _('product_backend.list.group.state'),
+          }
+          const config = listSearchFilterConfig(_, {
+            name: 'product-template-filter',
+            favoriteHref: (() => {
+              const next = new URL(url)
+              next.searchParams.set('modal', 'favorite')
+              return `${next.pathname}${next.search}`
+            })(),
+            fieldChoices: {
+              type: ['goods', 'service'].map((value) => ({
+                value,
+                label: _(`product_backend.type.${value}`),
+              })),
+              categoryId: [...categoryMap].map(([value, label]) => ({ value, label })),
+              uomId: [...unitMap].map(([value, label]) => ({ value, label })),
+            },
+            bodyId: 'product-template-list',
+            spec,
+            state,
+            favorites,
+            fieldLabel: (key, fallback) => productFieldLabel(_, key, fallback),
+            presetLabel: (key, fallback) =>
+              key === 'goods' || key === 'service'
+                ? _(`product_backend.type.${key}`)
+                : key === 'outOfStock'
+                  ? _('product_backend.list.preset.outOfStock')
                   : productFieldLabel(_, key === 'sale' ? 'saleOk' : 'purchaseOk', fallback),
-              labels: {
-                searchLabel: _('product_backend.search.label'),
-                searchPlaceholder: _('product_backend.chrome.search'),
-              },
-              applyInput: { listKey: spec.key, returnTo: `${url.pathname}${url.search}` },
-              functions: {
-                apply: 'product_backend.applySearchFilter',
-                saveFavorite: 'product_backend.saveSearchFavorite',
-                deleteFavorite: 'product_backend.deleteSearchFavorite',
-                setDefaultFavorite: 'product_backend.setDefaultSearchFavorite',
-              },
+            labels: {
+              searchLabel: _('product_backend.search.label'),
+              searchPlaceholder: _('product_backend.chrome.search'),
+            },
+            applyInput: { listKey: spec.key, returnTo: listHref },
+            functions: {
+              apply: 'product_backend.applySearchFilter',
+              saveFavorite: 'product_backend.saveSearchFavorite',
+              deleteFavorite: 'product_backend.deleteSearchFavorite',
+              setDefaultFavorite: 'product_backend.setDefaultSearchFavorite',
+            },
+          })
+          // Expanded and applied as it changes, like every list; typed text stays in the field.
+          const search: SearchFilterConfig = {
+            ...config,
+            presentation: 'expanded',
+            applyOnInput: true,
+            size: 'default',
+            query: state.q ?? '',
+            facets: config.facets.filter((facet) => facet.type !== 'field'),
+            filters: config.filters.map((option) => {
+              // Out of stock, sold and purchased read as states of the product, beside
+              // "Include archived", so the bar keeps the mock's Type and Status choices.
+              const group = ['stock', 'sale', 'purchase'].includes(String(option.group))
+                ? 'state'
+                : option.group
+              return {
+                ...option,
+                ...(group
+                  ? { group, ...(groupLabels[group] ? { groupLabel: groupLabels[group] } : {}) }
+                  : {}),
+              }
             }),
-          )
-          const shown = colsOf(url)
-          const columns = templateColumns(_)
-            .filter((column) => column.key !== 'id' || shown.includes('id'))
-            .map((column) => {
-              if (!spec.sortable?.some((field) => field.key === column.key)) return column
-              const next = cloneState(state)
-              next.sort = [
-                {
-                  key: column.key,
-                  dir: state.sort[0]?.key === column.key && state.sort[0].dir === 'asc' ? 'desc' : 'asc',
-                },
-              ]
-              next.page = 1
-              next.groupPages = {}
-              return { ...column, sortHref: encodeListState(next, url) }
-            })
-          const grid =
-            view === 'list'
-              ? await tableGrid(ctx, url, req, 'product-template-table', {
-                  columns,
-                  rows: decoratedRows,
-                  total: count,
-                  idField: 'id',
-                  locale: _.locale === 'qps' ? 'en' : _.locale,
-                  rowHrefTemplate: templatePageHref(url, '__ROW_ID__').replace('__ROW_ID__', '{id}'),
-                  groupBy: state.groupBy.map((group) => group.key),
-                  groups,
-                  selection,
-                  page: current,
-                  sort: state.sort[0] ? { field: state.sort[0].key, direction: state.sort[0].dir } : null,
-                  pager: false,
-                  labels: {
-                    selectAll: _('backend.table.selectAll'),
-                    selectRow: _('backend.table.selectRow'),
-                    region: _('backend.table.results'),
-                    sortedAscending: _('product_backend.table.sortAscending'),
-                    sortedDescending: _('product_backend.table.sortDescending'),
-                    previousPage: _('backend.chrome.previous'),
-                    nextPage: _('backend.chrome.next'),
-                    loading: _('backend.relation.loading'),
-                    loadError: _('backend.error.failed.title'),
-                    retry: _('backend.relation.retry'),
-                    empty: _('product_backend.screen.empty.message'),
-                    emptyHint: _('product_backend.screen.empty.hint'),
-                  },
-                })
+          }
+          const labels = {
+            ...Object.fromEntries(LIST_LABEL_KEYS.map((key) => [key, _(`product_backend.list.${key}`)])),
+            region: _('backend.table.results'),
+            selectAll: _('backend.table.selectAll'),
+            selectRow: _('backend.table.selectRow'),
+            sortedAscending: _('product_backend.table.sortAscending'),
+            sortedDescending: _('product_backend.table.sortDescending'),
+            previousPage: _('backend.chrome.previous'),
+            nextPage: _('backend.chrome.next'),
+            loading: _('backend.relation.loading'),
+            loadError: _('backend.error.failed.title'),
+            retry: _('backend.relation.retry'),
+            empty: _('product_backend.screen.empty.message'),
+            emptyHint: _('product_backend.screen.empty.hint'),
+            typeGoods: _('product_backend.type.goods'),
+            typeService: _('product_backend.type.service'),
+            create: _('product_backend.create.title'),
+          }
+          // Who may not create or archive is offered no way to start, rather than a refusal at the end.
+          const [canCreate, canArchive, canDelete, images] = await Promise.all([
+            may('product.saveTemplate'),
+            may('product.archiveTemplate'),
+            may('product.deleteTemplates'),
+            may('product_media.getMediaAttachment'),
+          ])
+          const createHref = canCreate ? templatePageHref(url, RECORD_NEW_ID) : null
+          const bulk =
+            canArchive || canDelete
+              ? {
+                  action: inLocale(url, '/admin/product/templates/bulk'),
+                  archive: canArchive,
+                  delete: canDelete,
+                }
               : null
+          const listProps: ProductListProps = {
+            read,
+            href: listHref,
+            timezone,
+            lang: _.locale === 'en' ? 'en' : 'vi',
+            pageSize: PRODUCT_LIST_PAGE_SIZE,
+            labels: labels as ProductListProps['labels'],
+            search,
+            createHref,
+            bulk,
+            images,
+          }
+          // Three islands over one store, each in its slot of the page (list/island.tsx).
+          const part = (name: string, controller: typeof productList) =>
+            html`${trustedMarkup(renderIsland(name, controller, listProps, { tag: 'div', key: PRODUCT_LIST_KEY }))}`
+          const islands = {
+            controls: part('product.template-list-controls', productListControls),
+            body: part('product.template-list', productList),
+            footer: part('product.template-list-footer', productListFooter),
+          }
           const returnUrl = new URL(url)
           returnUrl.searchParams.delete('modal')
           returnUrl.searchParams.delete('favoriteError')
@@ -634,51 +518,16 @@ export const routes: Record<string, RouteEntry> = {
           // The route modal belongs inside backend.content so fragment open/close replaces it too.
           return productsScreen(
             _,
-            decoratedRows,
-            view,
-            (id) => templatePageHref(url, id),
             {
               ...frame,
-              chrome: {
-                create: {
-                  label: _('product_backend.create.title'),
-                  path: templatePageHref(url, RECORD_NEW_ID),
-                },
-                selection,
-                searchContent: filterBar,
-                pager: grouped ? null : pager(url, current, rows.length, count),
-                tailMenus:
-                  view === 'list'
-                    ? [
-                        {
-                          id: 'columns',
-                          label: _('backend.table.columns'),
-                          items: [
-                            {
-                              id: 'id',
-                              label: _('backend.table.id'),
-                              active: shown.includes('id'),
-                              path: colsHref(url)(
-                                shown.includes('id') ? shown.filter((key) => key !== 'id') : [...shown, 'id'],
-                              ),
-                            },
-                          ],
-                        },
-                      ]
-                    : [],
-                views: VIEWS.map((candidate) => ({
-                  id: candidate,
-                  label: _(`backend.chrome.view.${candidate}`),
-                  icon: candidate === 'kanban' ? 'layout-grid' : 'list',
-                  path: withParam(url, 'view', candidate),
-                  active: candidate === view,
-                })),
-              },
+              chrome: createHref
+                ? { create: { label: _('product_backend.create.title'), path: createHref } }
+                : {},
             },
-            grid,
-            count,
+            islands,
             extensionActions,
             favoriteOverlay,
+            _.locale === 'en' ? 'en' : 'vi',
           )
         },
       })
@@ -744,7 +593,10 @@ export const routes: Record<string, RouteEntry> = {
         return `${target.pathname}${target.search}`
       }
       if (req.method === 'POST') {
-        const spec = productListSearch(table(ctx.manifest, 'product.Template'))
+        const spec = productListShape(
+          table(ctx.manifest, 'product.Template'),
+          Boolean(ctx.manifest.functions['stock_backend.searchProductTemplates']),
+        )
         const state = parseListState(spec, new URL(returnTo, 'http://ket.local')).state
         const id = randomUUID()
         const result = (await ctx.callUnchecked(
@@ -797,7 +649,10 @@ export const routes: Record<string, RouteEntry> = {
       if (req.method !== 'GET') return text('GET or POST', { status: 405 })
       const rows = (await ctx.call('product.listAttributes', {}, url, req)) as AttributeListRow[]
       const live = await ctx.live(req)
-      const canCreate = Boolean(live.functions['product.saveAttributeDraft'])
+      // `live` is the same for every viewer: whether this one may create is their allow-list.
+      const canCreate =
+        Boolean(live.functions['product.saveAttributeDraft']) &&
+        (await ctx.allows('product.saveAttributeDraft', url, req))
       const filterBar = await searchFilterBar(
         ctx,
         url,
@@ -853,6 +708,7 @@ export const routes: Record<string, RouteEntry> = {
         ? seeOther(inLocale(url, '/admin/product/attributes'))
         : seeOther(inLocale(url, '/admin/product/attributes?invalid=1'))
     },
+  '/admin/product/templates/{id}/context': productWorkspaceContext,
   '/admin/product/templates/{id}':
     (ctx: ServeContext): Route =>
     async (url, req, params) => {
@@ -875,13 +731,20 @@ export const routes: Record<string, RouteEntry> = {
           tab: askedTab === 'variants' && !creating ? 'variants' : 'general',
           title,
           loading: _('backend.relation.loading'),
-          back: inLocale(url, '/admin/product/templates'),
-          ...(creating ? {} : { width: 'wide' }),
+          back: listReturnOf(url),
+          // The page is wide new or saved (`size: 'large'`), so loading does not shift it.
+          width: 'wide',
         })
         return backendPage(ctx, req, {
           lang,
           title,
-          body: templatePageScreen(_, title, island, await frameOf(ctx, url, req)),
+          body: templatePageScreen(
+            _,
+            title,
+            island,
+            await frameOf(ctx, url, req),
+            lang === 'en' ? 'en' : 'vi',
+          ),
         })
       }
       const locale = localeQuery(url)
@@ -930,7 +793,7 @@ export const routes: Record<string, RouteEntry> = {
           .filter((image) => image.productId === variant.id)
           .map((image) => ({
             id: image.id,
-            src: `/files/${image.attachmentId}`,
+            src: productImageUrl(String(image.attachmentId)),
             alt: image.alt || image.attachment?.name || variant.defaultCode || variant.name || variant.id,
             primary: image.primary,
             actions: {
@@ -943,7 +806,7 @@ export const routes: Record<string, RouteEntry> = {
       }))
       const body = productDetailScreen(
         _,
-        { ...row, defaultCode: null, barcode: null, taxId: null },
+        { ...row, defaultCode: null, barcode: null },
         {
           status: 'ready',
           uploadAction: inLocale(url, `/admin/product/templates/${row.id}/media?tab=media`),
@@ -954,7 +817,7 @@ export const routes: Record<string, RouteEntry> = {
           }),
           images: mediaRows.map((image, index) => ({
             id: image.id,
-            src: `/files/${image.attachmentId}`,
+            src: productImageUrl(String(image.attachmentId)),
             alt: image.alt || image.attachment?.name || row.name,
             primary: image.primary,
             actions: {
@@ -987,7 +850,6 @@ export const routes: Record<string, RouteEntry> = {
           uoms: [],
           categories: [],
           brands: [],
-          taxes: [],
           variantAttributes: [],
           // The media panel renders exactly the `variants` it is given — the
           // caller does the paging, unlike the variants tab's own table.
@@ -1000,7 +862,7 @@ export const routes: Record<string, RouteEntry> = {
             total: variants.length,
           },
         },
-        await ctx.joint(url, req, 'product_backend:template.collaboration', {
+        await jointFor(ctx, url, req, 'product_backend:template.collaboration', {
           resModel: 'product.Template',
           resId: row.id,
           lang,
@@ -1051,12 +913,17 @@ export const routes: Record<string, RouteEntry> = {
             inLocale(url, `/admin/product/templates/${params.id}/variants/${params.variantId}?invalid=1`),
           )
         }
-        const cost = await ctx.call(
-          'product.setCost',
-          { productId: params.variantId, standardPrice: form.standardPrice || '0' },
-          url,
-          req,
-        )
+        // The cost field renders only for `product.cost`. A form without it
+        // leaves the cost alone instead of writing zero over it.
+        const cost =
+          'standardPrice' in form
+            ? await ctx.call(
+                'product.setCost',
+                { productId: params.variantId, standardPrice: form.standardPrice || '0' },
+                url,
+                req,
+              )
+            : { ok: true }
         if (!(cost as { ok?: boolean }).ok) {
           if (partial)
             return json(
@@ -1152,7 +1019,7 @@ export const routes: Record<string, RouteEntry> = {
               }),
           images: mediaRows.map((image, index) => ({
             id: image.id,
-            src: `/files/${image.attachmentId}`,
+            src: productImageUrl(String(image.attachmentId)),
             alt:
               image.alt ||
               image.attachment?.name ||
@@ -1195,7 +1062,7 @@ export const routes: Record<string, RouteEntry> = {
         template,
         savedPartial
           ? ''
-          : await ctx.joint(url, req, 'product_backend:variant.collaboration', {
+          : await jointFor(ctx, url, req, 'product_backend:variant.collaboration', {
               resModel: 'product.Product',
               resId: params.variantId,
               lang,

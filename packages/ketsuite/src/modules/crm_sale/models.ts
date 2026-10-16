@@ -14,4 +14,19 @@ export const models: Record<string, ModelDef> = {
       opportunity: { fields: ['companyId', 'caseId', 'createdAt'] },
     },
   },
+  /**
+   * How the company ties quotations written in Sales to its opportunities. `off`: an opportunity holds only the
+   * quotations written from it. `attach`: a salesperson may also attach a quotation of the same customer written
+   * in Sales. One row per company; none reads as `off`.
+   */
+  QuotationPolicy: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      saleQuotations: 'text',
+      version: 'int',
+      updatedAt: 'datetime',
+    },
+    indexes: { company: { fields: ['companyId'], unique: true } },
+  },
 }

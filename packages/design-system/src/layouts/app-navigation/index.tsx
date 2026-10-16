@@ -31,7 +31,20 @@ export const HOOKS = [
   'navigation-item-description',
   'navigation-item-count',
   'navigation-footer',
+  'navigation-tools',
+  'navigation-search-toggle',
+  'navigation-search',
+  'navigation-search-input',
+  'navigation-search-empty',
+  'navigation-collapse',
 ] as const
+
+export type NavigationToolsProps = {
+  searchLabel: string
+  searchPlaceholder: string
+  emptyLabel: string
+  collapseLabel: string
+}
 
 type NavigationItemBase = {
   id: string
@@ -74,6 +87,7 @@ export type AppNavigationProps = {
   menuLabel?: string
   closeLabel?: string
   open?: boolean
+  tools?: NavigationToolsProps
 }
 
 export const NavigationTrigger = (props: {
@@ -101,12 +115,37 @@ export const NavigationHeader = (props: {
   identity?: JSXChild
   context?: JSXChild
   closeLabel: string
+  searchId?: string
+  controls?: string
+  tools?: NavigationToolsProps
 }): TemplateResult => (
-  <header data-ui="navigation-header">
+  <header data-ui="navigation-header" data-has-tools={props.tools ? 'true' : null}>
     <div>
       {props.identity !== undefined && <div data-ui="navigation-identity">{props.identity}</div>}
       {props.context !== undefined && <div data-ui="navigation-context">{props.context}</div>}
     </div>
+    {props.tools && (
+      <div data-ui="navigation-tools">
+        <button
+          type="button"
+          data-ui="navigation-search-toggle"
+          aria-label={props.tools.searchLabel}
+          aria-controls={props.searchId}
+          aria-expanded="false"
+        >
+          <Icon name="search" />
+        </button>
+        <button
+          type="button"
+          data-ui="navigation-collapse"
+          aria-label={props.tools.collapseLabel}
+          aria-controls={props.controls}
+          aria-expanded="true"
+        >
+          <Icon name="chevron-left" />
+        </button>
+      </div>
+    )}
     <button data-ui="navigation-close" type="button" aria-label={props.closeLabel}>
       <span aria-hidden="true" />
     </button>
@@ -220,6 +259,7 @@ export const NavigationDrawer = (props: {
   footer?: JSXChild
   navigationSlot?: string
   closeLabel: string
+  tools?: NavigationToolsProps
 }): TemplateResult => (
   <div data-ui="navigation-layer">
     <button
@@ -230,7 +270,28 @@ export const NavigationDrawer = (props: {
       tabIndex={-1}
     />
     <div data-ui="navigation-drawer" id={props.id} data-navigation-label={props.label} tabIndex={-1}>
-      <NavigationHeader identity={props.identity} context={props.context} closeLabel={props.closeLabel} />
+      <NavigationHeader
+        identity={props.identity}
+        context={props.context}
+        closeLabel={props.closeLabel}
+        tools={props.tools}
+        searchId={`${props.id}-search`}
+        controls={props.id}
+      />
+      {props.tools && (
+        <div data-ui="navigation-search" id={`${props.id}-search`} hidden>
+          <input
+            type="search"
+            data-ui="navigation-search-input"
+            aria-label={props.tools.searchLabel}
+            placeholder={props.tools.searchPlaceholder}
+            autocomplete="off"
+          />
+          <p data-ui="navigation-search-empty" role="status" aria-live="polite" hidden>
+            {props.tools.emptyLabel}
+          </p>
+        </div>
+      )}
       <nav data-ui="navigation-groups" aria-label={props.label} data-ket-slot={props.navigationSlot}>
         {each(
           props.groups,
@@ -256,6 +317,7 @@ export const AppNavigation = (props: AppNavigationProps): TemplateResult => {
       data-ui="app-navigation"
       data-navigation-id={props.id}
       data-external-trigger={props.externalTrigger ? 'true' : null}
+      data-has-tools={props.tools ? 'true' : null}
       open={props.open === true}
     >
       <NavigationTrigger
@@ -274,6 +336,7 @@ export const AppNavigation = (props: AppNavigationProps): TemplateResult => {
         footer={props.footer}
         navigationSlot={props.navigationSlot}
         closeLabel={closeLabel}
+        tools={props.tools}
       />
     </details>
   )

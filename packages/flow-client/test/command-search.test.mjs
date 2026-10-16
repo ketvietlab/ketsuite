@@ -47,3 +47,17 @@ test('recent commands stay within authorized bootstrap and do not duplicate resu
   )
   assert.equal(groups.flatMap((g) => g.items).filter((x) => x.id === 'task:KV-142').length, 1)
 })
+
+test('a large authorized collection yields a bounded set of distinct destinations', () => {
+  const large = {
+    ...data,
+    tasks: Array.from({ length: 10000 }, (_, i) => ({
+      id: `KV-${i}`,
+      title: `Large match ${i}`,
+      projectId: 'p',
+    })),
+  }
+  const rows = search('Large match', large)
+  assert.equal(rows.filter((x) => x.id.startsWith('task:')).length, 6)
+  assert.equal(new Set(rows.map((x) => JSON.stringify([x.route, x.params]))).size, rows.length)
+})

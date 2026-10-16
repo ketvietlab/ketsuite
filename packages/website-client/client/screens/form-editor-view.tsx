@@ -1,6 +1,5 @@
+import { WorkspacePage, ModalSheet } from '../page-regions.tsx'
 import {
-  WorkspacePage,
-  ModalSheet,
   Surface,
   Stack,
   Grid,

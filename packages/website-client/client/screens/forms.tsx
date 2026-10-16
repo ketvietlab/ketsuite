@@ -1,9 +1,9 @@
+import { ListPage } from '../page-regions.tsx'
 // Forms and their submissions. Submissions are personal data: reading one is audited, holding one
 // stops its retention purge, and export is a server-produced CSV (the client never assembles it).
 import {
   ActionGroup,
   DataTable,
-  ListPage,
   Status,
   Tabs,
   LinkButton,

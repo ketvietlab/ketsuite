@@ -103,6 +103,25 @@ test('product media: metadata is ordered and primary is unique per target', asyn
         ['m:a1', false],
       ],
     )
+
+    // The product image route serves a file only while an image of a product links it.
+    await call('storage.createAttachment', {
+      id: 'loose',
+      name: 'Contract',
+      kind: 'url',
+      url: 'https://cdn.example/contract.pdf',
+      mimetype: 'application/pdf',
+      size: 0,
+      public: false,
+      createdAt: new Date().toISOString(),
+    })
+    const linked = (await call('product_media.getMediaAttachment', { attachmentId: 'a1' })).value as {
+      attachment: { id: string; name: string } | null
+    }
+    assert.deepEqual([linked.attachment?.id, linked.attachment?.name], ['a1', 'Front'])
+    assert.deepEqual((await call('product_media.getMediaAttachment', { attachmentId: 'loose' })).value, {
+      attachment: null,
+    })
   } finally {
     await adapter.close()
   }

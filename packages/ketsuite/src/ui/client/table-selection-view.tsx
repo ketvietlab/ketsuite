@@ -1,7 +1,7 @@
 import { installBulkSelection } from './bulk-selection.ts'
 import { installUserWorkflow } from './user-workflow.ts'
 import type { BrowserBehavior, BrowserNavigation } from '@ketvietlab/ketjs'
-import { attachDesignSystemInteractions } from '@ketvietlab/design-system'
+import { attachDesignSystemInteractions, configureMermaidLoader } from '@ketvietlab/design-system'
 import type { SearchFilterNavigateDetail } from '@ketvietlab/design-system'
 
 const themeStorageKey = 'ket.backend.theme'
@@ -287,14 +287,15 @@ const navigateTo = (href: string, navigation: BrowserNavigation): void => {
   void navigation.navigate(href)
 }
 
-const eventStartedInNestedModal = (event: KeyboardEvent, routeModal: HTMLElement): boolean =>
+/** Internal keyboard ownership guard, shared with the focused native-dialog contract check. */
+export const eventStartedInNestedModal = (event: KeyboardEvent, routeModal: HTMLElement): boolean =>
   event
     .composedPath()
     .some(
       (target) =>
         target instanceof HTMLElement &&
         target !== routeModal &&
-        target.matches('[data-ui="modal-layer"][data-presentation="dialog"]'),
+        target.matches('dialog, [data-ui="modal-layer"][data-presentation="dialog"]'),
     )
 
 /**
@@ -503,15 +504,28 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
  *
  * The modal lives outside the content slot, so re-fetching the current URL as a
  * fragment refreshes the list without closing, reloading or rebuilding the modal.
+ *
+ * A collection that is a client island reads itself again and cancels the event:
+ * the slot is then left alone. Re-fetching it anyway would be a second read, and a
+ * stale one — a modal that closes announces before it leaves the address bar, so the
+ * fetch would replace the list's entry with the record's and open it again. Islands
+ * may listen after the shell, so the decision waits until every listener has run.
  */
-const installRecordRefresh = (signal: AbortSignal, navigation: BrowserNavigation): void => {
+export const installRecordRefresh = (
+  signal: AbortSignal,
+  navigation: Pick<BrowserNavigation, 'navigate'>,
+): void => {
   document.addEventListener(
     'ket:records-changed',
     (event) => {
       if (!document.querySelector('[data-ket-slot="backend.content"]')) return
       // A record page re-reads its own context; there is no collection behind it.
       if ((event as CustomEvent<{ page?: boolean } | null>).detail?.page) return
-      void navigation.navigate(location.href, { replace: true })
+      const href = location.href
+      queueMicrotask(() => {
+        if (event.defaultPrevented || signal.aborted) return
+        void navigation.navigate(href, { replace: true })
+      })
     },
     { signal },
   )
@@ -537,6 +551,10 @@ export const backendShell: BrowserBehavior = ({ navigation, lifetime }) => {
     { signal: lifetime },
   )
   installRecordRefresh(lifetime, navigation)
+  // Screen help draws its ```mermaid fences with the copy bundled beside this client
+  // (tools/build-backend-mermaid.mjs); the address is a variable so the bundler leaves it alone.
+  const mermaid = new URL('./mermaid/mermaid.mjs', import.meta.url).href
+  configureMermaidLoader(async () => (await import(/* @vite-ignore */ mermaid)).default)
   const cleanupDesignSystem = attachDesignSystemInteractions(document)
   const cleanupUserWorkflow = installUserWorkflow(lifetime)
   installThemeToggle(lifetime)

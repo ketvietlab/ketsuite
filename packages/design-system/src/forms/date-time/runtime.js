@@ -661,6 +661,11 @@ const enhance = (picker) => {
     })
   }
   picker.dataset.dateEnhanced = 'true'
+  // A CSR refresh can replace the saved boundaries without firing a DOM change.
+  // The read-only display may be dirty after a calendar commit, so updating its
+  // value attribute alone does not update the visible value in the browser.
+  const rangeValues = range && typeof MutationObserver !== 'undefined' ? new MutationObserver(validate) : null
+  rangeValues?.observe(picker, { attributes: true, subtree: true, attributeFilter: ['value'] })
   validate()
   picker.addEventListener('click', click)
   picker.addEventListener('keydown', keydown)
@@ -675,6 +680,7 @@ const enhance = (picker) => {
   inputs[0].form?.addEventListener('submit', submit)
   return () => {
     disposing = true
+    rangeValues?.disconnect()
     close()
     delete picker.dataset.dateEnhanced
     picker.removeEventListener('click', click)

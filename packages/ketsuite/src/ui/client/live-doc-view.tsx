@@ -21,6 +21,7 @@
 // chatter view uses.
 import * as Y from 'yjs'
 import { ensureTrailingParagraph } from './live-doc-tail.ts'
+import { floatingToolbarPosition } from './live-doc-floating.ts'
 import type { IslandController, IslandProps, TemplateResult } from '@ketvietlab/ketjs-view'
 // The shell's markup and the document serializer, which belong to the kit and
 // not to a module — see the header of that file, and tools/ui-audit.ts for the
@@ -49,6 +50,10 @@ export type LiveDocValue = {
 }
 
 export type LiveDocProps = {
+  /** Top toolbar remains the compatible default; floating opens on selection or Alt+F10. */
+  toolbar?: 'top' | 'floating'
+  /** Plain removes the editor frame and inset; the containing document owns spacing. */
+  surface?: 'framed' | 'plain'
   /** The record this document belongs to. */
   docId: string
   /**
@@ -312,6 +317,12 @@ export function createLiveDocView(props: LiveDocProps) {
   let pending: Span | null = null
   /** The selection the link dialog was opened over, since focusing its input destroys it. */
   let linkSpan: Span | null = null
+  let toolbarSpan: Span | null = null
+  let floatingKeyboard = false
+  let floatingDismissed = false
+  let floatingFrame = 0
+  let floatingAnchor: DOMRect | null = null
+  let floatingEvents: AbortController | null = null
   /**
    * Everyone else with this description open, by user id.
    *
@@ -590,7 +601,7 @@ export function createLiveDocView(props: LiveDocProps) {
    */
   function syncToolbar() {
     if (!shell) return
-    const span = selectionSpan()
+    const span = toolbarElement()?.contains(document.activeElement) ? toolbarSpan : selectionSpan()
     const block = span ? blocksOf()[span.start.index] : undefined
     const select = shell.querySelector('[data-flow-editor-block]') as HTMLSelectElement | null
     if (select && block) select.value = LIST_TYPES.includes(block.type as BlockType) ? 'p' : block.type
@@ -600,7 +611,152 @@ export function createLiveDocView(props: LiveDocProps) {
         ? block?.type === name
         : span && !isCollapsed(span) && spanHasMark(span, name as MarkName)
       button.setAttribute('aria-pressed', String(active === true))
+      if (props.toolbar === 'floating' && ['bold', 'italic', 'strike', 'code', 'link'].includes(name)) {
+        ;(button as HTMLButtonElement).disabled = !span || isCollapsed(span)
+      }
     }
+    scheduleFloatingToolbar()
+  }
+
+  const toolbarElement = () => shell?.querySelector<HTMLElement>('[data-ui="flow-editor-toolbar"]')
+
+  function scheduleFloatingToolbar() {
+    if (props.toolbar !== 'floating' || props.readOnly || floatingFrame || disposed) return
+    floatingFrame = requestAnimationFrame(() => {
+      floatingFrame = 0
+      positionFloatingToolbar()
+    })
+  }
+
+  function positionFloatingToolbar() {
+    const toolbar = toolbarElement()
+    if (!toolbar || !container) return
+    const span = selectionSpan()
+    const focused = toolbar.contains(document.activeElement)
+    if (
+      linkDialog()?.open ||
+      composing ||
+      floatingDismissed ||
+      inCell() ||
+      (!span && !focused) ||
+      (span && isCollapsed(span) && !floatingKeyboard && !focused)
+    ) {
+      toolbar.hidden = true
+      return
+    }
+    if (span && !focused) toolbarSpan = span
+    const range = document.getSelection()?.rangeCount ? document.getSelection()!.getRangeAt(0) : null
+    const rect = span && !focused ? range?.getBoundingClientRect() : floatingAnchor
+    if (!rect) {
+      toolbar.hidden = true
+      return
+    }
+    floatingAnchor = rect
+    const editorRect = container.getBoundingClientRect()
+    const viewport = window.visualViewport
+    const bounds = {
+      left: Math.max(viewport?.offsetLeft ?? 0, editorRect.left),
+      top: Math.max(viewport?.offsetTop ?? 0, editorRect.top),
+      right: Math.min((viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth), editorRect.right),
+      bottom: (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight),
+    }
+    // Keep the anchor while a native select owns focus; still clamp after viewport resize.
+    if (
+      !focused &&
+      !floatingKeyboard &&
+      (rect.bottom < Math.max(bounds.top, editorRect.top) ||
+        rect.top > Math.min(bounds.bottom, editorRect.bottom))
+    ) {
+      toolbar.hidden = true
+      return
+    }
+    // Computed padding resolves rem-based kit tokens into CSS pixels.
+    const gap = Number.parseFloat(getComputedStyle(toolbar).paddingInlineStart) || 8
+    toolbar.style.maxWidth = `${Math.max(0, bounds.right - bounds.left - gap * 2)}px`
+    toolbar.hidden = false
+    const position = floatingToolbarPosition(rect, toolbar.getBoundingClientRect(), bounds, gap)
+    toolbar.style.left = `${position.left}px`
+    toolbar.style.top = `${position.top}px`
+  }
+
+  function restoreToolbarSelection() {
+    const span = toolbarElement()?.contains(document.activeElement)
+      ? toolbarSpan
+      : (selectionSpan() ?? toolbarSpan)
+    if (span) {
+      container?.focus({ preventScroll: true })
+      restoreSelection(span)
+    }
+  }
+
+  function wireFloatingToolbar(root: HTMLElement, el: HTMLElement) {
+    if (props.toolbar !== 'floating') return
+    floatingEvents = new AbortController()
+    const signal = floatingEvents.signal
+    const toolbar = toolbarElement()
+    el.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.altKey && event.key === 'F10' && !composing && !inCell()) {
+          event.preventDefault()
+          toolbarSpan = selectionSpan()
+          if (!toolbarSpan) return
+          floatingKeyboard = true
+          floatingDismissed = false
+          syncToolbar()
+          positionFloatingToolbar()
+          toolbar?.querySelector<HTMLElement>('select, button:not(:disabled)')?.focus()
+        } else if (event.key === 'Escape' && toolbar && !toolbar.hidden) {
+          event.preventDefault()
+          floatingDismissed = true
+          toolbar.hidden = true
+        }
+      },
+      { signal },
+    )
+    toolbar?.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        floatingDismissed = true
+        restoreToolbarSelection()
+        toolbar.hidden = true
+      },
+      { signal },
+    )
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        const target = event.target as Node
+        if (el.contains(target)) {
+          floatingKeyboard = false
+          floatingDismissed = false
+          return
+        }
+        if (toolbar?.contains(target) || linkDialog()?.contains(target)) return
+        floatingKeyboard = false
+        floatingDismissed = true
+        toolbarSpan = null
+        if (toolbar) toolbar.hidden = true
+      },
+      { signal },
+    )
+    document.addEventListener(
+      'focusin',
+      (event) => {
+        if (!root.contains(event.target as Node)) {
+          floatingDismissed = true
+          toolbarSpan = null
+        }
+        scheduleFloatingToolbar()
+      },
+      { signal },
+    )
+    document.addEventListener('scroll', scheduleFloatingToolbar, { capture: true, passive: true, signal })
+    window.addEventListener('resize', scheduleFloatingToolbar, { passive: true, signal })
+    window.visualViewport?.addEventListener('resize', scheduleFloatingToolbar, { passive: true, signal })
+    window.visualViewport?.addEventListener('scroll', scheduleFloatingToolbar, { passive: true, signal })
   }
 
   // ---- presence -----------------------------------------------------------
@@ -1149,6 +1305,14 @@ export function createLiveDocView(props: LiveDocProps) {
   // ---- mount --------------------------------------------------------------
 
   const onSelectionChange = () => {
+    const span = selectionSpan()
+    const focused = toolbarElement()?.contains(document.activeElement) || linkDialog()?.open
+    if (!focused && span && JSON.stringify(span) !== JSON.stringify(toolbarSpan)) {
+      floatingDismissed = false
+      floatingKeyboard = false
+      toolbarSpan = span
+    }
+    if (!span && !focused) toolbarSpan = null
     syncToolbar()
     announceCaret()
   }
@@ -1156,8 +1320,12 @@ export function createLiveDocView(props: LiveDocProps) {
   function wireToolbar(root: HTMLElement) {
     for (const button of Array.from(root.querySelectorAll('[data-flow-editor-mark]')) as HTMLElement[]) {
       const name = button.getAttribute('data-flow-editor-mark') ?? ''
+      button.addEventListener('pointerdown', () => {
+        toolbarSpan = selectionSpan() ?? toolbarSpan
+      })
       button.addEventListener('mousedown', (event) => event.preventDefault())
       button.addEventListener('click', () => {
+        restoreToolbarSelection()
         if (name === 'image') {
           if (!props.readOnly && !props.imageDisabled && props.local)
             props.onImageRequest?.(prepareImageInsertion(), button)
@@ -1173,7 +1341,11 @@ export function createLiveDocView(props: LiveDocProps) {
       })
     }
     const select = root.querySelector('[data-flow-editor-block]') as HTMLSelectElement | null
+    select?.addEventListener('pointerdown', () => {
+      toolbarSpan = selectionSpan() ?? toolbarSpan
+    })
     select?.addEventListener('change', () => {
+      restoreToolbarSelection()
       if (inCell()) return
       const value = select.value as BlockType
       const span = selectionSpan()
@@ -1298,6 +1470,13 @@ export function createLiveDocView(props: LiveDocProps) {
   function wireLinkDialog(root: HTMLElement) {
     const dialog = root.querySelector('[data-flow-editor-link-dialog]') as HTMLDialogElement | null
     const input = root.querySelector('[data-flow-editor-link-input]') as HTMLInputElement | null
+    dialog?.addEventListener('close', () => {
+      if (linkSpan) {
+        container?.focus({ preventScroll: true })
+        restoreSelection(linkSpan)
+      }
+      syncToolbar()
+    })
     root.querySelector('[data-flow-editor-link-cancel]')?.addEventListener('click', () => {
       dialog?.close()
     })
@@ -1326,6 +1505,7 @@ export function createLiveDocView(props: LiveDocProps) {
     }
     el.addEventListener('compositionstart', () => {
       composing = true
+      if (props.toolbar === 'floating') toolbarElement()?.setAttribute('hidden', '')
       composedAt = selectionSpan()?.start ?? null
     })
     el.addEventListener('compositionend', (event) => {
@@ -1371,6 +1551,7 @@ export function createLiveDocView(props: LiveDocProps) {
     if (shell) {
       wireToolbar(shell)
       wireLinkDialog(shell)
+      wireFloatingToolbar(shell, el)
     }
 
     doc.on('update', (update: Uint8Array, origin: unknown) => {
@@ -1571,10 +1752,15 @@ export function createLiveDocView(props: LiveDocProps) {
         tables: props.local,
         images: props.local && !!props.onImageRequest,
         imageDisabled: props.readOnly || props.imageDisabled,
+        toolbar: props.toolbar,
+        surface: props.surface,
+        readOnly: props.readOnly,
       }) as TemplateResult,
     getValue: currentValue,
     dispose() {
       disposed = true
+      floatingEvents?.abort()
+      if (floatingFrame) cancelAnimationFrame(floatingFrame)
       source?.close()
       doc.destroy()
       if (heartbeat) clearInterval(heartbeat)

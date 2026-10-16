@@ -152,7 +152,7 @@
     background: var(--admin-chart-6);
   }
 
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     [data-ui="chart"][data-kind="doughnut"] {
       grid-template-columns: minmax(0, 1fr);
       justify-items: center;

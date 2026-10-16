@@ -101,3 +101,14 @@ export const phoneSearchFragment = (value: unknown, region: string = DEFAULT_PHO
     return `+${home.callingCode}${digits.slice(home.trunkPrefix.length)}`
   return digits
 }
+
+/** Search both canonical and legacy national spellings without rewriting customer records. */
+export const phoneSearchFragments = (value: unknown, region: string = DEFAULT_PHONE_REGION): string[] => {
+  const canonical = phoneSearchFragment(value, region)
+  if (!canonical) return []
+  const home = REGIONS[region.toUpperCase()]
+  const prefix = home ? `+${home.callingCode}` : null
+  return prefix && canonical.startsWith(prefix)
+    ? [canonical, `${home!.trunkPrefix}${canonical.slice(prefix.length)}`]
+    : [canonical]
+}

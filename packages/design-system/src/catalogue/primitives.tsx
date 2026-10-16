@@ -122,6 +122,9 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
             items={[
               <Icon name="plus" label="Add" />,
               <Icon name="search" label="Search" />,
+              <Icon name="megaphone" label="Advertising" />,
+              <Icon name="sparkles" label="AI recommendation" />,
+              <Icon name="trending-up" label="Increase" />,
               <Icon name="circle-check" tone="positive" label="Complete" />,
               <Icon name="triangle-alert" tone="warning" label="Warning" />,
               <Icon name="x" label="Close" />,
@@ -652,6 +655,7 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
         </Row>
         <Row label="Empty" detail="A useful next step with restrained emphasis.">
           <EmptyState
+            visual="start"
             title="No projects yet"
             message="Create a project to bring your team’s work together."
             actions={<LinkButton label="Explore actions" href="#primitive-actions" size="compact" />}

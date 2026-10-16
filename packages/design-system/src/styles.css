@@ -35,11 +35,13 @@
 @import "./data-display/tree/styles.css";
 @import "./data-display/matrix/styles.css";
 @import "./data-display/bar-chart/styles.css";
+@import "./data-display/column-chart/styles.css";
 @import "./data-operations/timeframe-filter/styles.css";
 @import "./record/display/styles.css";
 @import "./record/formatted-values/styles.css";
 @import "./record/composition/styles.css";
 @import "./record/activity/styles.css";
+@import "./record/stage-path/styles.css";
 @import "./record/media/styles.css";
 @import "./layouts/layout/styles.css";
 @import "./layouts/shell/styles.css";
@@ -50,6 +52,10 @@
 @import "./patterns/list-chrome/styles.css";
 @import "./patterns/record-form/styles.css";
 @import "./patterns/modal-sheet/styles.css";
+@import "./patterns/help-drawer/styles.css";
+@import "./content/markdown/styles.css";
+@import "./patterns/peek/styles.css";
+@import "./patterns/settings-directory/styles.css";
 @import "./patterns/list-page/responsive.css";
 @import "./patterns/pipeline/styles.css";
 @import "./patterns/board-page/styles.css";

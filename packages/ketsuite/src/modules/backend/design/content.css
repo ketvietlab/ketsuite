@@ -243,8 +243,13 @@
     white-space: nowrap;
   }
 
+  /* The company names the context, so the branch gives up its width first. */
   [data-ui="page-context-branch"] {
+    min-inline-size: 0;
+    flex: 0 100 auto;
+    overflow: hidden;
     color: var(--admin-ink-muted);
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -555,13 +560,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  [data-ui="empty-icon"] {
-    display: grid;
-    inline-size: 2.5rem;
-    block-size: 2.5rem;
-    place-items: center;
-    color: var(--admin-ink-muted);
-  }
   [data-ui="kanban-actions"] {
     display: flex;
     flex-wrap: wrap;
@@ -670,7 +668,7 @@
     min-block-size: var(--kv-touch-target);
     max-inline-size: 24rem;
   }
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     [data-ui="page-context-viewer"][data-placement="topbar"] {
       min-inline-size: var(--kv-touch-target);
       justify-content: center;
@@ -682,10 +680,11 @@
 }
 
 @layer ket.app {
+  /* Capped by its slot as well: the nowrap names would otherwise draw over search. */
   [data-ui="app-location-bar"] [data-ui="page-context-viewer"] {
-    max-inline-size: 24rem;
+    max-inline-size: min(24rem, 100%);
   }
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     [data-ui="app-location-bar"] [data-ui="page-context-viewer"] {
       min-inline-size: var(--kv-touch-target);
       min-block-size: var(--kv-touch-target);

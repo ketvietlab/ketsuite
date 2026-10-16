@@ -6,7 +6,8 @@ import { routes } from './routes.ts'
 export default defineModule({
   name: 'stock_backend',
   version: '0.1.0',
-  depends: ['stock', 'backend'],
+  // The product list's stock column answers through product_backend's read.
+  depends: ['stock', 'backend', 'product_backend'],
   assets: new URL('./client/', import.meta.url),
   islands,
   functions,

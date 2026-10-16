@@ -1,5 +1,6 @@
 import { each } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
+import { Progress } from '../../primitives/progress/index.tsx'
 import type { Tone } from '../../primitives/status/index.tsx'
 
 export const HOOKS = [
@@ -9,6 +10,7 @@ export const HOOKS = [
   'toast-title',
   'toast-message',
   'toast-actions',
+  'toast-progress',
 ] as const
 
 export type ToastProps = {
@@ -17,6 +19,12 @@ export type ToastProps = {
   message?: string
   tone?: Tone
   actions?: JSXChild
+  /**
+   * How far the work this toast reports has got, for work that runs in the background
+   * (an import). The bar and its label are not announced: a live region would read every
+   * update, so the title and message carry what a reader must hear (started, finished).
+   */
+  progress?: { value: number; label: string }
 }
 
 export const Toast = (props: ToastProps): TemplateResult => (
@@ -30,6 +38,11 @@ export const Toast = (props: ToastProps): TemplateResult => (
       {props.message && <p data-ui="toast-message">{props.message}</p>}
     </div>
     {props.actions !== undefined && <div data-ui="toast-actions">{props.actions}</div>}
+    {props.progress && (
+      <div data-ui="toast-progress" aria-live="off">
+        <Progress value={props.progress.value} label={props.progress.label} size="small" />
+      </div>
+    )}
   </article>
 )
 

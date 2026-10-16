@@ -30,7 +30,8 @@ export const ModalSheet = (props: {
   status?: JSXChild
   actions?: JSXChild
   presentation?: 'sheet' | 'dialog'
-  size?: 'small' | 'default' | 'large'
+  /** Workspace dialogs use the available viewport width, with the same overlay margin. */
+  size?: 'small' | 'default' | 'large' | 'workspace'
   /**
    * `content` (default) lets a dialog grow with its body up to the viewport cap. `fixed`
    * holds the dialog at that cap so switching between tabs of different heights does not

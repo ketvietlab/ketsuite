@@ -38,10 +38,19 @@ export type FieldProps = {
   id: string
   name: string
   label: string
+  /** Forward the host locale to date/time controls; omitted keeps their existing default. */
+  locale?: 'vi' | 'en'
   /** Opt-in matched input/action height: 36px desktop, 44px mobile. */
   size?: 'default' | 'large'
   /** A trusted, progressively enhanced control such as a relation selector. */
   control?: JSXChild
+  /** Keep an enhanced control and its label in one row at narrow widths. */
+  layout?: 'inline'
+  /**
+   * A command right after a short single-line entry, such as an Add or Apply `Button`. The entry keeps a
+   * compact width and Enter in it runs the command instead of the form's first submit button.
+   */
+  action?: JSXChild
   type?:
     | 'text'
     | 'search'

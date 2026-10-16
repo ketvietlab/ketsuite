@@ -15,6 +15,9 @@ import {
   recordModalHost,
   recordModalHref,
   recordPageLoading,
+  recordPanelLoading,
+  recordPanelFrame,
+  recordPageFrame,
   recordPageShell,
 } from '@ketvietlab/ketsuite/ui'
 
@@ -24,15 +27,37 @@ import {
   callRecordRoute,
   createRecordModal,
   createRecordPage,
+  createRecordPanel,
+  createRecordCommandIntents,
   delayedFlag,
   openerHref,
   resolveRecordModalIssue,
   resolveRecordModalLabel,
+  recordLayerOwnsKey,
+  recordFormOwnedByHost,
 } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 
 import { httpServerSource } from './helpers/ketjs-internals.ts'
 const runtime = readFileSync('packages/ketsuite/src/ui/client/record-modal.tsx', 'utf8')
 const bootstrap = httpServerSource()
+
+test('record form ownership defers nested island submissions and keeps its own forms', () => {
+  const host = {},
+    child = {}
+  assert.equal(recordFormOwnedByHost({ closest: () => host }, host), true)
+  assert.equal(recordFormOwnedByHost({ closest: () => child }, host), false)
+  assert.equal(recordFormOwnedByHost({ closest: () => null }, host), false)
+})
+
+test('record keyboard ownership defers Escape and Tab to an open native dialog or an already handled event', () => {
+  assert.equal(recordLayerOwnsKey('Escape', false, false), true)
+  assert.equal(recordLayerOwnsKey('Tab', false, false), true)
+  assert.equal(recordLayerOwnsKey('Enter', false, false), false)
+  for (const key of ['Escape', 'Tab']) {
+    assert.equal(recordLayerOwnsKey(key, true, false), false)
+    assert.equal(recordLayerOwnsKey(key, false, true), false)
+  }
+})
 
 test('record modal: a link keeps the collection query and names kind, id and tab', () => {
   const href = recordModalHref(new URL('http://x/admin/crm/followups?bucket=overdue&q=an&cursor=50'), {
@@ -63,7 +88,14 @@ test('record modal: a create action opens the same modal with the reserved new i
   // create command switches the modal to the record it made instead of closing.
   assert.match(runtime, /creating: current\.id === RECORD_NEW_ID/u)
   assert.match(runtime, /creating\s*\?\s*\{\}\s*:\s*\{ id \}/u)
-  assert.match(runtime, /if \(createdId\) show\(createdId, command\.openTab \?\? null, 'replace'\)/u)
+  const opened = /if \(createdId\) \{([\s\S]*?)\} else hide\('history'\)/u.exec(runtime)
+  assert.ok(opened, 'a successful create opens its returned record')
+  assert.match(opened[1]!, /show\(createdId, command\.openTab \?\? null, 'replace'\)/u)
+  assert.match(
+    opened[1]!,
+    /if \(createdId === current\.id\) await load\(createdId\)/u,
+    'opening the current record still refreshes its saved context',
+  )
 })
 
 test('record modal: a reopened record renders from the island cache and revalidates', () => {
@@ -74,6 +106,30 @@ test('record modal: a reopened record renders from the island cache and revalida
   assert.match(runtime, /while \(cache\.size > RECORD_MODAL_CACHE_SIZE\)/u)
   assert.match(runtime, /cache\.delete\(current\.id\)/u)
   assert.match(runtime, /'ket:records-changed',\s*\(event\) =>[\s\S]*?cache\.delete\(String\(id\)\)/u)
+})
+
+test('record modal: a modal that follows its record reads it again, unless the reader typed into it', () => {
+  // A background job's status changes without the reader; a form keeps the context it opened with.
+  assert.match(runtime, /follow\?: boolean/u)
+  assert.match(
+    runtime,
+    /'ket:records-changed',[\s\S]*?\(page \|\| \(definition\.follow === true && !!root && !recordLayerHasDraft\(root\)\)\) &&[\s\S]*?!running\(\)[\s\S]*?void load\(current\.id, true\)/u,
+  )
+})
+
+test('record modal: a notice above an untabbed record keeps the layout gap without rebuilding the form', () => {
+  // Fixed positions: the body stays the third item whether or not a notice shows above it.
+  assert.match(
+    runtime,
+    /return Stack\(\{ items: \[header \|\| null, issueNotice \|\| null, body \|\| null\] \}\)/u,
+  )
+  // A record dialog's refusal sits above its view the same way.
+  assert.equal(
+    runtime.match(
+      /Stack\(\{ items: \[formIssues\(context\) \|\| null, spec\.view\(context\) \|\| null\] \}\)/gu,
+    )?.length,
+    2,
+  )
 })
 
 test('record modal: a malformed record parameter opens nothing', () => {
@@ -169,7 +225,7 @@ test('record modal: going back over a client-owned entry does not refetch the pa
 
 test('record modal: cross-collection navigation opens its target without resetting an open draft', () => {
   const listener =
-    /'ket:navigation-complete',\s*\(\) => \{([\s\S]*?)\n          \},\s*\{ signal: lifetime \}/u.exec(runtime)
+    /'ket:navigation-complete',\s*\(\) => \{([\s\S]*?)\n {10}\},\s*\{ signal: lifetime \}/u.exec(runtime)
   assert.ok(listener, 'the persistent island follows completed fragment navigation')
   const run = new Function(
     'readRecordModalTarget',
@@ -234,6 +290,8 @@ test('record modal: the runtime owns focus, escape, inertness, drafts and collec
   assert.match(runtime, /keepAllDrafts\(\)[\s\S]*?viewState\.set/u)
   assert.match(runtime, /'idempotency-key'/u)
   assert.match(runtime, /new CustomEvent\('ket:records-changed'/u)
+  // A collection island cancels it to refresh itself; the shell then leaves the slot alone.
+  assert.match(runtime, /new CustomEvent\('ket:records-changed', \{[^}]*?cancelable: true/u)
   // A view never fetches: only the runtime calls the function endpoint and `/files`.
   assert.equal((runtime.match(/fetch\(/gu) ?? []).length, 3)
   assert.match(runtime, /fetch\('\/files'/u, 'uploads go through storage, never a module route')
@@ -242,7 +300,7 @@ test('record modal: the runtime owns focus, escape, inertness, drafts and collec
 })
 
 test('record modal: a preview command changes nothing and leaves its answer on screen', () => {
-  const branch = /if \(command\.preview\) \{([\s\S]*?)\n        \}/u.exec(runtime)
+  const branch = /if \(command\.preview\) \{([\s\S]*?)\n {8}\}/u.exec(runtime)
   assert.ok(branch, 'the submit path has a preview branch')
   const body = branch[1]!
 
@@ -260,22 +318,25 @@ test('record modal: a preview command changes nothing and leaves its answer on s
 
   // A preview calls a read that is not declared idempotent, and the server refuses a
   // key on such a function: only a command that writes carries one.
-  assert.match(runtime, /const intent = \(\) => \(command\.preview \? undefined : uuid\(\)\)/u)
+  assert.match(runtime, /command\.preview \? undefined : commandIntents\.get\(operation, input\)/u)
+  assert.match(runtime, /callRecordFunction\(fn, input, \{ idempotencyKey: intent\(fn, input\) \}\)/u)
+  assert.match(runtime, /idempotencyKey: intent\(command\.route, primaryInput\)/u)
+  assert.doesNotMatch(body, /commandIntents\.clear\(/u, 'a preview preserves pending write intents')
   assert.doesNotMatch(runtime, /callRecordFunction\(fn, input, \{ idempotencyKey: uuid\(\) \}\)/u)
 
   // An answer is only ever read beside the selection it was computed from, so
   // everything that moves the layer clears it: another record, a closed modal, a
   // closed or newly opened dialog, another tab, a refusal, and a real write.
   for (const [what, near] of [
-    ['another record', /outcome\.set\(null\)\n        dialog\.set/u],
-    ['a closed modal', /outcome\.set\(null\)\n      status\.set\('idle'\)/u],
-    ['a closed dialog', /outcome\.set\(null\)\n        afterRender\(/u],
+    ['another record', /outcome\.set\(null\)\s*dialog\.set/u],
+    ['a closed modal', /outcome\.set\(null\)\s*status\.set\('idle'\)/u],
+    ['a closed dialog', /outcome\.set\(null\)\s*afterRender\(/u],
     [
       'an opened dialog',
-      /outcome\.set\(null\)\n                saved\.set\(false\)\n                dialog\.set\(\{ name: opener/u,
+      /outcome\.set\(null\)\s*saved\.set\(false\)\s*const name = opener\.getAttribute\(RECORD_DIALOG_ATTRIBUTE\) \?\? ''\s*dialog\.set\(\{ name, params \}\)/u,
     ],
-    ['another tab', /outcome\.set\(null\)\n              show\(/u],
-    ['a refusal', /outcome\.set\(null\)\n          issues\.set\(/u],
+    ['another tab', /outcome\.set\(null\)\s*show\(/u],
+    ['a refusal', /outcome\.set\(null\)\s*issues\.set\(/u],
   ] as const)
     assert.match(runtime, near, `${what} clears the answer`)
   // A write keeps its answer only when it stays in the layer, which is how a
@@ -285,6 +346,18 @@ test('record modal: a preview command changes nothing and leaves its answer on s
     /outcome\.set\(after_\(command\) === 'stay' \? \{ command: name, value: result\.value \} : null\)/u,
   )
   assert.match(runtime, /held\?\.command === command \? \(held\.value as T\) : null/u)
+})
+
+test('record modal: write retries retain their intent until a successful write clears it', () => {
+  let generated = 0
+  const intents = createRecordCommandIntents(() => `intent-${++generated}`)
+  const input = { id: 'record-1', version: 3 }
+  const first = intents.get('record.save', input)
+  assert.equal(intents.get('record.save', { ...input }), first, 'an uncertain response can be retried')
+  assert.notEqual(intents.get('record.save', { ...input, version: 4 }), first)
+  assert.notEqual(intents.get('record.close', input), first)
+  intents.clear()
+  assert.notEqual(intents.get('record.save', input), first, 'a completed write starts a new intent')
 })
 
 test('record modal: tabs another module adds follow the declared ones through the same filter', () => {
@@ -442,8 +515,12 @@ test('record modal: a command that leaves the modal open says it worked', () => 
     /saved\(\)[\s\S]*?tone: 'positive'/u,
     'the positive notice stands where the danger notice would',
   )
-  // One that closes says it by closing.
-  assert.match(runtime, /if \(after !== 'close' && after === declared\) saved\.set\(true\)/u)
+  // One that closes says it by closing; a dialog's ancillary mutation that keeps its draft
+  // (a fresh quote) changed nothing the reader saved, so it says nothing.
+  assert.match(
+    runtime,
+    /if \(after !== 'close' && after === declared && !\(scope === 'dialog' && command\.retainDialogDraft\)\)\s*saved\.set\(true\)/u,
+  )
   // It is never stale: a new submit, another record and closing all clear it.
   assert.match(runtime, /showBusy\.set\(value\)\s*\n\s*if \(value\) saved\.set\(false\)/u)
   const show = runtime.slice(runtime.indexOf('const show = '))
@@ -457,7 +534,8 @@ test('record modal: a multi-step command stops at the first failing call and ski
   // still reads as one action: one busy state, one notice, stopping on the first
   // call that fails rather than papering over it with a later step's success.
   assert.match(runtime, /command\.also \?\? \[\]/u)
-  assert.match(runtime, /if \(step\.when && !step\.when\(context\)\) continue/u)
+  // `when` also reads the submitted form, so a step can skip a value that did not change.
+  assert.match(runtime, /if \(step\.when && !step\.when\(context, formData\)\) continue/u)
   assert.match(runtime, /if \(!result\.ok\) break/u)
 })
 
@@ -613,6 +691,23 @@ test('record modal: command routes reject external destinations and preserve ref
   if (!result.ok) assert.equal(result.issues[0].field, 'email')
 })
 
+test('record modal: a refusal that may mean the record moved reads it again and keeps what was typed', () => {
+  const start = runtime.indexOf('        if (!result.ok) {')
+  const refused = runtime.slice(start, runtime.indexOf('        if (command.preview) {', start))
+  assert.match(
+    refused,
+    /if \(command\.refreshOnRefusal\) await load\(current\.id, true\)/u,
+    'a quiet read: the frame stays on screen, no loading state',
+  )
+  assert.doesNotMatch(
+    refused,
+    /dialogDrafts\.set|recordDrafts\.set|issues\.set\(\[\]\)/u,
+    'typed values and guidance stay',
+  )
+  // The new read replaces hidden stamps because a draft never holds one.
+  assert.match(runtime, /if \(control\.type === 'file' \|\| control\.type === 'hidden'\) continue/u)
+})
+
 test('record modal: unknown refusal codes use a translated fallback without hiding known field guidance', () => {
   const labels = { 'recordModal.saveFailed': 'Không thể lưu thay đổi.' }
   assert.equal(
@@ -690,6 +785,53 @@ test('record modal: cancelling one inline editor preserves other drafts and thei
   assert.equal(recordDraftHasChanges(resetRecordDraftFields(cancelled, ['call', 'confirmed'])), false)
 })
 
+test('record modal: an inline command consumes line drafts while preserving unsaved header information', async () => {
+  const { consumeRecordCommandDrafts, recordDraftHasChanges } = await import(
+    '../packages/ketsuite/src/ui/client/record-modal.tsx'
+  )
+  const draft = {
+    values: { phone: '0900 123 456', productId: 'sku-65', productUomQty: '2' },
+    initialValues: { phone: '0901 000 111', productId: '', productUomQty: '1' },
+    checks: {},
+    initialChecks: {},
+  }
+  const afterAdd = consumeRecordCommandDrafts(draft, ['productId', 'productUomQty'])
+  assert.deepEqual(afterAdd.values, { phone: '0900 123 456' })
+  assert.equal(recordDraftHasChanges(afterAdd), true)
+  assert.equal(draft.values.productId, 'sku-65')
+  assert.deepEqual(consumeRecordCommandDrafts(draft).values, {}, 'legacy commands retain full-reset behavior')
+  assert.deepEqual(
+    consumeRecordCommandDrafts(draft, []).values,
+    draft.values,
+    'an explicit empty set consumes nothing',
+  )
+})
+
+test('record modal: a state select reads its field help and error with the choice', async () => {
+  const { recordStateSelectControl } = await import(
+    '../packages/ketsuite/src/ui/client/record-modal-form.tsx'
+  )
+  const options = [
+    { value: '', label: 'Choose' },
+    { value: 'v1', label: 'Vendor' },
+  ]
+  const described = renderToString(
+    recordStateSelectControl({
+      id: 'vendor',
+      name: 'vendor',
+      state: 'vendor',
+      value: 'v1',
+      options,
+      describedBy: 'vendor-help vendor-error',
+    }),
+  )
+  assert.match(described, /aria-describedby="vendor-help vendor-error"/)
+  const plain = renderToString(
+    recordStateSelectControl({ id: 'vendor', name: 'vendor', state: 'vendor', value: '', options }),
+  )
+  assert.doesNotMatch(plain, /aria-describedby/)
+})
+
 test('record modal: a section-composed form does not reserve an empty field grid', async () => {
   const { RecordModalForm } = await import('../packages/ketsuite/src/ui/client/record-modal-form.tsx')
   const html = renderToString(
@@ -708,7 +850,8 @@ test('record modal: child view state is isolated and cleared with its draft life
   assert.match(runtime, /scope === 'dialog' \? dialogViewState\(\)\[key\] : undefined/u)
   assert.equal(
     (runtime.match(/const stateStore = dialog\(\) \? dialogViewState : viewState/gu) ?? []).length,
-    2,
+    3,
+    'a state control, a cancelled editor and a chosen file each write to the layer they sit in',
   )
   const resets = [...runtime.matchAll(/dialogDrafts\.set\(emptyDraftState\(\)\)/gu)]
   assert.ok(resets.length > 0)
@@ -740,6 +883,22 @@ test('record page: the server renders the RecordPage loading state the client ad
     () => defineRecordPageIsland({ kind: 'Product', client: 'p.mjs', export: 'x' }),
     /invalid record kind/u,
   )
+})
+
+test('record page: supporting facts stay in an accessible rail before stacked work', () => {
+  const markup = renderToString(
+    recordPageFrame({
+      title: 'Shipping case',
+      body: 'Work history',
+      aside: 'Customer and SLA',
+      asideLabel: 'Case facts',
+    }),
+  )
+  assert.match(markup, /data-ui="record-page-aside"/u)
+  assert.match(markup, /aria-label="Case facts"/u)
+  assert.match(markup, /data-aside-stacked="before"/u)
+  assert.match(markup, /Work history/u)
+  assert.match(markup, /Customer and SLA/u)
 })
 
 test('record page: the record runtime renders a page that leaves for its collection and owns no history', () => {
@@ -842,6 +1001,24 @@ test('record page: the runtime keeps a page a page — no history, no fence, no 
   assert.match(runtime, /serverPage &&[\s\S]{0,200}declared === 'close'[\s\S]{0,200}\? \{ dialog: null \}/u)
 })
 
+test('record panel: adopts its SSR loading frame without creating another page or form', () => {
+  const props = { id: 'current', title: 'Shipping policy', loading: 'Loading' }
+  const panel = createRecordPanel({
+    kind: 'test.policy',
+    title: () => props.title,
+    context: { fn: 'test.context' },
+  })(props)
+  const initial = renderToString(panel.view())
+  assert.equal(initial, renderToString(recordPanelLoading(props)))
+  assert.match(initial, /data-record-layer="panel"/)
+  assert.doesNotMatch(initial, /data-ui="record-page"|<h1|<form|role="dialog"/)
+  const ready = renderToString(
+    recordPanelFrame({ body: 'Policy fields', actions: 'Save', aside: 'Policy behavior' }),
+  )
+  assert.match(ready, /Save[\s\S]*Policy fields[\s\S]*Policy behavior/)
+  assert.doesNotMatch(ready, /data-ui="record-page"|<h1|<form/)
+})
+
 test('record page: both client-read and route-context factories adopt their server frame', () => {
   const definition = {
     kind: 'test.record',
@@ -899,4 +1076,136 @@ test('record page: Back guards client-read drafts and returns; route-context pro
   invoke(true, true)
   assert.deepEqual(calls, [], 'a route-context profile has no close action')
   assert.match(runtime, /\(!serverPage \|\| inModal\.matches\('\[data-ui="modal-layer"\]'\)\)/u)
+})
+
+test('record page: compound date/time has one draft and an untouched dialog closes cleanly', async () => {
+  const { transform } = await import('esbuild')
+  const source = runtime.slice(
+    runtime.indexOf('const keepDrafts = ('),
+    runtime.indexOf('const keepAllDrafts = ('),
+  )
+  const { code } = await transform(source, { loader: 'ts', target: 'es2022' })
+  const empty = () => ({ values: {}, checks: {}, initialValues: {}, initialChecks: {} })
+  let state: ReturnType<typeof empty> = empty()
+  const store = Object.assign(() => state, {
+    set: (next: typeof state) => {
+      state = next
+    },
+  })
+  class Input {
+    disabled = false
+    type = 'hidden'
+    name: string
+    value: string
+    defaultValue: string
+    picker: unknown
+    constructor(name: string, value: string, defaultValue: string, picker: unknown = null) {
+      this.name = name
+      this.value = value
+      this.defaultValue = defaultValue
+      this.picker = picker
+    }
+    closest() {
+      return this.picker
+    }
+    matches() {
+      return true
+    }
+  }
+  class Select {}
+  const day = new Input('', '2026-10-09', '2026-10-09')
+  const time = new Input('', '10:00', '10:00')
+  day.type = 'date'
+  time.type = 'time'
+  const picker = { querySelector: (selector: string) => (selector.includes('date') ? day : time) }
+  const canonical = new Input('nextContactAt', '2026-10-09T10:00', '2026-10-09T10:00', picker)
+  const layer = { querySelectorAll: () => [canonical, day, time] }
+  const capture = new Function(
+    'HTMLInputElement',
+    'HTMLSelectElement',
+    'dialogDrafts',
+    'recordDrafts',
+    'RECORD_COMMAND_FIELD',
+    `${code}; return keepDrafts`,
+  )(Input, Select, store, store, '__command')
+  const { recordDraftHasChanges } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  capture(layer, 'dialog')
+  assert.deepEqual(state.values, { nextContactAt: '2026-10-09T10:00' })
+  assert.equal(recordDraftHasChanges(state), false, 'opening the populated form is not an edit')
+  time.value = '11:30'
+  canonical.value = canonical.defaultValue = '2026-10-09T11:30'
+  capture(layer, 'dialog')
+  assert.equal(recordDraftHasChanges(state), true, 'changing only the clock still needs the discard guard')
+  state = empty()
+  capture(layer, 'dialog')
+  assert.equal(
+    recordDraftHasChanges(state),
+    true,
+    'helper defaults retain the initial value even before the first snapshot',
+  )
+  time.value = '10:00'
+  canonical.value = '2026-10-09T10:00'
+  capture(layer, 'dialog')
+  assert.equal(recordDraftHasChanges(state), false, 'restoring the original time clears the dirty state')
+})
+
+test('record page: a link naming a dialog of the same record opens it as its trigger would', () => {
+  const start = runtime.indexOf('if (current?.id === target.id) {\n              if ((target.tab')
+  const branch = runtime.slice(
+    start,
+    runtime.indexOf("show(target.id, target.tab ?? null, 'push', undefined, target.dialog)", start),
+  )
+  assert.ok(start > 0 && branch.length > 0, 'the same-record link branch is where it was')
+  // An overflow menu's command is a link: it opens the dialog on a new entry, focus inside it.
+  assert.match(
+    branch,
+    /if \(target\.dialog\) \{[\s\S]*?show\(\s*target\.id,\s*target\.tab \?\? null,\s*'push',\s*\(\) => null,\s*target\.dialog,\s*dialogId \? \{ id: dialogId \} : \{\},\s*\)\s*return/u,
+  )
+  // Closing returns focus to the menu's button, since the link's disclosure has closed.
+  assert.match(
+    branch,
+    /dialogReturnFocus =\s*opener\?\.closest\('details'\)\?\.querySelector<HTMLElement>\(':scope > summary'\) \?\? opener/u,
+  )
+  // A tab alone still replaces the entry and focuses the tab.
+  assert.match(
+    branch,
+    /'replace',\s*\(\) =>\s*recordLayer\(\)\?\.querySelector<HTMLElement>\('\[data-ui="tab"\]\[data-active="true"\]'\)/u,
+  )
+})
+
+test('record modal: a link may open a dialog for one item, so a row can be its editor', async () => {
+  const { recordDialogHref } = await import('../packages/ketsuite/src/ui/client/record-modal-form.tsx')
+  const context = { tab: 'stock', href: (tab: string) => `/admin/products/tpl-1?tab=${tab}&dialogId=old` }
+  assert.equal(
+    recordDialogHref(context, 'editVariant', 'v 50'),
+    '/admin/products/tpl-1?tab=stock&dialogId=v+50&dialog=editVariant',
+  )
+  assert.equal(recordDialogHref(context, 'addImage'), '/admin/products/tpl-1?tab=stock&dialog=addImage')
+  // A link to the tab already open stays with the record even when its definition
+  // declares no such tab (the product page's route names `general`); otherwise the
+  // shell would fetch the page again and the dialog would never open.
+  assert.match(
+    runtime,
+    /tab &&\s*current &&\s*tab !== current\.tab &&\s*data !== undefined &&\s*!visibleTabs/u,
+  )
+  // The runtime opens it from the clicked URL, not from the address bar it is leaving.
+  assert.match(runtime, /const dialogId = url\.searchParams\.get\('dialogId'\)/u)
+  assert.match(runtime, /params:\s*entryParams \?\?/u)
+  assert.match(
+    runtime,
+    /if \(entryDialog && entryParams\?\.id\) entryHref\.searchParams\.set\('dialogId', entryParams\.id\)/u,
+  )
+  // A dialog a link opens starts clean, as one a button opens does: the "Saved" or refusal
+  // of the command before it belongs to that command, not to this dialog.
+  assert.match(
+    runtime,
+    /if \(sameRecord && entryDialog && definition\.dialogs\?\.\[entryDialog\]\) \{\s*keepAllDrafts\(\)\s*dialogDrafts\.set\(emptyDraftState\(\)\)\s*dialogViewState\.set\(\{\}\)\s*\/\/[^\n]*\s*issues\.set\(\[\]\)\s*outcome\.set\(null\)\s*saved\.set\(false\)\s*dialog\.set\(/u,
+  )
+})
+
+test('record modal: a chosen picture previews from an object URL the runtime revokes', () => {
+  assert.match(runtime, /\[key\]: src, \[`\$\{key\}:name`\]: src \? file!\.name : ''/u)
+  assert.match(runtime, /file\?\.type\.startsWith\('image\/'\) \? URL\.createObjectURL\(file\) : ''/u)
+  assert.match(runtime, /if \(previous\) \{\s*URL\.revokeObjectURL\(previous\)/u)
+  assert.match(runtime, /for \(const src of filePreviews\) URL\.revokeObjectURL\(src\)/u)
 })

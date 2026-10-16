@@ -28,6 +28,29 @@ const settle = async () => {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
 }
 
+test('expanded clear-filters preserves grouping and its independent control', () => {
+  const { root, ui, click } = setup({ ...searchFilterDemoConfig, presentation: 'expanded' })
+  click('search-filter-clear')
+  const facets = ui('search-filter-facet')
+  assert.equal(facets.filter((node) => node.attrs?.['data-type'] === 'filter').length, 0)
+  assert.equal(facets.filter((node) => node.attrs?.['data-type'] === 'groupBy').length, 0)
+  assert.match(textOf(root), /Customer/)
+  assert.equal(
+    ui('search-filter-section-toggle').filter((node) => node.attrs?.['data-section'] === 'groupBy').length,
+    1,
+  )
+})
+
+test('expanded rule editor is initially absent and toggles without duplicating presets', () => {
+  const { ui, click } = setup({ ...searchFilterDemoConfig, presentation: 'expanded' })
+  assert.equal(ui('custom-filter').length, 0)
+  click('search-filter-rule-toggle')
+  assert.equal(ui('custom-filter').length, 1)
+  assert.equal(ui('search-filter-rule-toggle')[0].attrs?.['aria-expanded'], 'true')
+  click('search-filter-rule-toggle')
+  assert.equal(ui('custom-filter').length, 0)
+})
+
 const withGlobals = async (globals: Record<string, unknown>, run: () => Promise<void>) => {
   const scope = globalThis as unknown as Record<string, unknown>
   const previous = Object.fromEntries(Object.keys(globals).map((key) => [key, scope[key]]))

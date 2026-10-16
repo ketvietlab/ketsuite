@@ -155,3 +155,76 @@ test('collection frame places creation and tools together in the header and pres
   assert.doesNotMatch(override, /Create record/)
   assert.equal(collectionActions(translate, { chrome: { create: frame.chrome!.create } }), undefined)
 })
+
+test('a stacked KetTable row leaves tertiary columns to its record but keeps the cell with the row link', () => {
+  const labels = {
+    region: 'Bookings',
+    selectAll: '',
+    selectRow: '',
+    sortedAscending: '',
+    sortedDescending: '',
+    previousPage: '',
+    nextPage: '',
+    loading: 'Loading',
+    loadError: 'Not loaded',
+    retry: 'Retry',
+    empty: 'No bookings',
+    emptyHint: '',
+  }
+  const html = renderToString(
+    KetTable({
+      columns: [
+        { key: 'code', label: 'Booking', priority: 'tertiary', cell: (item: Row) => item.id },
+        { key: 'name', label: 'Guest', priority: 'primary', cell: (item: Row) => item.name },
+        {
+          key: 'amount',
+          label: 'Total',
+          priority: 'tertiary',
+          align: 'end',
+          cell: (item: Row) => item.amount,
+        },
+      ],
+      rows: [row],
+      id: (item: Row) => item.id,
+      rowHref: (item: Row) => `/bookings/${encodeURIComponent(item.id)}`,
+      caption: null,
+      responsive: 'stack',
+      labels,
+    } as KetTableServerProps<Row>),
+  )
+  // Every cell says its priority; the first carries the row link, so it stays in a stacked row.
+  assert.match(
+    html,
+    /<td data-ui="kt-cell" data-col="code"[^>]*data-priority="tertiary"[^>]*>(?:<!--[^>]*-->)*<a data-ui="kt-row-link"/,
+  )
+  assert.match(html, /<td data-ui="kt-cell" data-col="amount"[^>]*data-priority="tertiary"/)
+  assert.match(html, /<th data-ui="kt-col" data-col="amount"[^>]*data-priority="tertiary"/)
+
+  const css = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8').replace(
+    /\s+/g,
+    ' ',
+  )
+  // Whitespace is the formatter's; parentheses may wrap their contents onto lines of their own.
+  const tight = css.replace(/\( /g, '(').replace(/ \)/g, ')')
+  const stacked = tight.slice(tight.indexOf('@media (max-width: 47.9375rem)'))
+  const rule =
+    ':where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] :is([data-ui="kt-col"], [data-ui="kt-cell"])[data-priority="tertiary"]:not(:has([data-ui="kt-row-link"])) { display: none; }'
+  assert.ok(
+    stacked.slice(0, stacked.indexOf('@layer')).includes(rule),
+    'tertiary columns hide only in the stacked phone layout',
+  )
+  assert.equal(css.split('[data-priority="tertiary"]').length, 2, 'a wide table keeps every column')
+})
+
+test('a stacked KetTable cell label breaks between words even when its cell wraps anywhere', () => {
+  const css = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8').replace(
+    /\s+/g,
+    ' ',
+  )
+  const stacked = css.slice(css.indexOf('@media (max-width: 47.9375rem)'))
+  assert.match(css, /\[data-ui="kt-cell"\]\[data-wrap="true"\] \{[^}]*overflow-wrap: anywhere;/)
+  assert.match(
+    stacked,
+    /\[data-ui="ket-table"\]\[data-responsive="stack"\] \[data-ui="kt-cell"\]::before \{ content: attr\(data-label\);[^}]*overflow-wrap: normal; \}/,
+  )
+})

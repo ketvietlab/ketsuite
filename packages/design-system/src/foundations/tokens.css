@@ -119,6 +119,7 @@
     --kv-text-disabled: light-dark(#9a9ea2, var(--kv-ref-text-disabled));
     --kv-panel-border: light-dark(#e9e7e8, var(--kv-ref-border-subtle));
     --kv-panel-divider: var(--kv-panel-border);
+    --kv-opacity-pending: 0.55;
     --kv-border-default: light-dark(#dddcde, var(--kv-ref-border-default));
     --kv-border-strong: light-dark(#cccccd, var(--kv-ref-border-strong));
     --kv-interactive-bg: light-dark(#ffffff, var(--kv-ref-control));
@@ -131,6 +132,8 @@
     --kv-accent-subtle: light-dark(#eef0fb, var(--kv-ref-primary-subtle));
     --kv-accent-muted: light-dark(#dde2f7, var(--kv-ref-primary-muted));
     --kv-accent-border: light-dark(#c3cdf0, var(--kv-ref-primary-border));
+    /* Accent as text on a panel: the dark accent is a fill colour and reads at 3.4:1 as text, so text takes a lighter step (8:1). */
+    --kv-accent-text: light-dark(#4f5ed0, var(--kv-ref-primary-300));
     --kv-focus-border: light-dark(#5968df, #7485e8);
     --kv-focus-ring: 0 0 0 3px light-dark(#dde2f7, rgb(89 104 223 / 16%));
     --kv-on-accent: var(--kv-ref-white);
@@ -150,6 +153,8 @@
     --kv-danger-hover: light-dark(#912018, var(--kv-ref-danger-hover));
     --kv-danger-bg: light-dark(#fef3f2, var(--kv-ref-danger-bg));
     --kv-danger-border: light-dark(#fecdca, var(--kv-ref-danger-border));
+    /* Small status text needs AA contrast over tinted dark surfaces. */
+    --kv-badge-danger-text: light-dark(var(--kv-danger), var(--kv-ref-danger-hover));
     --kv-info: light-dark(#4557bc, var(--kv-ref-info));
     --kv-info-bg: light-dark(#eef0fb, var(--kv-ref-info-bg));
     --kv-info-border: light-dark(#c3cdf0, var(--kv-ref-info-border));
@@ -193,6 +198,7 @@
     --kv-app-topbar-search-bg: #2c3152;
     --kv-app-topbar-border: #626b95;
     --kv-app-topbar-focus: #bbc5ff;
+    --kv-help-width: 32rem;
     --kv-font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --kv-font-display: var(--kv-font-sans);
     --kv-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -278,6 +284,12 @@
     --kv-density-content-gap: var(--kv-space-4);
     /* Wide enough for a root section label at the raised text scale
        ("Chăm sóc khách hàng" at 14px medium). */
+    --kv-app-switcher-width: 3rem;
+    --kv-app-switcher-bg: var(--kv-ref-bg-app);
+    --kv-app-switcher-text: var(--kv-ref-text-secondary);
+    --kv-app-switcher-active: var(--kv-ref-white);
+    --kv-app-switcher-hover: var(--kv-ref-control-hover);
+    --kv-app-switcher-selected: var(--kv-ref-surface-2);
     --kv-sidebar-width: 14.25rem;
     --kv-right-rail-width: 21.25rem;
     /* Widest inline size of document-style content (API references, help pages), centred in

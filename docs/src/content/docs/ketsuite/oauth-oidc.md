@@ -171,6 +171,14 @@ party sai, nonce sai và token ngoài time window.
 
 ## Linking và auto-provision
 
+`Provider.protocol = 'oidc'` là luồng OIDC trực tiếp, callback
+`/auth/oauth/{code}/callback`. `oidc-broker` dành cho receiver do deployment sở hữu:
+callback đăng ký với issuer là `/api/auth/callback` của broker, dùng public client
+PKCE, `autoProvision=false`, không có `defaultRoleId`. Generic OAuth routes từ chối
+provider broker; deployment phải khởi tạo transaction một lần, bind cookie browser,
+xác minh ID token (signature, issuer, audience, expiry, nonce) trước `resolveLogin`.
+Role claim ngoài không trở thành Role/Grant cục bộ. Không lưu token trong browser storage.
+
 - Link self-service yêu cầu một session live; actor trong callback phải trùng User
   đã bắt đầu flow và provider phải bật `allowLinking`.
 - Link quản trị nhận subject đã xác minh từ provider, không nhận access token.

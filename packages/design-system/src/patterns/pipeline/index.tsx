@@ -23,7 +23,8 @@ export type PipelineStep = {
  * A process read left to right: the stages of a thing, and how many are sitting
  * in each one.
  *
- * Not a `Progress`, which answers "how far along is this one record". This
+ * Not a `Progress`, which answers "how far along is this one record", nor a
+ * `StagePath`, which shows which stage one record is in. This
  * answers "where is the work piling up", so every stage carries its own count
  * and none of them is a percentage of the others — a stage can hold more than
  * the one before it, and a bar that normalised them would say the opposite.

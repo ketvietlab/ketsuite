@@ -19,6 +19,21 @@ import {
 
 const render = (view: Parameters<typeof renderToString>[0]) =>
   renderToString(view).replace(/<!--.*?-->/gs, '')
+
+test('record Field locale reaches date and datetime pickers without changing native names or values', () => {
+  for (const type of ['date', 'datetime-local'] as const) {
+    const value = type === 'date' ? '2026-10-04' : '2026-10-04T09:00'
+    const output = render(Field({ id: 'host-date', name: 'when', label: 'When', type, value, locale: 'en' }))
+    assert.match(output, /data-date-locale="en"/)
+    assert.match(output, /Choose date/)
+    assert.ok(output.includes('name="when"'))
+    assert.ok(output.includes('value="' + value + '"'))
+  }
+  assert.match(
+    render(Field({ id: 'default-date', name: 'defaultDate', label: 'Ngày', type: 'date' })),
+    /data-date-locale="vi"/,
+  )
+})
 const range = {
   id: 'range',
   label: 'Báo cáo',
@@ -232,7 +247,7 @@ test('record form full-span rules do not reach into date/time parts', () => {
   const css = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8')
   assert.doesNotMatch(css, /\[data-ui="form-grid"\] \[data-ui="field"\]/)
   const auth = readFileSync('packages/ketsuite/src/modules/backend/design/auth.css', 'utf8')
-  assert.doesNotMatch(auth, /^  \[data-ui="field"\]/m)
+  assert.doesNotMatch(auth, /^ {2}\[data-ui="field"\]/m)
   const forms = readFileSync('packages/ketsuite/src/modules/backend/design/forms.css', 'utf8')
   assert.doesNotMatch(forms, /\[data-ui="date-picker"\](?!:not\(\[data-date-mode\]\))/)
 })

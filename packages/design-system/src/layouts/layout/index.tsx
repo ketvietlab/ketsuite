@@ -1,5 +1,6 @@
 import { each } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
+import { Icon } from '../../primitives/icon/index.tsx'
 import { Text } from '../../primitives/status/index.tsx'
 import type { Tone } from '../../primitives/status.tsx'
 
@@ -28,6 +29,7 @@ export const HOOKS = [
   'section-body',
   'content-card',
   'card-media',
+  'card-content',
   'card-head',
   'card-leading',
   'card-heading',
@@ -50,6 +52,7 @@ export const HOOKS = [
   'metric-icon',
   'metric-label',
   'metric-value',
+  'metric-change',
   'metric-detail',
 ] as const
 
@@ -158,9 +161,12 @@ export const Surface = (props: {
   actions?: JSXChild
   tone?: 'default' | 'subtle' | 'raised'
   padding?: 'none' | 'compact' | 'default'
+  /** The card's anchor, for a link elsewhere on the page that points at it (`#id`). */
+  id?: string
 }): TemplateResult => (
   <div
     data-ui="surface"
+    id={props.id}
     data-tone={props.tone ?? 'default'}
     data-padding={props.padding ?? 'default'}
     data-has-heading={props.title ? 'true' : null}
@@ -218,12 +224,21 @@ export const Section = (props: {
   description?: string | null
   eyebrow?: string | null
   actions?: JSXChild
+  /**
+   * Names the section by its title. Give one when sections repeat the same fields (one per guest, one per
+   * line): a field's label alone ("Name") then does not say whose it is.
+   */
+  id?: string | null
 }): TemplateResult => (
-  <section data-ui="section">
+  <section
+    data-ui="section"
+    id={props.id ?? undefined}
+    aria-labelledby={props.id ? `${props.id}-title` : undefined}
+  >
     <header data-ui="section-head">
       <div>
         {!!props.eyebrow && <p data-ui="section-eyebrow">{props.eyebrow}</p>}
-        <h2 data-ui="section-title">
+        <h2 data-ui="section-title" id={props.id ? `${props.id}-title` : undefined}>
           <Text>{props.title}</Text>
         </h2>
         {!!props.description && <p data-ui="section-description">{props.description}</p>}
@@ -240,6 +255,12 @@ export type ContentCardProps = {
   summary?: string | null
   leading?: JSXChild
   media?: JSXChild
+  /**
+   * `top` (default) runs `media` edge to edge above the card. `start` keeps a square
+   * picture beside all of the card's content, for catalogue items whose image identifies
+   * them; the `meta` row then holds the item's key figure (a price) at the content's end.
+   */
+  mediaPlacement?: 'top' | 'start'
   status?: JSXChild
   body?: JSXChild
   meta?: JSXChild
@@ -250,33 +271,42 @@ export type ContentCardProps = {
   padding?: 'compact' | 'default'
 }
 
-export const ContentCard = (props: ContentCardProps): TemplateResult => (
-  <article
-    data-ui="content-card"
-    data-interactive={String(!!props.href)}
-    data-selected={String(props.selected === true)}
-    data-tone={props.tone ?? 'default'}
-    data-padding={props.padding ?? 'default'}
-  >
-    {props.media !== undefined && <div data-ui="card-media">{props.media}</div>}
-    <header data-ui="card-head">
-      {props.leading !== undefined && (
-        <span data-ui="card-leading" aria-hidden="true">
-          {props.leading}
-        </span>
-      )}
-      <div data-ui="card-heading">
-        {!!props.eyebrow && <p data-ui="card-eyebrow">{props.eyebrow}</p>}
-        <h3 data-ui="card-title">{props.href ? <a href={props.href}>{props.title}</a> : props.title}</h3>
-        {!!props.summary && <p data-ui="card-summary">{props.summary}</p>}
-      </div>
-      {props.status !== undefined && <div data-ui="card-status">{props.status}</div>}
-    </header>
-    {props.body !== undefined && <div data-ui="card-body">{props.body}</div>}
-    {props.meta !== undefined && <div data-ui="card-meta">{props.meta}</div>}
-    {props.actions !== undefined && <div data-ui="card-actions">{props.actions}</div>}
-  </article>
-)
+export const ContentCard = (props: ContentCardProps): TemplateResult => {
+  const besideMedia = props.media !== undefined && props.mediaPlacement === 'start'
+  const content = (
+    <>
+      <header data-ui="card-head">
+        {props.leading !== undefined && (
+          <span data-ui="card-leading" aria-hidden="true">
+            {props.leading}
+          </span>
+        )}
+        <div data-ui="card-heading">
+          {!!props.eyebrow && <p data-ui="card-eyebrow">{props.eyebrow}</p>}
+          <h3 data-ui="card-title">{props.href ? <a href={props.href}>{props.title}</a> : props.title}</h3>
+          {!!props.summary && <p data-ui="card-summary">{props.summary}</p>}
+        </div>
+        {props.status !== undefined && <div data-ui="card-status">{props.status}</div>}
+      </header>
+      {props.body !== undefined && <div data-ui="card-body">{props.body}</div>}
+      {props.meta !== undefined && <div data-ui="card-meta">{props.meta}</div>}
+      {props.actions !== undefined && <div data-ui="card-actions">{props.actions}</div>}
+    </>
+  )
+  return (
+    <article
+      data-ui="content-card"
+      data-interactive={String(!!props.href)}
+      data-selected={String(props.selected === true)}
+      data-tone={props.tone ?? 'default'}
+      data-padding={props.padding ?? 'default'}
+      data-media={besideMedia ? 'start' : null}
+    >
+      {props.media !== undefined && <div data-ui="card-media">{props.media}</div>}
+      {besideMedia ? <div data-ui="card-content">{content}</div> : content}
+    </article>
+  )
+}
 
 export type KanbanCardProps = {
   id: string
@@ -300,7 +330,16 @@ export const KanbanCard = (props: KanbanCardProps): TemplateResult => (
     data-selected={String(props.selected === true)}
   >
     {props.media !== undefined && <div data-ui="kanban-media">{props.media}</div>}
-    <h3 data-ui="kanban-title">{props.href ? <a href={props.href}>{props.title}</a> : props.title}</h3>
+    <h3 data-ui="kanban-title">
+      {props.href ? (
+        // The link covers the card; a draggable card is dragged as itself, not as a link.
+        <a href={props.href} draggable={props.draggable === true ? 'false' : undefined}>
+          {props.title}
+        </a>
+      ) : (
+        props.title
+      )}
+    </h3>
     {props.meta !== undefined && <div data-ui="kanban-meta">{props.meta}</div>}
     {!!props.note && <p data-ui="kanban-note">{props.note}</p>}
     {props.actions !== undefined && <div data-ui="kanban-actions">{props.actions}</div>}
@@ -338,7 +377,19 @@ export const KanbanGrid = <T,>(props: KanbanGridProps<T>): TemplateResult => (
  * `href` makes the whole card the link rather than the label, because the card is
  * what the pointer is already over. There is nothing else inside a metric to
  * click, which is exactly why `ContentCard` does the opposite.
+ *
+ * `change` compares the figure with an earlier period. The label carries the
+ * signed amount and the period in words ("+12.4% vs previous 7 days"), the arrow
+ * repeats the direction, and the tone says whether that direction is good: a cost
+ * that went up is `danger` although its arrow points up. Colour is never the only
+ * cue, and the figure itself stays in the page's ink.
  */
+export type MetricChange = {
+  label: string
+  direction: 'up' | 'down' | 'flat'
+  tone?: 'positive' | 'danger' | 'neutral'
+}
+
 export const Metric = (props: {
   label: string
   value: string | number
@@ -350,6 +401,7 @@ export const Metric = (props: {
    */
   icon?: JSXChild
   href?: string | null
+  change?: MetricChange | null
 }): TemplateResult => {
   const attributes = {
     'data-ui': 'metric',
@@ -368,6 +420,25 @@ export const Metric = (props: {
       )}
       <p data-ui="metric-label">{props.label}</p>
       <p data-ui="metric-value">{String(props.value)}</p>
+      {!!props.change && (
+        <p
+          data-ui="metric-change"
+          data-direction={props.change.direction}
+          data-tone={props.change.tone ?? 'neutral'}
+        >
+          <Icon
+            name={
+              props.change.direction === 'up'
+                ? 'trending-up'
+                : props.change.direction === 'down'
+                  ? 'trending-down'
+                  : 'minus'
+            }
+            size="small"
+          />
+          {props.change.label}
+        </p>
+      )}
       {!!props.detail && <p data-ui="metric-detail">{props.detail}</p>}
     </>
   )

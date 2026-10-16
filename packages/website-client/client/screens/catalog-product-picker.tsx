@@ -1,3 +1,4 @@
+import { ModalSheet } from '../page-regions.tsx'
 import { createRoot, domHost } from '@ketvietlab/ketjs-view'
 import type { HostNode } from '@ketvietlab/ketjs-view'
 import {
@@ -8,7 +9,6 @@ import {
   Grid,
   IconButton,
   Inline,
-  ModalSheet,
   Notice,
   SearchField,
   Select,

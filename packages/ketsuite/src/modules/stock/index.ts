@@ -5,6 +5,7 @@ import { models } from './models.ts'
 import { relations } from './relations.ts'
 import { routingFunctions } from './routing.ts'
 import { reportFunctions, reports } from './reports.ts'
+import { productWorkspaceFunctions } from './product-workspace.ts'
 
 export default defineModule({
   name: 'stock',
@@ -18,11 +19,23 @@ export default defineModule({
     'product.Template': { isStorable: 'bool?', tracking: 'text?', inventoryRevision: 'int?' },
   },
   relations,
-  functions: { ...functions, ...routingFunctions, ...reportFunctions, ...inventoryPreviewFunctions },
+  functions: {
+    ...functions,
+    ...routingFunctions,
+    ...reportFunctions,
+    ...inventoryPreviewFunctions,
+    ...productWorkspaceFunctions,
+  },
   reports,
   messages: {
     vi: {
       'error.countStorable': 'Chọn sản phẩm lưu kho.',
+      'error.orderpoint.product': 'Biến thể không thuộc sản phẩm này. Tải lại trang.',
+      'error.orderpoint.unit': 'Chọn đơn vị tính cho sản phẩm trước khi đặt mức tồn.',
+      'error.orderpoint.warehouse': 'Kho không còn hoạt động hoặc chưa có vị trí lưu kho.',
+      'error.orderpoint.quantity':
+        'Nhập số lượng không âm, tối đa 3 chữ số thập phân; để trống cả hai để bỏ mức tồn.',
+      'error.orderpoint.range': 'Tồn tối đa phải lớn hơn hoặc bằng tồn tối thiểu.',
       'error.countLocation': 'Chọn vị trí nội bộ hoặc trung chuyển.',
       'error.countPositive': 'Số đếm không được âm.',
       'error.countLot': 'Chọn lô hoặc số sê-ri đúng sản phẩm.',
@@ -44,6 +57,12 @@ export default defineModule({
     },
     en: {
       'error.countStorable': 'Choose a storable product.',
+      'error.orderpoint.product': 'This variant does not belong to the product. Reload the page.',
+      'error.orderpoint.unit': 'Choose the product unit before setting stock levels.',
+      'error.orderpoint.warehouse': 'The warehouse is inactive or has no stock location.',
+      'error.orderpoint.quantity':
+        'Enter a non-negative quantity with up to 3 decimals; leave both empty to remove the level.',
+      'error.orderpoint.range': 'Maximum stock must be at least the minimum.',
       'error.countLocation': 'Choose an internal or transit location.',
       'error.countPositive': 'Count cannot be negative.',
       'error.countLot': 'Choose a lot or serial belonging to this product.',
