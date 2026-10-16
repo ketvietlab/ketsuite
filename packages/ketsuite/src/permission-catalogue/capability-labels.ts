@@ -1,0 +1,48 @@
+/** The words a role screen shows for each capability a module bundle grants. */
+export const capabilityLabels: Record<string, { en: string; vi: string }> = {
+  'agent-operate': { en: 'Agent operations', vi: 'Nghiệp vụ nhân viên' },
+  analytics: { en: 'Analytics', vi: 'Phân tích' },
+  import: { en: 'Import CRM leads', vi: 'Nhập lead CRM' },
+  approve: { en: 'Approve', vi: 'Phê duyệt' },
+  publish: { en: 'Publish content', vi: 'Xuất bản nội dung' },
+  author: { en: 'Write documents', vi: 'Soạn nội dung' },
+  assignment: { en: 'Assign records', vi: 'Phân công hồ sơ' },
+  cancel: { en: 'Cancel', vi: 'Hủy' },
+  'cash-control': { en: 'Cash control', vi: 'Kiểm soát tiền mặt' },
+  'compliance-operate': { en: 'Hospitality compliance', vi: 'Tuân thủ lưu trú' },
+  configure: { en: 'Configure', vi: 'Cấu hình' },
+  confirm: { en: 'Confirm', vi: 'Xác nhận' },
+  cost: { en: 'Cost', vi: 'Giá vốn' },
+  'fulfillment-sync': { en: 'Synchronize fulfillment', vi: 'Đồng bộ thực hiện đơn' },
+  'housekeeping-attend': { en: 'Attend housekeeping', vi: 'Thực hiện buồng phòng' },
+  'housekeeping-supervise': { en: 'Supervise housekeeping', vi: 'Giám sát buồng phòng' },
+  invoice: { en: 'Invoice', vi: 'Lập hóa đơn' },
+  merge: { en: 'Merge records', vi: 'Gộp hồ sơ' },
+  'night-audit': { en: 'Run night audit', vi: 'Chạy kiểm toán đêm' },
+  'order-operate': { en: 'Operate orders', vi: 'Vận hành đơn hàng' },
+  operate: { en: 'Operate', vi: 'Vận hành' },
+  // Not "read every project" — that is the grant row this capability hands out,
+  // and holding the capability without a row of your own reads nothing. The
+  // label said otherwise, which would have told a role screen that ticking this
+  // box opens the projects; it opens the ability to open them for somebody.
+  'project-access': { en: 'Administer project access', vi: 'Quản trị quyền đọc dự án' },
+  'project-delete': { en: 'Delete projects for good', vi: 'Xóa hẳn dự án' },
+  'property-reference': { en: 'Reference properties', vi: 'Tham chiếu cơ sở lưu trú' },
+  reconcile: { en: 'Reconcile', vi: 'Đối soát' },
+  refund: { en: 'Refund', vi: 'Hoàn tiền' },
+  report: { en: 'Reports', vi: 'Báo cáo' },
+  'reservation-input': { en: 'Enter reservations', vi: 'Nhập đặt phòng' },
+  'revenue-operate': { en: 'Manage hospitality revenue', vi: 'Quản lý doanh thu lưu trú' },
+  'quote-operate': { en: 'Operate quotations', vi: 'Vận hành báo giá' },
+  security: { en: 'Security', vi: 'Bảo mật' },
+  // These widen whose records the rest of a role reaches; without either, a user
+  // works their own records and the teams they lead.
+  'scope-company': { en: 'See the whole company', vi: 'Thấy việc toàn công ty' },
+  'scope-team': { en: 'See their teams', vi: 'Thấy việc của team' },
+  sensitive: { en: 'Sensitive data', vi: 'Dữ liệu nhạy cảm' },
+  'shift-approve': { en: 'Approve shifts', vi: 'Duyệt ca' },
+  'shift-operate': { en: 'Operate shifts', vi: 'Vận hành ca' },
+  tender: { en: 'Take payment', vi: 'Nhận thanh toán' },
+  view: { en: 'View', vi: 'Xem' },
+  void: { en: 'Void', vi: 'Hủy thanh toán' },
+}

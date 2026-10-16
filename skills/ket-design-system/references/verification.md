@@ -26,10 +26,10 @@ from input borders and row dividers. Check a boundary/inset has exactly one owne
 
 ## KétJS repository commands
 
-After public component/hook edits:
+After public component/hook edits (the inventory itself is derived on build and not committed;
+the check fails when an export has no entry in `inventory-policy.json`):
 
 ```sh
-npm run design:inventory
 npm run design:inventory:check
 npm run design:governance:check
 ```

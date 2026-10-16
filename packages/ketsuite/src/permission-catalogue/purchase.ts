@@ -1,0 +1,32 @@
+import type { CatalogueSource } from './source.ts'
+
+export const permissions = {
+  posture: 'permission-bearing',
+  bundles: ['approve', 'configure', 'operate', 'report', 'sensitive', 'view'],
+  functions: {
+    addLine: ['operate', 'operate'],
+    approveOrder: ['approve', 'approve', 'purchase.domain-policy'],
+    cancelOrder: ['approve', 'approve', 'purchase.domain-policy'],
+    confirmOrder: ['approve', 'approve', 'purchase.domain-policy'],
+    createOrder: ['operate', 'operate'],
+    createVendorBill: ['configure', 'configure', 'purchase.configuration-audit'],
+    getOrder: ['read', 'view'],
+    getPurchaseOrderReport: ['sensitive', 'sensitive', 'purchase.sensitive-data'],
+    getRfqReport: ['sensitive', 'sensitive', 'purchase.sensitive-data'],
+    listOrderMetrics: ['read', 'report'],
+    listOrders: ['read', 'view'],
+    listProductVendors: ['read', 'view'],
+    listSupplierInfo: ['read', 'view'],
+    lockOrder: ['approve', 'approve', 'purchase.domain-policy'],
+    receiveOrderReceipt: ['operate', 'operate'],
+    removeLine: ['operate', 'operate'],
+    resetToDraft: ['operate', 'operate'],
+    saveDraft: ['configure', 'configure', 'purchase.configuration-audit'],
+    saveSupplierInfo: ['configure', 'configure', 'purchase.configuration-audit'],
+    sendRfq: ['operate', 'operate'],
+    setPurchaseMethod: ['configure', 'configure', 'purchase.configuration-audit'],
+    syncReceipts: ['operate', 'operate'],
+    updateLine: ['operate', 'operate'],
+  },
+  exemptions: {},
+} satisfies CatalogueSource

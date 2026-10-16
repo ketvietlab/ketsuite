@@ -12,6 +12,7 @@
 
 import { signal } from '@ketvietlab/ketjs-view'
 import type { IslandController, IslandProps, JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
+import type { ActionVariant } from '@ketvietlab/design-system'
 import {
   Button,
   ConfirmDialog,
@@ -356,6 +357,13 @@ export type RecordModalDefinition<Data> = {
   /** Supporting record information beside a page; ignored by modal presentation. */
   pageAside?: (context: RecordModalContext<Data>) => JSXChild | undefined
   pageAsideLabel?: (context: RecordModalContext<Data>) => string
+  /**
+   * Where the rail sits in reading and keyboard order (`RecordPage.asideWhenStacked`).
+   * `before`, the default, leads the record with it: a rail of things to act on first.
+   * `after` keeps reference facts behind the record's own fields. A wide page draws the
+   * rail beside the record either way.
+   */
+  pageAsideWhenStacked?: 'before' | 'after'
   tabs?: readonly RecordModalTab<Data>[]
   /**
    * Tabs other modules add to this record, read from its context: they follow the
@@ -406,6 +414,13 @@ export const RECORD_MODAL_LABELS: Readonly<Record<string, string>> = Object.free
   'recordModal.savedTitle': 'Saved',
   'recordModal.saved': 'The change is in.',
   'recordModal.unsaved': 'Discard what you typed?',
+  'recordModal.unsavedDetail': 'Closing now loses what you typed here.',
+  'recordModal.discard': 'Discard',
+  'recordModal.keepEditing': 'Keep editing',
+  'recordModal.confirm': 'Continue',
+  'recordModal.back': 'Go back',
+  'recordModal.deniedTitle': 'You cannot open this record',
+  'recordModal.denied': 'Ask an administrator for access.',
   'recordModal.uploadFailed': 'The file could not be uploaded. Try again.',
 })
 
@@ -449,13 +464,19 @@ export const RECORD_DIALOG_ATTRIBUTE = 'data-record-dialog'
 export const recordLayerOwnsKey = (key: string, defaultPrevented: boolean, nativeDialogOpen: boolean) =>
   !defaultPrevented && !nativeDialogOpen && (key === 'Escape' || key === 'Tab')
 
+/** Both island hosts a page may use: the `ket-island` element and a `div` that names its island. */
+export const RECORD_ISLAND_HOST = 'ket-island, div[data-ket-island]'
+
 /** A nested island owns its native submit, including inline variant editors. */
 export const recordFormOwnedByHost = (form: { closest(selector: string): unknown }, host: unknown) =>
-  form.closest('ket-island') === host
+  form.closest(RECORD_ISLAND_HOST) === host
+
+/** A read refused for access is said so, without a retry that would only be refused again. */
+export const recordReadDenied = (status: number | undefined): boolean => status === 403
 
 /** A retained island host must receive fresh validation, draft and busy props. */
 export const recordIslandChanges = (records: MutationRecord[], root: Element) => {
-  const selector = 'ket-island, div[data-ket-island]'
+  const selector = RECORD_ISLAND_HOST
   const holds = (node: Node): node is Element =>
     node instanceof Element && (node.matches(selector) || node.querySelector(selector) !== null)
   const removed = new Set<Element>()
@@ -744,6 +765,19 @@ export const createRecordPanel =
 type PageMode = Partial<RecordPageOptions> & { props: RecordPageIslandProps; panel?: boolean }
 
 const MODAL_LAYER = '[data-ui="modal-layer"][data-client-modal="true"]'
+/** Wraps the runtime's own question, which is a modal layer but never a record layer. */
+const ASK_LAYER = '[data-record-ask]'
+/** The value of the confirm button in the runtime's question; it submits nothing. */
+export const RECORD_ASK_CONFIRM = 'record-ask-confirm'
+
+/** The name a submitter shows, which a question about its command repeats. */
+export const recordSubmitterLabel = (submitter: Element | null): string | null =>
+  (
+    submitter?.getAttribute('aria-label') ??
+    submitter?.querySelector('[data-ui="action-label"]')?.textContent ??
+    submitter?.textContent ??
+    ''
+  ).trim() || null
 
 const recordController =
   <Data,>(definition: RecordModalDefinition<Data>, page: PageMode | null) =>
@@ -815,6 +849,7 @@ const recordController =
     const status = signal<Status>('idle')
     const envelope = signal<RecordContextEnvelope<Data> | null>(null)
     const failure = signal<string | null>(null)
+    const failureStatus = signal<number | undefined>(undefined)
     const issues = signal<RecordIssue[]>([])
     const recordDrafts = signal<DraftState>(emptyDraftState())
     const dialogDrafts = signal<DraftState>(emptyDraftState())
@@ -870,6 +905,18 @@ const recordController =
     let returnFocus: HTMLElement | null = null
     let dialogReturnFocus: HTMLElement | null = null
     let releaseInert: (() => void) | null = null
+
+    // The question asked before discarding input or running a command that asks first,
+    // in the shared ConfirmDialog. One at a time; answering settles what `ask` returned.
+    type Question = {
+      title: string
+      message: string
+      confirmLabel: string
+      cancelLabel: string
+      variant: ActionVariant
+      settle: (accepted: boolean) => void
+    }
+    const asking = signal<Question | null>(null)
 
     // Messages of the last record this modal loaded: opening the next record clears
     // the envelope, and its loading state still needs words rather than keys.
@@ -950,6 +997,7 @@ const recordController =
       }
       if (!quiet) status.set('loading')
       failure.set(null)
+      failureStatus.set(undefined)
       try {
         const creating = id === RECORD_NEW_ID
         const result =
@@ -965,7 +1013,13 @@ const recordController =
               )
         if (controller.signal.aborted) return
         if (!result.ok || !result.value) {
-          failure.set(result.ok ? 'recordModal.notFound' : (result.message ?? 'recordModal.loadFailed'))
+          const denied = !result.ok && recordReadDenied(result.status)
+          failure.set(
+            result.ok
+              ? 'recordModal.notFound'
+              : (result.message ?? (denied ? 'recordModal.denied' : 'recordModal.loadFailed')),
+          )
+          failureStatus.set(result.ok ? undefined : result.status)
           status.set('error')
           return
         }
@@ -990,7 +1044,10 @@ const recordController =
       }
     }
 
-    const layers = (): HTMLElement[] => (root ? [...root.querySelectorAll<HTMLElement>(layerSelector)] : [])
+    const layers = (): HTMLElement[] =>
+      root
+        ? [...root.querySelectorAll<HTMLElement>(layerSelector)].filter((layer) => !layer.closest(ASK_LAYER))
+        : []
     const recordLayer = (): HTMLElement | null => layers()[0] ?? null
     const topLayer = (): HTMLElement | null => layers().at(-1) ?? null
 
@@ -1084,7 +1141,39 @@ const recordController =
       if (currentLayers.length > 1) keepDrafts(currentLayers.at(-1) ?? null, 'dialog')
     }
 
-    const mayDiscard = (current: HTMLElement | null): boolean => {
+    const ask = (question: Omit<Question, 'settle'>): Promise<boolean> => {
+      if (asking()) return Promise.resolve(false)
+      const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      // Everything under the question is out of reach until it is answered.
+      const beneath = layers()
+      const wasInert = beneath.map((layer) => layer.inert)
+      const releaseOutside = page && !releaseInert && root ? inertOutside(root) : null
+      return new Promise((resolve) => {
+        const asked: Question = {
+          ...question,
+          settle: (accepted) => {
+            if (asking() !== asked) return
+            asking.set(null)
+            beneath.forEach((layer, index) => {
+              layer.inert = wasInert[index] ?? false
+            })
+            releaseOutside?.()
+            // Declining returns to where the question was asked; accepting lets the caller move on.
+            if (!accepted && trigger?.isConnected) requestAnimationFrame(() => trigger.focus())
+            resolve(accepted)
+          },
+        }
+        asking.set(asked)
+        requestAnimationFrame(() => {
+          if (asking() !== asked) return
+          for (const layer of beneath) layer.inert = true
+          // The safe answer has focus: Enter on an unread question keeps what is there.
+          root?.querySelector<HTMLElement>(`${ASK_LAYER} [data-client-modal-close] button`)?.focus()
+        })
+      })
+    }
+
+    const mayDiscard = async (current: HTMLElement | null): Promise<boolean> => {
       if (!current) return true
       const scope = dialog() && current === topLayer() ? 'dialog' : 'record'
       keepDrafts(current, scope)
@@ -1094,7 +1183,13 @@ const recordController =
       )
       const policy = scope === 'dialog' ? definition.dialogs?.[dialog()!.name]?.discardPolicy : undefined
       if (recordDiscardAccepted(draft, hasFile, policy, () => false)) return true
-      return globalThis.confirm(t('recordModal.unsaved'))
+      return ask({
+        title: t('recordModal.unsaved'),
+        message: t('recordModal.unsavedDetail'),
+        confirmLabel: t('recordModal.discard'),
+        cancelLabel: t('recordModal.keepEditing'),
+        variant: 'destructive',
+      })
     }
 
     const afterRender = (preferred?: () => HTMLElement | null): void => {
@@ -1234,9 +1329,12 @@ const recordController =
       if (target?.isConnected) requestAnimationFrame(() => target.focus())
     }
 
-    const close = (): void => {
-      if (dialog()) {
-        if (!mayDiscard(topLayer())) return
+    const close = async (): Promise<void> => {
+      // A question already on screen is answered first; Escape or a second click does not stack another.
+      if (asking()) return
+      const opened = dialog()
+      if (opened) {
+        if (!(await mayDiscard(topLayer())) || dialog() !== opened) return
         const target = dialogReturnFocus
         dialogReturnFocus = null
         dialog.set(null)
@@ -1252,7 +1350,8 @@ const recordController =
       }
       // Route-context pages stay open; client-read pages return through their back action.
       if (serverPage) return
-      if (!mayDiscard(recordLayer())) return
+      const current = open()
+      if (!(await mayDiscard(recordLayer())) || open() !== current) return
       hide('history')
     }
 
@@ -1266,9 +1365,21 @@ const recordController =
       const scope: DraftScope = dialog() && currentLayer === topLayer() ? 'dialog' : 'record'
       keepDrafts(currentLayer, scope)
       const context = contextFor(current, data, scope)
-      if (command.confirm) {
-        const message = command.confirm(context)
-        if (message && !globalThis.confirm(message)) return
+      const question = command.confirm?.(context)
+      if (question) {
+        // The question repeats the command's own name, so the answer reads as the act itself.
+        const label = recordSubmitterLabel(submitter) ?? t('recordModal.confirm')
+        const accepted = await ask({
+          title: label,
+          message: question,
+          confirmLabel: label,
+          cancelLabel: t('recordModal.back'),
+          variant:
+            submitter instanceof HTMLElement && submitter.dataset.variant === 'destructive'
+              ? 'destructive'
+              : 'primary',
+        })
+        if (!accepted || open() !== current || running()) return
       }
       setRunning(true)
       issues.set([])
@@ -1490,6 +1601,13 @@ const recordController =
     const recordBody = (): TemplateResult | string => {
       const current = open()
       if (!current) return ''
+      // A refused read says why and offers nothing to retry; another failure may pass next time.
+      if (status() === 'error' && recordReadDenied(failureStatus()))
+        return Notice({
+          title: t('recordModal.deniedTitle'),
+          message: t(failure() ?? 'recordModal.denied'),
+          tone: 'warning',
+        })
       if (status() === 'error')
         return (
           <>
@@ -1531,6 +1649,31 @@ const recordController =
       // The stack owns the gap under a header or notice. Each part keeps its position
       // (an empty one renders nothing), so a refusal's notice never rebuilds the form.
       return Stack({ items: [header || null, issueNotice || null, body || null] })
+    }
+
+    // A refused read is titled as such; any other failure could not load.
+    const failureTitle = (): string =>
+      t(recordReadDenied(failureStatus()) ? 'recordModal.deniedTitle' : 'recordModal.loadFailed')
+
+    const askLayer = (): TemplateResult | string => {
+      const question = asking()
+      if (!question) return ''
+      return (
+        <div data-record-ask>
+          {ConfirmDialog({
+            id: `record-ask-${definition.kind.replaceAll('.', '-')}`,
+            mode: 'client',
+            size: 'small',
+            title: question.title,
+            message: question.message,
+            closeHref: '#',
+            closeLabel: question.cancelLabel,
+            confirmLabel: question.confirmLabel,
+            confirmValue: RECORD_ASK_CONFIRM,
+            confirmVariant: question.variant,
+          })}
+        </div>
+      )
     }
 
     const dialogLayer = (): TemplateResult | string => {
@@ -1583,7 +1726,7 @@ const recordController =
       const title = context
         ? definition.title(context)
         : status() === 'error'
-          ? t('recordModal.loadFailed')
+          ? failureTitle()
           : pageProps!.title
       return (
         <>
@@ -1596,9 +1739,11 @@ const recordController =
             actions: context ? definition.pageActions?.(context) : undefined,
             aside: context ? definition.pageAside?.(context) : undefined,
             asideLabel: context ? definition.pageAsideLabel?.(context) : undefined,
+            asideWhenStacked: definition.pageAsideWhenStacked,
             body: recordBody(),
           })}
           {dialogLayer()}
+          {askLayer()}
         </>
       )
     }
@@ -1620,6 +1765,7 @@ const recordController =
               aside: context ? definition.pageAside?.(context) : undefined,
             })}
             {dialogLayer()}
+            {askLayer()}
           </>
         )
       }
@@ -1631,7 +1777,7 @@ const recordController =
             ? definition.size(context)
             : 'default'
           : (definition.size ?? 'default')
-      const title = context ? definition.title(context) : t('recordModal.loadFailed')
+      const title = context ? definition.title(context) : failureTitle()
       // The document title follows the record, as a server-rendered page's would:
       // a created record replaces `new`, a rename shows after saving.
       if (context && document.title !== title) queueMicrotask(() => (document.title = title))
@@ -1648,10 +1794,11 @@ const recordController =
               : undefined,
             aside: context ? definition.pageAside?.(context) : undefined,
             asideLabel: context ? definition.pageAsideLabel?.(context) : undefined,
-            asideWhenStacked: 'before',
+            asideWhenStacked: definition.pageAsideWhenStacked ?? 'before',
             body: recordBody(),
           })}
           {dialogLayer()}
+          {askLayer()}
         </>
       )
     }
@@ -1684,7 +1831,9 @@ const recordController =
               fixedHeight: definition.fixedHeight ?? 'auto',
               title: context
                 ? definition.title(context)
-                : t(status() === 'error' ? 'recordModal.loadFailed' : 'recordModal.loading'),
+                : status() === 'error'
+                  ? failureTitle()
+                  : t('recordModal.loading'),
               description: context ? (definition.description?.(context) ?? null) : null,
               status: context ? definition.status?.(context) : undefined,
               actions: context ? definition.actions?.(context) : undefined,
@@ -1692,6 +1841,7 @@ const recordController =
               body: recordBody(),
             })}
             {dialogLayer()}
+            {askLayer()}
           </>
         )
       },
@@ -1718,6 +1868,20 @@ const recordController =
             )
               return
             const element = event.target instanceof Element ? event.target : null
+            // The question answers before anything under it: its confirm submits nothing.
+            const question = asking()
+            const inAsk = question && element?.closest(ASK_LAYER)
+            if (inAsk && root?.contains(inAsk)) {
+              const confirmed = element?.closest(`button[value="${RECORD_ASK_CONFIRM}"]`)
+              const declined = element?.closest(
+                '[data-ui="modal-close"], [data-ui="modal-backdrop"], [data-client-modal-close]',
+              )
+              if (confirmed || declined) {
+                event.preventDefault()
+                question.settle(Boolean(confirmed))
+              }
+              return
+            }
             const inModal = element?.closest(layerSelector)
             if (inModal && root?.contains(inModal)) {
               // A child control can open its own dialog inside this record.
@@ -1735,7 +1899,7 @@ const recordController =
                 )
               ) {
                 event.preventDefault()
-                close()
+                void close()
                 return
               }
               const stateControl = element?.closest<HTMLElement>(
@@ -1920,7 +2084,9 @@ const recordController =
             if (!top) return
             if (event.key === 'Escape') {
               event.preventDefault()
-              close()
+              const question = asking()
+              if (question) question.settle(false)
+              else void close()
               return
             }
             if (event.key !== 'Tab') return
@@ -2155,7 +2321,7 @@ const recordController =
               const url = new URL(location.href)
               const name = url.searchParams.get('dialog')
               if (!name && dialog()) {
-                close()
+                void close()
                 return
               }
               show(current.id, url.searchParams.get(RECORD_TAB_PARAM), 'none', undefined, name)

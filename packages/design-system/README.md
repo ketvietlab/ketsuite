@@ -783,11 +783,12 @@ registry. It lists current public exports, the KetSuite compatibility kit, and
 the planned component catalog with ownership, maturity, Wave, evidence posture,
 and promotion decisions. Filters are URL-owned and work without client JavaScript.
 
-Regenerate and verify its source snapshot with:
+The registry reads `src/catalogue/inventory.generated.{ts,json}`, which `npm run build` and
+`npm run check` derive from source. They are ignored by Git, so branches never conflict on them. Check
+that every export has a policy entry, and the governance contract, with:
 
 ```bash
-# Run from: ketjs/
-npm run design:inventory
+# Run from: ketsuite/
 npm run design:inventory:check
 npm run design:governance:check
 ```

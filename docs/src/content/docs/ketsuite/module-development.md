@@ -225,6 +225,35 @@ export while consumers migrate, and cover scope and transaction/rollback behavio
 API before private deployments update their pin and switch consumers. A file-only refactor must not
 silently remove an existing extension contract.
 
+## Permission declarations
+
+Each public module declares its permission posture, capability bundles, function risks and
+exemptions in its own file, `packages/ketsuite/src/permission-catalogue/<module>.ts`:
+
+```ts
+// File: packages/ketsuite/src/permission-catalogue/example.ts
+import type { CatalogueSource } from './source.ts'
+
+export const permissions = {
+  posture: 'permission-bearing',
+  bundles: ['operate', 'configure'],
+  functions: {
+    createThing: ['operate', 'operate'],
+    changePolicy: ['configure', 'configure'],
+  },
+  exemptions: {},
+} satisfies CatalogueSource
+```
+
+When a module's functions change, change only that module's file. Parallel branches then touch
+different files instead of one shared catalogue. `permission-catalogue.ts` only imports each file
+and lists it in `sources`; the order there is the order of `ketsuitePermissionModuleNames`. It
+changes only when a module joins or leaves the catalogue: a new module adds its file, one import
+and one `sources` entry. A deployment that composes a module missing from the catalogue fails
+`requireCoverage`, and `test/ketsuite-permission-catalogue.test.ts` rejects entries written inline in
+`sources` and module files that are not listed. Capability labels shared by every module live in
+`permission-catalogue/capability-labels.ts`.
+
 ## Messages and public exports
 
 Ship Vietnamese and English messages together for code paths visible in either locale. Keep message
@@ -245,5 +274,6 @@ UI components belong in `@ketvietlab/ketsuite/ui`.
 - Vietnamese and English messages cover new user-visible output.
 - Focused integration and HTTP tests cover success, rejection, and scope isolation.
 - Public exports are added only for a real extension consumer.
+- Permission declarations stay in the module's own `permission-catalogue/<module>.ts`.
 - Existing descriptor fields and public extension contracts survive organizational refactors.
 - Routed business screens follow the [screen organization rules](/ketsuite/backend-development/#screen-organization).

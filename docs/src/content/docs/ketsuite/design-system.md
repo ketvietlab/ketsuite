@@ -67,9 +67,13 @@ application still owns the open state and the region's id. Omitting both keeps t
 
 ## Inventory contract
 
-`npm run design:inventory` regenerates the inventory from the public and compatibility entry points.
-`npm run design:inventory:check` fails when the committed snapshot no longer matches source. The normal
-verification pipeline runs this check before building.
+The inventory is derived from the public and compatibility entry points and is not committed:
+`npm run build` and `npm run check` write it to
+`packages/design-system/src/catalogue/inventory.generated.{ts,json}` (ignored by Git), and the package
+publishes it as `@ketvietlab/design-system/catalogue/inventory.json`. It counts tests, consumers and CSS
+lines, so a committed copy changed on almost every branch and made them conflict.
+`npm run design:inventory` writes it on its own; `npm run design:inventory:check` fails when a public or
+compatibility export has no policy entry. The commit hook and the verification pipeline run that check.
 
 Classification policy lives in
 `packages/design-system/src/catalogue/inventory-policy.json`. A source module must have an owner,

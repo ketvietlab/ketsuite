@@ -201,7 +201,14 @@ Full contract: `packages/design-system/README.md` "Peek beside a spatial view".
   `RecordPage asideWhenStacked="before"`: once the page stacks it leads the
   record, in document and keyboard order; a wide page keeps it in the rail
   column. Reference rails keep the default `after`. Source: design-system
-  README "Facts and the rail on a record page".
+  README "Facts and the rail on a record page". A native record page chooses
+  this through its definition's `pageAsideWhenStacked` (the runtime keeps
+  `before` for existing pages, so a reference rail sets `after`).
+- The record runtime asks before discarding typed input, and before a command
+  whose `confirm` returns a question, in the shared small `ConfirmDialog`
+  with Cancel focused — never the browser's `confirm()`. A read the server
+  refuses (403) is titled as refused, without a retry. Source:
+  `docs/src/content/docs/ketsuite/record-modal.md`.
 
 - Define record modals with `RecordModalDefinition`; do not build a parallel overlay, history handler, loading state, or close flow in a module.
 - Use `RecordModalForm` for forms and named record commands for mutations. Views never call `fetch`, mutate history, query the document, or refresh the collection themselves.
