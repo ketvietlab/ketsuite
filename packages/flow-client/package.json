@@ -47,6 +47,7 @@
     "./project-setup.mjs": "./dist/project-setup.mjs",
     "./routes.mjs": "./dist/routes.mjs",
     "./server-extensions.mjs": "./dist/server-extensions.mjs",
+    "./shell-model.mjs": "./dist/shell-model.mjs",
     "./setup-catalog.mjs": "./dist/setup-catalog.mjs",
     "./sprint-cadence.mjs": "./dist/sprint-cadence.mjs",
     "./task-assignees.mjs": "./dist/task-assignees.mjs",
@@ -65,8 +66,8 @@
   "dependencies": {
     "@ketvietlab/design-system": "0.1.41",
     "@ketvietlab/flow-ui": "0.1.41",
-    "@ketvietlab/ketjs-view": "0.2.0",
-    "@ketvietlab/ketjs": "0.2.0",
+    "@ketvietlab/ketjs-view": "0.5.0",
+    "@ketvietlab/ketjs": "0.5.0",
     "@ketvietlab/ketsuite": "0.1.41"
   },
   "devDependencies": {

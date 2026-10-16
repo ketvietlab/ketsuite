@@ -325,7 +325,9 @@ test('the owner signs in, replaces the password, sets up a workspace and project
   assert.match(page, /<h1>Sign in to Flow<\/h1>/)
   assert.match(page, /Atlas mock account: mai@hoasen\.example · password HoaSen-2026/)
   assert.match(page, /autocomplete="current-password"/)
-  assert.doesNotMatch(page, /data-flow="shell"|ZITADEL|OAuth|SSO/)
+  assert.doesNotMatch(page, /ZITADEL|OAuth|SSO/)
+  assert.equal((page.match(/data-flow="shell"/g) ?? []).length, 1)
+  assert.equal((page.match(/<main\b/g) ?? []).length, 1)
   type('sign-in-email', BLANK_OWNER.email)
   type('sign-in-password', 'wrong')
   submit()
@@ -398,7 +400,16 @@ test('the owner signs in, replaces the password, sets up a workspace and project
   submit()
   await tick()
   assert.match(html(), /Not an email address: not-an-email/)
-  const [skip] = handlers(island.view(), 'data-variant=ghost', 'click')
+  const entryContent = (node) => {
+    if (!node || typeof node !== 'object') return null
+    if (node.strings?.join('').includes('data-flow="entry-page"')) return node
+    for (const child of node.values ?? []) {
+      const entry = entryContent(child)
+      if (entry) return entry
+    }
+    return null
+  }
+  const [skip] = handlers(entryContent(island.view()), 'data-variant=ghost', 'click')
   skip()
   await tick()
   await tick()
@@ -475,6 +486,7 @@ test('sending invitations finishes onboarding; a failed address stays in the box
   on('id=invite-role', 'change', { target: { value: 'admin' } })
   await submit()
   assert.match(html(), /bao@hoasen\.example: Email này đã có lời mời đang chờ\./)
+  assert.match(html(), /id="invite-emails"[^>]*aria-invalid="true"/)
   assert.match(html(), /<h1>Invite your team<\/h1>/)
   assert.deepEqual(
     c('flow.workspace.bootstrap').invitations.map((i) => [i.email, i.role]),
@@ -500,6 +512,61 @@ test('sending invitations finishes onboarding; a failed address stays in the box
   island.dispose()
 })
 
+test('a lost invitation response retries its committed command without duplicating or trapping onboarding', async () => {
+  const session = createOrganizationSession('blank', 'workspace-overview', { profile: 'realistic' }),
+    c = call(session),
+    lifetime = new AbortController(),
+    invitationKeys = []
+  c('flow.auth.signIn', { email: BLANK_OWNER.email, password: BLANK_OWNER.password })
+  c('flow.auth.setPassword', { password: 'my-own-secret', confirm: 'my-own-secret' })
+  let lost = false
+  const transport = createFnClient({
+    fetch: async (url, request) => {
+      const name = decodeURIComponent(url.split('/').pop()),
+        args = JSON.parse(request.body)
+      const result = session.call(name, args)
+      if (name === 'flow.organization.command' && args.action === 'member.invite') {
+        invitationKeys.push(args.idempotencyKey)
+        if (!lost) {
+          lost = true
+          throw new TypeError('Network response lost after commit')
+        }
+      }
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  const island = createFlowWorkspace({ screen: 'workspace-overview' }, { call: transport })
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await tick()
+    const on = (marker, event, value) => handlers(island.view(), marker, event)[0](value)
+    const type = (id, value) => on('id=' + id, 'input', { target: { value } })
+    const submit = async () => {
+      on('<form', 'submit', { preventDefault() {} })
+      await tick()
+      await tick()
+    }
+    type('workspace-title', 'Sản phẩm')
+    await submit()
+    type('project-title', 'Website')
+    await submit()
+    type('invite-emails', 'ha@hoasen.example')
+    await submit()
+    assert.match(renderToStaticString(island.view()), /Invite your team/)
+    assert.equal(c('flow.workspace.bootstrap').invitations.length, 1)
+    await submit()
+    assert.equal(invitationKeys.length, 2)
+    assert.equal(invitationKeys[1], invitationKeys[0])
+    assert.equal(c('flow.workspace.bootstrap').invitations.length, 1)
+    assert.match(renderToStaticString(island.view()), /data-flow="checklist"/)
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
 test('onboarding is only for people who can manage the organization, and never replaces a loaded organization with workspaces', () => {
   const page = (data) =>
     createFirstRun({
@@ -527,6 +594,58 @@ test('onboarding is only for people who can manage the organization, and never r
   })
   assert.equal(signedOut.page({ code: 'forbidden' }), null, 'other failures keep the normal error screen')
   assert.equal(signedOut.page(null), null)
+})
+
+test('first-run local field refusal focuses the invalid control and preserves its draft without a command', async () => {
+  let commands = 0,
+    focused = 0
+  const controller = createFirstRun({
+    data: () => ({
+      company: { name: 'Hoa Sen' },
+      workspaces: [],
+      capabilities: { manageOrganization: true },
+    }),
+    call: async () => {
+      commands++
+      return {}
+    },
+    reload: async () => {},
+    finish: async () => {},
+  })
+  const form = { querySelector: () => ({ focus: () => focused++ }) }
+  handlers(controller.page(null), 'id=workspace-title', 'input')[0]({ target: { value: '   ' } })
+  handlers(controller.page(null), '<form', 'submit')[0]({ preventDefault() {}, currentTarget: form })
+  await tick()
+  assert.equal(commands, 0)
+  assert.equal(focused, 1)
+  const output = renderToStaticString(controller.page(null))
+  assert.match(output, /aria-invalid="true"/)
+  assert.match(output, /value=" {3}"/)
+})
+
+test('first-run asynchronous credential refusal returns focus to its bound field after releasing busy', async () => {
+  let focused = 0
+  const controller = createFirstRun({
+    data: () => null,
+    call: async () => {
+      throw Object.assign(new Error('Invalid credentials'), { code: 'credentials' })
+    },
+    reload: async () => {},
+    finish: async () => {},
+  })
+  const form = { querySelector: () => ({ focus: () => focused++ }) }
+  const state = { code: 'unauthenticated' }
+  handlers(controller.page(state), 'id=sign-in-email', 'input')[0]({
+    target: { value: 'mai@hoasen.example' },
+  })
+  handlers(controller.page(state), 'id=sign-in-password', 'input')[0]({ target: { value: 'wrong-password' } })
+  handlers(controller.page(state), '<form', 'submit')[0]({ preventDefault() {}, currentTarget: form })
+  await tick()
+  assert.equal(focused, 1)
+  const output = renderToStaticString(controller.page(state))
+  assert.match(output, /id="sign-in-password"[^>]*aria-invalid="true"/)
+  assert.match(output, /value="wrong-password"/)
+  assert.doesNotMatch(output, /aria-busy="true"/)
 })
 
 test('the overview checklist leads with the first open step, waits for a project where one is needed, and hides on request', () => {

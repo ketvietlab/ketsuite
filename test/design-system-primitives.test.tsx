@@ -106,6 +106,37 @@ test('primitive harness owns only its specimen layout and stays render-pure', ()
   for (const hook of new Set(hooks)) assert.ok(catalogue.includes(`'${hook}'`), `${hook} is declared`)
 })
 
+test('list sort draws its own select chevron inside the control', () => {
+  const chrome = sheet('patterns/list-chrome/styles.css')
+  // The platform arrow is large and sits on the border; the sort form draws Field's chevron instead.
+  assert.match(
+    chrome,
+    /\[data-ui="list-sort-select"\] \{[^}]*grid-column: 1;[^}]*grid-row: 1;[^}]*appearance: none;[^}]*padding-inline: var\(--kv-space-2\) var\(--kv-space-8\);/,
+  )
+  assert.match(
+    chrome,
+    /\[data-ui="list-sort"\]::after \{[^}]*grid-column: 1;[^}]*grid-row: 1;[^}]*justify-self: end;[^}]*margin-inline-end: var\(--kv-space-3\);[^}]*pointer-events: none;/,
+  )
+})
+
+test('a field with a unit shades its whole frame on hover, not the entry inside it', () => {
+  const fields = sheet('primitives/field/styles.css')
+  assert.match(
+    fields,
+    /\[data-ui="field-input"\]:hover:not\(:focus-within, \[data-disabled="true"\]\) \{\s*background: var\(--kv-input-bg-hover\);/,
+  )
+  // An invalid frame keeps its danger stroke under the pointer.
+  assert.match(
+    fields,
+    /\[data-ui="field-input"\]:hover:not\(:focus-within, \[data-disabled="true"\], \[data-invalid="true"\]\) \{\s*--kv-field-stroke: var\(--kv-input-border-hover\);/,
+  )
+  // The entry's own hover outranks the frame's transparent entry, so the frame clears it again.
+  assert.match(
+    fields,
+    /\[data-ui="field-input"\]\s*>\s*\[data-ui="field-control"\]:hover:not\(:focus-visible, :disabled\) \{\s*background: transparent;/,
+  )
+})
+
 test('primitive content pressure is handled by component-owned CSS', () => {
   const fields = sheet('primitives/field/styles.css')
   assert.match(
@@ -116,6 +147,8 @@ test('primitive content pressure is handled by component-owned CSS', () => {
     fields,
     /:has\(> select\)::after \{[^}]*margin-inline-end: var\(--kv-space-3\);[^}]*pointer-events: none;/,
   )
+  // A stacked select keeps its chevron on the control's row in each place a label stacks: below the
+  // mobile breakpoint and in a field container narrower than 28rem.
   assert.equal(
     [
       ...fields.matchAll(
@@ -138,13 +171,25 @@ test('primitive content pressure is handled by component-owned CSS', () => {
   for (const hook of ['action-leading', 'action-spinner']) {
     assert.match(actions, new RegExp(`\\[data-ui="${hook}"\\] \\{[^}]*flex: none;`))
   }
+  // A disabled tertiary action (the end of a pager) keeps no frame: a fill would read as pressed.
+  assert.match(
+    actions,
+    /\[data-variant="tertiary"\]:disabled \{\s*--kv-action-stroke: transparent;\s*background: transparent;/,
+  )
   const status = sheet('primitives/status/styles.css')
   assert.match(status, /\[data-ui="tag"\] \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;/)
+  // A badge in a Stack or column keeps the width of its words instead of filling the track.
+  assert.match(
+    status,
+    /\[data-ui="badge"\]\[data-pattern="badge"\] \{[^}]*inline-size: fit-content;[^}]*max-width: 100%;/,
+  )
   assert.match(status, /\[data-ui="tag-remove"\] \{[^}]*flex: none;/)
   const feedback = sheet('primitives/feedback/styles.css')
   assert.match(feedback, /container: kv-notice \/ inline-size;/)
   assert.match(feedback, /\[data-ui="notice-copy"\] \{[^}]*flex: 1 1 0%;/)
   assert.match(feedback, /@container kv-notice[^}]*\[data-ui="notice-actions"\][^}]*flex-basis: 100%;/)
+  // In a multi-column description list a two-line value must not push its neighbour's value down.
+  assert.match(sheet('record/display/styles.css'), /\[data-ui="key-value"\] \{[^}]*align-content: start;/)
   const progress = sheet('primitives/progress/styles.css')
   assert.match(progress, /\[data-ui="progress-value"\] \{[^}]*flex: none;/)
 })

@@ -92,3 +92,27 @@ test('three and larger selections stay a single compact summary with complete ac
         assert.match(trigger, new RegExp(`data-flow="avatar-overflow">\\+${count - 3}<`))
     }
 })
+test('a consumer-owned menu builds search and people only while open and keeps the summary', () => {
+  const picker = (open) =>
+    renderToStaticString(
+      FlowUserPicker({
+        id: 'row-users',
+        label: 'Phụ trách',
+        size: 'sm',
+        value: ['a'],
+        options,
+        menu: { open, onToggle: () => {} },
+        onChange: () => {},
+      }),
+    )
+  const closed = picker(false),
+    open = picker(true)
+  assert.doesNotMatch(closed, /data-flow="user-option"|data-flow-user-filter|data-flow="user-picker-footer"/)
+  for (const out of [closed, open]) {
+    assert.match(out, /aria-label="Phụ trách: Mai Anh"/)
+    assert.match(out, /id="row-users-menu" popover="auto" role="dialog"/)
+  }
+  assert.equal((open.match(/data-flow="user-option"/g) ?? []).length, 3)
+  assert.match(open, /data-flow-user-filter/)
+  assert.match(open, />Xong<\/button>/)
+})

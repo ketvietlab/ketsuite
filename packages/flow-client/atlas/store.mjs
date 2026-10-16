@@ -5,11 +5,30 @@ import {
   taskAssigneeNames,
   assignableUsers,
 } from '@ketvietlab/flow-client/task-assignees.mjs'
-import { taskColumns, taskTags, isDone, statusForKind } from '@ketvietlab/flow-client/project-catalogs.mjs'
-import { validateCustomFields, fieldKinds } from '@ketvietlab/flow-client/custom-fields.mjs'
+import {
+  taskColumns,
+  taskTags,
+  isDone,
+  statusForKind,
+  statusKinds,
+  taskTypeIcons,
+} from '@ketvietlab/flow-client/project-catalogs.mjs'
+import {
+  validateCustomFields,
+  fieldKinds,
+  incompatibleFieldValues,
+} from '@ketvietlab/flow-client/custom-fields.mjs'
+import { tr } from '@ketvietlab/flow-client/i18n.mjs'
 import { orderedTasks, taskGroupValue, taskGroups } from '@ketvietlab/flow-client/task-order.mjs'
-import { documentSiblings, sameDocumentLevel } from '@ketvietlab/flow-client/document-tree.mjs'
+import {
+  documentSiblings,
+  sameDocumentLevel,
+  sameDocumentOwner,
+} from '@ketvietlab/flow-client/document-tree.mjs'
 import { createData } from './fixtures.mjs'
+import { sprintReport } from './sprint-report.mjs'
+import { noteInput } from '../client/document-notes.mjs'
+import { taskEpic } from '../client/project-record.mjs'
 const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const fileSize = (bytes) =>
   bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -17,13 +36,48 @@ const failure = (code, message, fields = {}) => ({
   ok: true,
   value: { ok: false, errors: [{ code, message }], fields },
 })
-export function createFixtureSession(scenario = 'baseline', route = 'my-work', { extensions = [] } = {}) {
+const openSprint = (data, projectId, title) =>
+  data.sprints.find(
+    (sprint) =>
+      sprint.projectId === projectId &&
+      !sprint.archived &&
+      ['planned', 'active'].includes(sprint.state) &&
+      sprint.title === title,
+  )
+export function createFixtureSession(
+  scenario = 'baseline',
+  route = 'my-work',
+  { extensions = [], dispatchItem } = {},
+) {
   const hooks = atlasExtensions(extensions)
   const data = createData()
   for (const task of data.tasks) task.assigneeIds = taskAssigneeIds(data, task)
   data.taskOrderRevision = 0
   const replay = new Map()
   hooks.notify('seedBase', data, scenario, route)
+  if (['note', 'note-child', 'note-child-validation', 'note-save-error'].includes(scenario)) {
+    const note = {
+      ...noteInput({ projectId: 'core' }),
+      id: 'note-first',
+      title: 'Ghi chú phát hành',
+      description: 'Ghi chú phát hành\nNội dung tài liệu được lưu cùng tiêu đề.',
+      blocks: [
+        { id: 'title', type: 'h1', text: 'Ghi chú phát hành' },
+        { id: 'body', type: 'paragraph', text: 'Nội dung tài liệu được lưu cùng tiêu đề.' },
+      ],
+      version: 1,
+    }
+    data.pages.push(note)
+    if (['note-child', 'note-child-validation'].includes(scenario))
+      data.pages.push({
+        ...noteInput({ parent: note }),
+        id: 'note-child',
+        title: 'Checklist phát hành',
+        description: 'Checklist phát hành',
+        blocks: [{ id: 'title', type: 'h1', text: 'Checklist phát hành' }],
+        version: 1,
+      })
+  }
   let failedOnce = false
   if (scenario === 'empty') {
     data.tasks = []
@@ -46,7 +100,7 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
   let initial = true
   const call = (name, args = {}) => {
     if (scenario === 'forbidden') return failure('forbidden', 'Bạn không có quyền truy cập không gian này.')
-    if (scenario === 'error' && !failedOnce) {
+    if (scenario === 'error' && !failedOnce && !args.shellOnly) {
       failedOnce = true
       return failure('unavailable', 'Không tải được dữ liệu. Kết nối tạm thời gián đoạn.')
     }
@@ -54,17 +108,18 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
     if (extensionRead !== undefined) return extensionRead
     const read = name === 'flow.workspace.bootstrap'
     if (read) {
-      const problem = initial
-        ? ({
-            conflict: {
-              code: 'conflict',
-              message: 'Người khác vừa cập nhật hồ sơ. Tải phiên bản mới trước khi lưu.',
-            },
-            blocked: { code: 'blocked', message: 'Còn công việc phụ thuộc chưa hoàn thành.' },
-            validation: { code: 'validation', message: 'Vui lòng kiểm tra các trường bắt buộc.' },
-          }[scenario] ?? null)
-        : null
-      initial = false
+      const problem =
+        initial && !args.shellOnly
+          ? ({
+              conflict: {
+                code: 'conflict',
+                message: 'Người khác vừa cập nhật hồ sơ. Tải phiên bản mới trước khi lưu.',
+              },
+              blocked: { code: 'blocked', message: 'Còn công việc phụ thuộc chưa hoàn thành.' },
+              validation: { code: 'validation', message: 'Vui lòng kiểm tra các trường bắt buộc.' },
+            }[scenario === 'note-child-validation' ? 'validation' : scenario] ?? null)
+          : null
+      if (!args.shellOnly) initial = false
       return {
         ok: true,
         value: {
@@ -84,6 +139,10 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
     const beforeTask = task ? structuredClone(task) : null
     if (task && args.expectedVersion !== undefined && args.expectedVersion !== task.version)
       return failure('conflict', 'Công việc đã được người khác cập nhật. Tải bản mới rồi thử lại.')
+    if (scenario === 'note-save-error' && name === 'flow.entity.save' && !failedOnce) {
+      failedOnce = true
+      return failure('unavailable', 'Chưa lưu được tài liệu. Bản nháp vẫn được giữ lại. Thử lưu lại.')
+    }
     if (scenario === 'conflict' && !failedOnce) {
       failedOnce = true
       if (task) task.version++
@@ -95,7 +154,10 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
         title: 'Vui lòng nhập tên khác.',
       })
     }
-    const refusal = hooks.first('beforeCommand', { data, name, args, task, failure })
+    // A bulk item uses the same command gate as an individual move. One refusal
+    // must not prevent other selected items from reaching their own gate.
+    const refusal =
+      name === 'flow.issue.bulk' ? null : hooks.first('beforeCommand', { data, name, args, task, failure })
     if (refusal) return refusal
     let value = { ok: true }
     const extended = hooks.first('command', { data, name, args, failure })
@@ -103,8 +165,45 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       if (extended.value?.ok === false) return extended
       value = extended.value
     } else if (name === 'flow.issue.save') {
-      const title = String(args.title ?? task?.title ?? '').trim()
-      if (!title) return failure('validation', 'Vui lòng nhập tiêu đề.', { title: 'Tiêu đề là bắt buộc.' })
+      if (args.id != null && !task) return failure('notFound', 'Không tìm thấy công việc.')
+      const rawTitle = Object.hasOwn(args, 'title') ? args.title : task?.title
+      if (typeof rawTitle !== 'string' || !rawTitle.trim())
+        return failure('validation', 'Vui lòng nhập tiêu đề.', { title: 'Tiêu đề là bắt buộc.' })
+      const title = rawTitle.trim()
+      if (args.parentId != null) {
+        const parent = data.tasks.find((item) => item.id === args.parentId)
+        if (!parent || parent.archived)
+          return failure('validation', 'Công việc cha không tồn tại hoặc không thuộc dự án này.', {
+            parentId: 'Chọn công việc cha đang hoạt động trong cùng dự án.',
+          })
+        if (parent.projectId !== (args.projectId ?? task?.projectId ?? 'core'))
+          return failure('validation', 'Việc con phải cùng dự án với công việc cha.', {
+            projectId: 'Chọn dự án của công việc cha.',
+          })
+      }
+      if (
+        args.subtasks !== undefined &&
+        (!Array.isArray(args.subtasks) ||
+          args.subtasks.some((text) => typeof text !== 'string' || !text.trim()))
+      )
+        return failure('validation', 'Việc con không hợp lệ.', { subtasks: 'Mỗi việc con cần một tiêu đề.' })
+      if (
+        args.attachments !== undefined &&
+        (!Array.isArray(args.attachments) ||
+          args.attachments.some(
+            (file) =>
+              !file ||
+              typeof file.title !== 'string' ||
+              !file.title.trim() ||
+              typeof file.size !== 'number' ||
+              !Number.isFinite(file.size) ||
+              file.size < 0 ||
+              file.size > 25 * 1024 * 1024,
+          ))
+      )
+        return failure('validation', 'Tệp đính kèm không hợp lệ.', {
+          attachments: 'Chọn tệp không quá 25 MB.',
+        })
       if (
         args.tags !== undefined &&
         (!Array.isArray(args.tags) ||
@@ -161,10 +260,24 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       }
       if (args.priority && !['normal', 'high', 'urgent'].includes(args.priority))
         return failure('validation', 'Ưu tiên không hợp lệ.')
-      if (args.sprint && args.sprint !== 'Backlog' && !data.sprints.some((s) => s.title === args.sprint))
-        return failure('validation', 'Sprint không hợp lệ.')
+      if (
+        args.sprint &&
+        args.sprint !== 'Backlog' &&
+        (args.sprint !== task?.sprint || (args.projectId && args.projectId !== task?.projectId)) &&
+        !openSprint(data, args.projectId ?? task?.projectId ?? 'core', args.sprint)
+      ) {
+        const message = tr('flow.sprint.invalidCarryTo')
+        return failure('validation', message, { sprint: message })
+      }
       if (Object.hasOwn(args, 'projectId') && !data.projects.some((p) => p.id === args.projectId))
         return failure('validation', 'Dự án không hợp lệ.')
+      if (args.epic != null && args.epic !== '') {
+        const epic = taskEpic(data.epics, { projectId: next.projectId, epic: args.epic })
+        if (!epic || (epic.archived && args.epic !== task?.epic)) {
+          const message = tr('flow.record.notFoundHelp')
+          return failure('validation', message, { epic: message })
+        }
+      }
       if (
         args.blockedBy &&
         task &&
@@ -304,6 +417,14 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
           'Nhóm đích không hợp lệ với một trong các dự án đã chọn. Chưa di chuyển công việc nào.',
         )
       if (
+        field === 'sprint' &&
+        args.groupValue !== 'Backlog' &&
+        moving.some(
+          (task) => task.sprint !== args.groupValue && !openSprint(data, task.projectId, args.groupValue),
+        )
+      )
+        return failure('validation', tr('flow.sprint.invalidCarryTo'))
+      if (
         field === 'assignee' &&
         moving.some((t) => {
           const group = taskGroups(data, field, t.projectId).find((g) => g.id === args.groupValue),
@@ -405,42 +526,30 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       task.status = args.columnId
       task.version++
     } else if (name === 'flow.issue.bulk') {
-      const targets = data.tasks.filter((t) => (args.ids ?? []).includes(t.id))
-      if (
-        targets.some(
-          (t) =>
-            !taskColumns(data, t.projectId).some(
-              (c) => c.id === (args.status ?? statusForKind(data, t.projectId, 'done')),
-            ),
-        )
-      )
-        return failure('validation', 'Trạng thái không hợp lệ.')
-      if (!args.status || data.columns.find((c) => c.id === args.status)?.kind === 'done') {
-        const error = targets
-          .map((t) => validateCustomFields(data.fields, t.customFields, t.projectId, true))
-          .find(Boolean)
-        if (error) return failure('validation', error)
-      }
-      if (
-        (!args.status || data.columns.find((c) => c.id === args.status)?.kind === 'done') &&
-        targets.some((t) =>
-          t.blockedBy.some(
-            (id) =>
-              !isDone(
-                data,
-                data.tasks.find((x) => x.id === id),
-              ),
-          ),
-        )
-      )
-        return failure('blocked', 'Nhóm đã chọn có việc đang bị chặn. Chưa thay đổi công việc nào.')
-      for (const t of targets) {
-        t.status = args.status ?? statusForKind(data, t.projectId, 'done')
-        t.version++
+      if (!Array.isArray(args.ids) || args.ids.some((id) => typeof id !== 'string' || !id))
+        return failure('validation', 'Danh sách lựa chọn không hợp lệ.')
+      const ids = [...new Set(args.ids)]
+      if (!ids.length || ids.length > 200 || (args.action && args.action !== 'move'))
+        return failure('validation', 'Chọn từ 1 đến 200 công việc để đổi trạng thái.')
+      value = { ok: true, applied: 0, refused: [] }
+      for (const id of ids) {
+        const held = data.tasks.find((t) => t.id === id)
+        const response = (dispatchItem ?? call)('flow.issue.move', {
+          companyId: args.companyId,
+          id,
+          columnId: args.value ?? args.status ?? statusForKind(data, held?.projectId, 'done'),
+          // Match the current backend policy: read at processing time, not list CAS.
+          expectedVersion: held?.version,
+          idempotencyKey: JSON.stringify(['flow.issue.bulk', 'move', id, args.idempotencyKey]),
+        })
+        if (response.ok && response.value?.ok !== false) value.applied++
+        else value.refused.push({ id, code: response.value?.errors?.[0]?.code ?? 'invalid' })
       }
     } else if (name === 'flow.issue.dependency') {
-      if (!task || !data.tasks.some((t) => t.id === args.target))
-        return failure('notFound', 'Công việc không tồn tại.')
+      const target = data.tasks.find((t) => t.id === args.target)
+      if (!task || !target) return failure('notFound', 'Công việc không tồn tại.')
+      if (task.archived || target.archived)
+        return failure('validation', 'Chỉ liên kết công việc đang hoạt động.')
       const reaches = (id, seen = new Set()) => {
         if (id === task.id) return true
         if (seen.has(id)) return false
@@ -451,7 +560,9 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       task.blockedBy = [...new Set([...task.blockedBy, args.target])]
       task.version++
     } else if (name === 'flow.issue.comment') {
-      if (!String(args.text ?? '').trim()) return failure('validation', 'Vui lòng nhập bình luận.')
+      if (!task) return failure('notFound', 'Không tìm thấy công việc.')
+      if (typeof args.text !== 'string' || !args.text.trim())
+        return failure('validation', 'Vui lòng nhập bình luận.', { text: 'Vui lòng nhập bình luận.' })
       data.comments.push({
         id: `c${data.comments.length + 1}`,
         taskId: args.id,
@@ -467,8 +578,19 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       name === 'flow.issue.linkChild'
     ) {
       if (!task) return failure('notFound', 'Không tìm thấy công việc.')
-      if (name.endsWith('archive') && !args.reason?.trim())
-        return failure('validation', 'Vui lòng ghi lý do lưu trữ.')
+      if (
+        name === 'flow.issue.assignSprint' &&
+        (typeof args.sprint !== 'string' ||
+          !args.sprint ||
+          (args.sprint !== task.sprint &&
+            args.sprint !== 'Backlog' &&
+            !openSprint(data, task.projectId, args.sprint)))
+      ) {
+        const message = tr('flow.sprint.invalidCarryTo')
+        return failure('validation', message, { sprint: message })
+      }
+      if (name.endsWith('archive') && (typeof args.reason !== 'string' || !args.reason.trim()))
+        return failure('validation', 'Vui lòng ghi lý do lưu trữ.', { reason: 'Vui lòng ghi lý do lưu trữ.' })
       if (name.endsWith('archive')) {
         task.archived = true
         task.archivedAt = new Date().toISOString()
@@ -480,7 +602,17 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       if (name.endsWith('linkChild')) {
         const child = data.tasks.find((t) => t.id === args.target)
         if (!child || child.id === task.id) return failure('validation', 'Chọn công việc con hợp lệ.')
+        if (task.archived || child.archived || task.projectId !== child.projectId)
+          return failure('validation', 'Chọn công việc đang hoạt động trong cùng dự án.')
+        if (args.expectedChildVersion !== undefined && args.expectedChildVersion !== child.version)
+          return failure('conflict', 'Công việc con đã được người khác cập nhật. Tải bản mới rồi thử lại.')
+        const seen = new Set([child.id])
+        for (let ancestor = task; ancestor; ancestor = data.tasks.find((t) => t.id === ancestor.parentId)) {
+          if (seen.has(ancestor.id)) return failure('cycle', 'Liên kết này tạo vòng lặp cha và việc con.')
+          seen.add(ancestor.id)
+        }
         child.parentId = task.id
+        child.version++
       }
       task.version++
     } else if (name === 'flow.page.reorder') {
@@ -535,11 +667,108 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
     } else if (name === 'flow.entity.save') {
       const list = data[args.collection]
       if (!Array.isArray(list)) return failure('validation', 'Loại hồ sơ không hợp lệ.')
-      if (!String(args.title ?? '').trim())
+      if (typeof args.title !== 'string' || !args.title.trim())
         return failure('validation', 'Vui lòng nhập tên.', { title: 'Tên là bắt buộc.' })
-      if (args.start && args.end && args.end < args.start)
+      if (args.collection !== 'epics' && args.start && args.end && args.end < args.start)
         return failure('validation', 'Ngày kết thúc phải sau ngày bắt đầu.')
       const held = list.find((x) => x.id === args.entityId)
+      if (args.entityId && !held)
+        return failure('not_found', 'Hồ sơ không còn khả dụng. Mở lại thư viện để chọn hồ sơ hiện có.')
+      if (args.collection === 'epics') {
+        const projectId = args.projectId ?? held?.projectId
+        const project = data.projects.find((item) => item.id === projectId && !item.archived)
+        if (!project || (held && projectId !== held.projectId)) {
+          const message = tr('flow.epic.invalidProject')
+          return failure('validation', message, { projectId: message })
+        }
+        for (const key of ['start', 'end']) {
+          if (held && !Object.hasOwn(args, key)) continue
+          const date = args[key]
+          if (
+            typeof date !== 'string' ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+            !Number.isFinite(Date.parse(date)) ||
+            new Date(date).toISOString().slice(0, 10) !== date
+          ) {
+            const message = tr('flow.epic.invalidDate')
+            return failure('validation', message, { [key]: message })
+          }
+        }
+        const start = args.start ?? held?.start,
+          end = args.end ?? held?.end
+        if (start && end && end < start) {
+          const message = tr('flow.epic.dateOrder')
+          return failure('validation', message, { end: message })
+        }
+        if (!held || Object.hasOwn(args, 'owner')) {
+          if (!data.people.includes(args.owner) && (!held || args.owner !== held.owner)) {
+            const message = tr('flow.epic.invalidOwner')
+            return failure('validation', message, { owner: message })
+          }
+        }
+        if (!held || Object.hasOwn(args, 'outcome')) {
+          if (typeof args.outcome !== 'string' || !args.outcome.trim()) {
+            const message = tr('flow.epic.outcomeRequired')
+            return failure('validation', message, { outcome: message })
+          }
+        }
+        args = { ...args, projectId, start, end }
+      }
+      if (['columns', 'types', 'fields', 'tags'].includes(args.collection)) {
+        const owner = Object.hasOwn(args, 'projectId') ? (args.projectId ?? null) : (held?.projectId ?? null)
+        if (held && owner !== (held.projectId ?? null))
+          return failure('validation', tr('flow.catalog.ownerImmutable'))
+        if (owner && !data.projects.some((project) => project.id === owner))
+          return failure('validation', tr('flow.catalog.ownerInvalid'))
+        args = { ...args, projectId: owner }
+        if (
+          list.some(
+            (item) =>
+              item.id !== held?.id &&
+              !item.archived &&
+              (item.projectId ?? null) === owner &&
+              (item.domain ?? 'task') === (held?.domain ?? 'task') &&
+              String(item.title ?? item.label)
+                .trim()
+                .toLocaleLowerCase() === args.title.trim().toLocaleLowerCase(),
+          )
+        ) {
+          const message = tr('flow.catalog.duplicateTitle')
+          return failure('validation', message, { title: message })
+        }
+      }
+      if (args.collection === 'columns') {
+        const kind = args.kind ?? held?.kind ?? 'todo'
+        let message
+        if (!statusKinds.includes(kind)) message = tr('flow.catalog.invalidKind')
+        else if (held && kind !== (held.kind ?? held.id)) {
+          const count = data.tasks.filter((task) => task.status === held.id).length
+          if (count) message = tr('flow.catalog.statusInUse', [count])
+          else if (
+            statusKinds.some(
+              (group) =>
+                group !== kind &&
+                !list.some(
+                  (column) =>
+                    column.id !== held.id &&
+                    (column.projectId ?? null) === (held.projectId ?? null) &&
+                    (column.kind ?? column.id) === group,
+                ),
+            )
+          )
+            message = tr('flow.catalog.requiredStatusGroup')
+        }
+        if (message) return failure('validation', message, { kind: message })
+        args = { ...args, kind }
+      }
+      if (args.collection === 'types') {
+        const icon = args.icon ?? held?.icon ?? 'list'
+        if (!taskTypeIcons.includes(icon) && icon !== held?.icon) {
+          const message = tr('flow.catalog.invalidIcon')
+          return failure('validation', message, { icon: message })
+        }
+        args = { ...args, icon }
+      }
       if (args.collection === 'forms') {
         if (
           !data.projects.some((p) => p.id === args.projectId) ||
@@ -549,12 +778,13 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       }
       if (args.collection === 'pages') {
         const owner = Object.hasOwn(args, 'projectId') ? args.projectId : (held?.projectId ?? null)
+        const ownership = { projectId: owner, workspaceId: args.workspaceId ?? held?.workspaceId }
         if (owner !== null && !data.projects.some((p) => p.id === owner))
           return failure('validation', 'Dự án sở hữu không hợp lệ.')
-        if (held && (held.projectId ?? null) !== owner)
+        if (held && !sameDocumentOwner(held, ownership))
           return failure('validation', 'Không thể đổi nơi sở hữu khi sửa nội dung tài liệu.')
         const parent = data.pages.find((p) => p.id === args.parentId)
-        if (args.parentId && (!parent || parent.archived || (parent.projectId ?? null) !== owner))
+        if (args.parentId && (!parent || parent.archived || !sameDocumentOwner(parent, ownership)))
           return failure('validation', 'Tài liệu cha phải thuộc cùng nơi sở hữu.')
         let ancestor = parent
         const visited = new Set()
@@ -570,22 +800,49 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
         if (args.entityId && !held) return failure('notFound', 'Nhãn không còn tồn tại.')
         if (!['neutral', 'blue', 'green', 'yellow', 'red'].includes(args.color ?? held?.color ?? 'blue'))
           return failure('validation', 'Màu nhãn không hợp lệ.')
-        if (
-          list.some(
-            (t) =>
-              t.id !== held?.id &&
-              !t.archived &&
-              t.title.trim().toLocaleLowerCase() === args.title.trim().toLocaleLowerCase(),
-          )
-        )
-          return failure('validation', 'Tên nhãn đã tồn tại.', { title: 'Chọn tên nhãn khác.' })
       }
       if (
         args.collection === 'fields' &&
         (!fieldKinds.some((f) => f.value === args.kind) ||
           (['select', 'multi-select'].includes(args.kind) && !String(args.options ?? '').trim()))
       )
-        return failure('validation', 'Chọn kiểu dữ liệu và nhập các lựa chọn.')
+        return failure('validation', 'Chọn kiểu dữ liệu và nhập các lựa chọn.', {
+          [fieldKinds.some((field) => field.value === args.kind) ? 'options' : 'kind']:
+            'Chọn kiểu dữ liệu và nhập các lựa chọn.',
+        })
+      if (args.collection === 'fields') {
+        const projectId = args.projectId ?? null
+        const target = args.appliesTo ?? 'all'
+        if (
+          (target !== 'all' && !data.projects.some((project) => project.id === target)) ||
+          (projectId && target !== 'all' && target !== projectId)
+        )
+          return failure('validation', tr('flow.catalog.ownerInvalid'), {
+            appliesTo: tr('flow.catalog.ownerInvalid'),
+          })
+        if (held) {
+          const proposed = {
+            ...held,
+            kind: args.kind,
+            projectId,
+            appliesTo: target,
+            options: String(args.options ?? '')
+              .split('\n')
+              .map((option) => option.trim())
+              .filter(Boolean),
+          }
+          const options = (values) => JSON.stringify([...new Set(values ?? [])].sort())
+          const changed =
+            proposed.kind !== (held.kind ?? 'text') ||
+            options(proposed.options) !== options(held.options) ||
+            (projectId || target) !== (held.projectId || held.appliesTo || 'all')
+          const count = changed ? incompatibleFieldValues(proposed, data.tasks) : 0
+          if (count) {
+            const message = tr('flow.catalog.incompatibleValues', [count])
+            return failure('validation', message, { [args.kind === held.kind ? 'options' : 'kind']: message })
+          }
+        }
+      }
       if (
         args.collection === 'fields' &&
         [
@@ -651,7 +908,10 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
         end: args.end,
         projectId: Object.hasOwn(args, 'projectId') ? args.projectId : (held?.projectId ?? null),
         ...(args.collection === 'pages'
-          ? { visibility: args.visibility ?? held?.visibility ?? 'shared' }
+          ? {
+              visibility: args.visibility ?? held?.visibility ?? 'shared',
+              titleSource: held?.titleSource ?? (args.titleSource === 'content' ? 'content' : 'manual'),
+            }
           : {}),
         ...(args.liveDoc ? { liveDoc: args.liveDoc } : {}),
         ...(args.blocks ? { blocks: structuredClone(args.blocks) } : {}),
@@ -662,8 +922,10 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
         label: args.title,
         kind: args.kind ?? 'todo',
       }
-      if (held) Object.assign(held, fields)
-      else
+      if (held) {
+        if (args.collection === 'columns' && fields.label !== held.label) delete held.labelKey
+        Object.assign(held, fields)
+      } else
         list.push({
           id: `${args.collection}-${list.length + 1}`,
           ...fields,
@@ -677,6 +939,45 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
     } else if (name === 'flow.entity.action') {
       const held = data[args.collection]?.find((x) => x.id === args.entityId)
       if (!held) return failure('notFound', 'Hồ sơ không còn tồn tại.')
+      if (args.collection === 'sprints') {
+        if (held.archived) return failure('notFound', tr('flow.record.notFoundHelp'))
+        if (args.projectId && args.projectId !== held.projectId)
+          return failure('validation', tr('flow.record.notFoundHelp'))
+        if (!['start', 'close'].includes(args.action))
+          return failure('validation', tr('flow.catalog.invalidAction'))
+        if (
+          (args.action === 'start' && held.state !== 'planned') ||
+          (args.action === 'close' && !['active', 'closed', 'completed'].includes(held.state))
+        )
+          return failure('state', tr('flow.sprint.invalidState'))
+        if (args.action === 'close' && held.state === 'active') {
+          const carryTo = args.carryTo ?? 'Backlog'
+          if (
+            carryTo !== 'Backlog' &&
+            (carryTo === held.title || !openSprint(data, held.projectId, carryTo))
+          ) {
+            const message = tr('flow.sprint.invalidCarryTo')
+            return failure('validation', message, { carryTo: message })
+          }
+          args = { ...args, carryTo }
+        }
+      }
+      if (args.collection === 'tags') {
+        if (!['archive', 'restore'].includes(args.action))
+          return failure('validation', tr('flow.catalog.invalidAction'))
+        if (
+          args.action === 'restore' &&
+          data.tags.some(
+            (tag) =>
+              tag.id !== held.id &&
+              !tag.archived &&
+              (tag.projectId ?? null) === (held.projectId ?? null) &&
+              (tag.domain ?? 'task') === (held.domain ?? 'task') &&
+              tag.title.trim().toLocaleLowerCase() === held.title.trim().toLocaleLowerCase(),
+          )
+        )
+          return failure('validation', tr('flow.catalog.restoreDuplicate'))
+      }
       if (args.collection === 'forms' && held.projectId !== args.projectId)
         return failure('validation', 'Thao tác không thuộc dự án này.')
       if (args.collection === 'pages' && args.action === 'move' && args.parentId) {
@@ -685,7 +986,7 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
         if (
           !parent ||
           parent.archived ||
-          (parent.projectId ?? null) !== (held.projectId ?? null) ||
+          !sameDocumentOwner(parent, held) ||
           (parent.visibility ?? 'shared') !== (held.visibility ?? 'shared')
         )
           return failure('validation', 'Chỉ di chuyển trong cùng nơi sở hữu và quyền hiển thị.')
@@ -698,40 +999,31 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
       }
       if (
         args.action === 'start' &&
-        data.sprints.some((x) => x.id !== held.id && x.projectId === held.projectId && x.state === 'active')
+        data.sprints.some(
+          (x) => x.id !== held.id && x.projectId === held.projectId && !x.archived && x.state === 'active',
+        )
       )
         return failure('activeSprint', 'Đã có một sprint đang chạy. Đóng sprint hiện tại trước.')
       if (args.action === 'move' && args.parentId === held.id)
         return failure('cycle', 'Không thể chuyển tài liệu vào chính nó.')
-      if (args.action === 'close') {
+      if (args.action === 'close' && !['closed', 'completed'].includes(held.state)) {
         const sprintTasks = data.tasks.filter(
-          (t) => t.projectId === held.projectId && t.sprint === held.title,
+          (t) => t.projectId === held.projectId && t.sprint === held.title && !t.archived,
         )
         const initial = held.commitment ?? sprintTasks.map((t) => ({ id: t.id, points: t.points }))
-        held.report = hooks.first('sprintReport', { data, sprintTasks, initial, args }) ?? {
-          closedAt: new Date().toISOString(),
-          tasks: sprintTasks.map((t) => ({ id: t.id, title: t.title, status: t.status, points: t.points })),
-          completedPoints: sprintTasks
-            .filter((t) => isDone(data, t))
-            .reduce((n, t) => n + (t.points || 0), 0),
-          committedPoints: initial.reduce((n, t) => n + (t.points || 0), 0),
-          added: sprintTasks.filter((t) => !initial.some((x) => x.id === t.id)).length,
-          removed: initial.filter((x) => !sprintTasks.some((t) => t.id === x.id)).length,
-          taskIds: sprintTasks.map((t) => t.id),
-          completed: sprintTasks.filter((t) => isDone(data, t)).length,
-          carried: sprintTasks.filter((t) => !isDone(data, t)).length,
-          carryTo: args.carryTo ?? 'Backlog',
-        }
+        held.report =
+          hooks.first('sprintReport', { data, sprintTasks, initial, args }) ??
+          sprintReport(data, sprintTasks, initial, args.carryTo)
         held.state = 'closed'
         for (const t of data.tasks.filter(
-          (t) => t.projectId === held.projectId && t.sprint === held.title && !isDone(data, t),
+          (t) => t.projectId === held.projectId && t.sprint === held.title && !t.archived && !isDone(data, t),
         ))
           t.sprint = args.carryTo ?? 'Backlog'
       }
       if (args.action === 'start') {
         held.state = 'active'
         held.commitment = data.tasks
-          .filter((t) => t.projectId === held.projectId && t.sprint === held.title)
+          .filter((t) => t.projectId === held.projectId && t.sprint === held.title && !t.archived)
           .map((t) => ({
             id: t.id,
             points: t.points,
@@ -775,13 +1067,14 @@ export function createFixtureSession(scenario = 'baseline', route = 'my-work', {
             .concat(assignmentChange ? [assignmentChange] : [])
             .join(' · ')
         : ''
-    data.history.unshift({
-      id: `h${data.history.length + 1}`,
-      person: data.user.name,
-      taskId: name.startsWith('flow.issue.') ? (args.id ?? value.id) : args.taskId,
-      text: `${changes ? changes + ' · ' : ''}${{ 'flow.issue.save': 'Đã lưu công việc', 'flow.issue.move': 'Đã chuyển trạng thái', 'flow.issue.reorder': 'Đã sắp xếp công việc', 'flow.issue.comment': 'Đã thêm bình luận', 'flow.issue.dependency': 'Đã thêm phụ thuộc', 'flow.issue.archive': 'Đã lưu trữ', 'flow.issue.restore': 'Đã khôi phục', 'flow.issue.follow': 'Đã đổi theo dõi', 'flow.issue.assignSprint': 'Đã đổi sprint', 'flow.issue.linkChild': 'Đã gắn việc con' }[name] ?? 'Đã cập nhật'} · ${args.title ?? args.id ?? ''}`,
-      time: 'Vừa xong',
-    })
+    if (name !== 'flow.issue.bulk')
+      data.history.unshift({
+        id: `h${data.history.length + 1}`,
+        person: data.user.name,
+        taskId: name.startsWith('flow.issue.') ? (args.id ?? value.id) : args.taskId,
+        text: `${changes ? changes + ' · ' : ''}${{ 'flow.issue.save': 'Đã lưu công việc', 'flow.issue.move': 'Đã chuyển trạng thái', 'flow.issue.reorder': 'Đã sắp xếp công việc', 'flow.issue.comment': 'Đã thêm bình luận', 'flow.issue.dependency': 'Đã thêm phụ thuộc', 'flow.issue.archive': 'Đã lưu trữ', 'flow.issue.restore': 'Đã khôi phục', 'flow.issue.follow': 'Đã đổi theo dõi', 'flow.issue.assignSprint': 'Đã đổi sprint', 'flow.issue.linkChild': 'Đã gắn việc con' }[name] ?? 'Đã cập nhật'} · ${args.title ?? args.id ?? ''}`,
+        time: 'Vừa xong',
+      })
     const result = { ok: true, value }
     replay.set(args.idempotencyKey, structuredClone(result))
     return result

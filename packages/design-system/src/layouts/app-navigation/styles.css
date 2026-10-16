@@ -58,6 +58,94 @@
     flex: 1 1 auto;
   }
 
+  :where([data-kv-design-system]) [data-ui="navigation-header"][data-has-tools="true"] {
+    min-height: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    padding: 0 var(--kv-space-3);
+    gap: var(--kv-space-1);
+    border-bottom: 0;
+  }
+  :where([data-kv-design-system]) [data-ui="navigation-header"] > [data-ui="navigation-tools"] {
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--kv-space-1);
+  }
+  :where([data-kv-design-system])
+    [data-ui="navigation-tools"]
+    :is([data-ui="navigation-search-toggle"], [data-ui="navigation-collapse"]) {
+    display: grid;
+    place-items: center;
+    width: var(--kv-space-8);
+    height: var(--kv-space-8);
+    padding: 0;
+    border: 0;
+    border-radius: var(--kv-radius-sm);
+    background: transparent;
+    color: var(--kv-text-secondary);
+    cursor: pointer;
+  }
+  :where([data-kv-design-system])
+    [data-ui="navigation-tools"]
+    :is([data-ui="navigation-search-toggle"], [data-ui="navigation-collapse"]):hover {
+    background: var(--kv-interactive-hover);
+    color: var(--kv-text-main);
+  }
+  :where([data-kv-design-system])
+    [data-ui="navigation-tools"]
+    :is([data-ui="navigation-search-toggle"], [data-ui="navigation-collapse"]):focus-visible {
+    outline: 2px solid var(--kv-color-focus);
+    outline-offset: -2px;
+  }
+  :where([data-kv-design-system]) [data-ui="navigation-tools"] [data-ui="icon"] {
+    width: 1rem;
+    height: 1rem;
+  }
+  :where([data-kv-design-system]) [data-ui="navigation-search"] {
+    padding: var(--kv-space-1) var(--kv-space-3) var(--kv-space-2);
+  }
+  :where([data-kv-design-system]) [data-ui="navigation-search-input"] {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: var(--kv-space-8);
+    padding-inline: var(--kv-space-2);
+    border: 1px solid var(--kv-border-default);
+    border-radius: var(--kv-radius-sm);
+    background: var(--kv-input-bg);
+    color: var(--kv-text-main);
+    font: inherit;
+    font-size: var(--kv-text-sm);
+    outline-color: var(--kv-color-focus);
+  }
+  :where([data-kv-design-system]) [data-ui="navigation-search-empty"] {
+    margin: var(--kv-space-2) 0 0;
+    color: var(--kv-text-muted);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+  }
+  :where([data-kv-design-system])
+    [data-ui="app-navigation"]
+    :is(
+      [data-ui="navigation-search"],
+      [data-ui="navigation-search-empty"],
+      [data-ui="navigation-groups"] [hidden]
+    )[hidden] {
+    display: none;
+  }
+  @media (width < 48rem) {
+    :where([data-kv-design-system]) [data-ui="navigation-tools"] [data-ui="navigation-collapse"] {
+      display: none;
+    }
+    :where([data-kv-design-system])
+      [data-ui="navigation-tools"]
+      :is([data-ui="navigation-search-toggle"], [data-ui="navigation-collapse"]),
+    :where([data-kv-design-system]) [data-ui="navigation-search-input"] {
+      min-width: var(--kv-touch-target);
+      height: var(--kv-touch-target);
+    }
+  }
+
   :where([data-kv-design-system]) [data-ui="navigation-identity"] {
     font-size: var(--kv-text-base);
     line-height: var(--kv-line-sm);
@@ -221,6 +309,23 @@
     > [data-ui="navigation-children"] {
     padding-left: 0;
     margin-left: var(--kv-space-2);
+  }
+
+  /* Centre the 1px guide on the parent's icon slot (including its row border).
+     Reduce child inset by the same amount so label alignment does not move. */
+  :where([data-kv-design-system])
+    [data-ui="navigation-branch"]:has(
+      > [data-ui="navigation-branch-trigger"] > [data-ui="navigation-item-leading"]
+    )
+    > [data-ui="navigation-children"] {
+    margin-left: calc(var(--kv-space-2) + var(--kv-sidebar-icon-size) / 2 + 0.5px);
+    padding-left: calc(
+      var(--kv-sidebar-icon-size) /
+      2 +
+      var(--kv-sidebar-item-gap) -
+      var(--kv-space-2) -
+      1.5px
+    );
   }
 
   :where([data-kv-design-system]) [data-ui="navigation-item-leading"] {

@@ -30,7 +30,7 @@ export type {
   AvatarProps,
 } from './primitives/status/index.tsx'
 export { EmptyState, LoadingState, Notice } from './primitives/feedback/index.tsx'
-export type { NoticeTone } from './primitives/feedback/index.tsx'
+export type { EmptyVisual, NoticeTone } from './primitives/feedback/index.tsx'
 export { Field } from './primitives/field/index.tsx'
 export type { FieldOption, FieldProps } from './primitives/field/index.tsx'
 export {
@@ -106,6 +106,8 @@ export type {
   SearchFavorite,
   SearchFilterCustomRule,
   SearchFilterConfig,
+  SearchFilterApplyInput,
+  SearchFilterIntegration,
   SearchFilterNavigateDetail,
   SearchFilterFieldType,
   SearchFilterLabels,
@@ -131,6 +133,16 @@ export type {
 } from './interactions/ket-table/index.tsx'
 export { attachDesignSystemInteractions } from './runtime/index.js'
 export { attachClientModalInteractions } from './runtime/client-modal.js'
+export { attachPeekInteractions } from './runtime/peek.js'
+// Hosts give screen help's ```mermaid fences a renderer; the DS itself bundles none.
+export { configureMermaidLoader } from './runtime/mermaid.js'
+export {
+  readRowAnchor,
+  rememberRowAnchor,
+  restoreRowAnchor,
+  rowAnchorHref,
+  takeRowAnchor,
+} from './runtime/row-anchor.js'
 export { ContextButton } from './interactions/context-button/index.tsx'
 export type { ContextButtonProps } from './interactions/context-button/index.tsx'
 
@@ -219,6 +231,12 @@ export type {
   BarChartProps,
   BarChartSegment,
 } from './data-display/bar-chart/index.tsx'
+export { ColumnChart } from './data-display/column-chart/index.tsx'
+export type {
+  ColumnChartPoint,
+  ColumnChartProps,
+  ColumnChartReference,
+} from './data-display/column-chart/index.tsx'
 export { TimeframeFilter } from './data-operations/timeframe-filter/index.tsx'
 export type { TimeframeFilterProps, TimeframeOption } from './data-operations/timeframe-filter/index.tsx'
 
@@ -232,8 +250,10 @@ export type {
 } from './record/composition/index.tsx'
 export { ActivityTimeline, AuditLog } from './record/activity/index.tsx'
 export type { ActivityItem } from './record/activity/index.tsx'
-export { Attachments, MediaGallery } from './record/media/index.tsx'
-export type { AttachmentItem, MediaItem } from './record/media/index.tsx'
+export { StagePath } from './record/stage-path/index.tsx'
+export type { StagePathStep } from './record/stage-path/index.tsx'
+export { Attachments, MediaGallery, Thumbnail } from './record/media/index.tsx'
+export type { AttachmentItem, MediaItem, ThumbnailProps } from './record/media/index.tsx'
 
 export {
   CardGrid,
@@ -255,9 +275,12 @@ export type {
   ContentCardProps,
   KanbanCardProps,
   KanbanGridProps,
+  MetricChange,
 } from './layouts/layout/index.tsx'
 export {
   AppBrand,
+  AppSwitcher,
+  AppSwitcherHelp,
   AppShell,
   AppTopbar,
   Page,
@@ -265,7 +288,7 @@ export {
   RecordCanvas,
   RecordSection,
 } from './layouts/shell/index.tsx'
-export type { PageHeaderProps, PageProps } from './layouts/shell/index.tsx'
+export type { AppSwitcherItem, AppSwitcherProps, PageHeaderProps, PageProps } from './layouts/shell/index.tsx'
 export {
   AppNavigation,
   NavigationDrawer,
@@ -277,6 +300,7 @@ export {
 } from './layouts/app-navigation/index.tsx'
 export type {
   AppNavigationProps,
+  NavigationToolsProps,
   NavigationGroupData,
   NavigationItemData,
 } from './layouts/app-navigation/index.tsx'
@@ -318,10 +342,23 @@ export type { DashboardPageProps } from './patterns/dashboard-page/index.tsx'
 export { BoardPage } from './patterns/board-page/index.tsx'
 export type { BoardPageProps } from './patterns/board-page/index.tsx'
 export { ModalSheet } from './patterns/modal-sheet/index.tsx'
+export { HelpDrawer } from './patterns/help-drawer/index.tsx'
+export type { HelpDrawerProps } from './patterns/help-drawer/index.tsx'
+export { MarkdownContent, MermaidDiagram } from './content/markdown/index.tsx'
+export type { MarkdownContentProps, MarkdownLabels, MarkdownToken } from './content/markdown/index.tsx'
+export { Peek, PeekLayout } from './patterns/peek/index.tsx'
+export type { PeekLayoutProps, PeekProps, PeekStep } from './patterns/peek/index.tsx'
 export { Pipeline } from './patterns/pipeline/index.tsx'
 export type { PipelineStep } from './patterns/pipeline/index.tsx'
-export { RecordForm } from './patterns/record-form/index.tsx'
-export type { RecordFormProps } from './patterns/record-form/index.tsx'
+export { SettingsDirectory } from './patterns/settings-directory/index.tsx'
+export type {
+  SettingsDirectoryLink,
+  SettingsDirectoryModule,
+  SettingsDirectoryProps,
+  SettingsDirectorySection,
+} from './patterns/settings-directory/index.tsx'
+export { FormGrid, RecordForm } from './patterns/record-form/index.tsx'
+export type { FormGridProps, RecordFormProps } from './patterns/record-form/index.tsx'
 
 export { HOOKS, OWNERS } from './contract/index.ts'
 

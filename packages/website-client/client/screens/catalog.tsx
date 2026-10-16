@@ -1,3 +1,4 @@
+import { ListPage, ModalSheet, RecordPage, WorkspacePage } from '../page-regions.tsx'
 import {
   ActionGroup,
   Checkbox,
@@ -9,11 +10,8 @@ import {
   Grid,
   Inline,
   LinkButton,
-  ListPage,
   Menu,
-  ModalSheet,
   Notice,
-  RecordPage,
   SearchBar,
   Select,
   Stack,
@@ -24,7 +22,6 @@ import {
   Text,
   TextArea,
   TextField,
-  WorkspacePage,
 } from '@ketvietlab/design-system'
 import { createCatalogProductPicker } from './catalog-product-picker.tsx'
 import { CommandButton, commandValue, icon } from '../ui.tsx'

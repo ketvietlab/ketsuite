@@ -14,10 +14,6 @@ import calendar from '../packages/ketsuite/src/modules/calendar/index.ts'
 import { renderToString } from '@ketvietlab/ketjs-view'
 import crm from '../packages/ketsuite/src/modules/crm/index.ts'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
-import { completeCollectionRows } from '../packages/ketsuite/src/modules/crm_backend/collection-rows.ts'
-import { collectionSearchFrame } from '../packages/ketsuite/src/modules/backend/collection-search.ts'
-import { configurationScreen } from '../packages/ketsuite/src/modules/crm_backend/screens/configuration.tsx'
-import { plannerScreen } from '../packages/ketsuite/src/modules/crm_backend/screens/activity-planner.tsx'
 import { leaderboardScreen } from '../packages/ketsuite/src/modules/crm_backend/screens/leaderboard.tsx'
 
 const declaration = defineDeployment({
@@ -37,6 +33,18 @@ translate.resolves = translate.has
 const insert = async (adapter: Adapter, model: string, columns: string[], rows: unknown[][]) => {
   const sql = `INSERT INTO ${adapter.quoteIdent(tableNameFor(model))} (${columns.map((name) => adapter.quoteIdent(name)).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
   for (const row of rows) await adapter.run(sql, row as never[])
+}
+
+/** Reads a whole list through its cursor API, 200 rows at a time, until a short batch ends it. */
+const completeCollectionRows = async <R,>(
+  read: (cursor: number, limit: number) => Promise<R[]>,
+): Promise<R[]> => {
+  const rows: R[] = []
+  for (;;) {
+    const batch = await read(rows.length, 200)
+    rows.push(...batch)
+    if (batch.length < 200) return rows
+  }
 }
 
 test('platform collections cross old caps with scoped rows, exact totals and working later pages', async (t) => {
@@ -291,18 +299,6 @@ test('platform collections cross old caps with scoped rows, exact totals and wor
     const active = await call<Row[]>('crm.tag.list', { cursor: 100, limit: 30 })
     assert.equal(active.length, 13)
     assert.ok(active.every((row) => row.active === true))
-    const url = new URL('https://ket.test/admin/crm/configuration?section=tags&status=all&page=8&lang=en')
-    const html = renderToString(
-      configurationScreen(translate, collectionSearchFrame(url, {}, 'Search tags'), {
-        section: 'tags',
-        status: 'all',
-        rows: tags,
-        canCreate: false,
-      }),
-    )
-    assert.match(html, /211-225 \/ 225/)
-    assert.match(html, /Tag 225/)
-    assert.doesNotMatch(html, />Tag 001</)
   })
 
   await t.test(
@@ -317,19 +313,6 @@ test('platform collections cross old caps with scoped rows, exact totals and wor
       const page = await call<Row[]>('crm.activity.listMine', { cursor: 200, limit: 30 }, 'worker')
       assert.equal(page[0]?.id, 'activity-201')
       assert.equal(page.length, 25)
-      const url = new URL('https://ket.test/admin/crm/activities?tab=mine&page=8&lang=en')
-      const html = renderToString(
-        plannerScreen(translate, collectionSearchFrame(url, {}, 'Search activity'), {
-          tab: 'mine',
-          activities,
-          plans: [],
-          events: [],
-          activityTypes: [],
-        }),
-      )
-      assert.match(html, /211-225 \/ 225/)
-      assert.match(html, /Activity 225/)
-      assert.doesNotMatch(html, />Activity 001</)
     },
   )
 

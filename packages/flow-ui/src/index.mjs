@@ -26,13 +26,16 @@ export const FlowIcon = (name) =>
     <path d=${icons[name]}></path>
   </svg>`
 
-/** @param {{label:string, variant?:'primary'|'secondary'|'ghost'|'danger', size?:'sm'|'md', icon?:keyof typeof icons, iconOnly?:boolean, disabled?:boolean, disabledReason?:string, loading?:boolean, pressed?:boolean, type?:'button'|'submit', onClick?:(event:Event)=>void}} p */
+/** `form` associates a submit button with a native form outside its DOM parent (for persistent dialog actions). @param {{label:string, variant?:'primary'|'secondary'|'ghost'|'danger', size?:'sm'|'md', icon?:keyof typeof icons, iconOnly?:boolean, disabled?:boolean, disabledReason?:string, loading?:boolean, pressed?:boolean, action?:string, type?:'button'|'submit', form?:string, onClick?:(event:Event)=>void}} p */
 export const FlowButton = (p) =>
   html`<button
     data-flow="button"
+    data-flow-action=${p.action ?? null}
     data-variant=${p.variant ?? 'secondary'}
     data-size=${p.size ?? 'md'}
+    data-icon-only=${p.iconOnly ? true : null}
     type=${p.type ?? 'button'}
+    form=${p.form ?? null}
     disabled=${p.disabled || p.loading || false}
     aria-busy=${p.loading ? 'true' : null}
     aria-pressed=${p.pressed === undefined ? null : String(p.pressed)}
@@ -46,7 +49,7 @@ export const FlowButton = (p) =>
 /** @param {{id:string,name?:string,label:string,icon?:keyof typeof icons,value?:string,placeholder?:string,type?:string,autocomplete?:string,required?:boolean,disabled?:boolean,min?:string,max?:string,step?:string,multiple?:boolean,onBlur?:(event:Event)=>void,onChange?:(event:Event)=>void,error?:string,onInput?:(event:Event)=>void}} p */
 export const FlowInput = (p) =>
   html`<label data-flow="field" for=${p.id}
-    ><span>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span
+    ><span id=${`${p.id}-label`}>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span
     ><input
       data-flow="input"
       data-flow-value=${p.value ?? ''}
@@ -65,6 +68,7 @@ export const FlowInput = (p) =>
       required=${p.required ?? false}
       disabled=${p.disabled ?? false}
       aria-invalid=${p.error ? 'true' : null}
+      aria-labelledby=${`${p.id}-label`}
       aria-describedby=${p.error ? `${p.id}-error` : null}
       on:input=${p.onInput}
     />${p.error ? html`<small id=${`${p.id}-error`} data-flow="field-error">${p.error}</small>` : null}</label
@@ -84,7 +88,7 @@ export const FlowSearch = (p) =>
       on:search=${p.onInput}
   /></label>`
 
-/** @param {{label:string,value:string,options:readonly Option[],id?:string,name?:string,disabled?:boolean,onChange?:(event:Event)=>void}} p */
+/** @param {{label:string,value:string,options:readonly Option[],id?:string,name?:string,disabled?:boolean,invalid?:boolean,descriptionId?:string,onChange?:(event:Event)=>void}} p */
 export const FlowSelect = (p) =>
   html`<select
     data-flow="select"
@@ -94,6 +98,8 @@ export const FlowSelect = (p) =>
     data-flow-value=${p.value}
     data-flow-controlled=${p.onChange ? true : null}
     aria-label=${p.label}
+    aria-invalid=${p.invalid ? 'true' : null}
+    aria-describedby=${p.descriptionId ?? null}
     on:change=${p.onChange}
   >
     ${each(
@@ -103,18 +109,25 @@ export const FlowSelect = (p) =>
     )}
   </select>`
 
-/** @param {{label:string,checked:boolean,indeterminate?:boolean,disabled?:boolean,onChange?:(event:Event)=>void}} p */
-export const FlowCheckbox = (p) =>
-  html`<input
+/** `standalone` provides a native clickable label; use `native` inside an existing label.
+ * @param {{label:string,checked:boolean,name?:string,value?:string,target?:'native'|'standalone',indeterminate?:boolean,disabled?:boolean,onChange?:(event:Event)=>void}} p */
+export const FlowCheckbox = (p) => {
+  const input = html`<input
     data-flow="checkbox"
     disabled=${p.disabled ?? false}
     type="checkbox"
+    name=${p.name ?? null}
+    value=${p.value ?? null}
     aria-label=${p.label}
     checked=${p.checked}
     aria-checked=${p.indeterminate ? 'mixed' : null}
     data-flow-indeterminate=${p.indeterminate ? 'true' : null}
     on:change=${p.onChange}
   />`
+  return p.target === 'standalone'
+    ? html`<label data-flow="checkbox-target" data-disabled=${String(!!p.disabled)}>${input}</label>`
+    : input
+}
 
 export const FLOW_STATUSES = /** @type {const} */ ({
   get todo() {
@@ -145,12 +158,19 @@ export const FlowPriority = (p) =>
     >${FlowIcon('flag')}${{ normal: tr('flow.ui.normal'), high: tr('flow.ui.high'), urgent: tr('flow.ui.urgent') }[p.priority]}</span
   >`
 
+/** Identity hue for a name: the same person keeps one of five chart hues on every screen. @param {string} name */
+const avatarHue = (name) => {
+  let hash = 0
+  for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0
+  return hash % 5
+}
+
 /** @param {{name:string,size?:'sm'|'md',src?:string}} p */
 export const FlowAvatar = (p) =>
   html`<span
     data-flow="avatar"
     data-size=${p.size ?? 'sm'}
-    data-color=${p.name.length % 4}
+    data-color=${avatarHue(p.name)}
     title=${p.name}
     aria-label=${p.name}
     >${
@@ -203,23 +223,23 @@ export const FlowSegmented = (p) =>
   </div>`
 
 /** @typedef {"standard"|"wide"|"full"} FlowContentWidth */
-/** Shared task/document topbar. @param {{title:string,breadcrumb?:string,search?:Child,actions?:Child,documentTitle?:boolean}} p */
+/** Shared task/document topbar. @param {{title:string,breadcrumb?:string,search?:Child,actions?:Child,documentTitle?:boolean,titleAsLabel?:boolean}} p */
 export const FlowShellHeader = (
   p,
 ) => html`<header data-flow="shell-header" data-has-search=${p.search ? 'true' : null}>
         <div data-flow="shell-heading">
           ${p.breadcrumb ? html`<span>${p.breadcrumb}</span>${FlowIcon('chevron')}` : null}
-          ${p.documentTitle ? html`<strong>${p.title}</strong>` : html`<h1>${p.title}</h1>`}
+          ${p.documentTitle || p.titleAsLabel ? html`<strong>${p.title}</strong>` : html`<h1>${p.title}</h1>`}
         </div>
         ${p.search ? html`<div data-flow="shell-search">${p.search}</div>` : null}
         <div data-flow="shell-actions">${p.actions ?? null}</div>
       </header>`
-/** Compact viewport shell; navigation stays full width above the bounded body. @param {{sidebar:Child,title:string,breadcrumb?:string,search?:Child,actions?:Child,navigation?:Child,contentWidth?:FlowContentWidth,children:Child,footer?:Child}} p */
+/** Compact viewport shell; header may be an SSR enhancement region. @param {{sidebar:Child,title:string,titleAsLabel?:boolean,breadcrumb?:string,search?:Child,actions?:Child,header?:Child,navigation?:Child,contentWidth?:FlowContentWidth,contentMode?:'documents'|'form',children:Child,footer?:Child}} p */
 export const FlowShell = (p) =>
   FlowFrame({
     sidebar: p.sidebar,
-    children: html`<main data-flow="shell-main">
-      ${FlowShellHeader(p)}
+    children: html`<main data-flow="shell-main" data-content-mode=${p.contentMode ?? null}>
+      ${p.header ?? FlowShellHeader(p)}
       <div data-flow="shell-content">
         ${p.navigation ?? null}
         <div data-flow="content-container" data-width=${p.contentWidth ?? 'standard'}>${p.children}</div>
@@ -237,24 +257,30 @@ export const FlowProgress = (p) =>
     value=${Math.max(0, Math.min(p.value, p.total))}
   ></progress>`
 
-/** @param {{title:string,description:string,action?:Child}} p */
+/** @param {{title:string,description:string,action?:Child,titleLevel?:1}} p */
 export const FlowEmpty = (p) =>
   html`<div data-flow="empty">
-    ${FlowIcon('inbox')}<strong>${p.title}</strong>
+    ${FlowIcon('inbox')}${p.titleLevel === 1 ? html`<h1 data-flow="empty-title">${p.title}</h1>` : html`<strong data-flow="empty-title">${p.title}</strong>`}
     <p>${p.description}</p>
     ${p.action ?? null}
   </div>`
 
-/** Native dialog supplies modality, focus trapping and Escape. Call runtime.open(id) from the opener. @param {{id:string,title:string,body:Child,feedback?:Child,footer?:Child,headerActions?:Child,size?:'default'|'task'|'spotlight'|'setup'|'media'|(string&{}),onRequestClose?:()=>void}} p */
+/** Native dialog supplies modality, focus trapping and Escape. Call runtime.open(id) from the opener. @param {{id:string,title:string,body:Child,feedback?:Child,footer?:Child,headerActions?:Child,size?:'default'|'wide'|'task'|'spotlight'|'setup'|'media'|'confirm'|(string&{}),role?:'dialog'|'alertdialog',descriptionId?:string,autoOpen?:boolean,closeDisabled?:boolean,onRequestClose?:()=>void}} p */
 export const FlowDialog = (p) =>
   html`<dialog
     data-flow="dialog"
     data-size=${p.size ?? 'default'}
-    data-flow-route-modal=${p.onRequestClose ? true : null}
+    data-flow-route-modal=${p.onRequestClose && p.autoOpen !== false ? true : null}
     id=${p.id}
+    role=${p.role ?? null}
     aria-labelledby=${`${p.id}-title`}
+    aria-describedby=${p.descriptionId ?? null}
     on:cancel=${
       /** @param {Event} e */ (e) => {
+        if (p.closeDisabled) {
+          e.preventDefault()
+          return
+        }
         if (p.onRequestClose) {
           e.preventDefault()
           p.onRequestClose()
@@ -263,6 +289,7 @@ export const FlowDialog = (p) =>
     }
     on:click=${
       /** @param {MouseEvent} e */ (e) => {
+        if (p.closeDisabled) return
         const dialog = /** @type {HTMLDialogElement} */ (e.currentTarget)
         const r = dialog.getBoundingClientRect()
         if (
@@ -277,8 +304,11 @@ export const FlowDialog = (p) =>
       <h2 id=${`${p.id}-title`}>${p.title}</h2>
       <div data-flow="dialog-header-actions">${p.headerActions ?? null}<button
         data-flow="button"
+        data-size="md"
+        data-icon-only
         data-variant="ghost"
         type="button"
+        disabled=${p.closeDisabled ?? false}
         data-flow-close=${p.onRequestClose ? null : true}
         on:click=${p.onRequestClose}
         aria-label=${tr('flow.ui.close.5d54c2')}
@@ -288,8 +318,24 @@ export const FlowDialog = (p) =>
     </header>
     <div data-flow="dialog-body">${p.body}</div>
     ${p.footer ? html`<footer>${p.footer}</footer>` : null}
-    ${p.feedback ?? null}
+    ${p.feedback ? html`<div data-flow="dialog-feedback">${p.feedback}</div>` : null}
   </dialog>`
+
+/** A small centred question, including on mobile; consumers own the action. Details explain prerequisites without replacing the associated question. @param {{id:string,title:string,message:string,details?:Child,confirmLabel:string,cancelLabel:string,onConfirm:()=>void,onCancel:()=>void,tone?:'danger'|'primary',confirmDisabled?:boolean,loading?:boolean,autoOpen?:boolean,feedback?:Child}} p */
+export const FlowConfirmDialog = (p) =>
+  FlowDialog({
+    id: p.id,
+    title: p.title,
+    role: 'alertdialog',
+    descriptionId: `${p.id}-description`,
+    autoOpen: p.autoOpen,
+    size: 'confirm',
+    closeDisabled: p.loading,
+    feedback: p.feedback,
+    onRequestClose: p.onCancel,
+    body: html`<div data-flow="stack"><p data-flow="confirm-message" id=${`${p.id}-description`}>${p.message}</p>${p.details}</div>`,
+    footer: html`${FlowButton({ label: p.cancelLabel, disabled: p.loading, onClick: p.onCancel })}${FlowButton({ label: p.confirmLabel, variant: p.tone ?? 'danger', disabled: p.confirmDisabled, loading: p.loading, onClick: p.onConfirm })}`,
+  })
 
 /** @param {{task:FlowTask,selected:boolean,onSelect:()=>void,onOpen:()=>void,statusControl?:Child,priorityControl?:Child,assigneeControl?:Child,dueControl?:Child,statusHint?:Child} & import("./task-drag.mjs").TaskDrop} p */
 export const FlowTaskRow = (p) => {
@@ -300,11 +346,11 @@ export const FlowTaskRow = (p) => {
     on:keydown=${drag.key}>
     <td>
 
-      ${FlowCheckbox({ label: tr('flow.ui.select.85cbcf', [p.task.id]), checked: p.selected, onChange: p.onSelect })}
+      ${FlowCheckbox({ target: 'standalone', label: tr('flow.ui.select.85cbcf', [p.task.id]), checked: p.selected, onChange: p.onSelect })}
     </td>
     <td>
       <button data-flow="task-open" type="button" on:click=${p.onOpen}>
-        <span data-flow="task-id">${p.task.id}</span
+        <span data-flow="task-id" title=${p.task.id}>${p.task.id}</span
         ><span data-flow="task-title">${p.task.title}${p.task.project ? html`<small data-flow="task-project">${p.task.project}</small>` : null}</span>
       </button>
     </td>
@@ -315,7 +361,7 @@ export const FlowTaskRow = (p) => {
   </tr>`
 }
 
-/** @param {{task:FlowTask,onOpen:()=>void} & import("./task-drag.mjs").TaskDrop} p */
+/** @param {{task:FlowTask,onOpen:()=>void,statusHint?:string} & import("./task-drag.mjs").TaskDrop} p */
 export const FlowTaskCard = (p) => {
   const drag = taskDrag(p, p.task.id)
   return html`<div data-flow="task-card-drag" data-task-id=${p.task.id}
@@ -330,7 +376,7 @@ export const FlowTaskCard = (p) => {
     ><strong>${p.task.title}</strong>${p.task.project ? html`<span data-flow="card-project">${p.task.project}</span>` : null}<span data-flow="card-bottom"
       ><span>${FlowIcon('calendar')}${p.task.due}</span
       >${FlowAvatarGroup({ users: p.task.assignees ?? (p.task.assignee ? [{ id: p.task.assignee, name: p.task.assignee }] : []) })}</span
-    >
+    >${p.statusHint ? html`<span data-flow="card-status-hint">${p.statusHint}</span>` : null}
   </button></div>`
 }
 

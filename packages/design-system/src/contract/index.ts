@@ -29,11 +29,13 @@ import { HOOKS as dataGridHooks } from '../data-display/data-grid/index.tsx'
 import { HOOKS as treeHooks } from '../data-display/tree/index.tsx'
 import { HOOKS as matrixHooks } from '../data-display/matrix/index.tsx'
 import { HOOKS as barChartHooks } from '../data-display/bar-chart/index.tsx'
+import { HOOKS as columnChartHooks } from '../data-display/column-chart/index.tsx'
 import { HOOKS as timeframeHooks } from '../data-operations/timeframe-filter/index.tsx'
 import { HOOKS as recordDisplayHooks } from '../record/display/index.tsx'
 import { HOOKS as formattedValueHooks } from '../record/formatted-values/index.tsx'
 import { HOOKS as recordCompositionHooks } from '../record/composition/index.tsx'
 import { HOOKS as activityHooks } from '../record/activity/index.tsx'
+import { HOOKS as stagePathHooks } from '../record/stage-path/index.tsx'
 import { HOOKS as mediaHooks } from '../record/media/index.tsx'
 import { HOOKS as layoutHooks } from '../layouts/layout/index.tsx'
 import { HOOKS as shellHooks } from '../layouts/shell/index.tsx'
@@ -46,6 +48,10 @@ import { HOOKS as recordPageHooks } from '../patterns/record-page/index.tsx'
 import { HOOKS as dashboardPageHooks } from '../patterns/dashboard-page/index.tsx'
 import { HOOKS as boardPageHooks } from '../patterns/board-page/index.tsx'
 import { HOOKS as modalHooks } from '../patterns/modal-sheet/index.tsx'
+import { HOOKS as helpDrawerHooks } from '../patterns/help-drawer/index.tsx'
+import { HOOKS as markdownHooks } from '../content/markdown/index.tsx'
+import { HOOKS as peekHooks } from '../patterns/peek/index.tsx'
+import { HOOKS as settingsDirectoryHooks } from '../patterns/settings-directory/index.tsx'
 import { HOOKS as pipelineHooks } from '../patterns/pipeline/index.tsx'
 import { HOOKS as formHooks } from '../patterns/record-form/index.tsx'
 
@@ -81,11 +87,13 @@ const GROUPS = {
   tree: treeHooks,
   matrix: matrixHooks,
   barChart: barChartHooks,
+  columnChart: columnChartHooks,
   timeframe: timeframeHooks,
   recordDisplay: recordDisplayHooks,
   formattedValues: formattedValueHooks,
   recordComposition: recordCompositionHooks,
   activity: activityHooks,
+  stagePath: stagePathHooks,
   media: mediaHooks,
   layouts: layoutHooks,
   shell: shellHooks,
@@ -98,6 +106,10 @@ const GROUPS = {
   dashboardPage: dashboardPageHooks,
   boardPage: boardPageHooks,
   modal: modalHooks,
+  helpDrawer: helpDrawerHooks,
+  markdown: markdownHooks,
+  peek: peekHooks,
+  settingsDirectory: settingsDirectoryHooks,
   pipeline: pipelineHooks,
   form: formHooks,
 } as const

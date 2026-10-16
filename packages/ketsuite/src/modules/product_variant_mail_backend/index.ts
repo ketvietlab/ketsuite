@@ -27,7 +27,8 @@ export default defineModule({
   depends: ['product_backend', 'mail_backend', 'mail_transport'],
   functions,
   fills: {
-    'product_backend:variant.collaboration': `{% island "mail.chatter" %}`,
+    // The chatter opens on its timeline; whoever may not read it is not shown one.
+    'product_backend:variant.collaboration': `{% if may.product_variant_mail_backend.timeline %}{% island "mail.chatter" %}{% endif %}`,
   },
 })
 

@@ -1,0 +1,191 @@
+@layer ket.app {
+  /* One record's place in its process. Each chevron is the label's ::before, so the
+     shape never clips the label's focus ring and a link step fills itself on hover.
+     The path measures its own width: in a narrow column it folds like on a phone. */
+  :where([data-kv-design-system]) [data-ui="stage-path"] {
+    display: flex;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    gap: 0.125rem;
+    list-style: none;
+    container: stage-path / inline-size;
+  }
+
+  :where([data-kv-design-system]) [data-ui="stage-path-step"] {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="stage-path-label"] {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--kv-control-height-md);
+    align-items: center;
+    justify-content: center;
+    gap: var(--kv-space-1);
+    padding: var(--kv-space-1) calc(0.625rem + var(--kv-space-2));
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    font-weight: var(--kv-weight-medium);
+    text-align: center;
+    text-decoration: none;
+  }
+
+  /* A notch on the left and a point on the right, 0.625rem deep; the ends stay square
+     and keep the radius, so the path reads as one bar. */
+  :where([data-kv-design-system]) [data-ui="stage-path-label"]::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: var(--kv-radius-sm);
+    background: color-mix(in srgb, var(--kv-text-main) 7%, transparent);
+    clip-path: polygon(
+      0 0,
+      calc(100% - 0.625rem) 0,
+      100% 50%,
+      calc(100% - 0.625rem) 100%,
+      0 100%,
+      0.625rem 50%
+    );
+    content: "";
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"]:first-child
+    [data-ui="stage-path-label"]::before {
+    clip-path: polygon(0 0, calc(100% - 0.625rem) 0, 100% 50%, calc(100% - 0.625rem) 100%, 0 100%);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"]:last-child
+    [data-ui="stage-path-label"]::before {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0.625rem 50%);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"]:only-child
+    [data-ui="stage-path-label"]::before {
+    clip-path: none;
+  }
+
+  :where([data-kv-design-system]) a[data-ui="stage-path-label"]:hover {
+    color: var(--kv-text-main);
+  }
+
+  :where([data-kv-design-system]) a[data-ui="stage-path-label"]:hover::before {
+    background: color-mix(in srgb, var(--kv-text-main) 12%, transparent);
+  }
+
+  :where([data-kv-design-system]) a[data-ui="stage-path-label"]:focus-visible {
+    outline: 2px solid var(--kv-color-focus);
+    outline-offset: -2px;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="complete"]
+    [data-ui="stage-path-label"] {
+    color: var(--kv-color-positive);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="complete"]
+    [data-ui="stage-path-label"]::before {
+    background: var(--kv-color-positive-soft);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="complete"]
+    a[data-ui="stage-path-label"]:hover::before {
+    background: var(--kv-positive-border);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="current"]
+    [data-ui="stage-path-label"] {
+    color: var(--kv-action-primary-ink);
+    font-weight: var(--kv-weight-semibold);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="current"]
+    [data-ui="stage-path-label"]::before {
+    background: var(--kv-action-primary-bg);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="current"][data-tone]
+    [data-ui="stage-path-label"] {
+    color: var(--kv-action-status-ink);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="current"][data-tone="positive"]
+    [data-ui="stage-path-label"]::before {
+    background: var(--kv-color-positive);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="current"][data-tone="danger"]
+    [data-ui="stage-path-label"]::before {
+    background: var(--kv-color-danger);
+  }
+
+  :where([data-kv-design-system]) [data-ui="stage-path-marker"] {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Ahead of the record, a step's number only helps once its name is folded away. */
+  :where([data-kv-design-system])
+    [data-ui="stage-path-step"][data-state="upcoming"]
+    [data-ui="stage-path-marker"] {
+    display: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="stage-path-text"] {
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+
+  @container stage-path (max-width: 47.9375rem) {
+    :where([data-kv-design-system]) [data-ui="stage-path-step"]:not([data-state="current"]) {
+      flex: 0 0 2.75rem;
+    }
+
+    :where([data-kv-design-system]) [data-ui="stage-path-label"] {
+      padding-inline: calc(0.625rem + var(--kv-space-1));
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="stage-path-step"]:not([data-state="current"])
+      [data-ui="stage-path-label"] {
+      padding-inline: 0.625rem;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="stage-path-step"][data-state="upcoming"]
+      [data-ui="stage-path-marker"] {
+      display: inline-flex;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="stage-path-step"]:not([data-state="current"])
+      [data-ui="stage-path-text"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+}

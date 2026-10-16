@@ -1,6 +1,12 @@
 // @ts-check
 import { attachPrimitives } from './primitives.js'
 import { attachDatePickers } from '../forms/date-time/runtime.js'
+import { attachApplyOnInput } from './apply-on-input.js'
+import { attachHelpDrawers } from './help.js'
+import { attachMermaidDiagrams } from './mermaid.js'
+import { attachNavigationTools } from './navigation-tools.js'
+export { configureMermaidLoader } from './mermaid.js'
+export { createMermaidTheme, readMermaidPalette } from './mermaid-theme.js'
 
 const focusableSelector = [
   'a[href]',
@@ -23,6 +29,43 @@ const focusables = (root) =>
       (typeof element.checkVisibility !== 'function' ||
         element.checkVisibility({ visibilityProperty: true })),
   )
+
+/**
+ * Where focus lands when a route modal opens. A modal that comes back from a rejected submit
+ * starts on its first invalid control, so the person lands on what to fix; otherwise on the
+ * first focusable control, or the dialog itself.
+ * @param {HTMLElement} modal
+ */
+const routeModalFocusTarget = (modal) => {
+  const controls = focusables(modal)
+  for (const control of controls) {
+    if (control instanceof HTMLElement && control.getAttribute('aria-invalid') === 'true') return control
+  }
+  return controls[0] instanceof HTMLElement ? controls[0] : modal
+}
+
+/**
+ * A menu panel opens from its trigger's start or end. Where that carries it out of the viewport,
+ * as a trigger in the middle of a phone row does, the panel moves along the row until it is 8px
+ * inside, its leading edge on a whole pixel; a panel the viewport holds stays where its trigger put it.
+ * @param {HTMLElement} panel
+ * @param {boolean} open
+ * @param {{ left: number, right: number }} [clip]
+ */
+const keepMenuPanelInView = (
+  panel,
+  open,
+  clip = { left: 8, right: document.documentElement.clientWidth - 8 },
+) => {
+  panel.style.removeProperty('translate')
+  panel.style.removeProperty('--kv-menu-shift-inline')
+  if (!open) return
+  const box = panel.getBoundingClientRect()
+  const shift = Math.max(clip.left - box.left, Math.min(0, clip.right - box.right))
+  if (!shift) return
+  const left = shift < 0 ? Math.floor(box.left + shift) : Math.ceil(box.left + shift)
+  panel.style.setProperty('--kv-menu-shift-inline', `${left - box.left}px`)
+}
 
 /**
  * Attach the small browser contract shared by server-rendered overlays.
@@ -154,9 +197,11 @@ const attachGlobalSearch = (root) => {
  * @param {Document | HTMLElement} [root]
  */
 export const attachDesignSystemInteractions = (root = document) => {
+  const cleanupNavigationTools = attachNavigationTools(root)
   const cleanupPrimitives = attachPrimitives(root)
   const cleanupDatePickers = attachDatePickers(root)
   const cleanupGlobalSearch = attachGlobalSearch(root)
+  const cleanupApplyOnInput = attachApplyOnInput(document)
   const activeBeforeOpen = document.activeElement instanceof HTMLElement ? document.activeElement : null
   const modal = root.querySelector('[data-ui="modal-layer"][data-route-modal="true"] [role="dialog"]')
   const appShell = root.querySelector('[data-ui="app-shell"], [data-ui="shell"]')
@@ -165,28 +210,116 @@ export const attachDesignSystemInteractions = (root = document) => {
     modal instanceof HTMLElement && appShell instanceof HTMLElement && !appShell.contains(modal)
   if (modal instanceof HTMLElement) {
     if (ownsShellLock && appShell instanceof HTMLElement) appShell.inert = true
-    const first = focusables(modal)[0]
-    ;(first instanceof HTMLElement ? first : modal).focus()
+    routeModalFocusTarget(modal).focus()
   }
 
   // A list toolbar's folded filters are a disclosure with a button trigger, as a menu is.
-  const menus = /** @type {HTMLDetailsElement[]} */ (
-    [...root.querySelectorAll('[data-ui="menu"], [data-ui="list-filters"]')].filter(
-      (menu) => menu instanceof HTMLDetailsElement,
-    )
-  )
+  const menuDisclosures = '[data-ui="menu"], [data-ui="list-filters"]'
+  const menuProperties = [
+    '--kv-menu-shift-inline',
+    '--kv-menu-shift-block',
+    '--kv-menu-available-block',
+    '--kv-menu-available-inline',
+  ]
+  /** @type {Map<HTMLDetailsElement, ResizeObserver>} */
+  const menuObservers = new Map()
+  const pruneMenuObservers = () => {
+    for (const [menu, observer] of menuObservers) {
+      if (menu.isConnected) continue
+      observer.disconnect()
+      menuObservers.delete(menu)
+    }
+  }
   /** @param {HTMLDetailsElement} menu */
   const syncMenu = (menu) => {
     // Its own trigger: folded filters hold menus whose triggers are not theirs.
     const trigger = menu.querySelector(':scope > summary')
     if (trigger instanceof HTMLElement) trigger.setAttribute('aria-expanded', String(menu.open))
+    const panel = menu.querySelector(':scope > [data-ui="menu-panel"]')
+    if (!(panel instanceof HTMLElement) || !(trigger instanceof HTMLElement)) return
+    for (const property of menuProperties) panel.style.removeProperty(property)
+    if (!menu.open) {
+      menuObservers.get(menu)?.disconnect()
+      menuObservers.delete(menu)
+      return
+    }
+    if (typeof ResizeObserver !== 'undefined' && !menuObservers.has(menu)) {
+      const observer = new ResizeObserver(() => {
+        pruneMenuObservers()
+        if (menu.isConnected) syncMenu(menu)
+      })
+      menuObservers.set(menu, observer)
+      observer.observe(panel)
+    }
+    const tokens = getComputedStyle(panel)
+    const viewport = panel.ownerDocument.documentElement
+    const rootSize = Number.parseFloat(getComputedStyle(viewport).fontSize) || 16
+    /** @param {string} key */
+    const tokenPixels = (key) => {
+      const value = tokens.getPropertyValue(key).trim()
+      return (Number.parseFloat(value) || 0) * (value.endsWith('rem') ? rootSize : 1)
+    }
+    const inset = tokenPixels('--kv-space-2')
+    const gap = tokenPixels('--kv-space-1')
+    const clip = {
+      left: inset,
+      top: inset,
+      right: viewport.clientWidth - inset,
+      bottom: viewport.clientHeight - inset,
+    }
+    for (let parent = menu.parentElement; parent; parent = parent.parentElement) {
+      const styles = getComputedStyle(parent)
+      const bounds = parent.getBoundingClientRect()
+      if (/auto|scroll|hidden|clip/.test(styles.overflowX)) {
+        clip.left = Math.max(clip.left, bounds.left + inset)
+        clip.right = Math.min(clip.right, bounds.right - inset)
+      }
+      if (/auto|scroll|hidden|clip/.test(styles.overflowY)) {
+        clip.top = Math.max(clip.top, bounds.top + inset)
+        clip.bottom = Math.min(clip.bottom, bounds.bottom - inset)
+      }
+    }
+    panel.style.setProperty('--kv-menu-available-inline', `${Math.max(0, clip.right - clip.left)}px`)
+    const anchor = trigger.getBoundingClientRect()
+    if (menu.dataset.placement === 'right') {
+      panel.style.setProperty('--kv-menu-available-block', `${Math.max(0, clip.bottom - clip.top)}px`)
+      const bounds = panel.getBoundingClientRect()
+      const top = Math.max(clip.top, Math.min(anchor.bottom - bounds.height, clip.bottom - bounds.height))
+      panel.style.setProperty('--kv-menu-shift-block', `${top - bounds.top}px`)
+      keepMenuPanelInView(panel, menu.open, clip)
+      return
+    }
+    const initial = panel.getBoundingClientRect()
+    const below = clip.bottom - anchor.bottom - gap
+    const above = anchor.top - gap - clip.top
+    const prefersAbove = menu.dataset.placement === 'top'
+    const useAbove = prefersAbove
+      ? above >= Math.min(initial.height, below)
+      : below < initial.height && above > below
+    panel.style.setProperty('--kv-menu-available-block', `${Math.max(0, useAbove ? above : below)}px`)
+    const bounds = panel.getBoundingClientRect()
+    const top = useAbove ? anchor.top - gap - bounds.height : anchor.bottom + gap
+    panel.style.setProperty('--kv-menu-shift-block', `${top - bounds.top}px`)
+    keepMenuPanelInView(panel, menu.open, clip)
   }
-  const menuCleanups = menus.map((menu) => {
-    const onToggle = () => syncMenu(menu)
-    menu.addEventListener('toggle', onToggle)
-    syncMenu(menu)
-    return () => menu.removeEventListener('toggle', onToggle)
-  })
+  // A toggle does not bubble; capturing also follows a menu an island draws later.
+  /** @param {Event} event */
+  const onMenuToggle = (event) => {
+    pruneMenuObservers()
+    const menu = event.target
+    if (menu instanceof HTMLDetailsElement && menu.matches(menuDisclosures)) syncMenu(menu)
+  }
+  const onMenuResize = () => {
+    pruneMenuObservers()
+    for (const menu of root.querySelectorAll('[data-ui="menu"][open]')) {
+      if (menu instanceof HTMLDetailsElement) syncMenu(menu)
+    }
+  }
+  for (const menu of root.querySelectorAll(menuDisclosures)) {
+    if (menu instanceof HTMLDetailsElement) syncMenu(menu)
+  }
+  root.addEventListener('toggle', onMenuToggle, true)
+  window.addEventListener('resize', onMenuResize)
 
   const navigationMedia = window.matchMedia('(width < 48rem)')
   const navigationRoot = document.documentElement
@@ -196,6 +329,27 @@ export const attachDesignSystemInteractions = (root = document) => {
       (navigation) => navigation instanceof HTMLDetailsElement,
     )
   )
+  // Keep one SSR app rail. On mobile it belongs inside the dialog focus boundary.
+  const appRails = [...root.querySelectorAll('[data-ui="app-shell"] > [data-ui="app-switcher"]')].map(
+    (rail) => ({ rail, parent: rail.parentNode, next: rail.nextSibling }),
+  )
+  const restoreAppRails = () => {
+    for (const { rail, parent, next } of appRails) {
+      if (parent && rail.parentNode !== parent)
+        parent.insertBefore(rail, next?.parentNode === parent ? next : null)
+    }
+  }
+  const syncAppRails = () => {
+    if (!navigationMedia.matches) {
+      restoreAppRails()
+      return
+    }
+    for (const { rail, parent } of appRails) {
+      const drawer = parent?.querySelector('[data-ui="navigation-drawer"]')
+      if (drawer && rail.parentNode !== drawer) drawer.prepend(rail)
+    }
+  }
+  syncAppRails()
   const navigationStates = new Map()
 
   /** @param {HTMLDetailsElement} navigation */
@@ -215,6 +369,7 @@ export const attachDesignSystemInteractions = (root = document) => {
 
   /** @param {HTMLDetailsElement} navigation */
   const syncNavigation = (navigation) => {
+    syncAppRails()
     const trigger = navigation.querySelector('[data-ui="navigation-trigger"]')
     const drawer = navigation.querySelector('[data-ui="navigation-drawer"]')
     if (!(trigger instanceof HTMLElement) || !(drawer instanceof HTMLElement)) return
@@ -236,6 +391,9 @@ export const attachDesignSystemInteractions = (root = document) => {
     drawer.setAttribute('aria-modal', 'true')
     drawer.setAttribute('aria-label', drawer.dataset.navigationLabel ?? 'Navigation')
     if (!navigation.open) {
+      for (const menu of drawer.querySelectorAll('[data-ui="menu"][open]')) {
+        if (menu instanceof HTMLDetailsElement) menu.open = false
+      }
       restoreNavigationTargets(navigation)
       syncNavigationLock()
       return
@@ -285,7 +443,7 @@ export const attachDesignSystemInteractions = (root = document) => {
       if (!(target instanceof Element)) return
       const branchTrigger = target.closest('[data-ui="navigation-branch-trigger"]')
       const branch = branchTrigger?.closest('[data-ui="navigation-branch"]')
-      if (branch instanceof HTMLDetailsElement && branch.open) {
+      if (branch instanceof HTMLDetailsElement && branch.open && branch.hasAttribute('name')) {
         event.preventDefault()
         return
       }
@@ -347,10 +505,28 @@ export const attachDesignSystemInteractions = (root = document) => {
     // A page and its islands may both attach the runtime. Only the owning root
     // handles a key, and a key consumed by another layer must not move focus twice.
     if (event.defaultPrevented || !root.contains(document.activeElement)) return
+    // Enter in a short entry with a command beside it (Field `action`) runs that command, not the
+    // form's first submit button.
+    if (event.key === 'Enter' && !event.isComposing && event.target instanceof HTMLInputElement) {
+      const command = event.target.closest('[data-ui="field-row"]')?.lastElementChild
+      const button = command?.closest('button') ?? command?.querySelector('button')
+      if (button instanceof HTMLButtonElement && !button.disabled) {
+        event.preventDefault()
+        button.click()
+        return
+      }
+    }
+    // Native dialogs own Escape and focus traversal, including ones outside this runtime root.
+    // Keep the composed path: another listener may synchronously close/remove the dialog.
+    if (
+      (event.key === 'Escape' || event.key === 'Tab') &&
+      event.composedPath().some((target) => target instanceof HTMLDialogElement)
+    )
+      return
     const openNavigation = navigations.find((navigation) => navigationMedia.matches && navigation.open)
     if (openNavigation instanceof HTMLDetailsElement) {
       const drawer = openNavigation.querySelector('[data-ui="navigation-drawer"]')
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !document.activeElement?.closest('[data-ui="menu"][open]')) {
         closeNavigation(openNavigation)
         event.preventDefault()
         return
@@ -453,6 +629,14 @@ export const attachDesignSystemInteractions = (root = document) => {
       }
     }
     const activeMenu = document.activeElement?.closest('[data-ui="menu"]')
+    if (
+      activeMenu instanceof HTMLDetailsElement &&
+      activeMenu.querySelector(':scope > summary')?.getAttribute('aria-disabled') === 'true' &&
+      ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' '].includes(event.key)
+    ) {
+      event.preventDefault()
+      return
+    }
     if (activeMenu instanceof HTMLDetailsElement && !activeMenu.open) {
       const trigger = activeMenu.querySelector('[data-ui="menu-trigger"]')
       if (document.activeElement === trigger && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
@@ -462,7 +646,13 @@ export const attachDesignSystemInteractions = (root = document) => {
             ...activeMenu.querySelectorAll(
               '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]',
             ),
-          ].filter((item) => item instanceof HTMLElement && item.getAttribute('aria-disabled') !== 'true')
+          ].filter(
+            (item) =>
+              item instanceof HTMLElement &&
+              item.getAttribute('aria-disabled') !== 'true' &&
+              !item.hidden &&
+              (typeof item.checkVisibility !== 'function' || item.checkVisibility()),
+          )
         )
         const item = event.key === 'ArrowUp' ? items.at(-1) : items[0]
         if (item instanceof HTMLElement) item.focus()
@@ -478,7 +668,13 @@ export const attachDesignSystemInteractions = (root = document) => {
           ...openMenu.querySelectorAll(
             '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]',
           ),
-        ].filter((item) => item instanceof HTMLElement && item.getAttribute('aria-disabled') !== 'true')
+        ].filter(
+          (item) =>
+            item instanceof HTMLElement &&
+            item.getAttribute('aria-disabled') !== 'true' &&
+            !item.hidden &&
+            (typeof item.checkVisibility !== 'function' || item.checkVisibility()),
+        )
       )
       const active = document.activeElement
       const activeIndex = active instanceof HTMLElement ? items.indexOf(active) : -1
@@ -603,6 +799,21 @@ export const attachDesignSystemInteractions = (root = document) => {
 
   /** @param {MouseEvent} event */
   const onDocumentClick = (event) => {
+    const help =
+      event.target instanceof Element
+        ? event.target.closest('[data-ui="app-switcher-help"], button[name="screen-help"]')
+        : null
+    if (help instanceof HTMLElement && root.contains(help) && !event.defaultPrevented) {
+      event.preventDefault()
+      help.dispatchEvent(
+        new CustomEvent('ket:screen-help-request', {
+          bubbles: true,
+          cancelable: true,
+          detail: { trigger: help },
+        }),
+      )
+    }
+
     const target = event.target
     if (!(target instanceof Node)) return
     const toggle = target instanceof Element ? target.closest('[data-ui="navigation-toggle"]') : null
@@ -632,15 +843,30 @@ export const attachDesignSystemInteractions = (root = document) => {
   }
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('click', onDocumentClick)
+  const cleanupHelp = attachHelpDrawers(root)
+  const cleanupDiagrams = attachMermaidDiagrams(root)
 
   return () => {
+    cleanupHelp()
+    cleanupNavigationTools()
+    cleanupDiagrams()
+    restoreAppRails()
     cleanupGlobalSearch()
+    cleanupApplyOnInput()
     cleanupPrimitives()
     cleanupDatePickers()
     document.removeEventListener('keydown', onKeydown)
     document.removeEventListener('click', onDocumentClick)
     document.removeEventListener('change', onSelectionChange)
-    for (const cleanup of menuCleanups) cleanup()
+    root.removeEventListener('toggle', onMenuToggle, true)
+    window.removeEventListener('resize', onMenuResize)
+    for (const [menu, observer] of menuObservers) {
+      observer.disconnect()
+      const panel = menu.querySelector(':scope > [data-ui="menu-panel"]')
+      if (panel instanceof HTMLElement)
+        for (const property of menuProperties) panel.style.removeProperty(property)
+    }
+    menuObservers.clear()
     navigationMedia.removeEventListener('change', onNavigationMediaChange)
     for (const cleanup of navigationCleanups) cleanup()
     if (priorNavigationOpen === undefined) delete navigationRoot.dataset.kvNavigationOpen

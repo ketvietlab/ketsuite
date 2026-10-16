@@ -30,6 +30,7 @@ export const models: Record<string, ModelDef> = {
       summary: 'text',
       note: 'text?',
       dueDate: 'date',
+      dueAt: 'datetime?',
       active: 'bool',
       doneAt: 'datetime?',
       canceledAt: 'datetime?',

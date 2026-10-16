@@ -24,7 +24,16 @@
     justify-content: flex-end;
   }
 
+  /* The rail owns the separation of its sections: a gap and a divider, as a divided Stack. */
   :where([data-kv-design-system]) [data-ui="record-rail"] {
+    display: grid;
+    align-content: start;
+    gap: var(--kv-layout-gap);
     min-width: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="record-rail"] > * + * {
+    padding-block-start: var(--kv-layout-gap);
+    border-block-start: 1px solid var(--kv-panel-border);
   }
 }

@@ -21,7 +21,11 @@ const workspace = createFlowWorkspace({ screen: 'my-work', basePath: '/flow/' },
 
 Register this factory with KetJS View's island manager; do not call `mount` manually
 in a product. Load `@ketvietlab/design-system/tokens.css` and
-`@ketvietlab/flow-ui/styles.css`. Server rendering emits a deterministic loading view.
+`@ketvietlab/flow-ui/styles.css`. With `serverShell: true`, render
+`shellView(dataIsland)` using authorized `flowShellData` chrome metadata. Sidebar,
+header and routed tabs are SSR; only the data island starts with a deterministic
+loading view. Client enhancement preserves those chrome nodes and native full-page
+navigation receives the next SSR frame. See the executable Atlas server example.
 A deployment provides authenticated, scoped HTTP functions. `API-CONTRACT.md` records
 the proposed adapter and which APIs remain mock-only.
 
@@ -40,7 +44,9 @@ npm --workspace @ketvietlab/flow-client run atlas -- --port 4260
 ```
 
 Open `http://127.0.0.1:4260/flow/my-work`. **Atlas uses in-memory synthetic data** and
-starts a new fixture session on a full reload. The development server and fixtures
+keeps the same per-port fixture session across native navigation and reloads;
+changing the explicit `state` starts another scenario. Sessions remain in memory
+and reset when the server restarts or they expire. The development server and fixtures
 are not included in the npm artifact. They must never be deployed as the product API.
 No companion private checkout is needed to build, test or run this core demo.
 

@@ -29,6 +29,7 @@ export const attributeDraftFunctions: Record<string, FnSpec> = {
       'read:product.TemplateAttributeLine',
       'read:product.TemplateAttributeValue',
     ],
+    idempotent: true,
     agent: true,
     handler: async (ctx, args) => {
       const name = clean(args.name)

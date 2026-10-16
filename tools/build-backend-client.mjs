@@ -67,14 +67,14 @@ const entries = [
     source: join(UI_CLIENT_DIR, 'mail-entry.mjs'),
     output: join(UI_CLIENT_DIR, 'mail-bundle.mjs'),
   },
-  // The CRM configuration record modals: one bundle, one export per record kind.
+  // The CRM sales screens: one island draws each of them whole.
   {
-    source: join(CRM_BACKEND_DIR, 'modal/case-modal-view.tsx'),
-    output: join(CRM_BACKEND_DIR, 'client/crm-case-modal.mjs'),
+    source: join(CRM_BACKEND_DIR, 'sales/client-entry.mjs'),
+    output: join(CRM_BACKEND_DIR, 'client/crm-sales-screen.mjs'),
   },
   {
-    source: join(CRM_BACKEND_DIR, 'modal/configuration-modal-view.tsx'),
-    output: join(CRM_BACKEND_DIR, 'client/crm-configuration-modal.mjs'),
+    source: join(CRM_BACKEND_DIR, 'import-island.tsx'),
+    output: join(CRM_BACKEND_DIR, 'client/crm-import.mjs'),
   },
   // The user record modal, including the users collection's create action.
   {
@@ -100,6 +100,20 @@ const entries = [
     source: join(PRODUCT_BACKEND_DIR, 'modal/attribute-modal-view.tsx'),
     output: join(PRODUCT_BACKEND_DIR, 'client/attribute-modal.mjs'),
   },
+  // The catalogue's list island.
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'list/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/product-list.mjs'),
+  },
+  // The Units of measure list, and a unit's record modal over any admin page.
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'units/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/uom-list.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/uom-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/uom-modal.mjs'),
+  },
   // Loaded when the template modal opens its Attributes & variants tab.
   {
     source: join(UI_CLIENT_DIR, 'variant-editor-view.tsx'),
@@ -122,8 +136,12 @@ const ketViewRuntime = {
   },
 }
 
-export async function buildBackendClients() {
-  const available = entries.filter(({ source }) => existsSync(source))
+/** @param {{ only?: string }} [options] */
+export async function buildBackendClients(options = {}) {
+  const available = entries.filter(
+    ({ source, output }) =>
+      existsSync(source) && (!options.only || output.endsWith(`/client/${options.only}.mjs`)),
+  )
   await Promise.all(
     available.map(({ source, output }) =>
       esbuild.build({

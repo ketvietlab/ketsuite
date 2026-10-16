@@ -440,6 +440,18 @@ export const SpecApp = (props: SpecViewProps): TemplateResult => (
 
 const SpecShell = (props: SpecViewProps): TemplateResult => (
   <AppShell
+    applications={{
+      label: props.t('spec.nav.apps'),
+      newTabLabel: props.t('spec.nav.newTab'),
+      helpLabel: props.t('spec.nav.help'),
+      settings: {
+        id: 'spec-app-settings',
+        label: props.t('spec.nav.settings'),
+        items: [{ id: 'settings', label: props.t('spec.nav.settings'), href: '#settings-spec' }],
+      },
+      activeId: 'spec',
+      items: [{ id: 'spec', label: props.t('spec.brand'), href: '#app-spec', icon: 'globe' }],
+    }}
     location={
       <div data-spec-region="topbar">
         <SpecTopbar

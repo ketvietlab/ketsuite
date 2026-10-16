@@ -11,6 +11,7 @@ import {
 
 type Req = Parameters<Route>[1]
 type Provider = {
+  protocol: string
   id: string
   code: string
   name: string
@@ -129,7 +130,8 @@ const start =
       url,
       req,
     )) as Provider | null
-    if (!provider) return errorResponse(url, req, 'oauth.error.providerUnavailable')
+    if (!provider || provider.protocol !== 'oidc')
+      return errorResponse(url, req, 'oauth.error.providerUnavailable')
     const sessions = await ctx.sessionsOf(url, req)
     if (!sessions) return text('this deployment has not turned sessions on', { status: 501 })
     const mode = url.searchParams.get('mode') === 'link' ? 'link' : 'login'
@@ -178,7 +180,8 @@ const callback =
       url,
       req,
     )) as Provider | null
-    if (!provider) return errorResponse(url, req, 'oauth.error.providerUnavailable')
+    if (!provider || provider.protocol !== 'oidc')
+      return errorResponse(url, req, 'oauth.error.providerUnavailable')
     const state = url.searchParams.get('state') ?? ''
     const heldCookie = decodedCookie(parseCookies(req.headers.cookie as string | undefined)[FLOW_COOKIE])
     if (!state || !sameSecret(heldCookie, `${provider.code}.${state}`)) {

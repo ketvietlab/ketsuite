@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { exampleApplications } from './catalogue/application-switcher.ts'
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -150,7 +151,14 @@ const renderContracts = (): string => {
         variant: 'operational',
       }),
     ),
-    shell: renderToString(AppShell({ sidebar: markers.sidebar, main: markers.main, mode: 'viewport' })),
+    shell: renderToString(
+      AppShell({
+        applications: exampleApplications,
+        sidebar: markers.sidebar,
+        main: markers.main,
+        mode: 'viewport',
+      }),
+    ),
     surface: renderToString(Surface({ body: markers.body })),
     'surface-none': renderToString(Surface({ body: markers.body, padding: 'none' })),
     section: renderToString(
@@ -187,17 +195,41 @@ const renderRuntime = (): string => {
     'const ',
   )
   const dateRuntime = readFileSync(join(sourceDirectory, 'forms/date-time/runtime.js'), 'utf8')
-    .replace(/^import \{[\s\S]*?\} from '\.\/date-math\.js'\n/mu, '')
+    .replace(/^import \{[\s\S]*?\} from '\.\/date-math\.js';?\r?\n/mu, '')
     .replace('export const attachDatePickers', 'const attachDatePickers')
   const primitiveRuntime = readFileSync(join(sourceDirectory, 'runtime/primitives.js'), 'utf8').replace(
     'export const attachPrimitives',
     'const attachPrimitives',
   )
   const interactions = moduleSource
-    .replace("import { attachPrimitives } from './primitives.js'\n", '')
-    .replace("import { attachDatePickers } from '../forms/date-time/runtime.js'\n", '')
+    .replace(
+      /^import \{ (?:attachPrimitives|attachApplyOnInput|attachDatePickers|attachHelpDrawers|attachMermaidDiagrams|attachNavigationTools) \} from '[^']+';?\r?\n/gmu,
+      '',
+    )
+    .replace(/^export \{[^}]*\} from '[^']+';?\r?\n/gmu, '')
     .replace('export const attachDesignSystemInteractions', 'const attachDesignSystemInteractions')
-  const classicSource = `${primitiveRuntime}\nconst attachDatePickers = (() => {\n${dateMath}\n${dateRuntime}\nreturn attachDatePickers;\n})();\n${interactions}`
+  const themeRuntime = readFileSync(join(sourceDirectory, 'runtime/mermaid-theme.js'), 'utf8').replaceAll(
+    'export const ',
+    'const ',
+  )
+  const diagramRuntime = readFileSync(join(sourceDirectory, 'runtime/mermaid.js'), 'utf8')
+    .replace(/^import .*\n/gmu, '')
+    .replaceAll('export const ', 'const ')
+  const helpRuntime = readFileSync(join(sourceDirectory, 'runtime/help.js'), 'utf8')
+    .replace(/^import .*\n/gmu, '')
+    .replaceAll('export const ', 'const ')
+  const sharedHelp = `const {createMermaidTheme,readMermaidPalette,hasMermaidOverrides} = (() => {${themeRuntime}\nreturn {createMermaidTheme,readMermaidPalette,hasMermaidOverrides};})();\nconst {attachMermaidDiagrams,configureMermaidLoader} = (() => {${diagramRuntime}\nreturn {attachMermaidDiagrams,configureMermaidLoader};})();\nconst attachHelpDrawers = (() => {${helpRuntime}\nreturn attachHelpDrawers;})();`
+  const navigationRuntime = readFileSync(
+    join(sourceDirectory, 'runtime/navigation-tools.js'),
+    'utf8',
+  ).replaceAll('export const ', 'const ')
+  const sharedNavigation = `const attachNavigationTools = (() => {${navigationRuntime}\nreturn attachNavigationTools;})();`
+  const applyRuntime = readFileSync(join(sourceDirectory, 'runtime/apply-on-input.js'), 'utf8').replace(
+    'export const attachApplyOnInput',
+    'const attachApplyOnInput',
+  )
+  const sharedApply = `const attachApplyOnInput = (() => {${applyRuntime}\nreturn attachApplyOnInput;})();`
+  const classicSource = `${sharedHelp}\n${sharedNavigation}\n${sharedApply}\n${primitiveRuntime}\nconst attachDatePickers = (() => {\n${dateMath}\n${dateRuntime}\nreturn attachDatePickers;\n})();\n${interactions}`
   if (/\bexport\s/u.test(classicSource) || /^import\s/mu.test(classicSource))
     throw new Error('Design-system runtime can no longer be converted to a classic KetAtlas script')
   // Built by tools/build-design-system-atlas-runtime.mjs: a self-contained bundle

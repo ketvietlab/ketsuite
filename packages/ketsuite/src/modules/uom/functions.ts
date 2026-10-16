@@ -72,7 +72,10 @@ function deriveTree(rows: UnitRow[]): { ok: true; rows: UnitRow[] } | { ok: fals
   }
   for (const row of rows) {
     if (!(row.relativeFactor > 0))
-      return { ok: false, errors: [{ field: 'relativeFactor', message: 'phải lớn hơn 0' }] }
+      return {
+        ok: false,
+        errors: [{ field: 'relativeFactor', code: 'uom.error.factorPositive', message: 'phải lớn hơn 0' }],
+      }
     const error = visit(row)
     if (error)
       return {
@@ -80,6 +83,7 @@ function deriveTree(rows: UnitRow[]): { ok: true; rows: UnitRow[] } | { ok: fals
         errors: [
           {
             field: 'relativeUomId',
+            code: 'uom.error.referenceLoop',
             message: error.includes('reference root')
               ? error
               : `cây đơn vị có vòng lặp hoặc cha không hợp lệ: ${error}`,
@@ -164,10 +168,50 @@ export const functions: Record<string, FnSpec> = {
       if (args.relativeUomId === args.id)
         return {
           ok: false,
-          errors: [{ field: 'relativeUomId', message: 'một đơn vị không thể tham chiếu chính nó' }],
+          errors: [
+            {
+              field: 'relativeUomId',
+              code: 'uom.error.referenceLoop',
+              message: 'một đơn vị không thể tham chiếu chính nó',
+            },
+          ],
         }
       const stored = await ctx.db.select('uom.Unit')
       const current = stored.find((row) => row.id === args.id)
+      // A unit is picked by name on every document, so two may not share one.
+      const name = String(args.name ?? '').trim()
+      if (!name)
+        return { ok: false, errors: [{ field: 'name', code: 'uom.error.nameRequired', message: 'bắt buộc' }] }
+      if (
+        stored.some(
+          (row) => row.id !== args.id && String(row.name).trim().toLowerCase() === name.toLowerCase(),
+        )
+      )
+        return { ok: false, errors: [{ field: 'name', code: 'uom.error.nameTaken', message: 'tên đã có' }] }
+      // Quantities are kept to three decimals; a finer conversion would round away.
+      if (/\.\d{4,}$/u.test(String(args.relativeFactor).trim()))
+        return {
+          ok: false,
+          errors: [
+            { field: 'relativeFactor', code: 'uom.error.factorDigits', message: 'tối đa 3 chữ số thập phân' },
+          ],
+        }
+      // Archiving a unit another active unit counts in would leave that one counting nothing.
+      if (
+        current &&
+        args.active === false &&
+        stored.some((row) => row.active !== false && String(row.relativeUomId ?? '') === String(args.id))
+      )
+        return {
+          ok: false,
+          errors: [
+            {
+              field: 'active',
+              code: 'uom.error.archiveCounted',
+              message: 'còn đơn vị đang quy đổi từ đơn vị này',
+            },
+          ],
+        }
       const precision = (await ctx.db.select('uom.Precision', { id: PRECISION_ID }))[0]
       const digits = precision ? Number(precision.digits) : 2
       const rounding = 10 ** -digits
@@ -189,6 +233,8 @@ export const functions: Record<string, FnSpec> = {
           errors: [
             {
               field: 'relativeFactor',
+              code: lockedDescendant ? 'uom.error.conversionUsedBelow' : 'uom.error.conversionLocked',
+              params: lockedDescendant ? { unit: String(lockedDescendant.name ?? lockedDescendant.id) } : {},
               message: lockedDescendant
                 ? `conversion identity ảnh hưởng đơn vị đã sử dụng ${String(lockedDescendant.id)}`
                 : 'conversion identity đã được sử dụng và không thể đổi',
@@ -197,7 +243,7 @@ export const functions: Record<string, FnSpec> = {
         }
       const candidate: UnitRow = {
         id: String(args.id),
-        name: String(args.name),
+        name,
         sequence:
           args.sequence == null
             ? Math.min(Math.trunc(Number(args.relativeFactor) * 100), 1000)

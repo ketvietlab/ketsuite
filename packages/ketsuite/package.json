@@ -32,6 +32,10 @@
     "prepack": "npm run build --prefix ../.."
   },
   "exports": {
+    "./shipping": {
+      "types": "./dist/shipping.d.ts",
+      "default": "./dist/shipping.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
@@ -43,6 +47,10 @@
     "./ui": {
       "types": "./dist/ui/index.d.ts",
       "default": "./dist/ui/index.js"
+    },
+    "./ui/application-switcher": {
+      "types": "./dist/ui/application-switcher.d.ts",
+      "default": "./dist/ui/application-switcher.js"
     },
     "./backend": {
       "types": "./dist/modules/backend/index.d.ts",
@@ -75,10 +83,12 @@
   },
   "dependencies": {
     "@ketvietlab/design-system": "0.1.41",
-    "@ketvietlab/ketjs": "0.2.0",
-    "@ketvietlab/ketjs-view": "0.2.0",
+    "@ketvietlab/ketjs": "0.5.0",
+    "@ketvietlab/ketjs-view": "0.5.0",
+    "@ketvietlab/website-client": "0.1.41",
     "chart.js": "4.5.1",
     "ioredis": "^6.0.0",
+    "marked": "18.1.0",
     "sharp": "0.35.5",
     "yjs": "13.6.32"
   },

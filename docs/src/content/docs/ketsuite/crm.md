@@ -179,10 +179,24 @@ to create was refused.
   Tabs cover sales (figures and quotations), activities (open work, meetings, history) and the timeline.
 - **Planner** — CRM activities only, each linked back to its case, with complete and cancel on the row.
 - **Leaderboard** — standings, recalculated on request.
-- **Configuration** — five lists: teams, stages, tags, assignment rules and lead/opportunity scoring.
-  Clicking anywhere on a row opens it. Adding or editing a team uses a full page, with member
-  management inside that page; the other four records use centered route dialogs. Each list can show
-  active, archived or all records, and lifecycle changes are made inside the opened record.
+- **Configuration** — three URL-backed tabs: Teams & assignment, Sales process (stages, loss reasons,
+  tags and the Sales quotation policy), and Lead scoring. Team links open the team workspace; managers
+  add or edit configuration through its dialogs. Viewers keep the same tabs without write actions.
+  The current URL owns the selected tab, including direct links and browser Back/Forward.
+
+### CRM sales navigation ownership
+
+`crm.sales-screen` keeps the current address separate from its last successful data read. `tab`,
+`peek`, and `bucket` are view-only parameters: changing them redraws the existing data without another
+request. Every consumer must select its visible panel from the current address (`k.query`), never
+from a copy embedded in the read model. Configuration therefore returns all groups and no `settings.tab`.
+An absent or unsupported configuration tab selects Teams & assignment.
+
+`salesDataQuery` defines the shared data identity used by clicks and history navigation. Filters,
+language, record identity and dialog/command state remain part of that identity and trigger a read.
+Do not fix a stale panel by forcing full-page reloads or adding a separate tab listener. Cover a sequence
+of addresses over the same read model, plus matching native links and active state; testing only a
+fresh read for each URL misses stale-state regressions.
 
 URL-owned CRM overlays use centered dialogs on desktop, including the four non-team configuration
 forms and the activity scheduler. On narrow screens the shared dialog contract expands them to the
@@ -227,6 +241,14 @@ The owning module answers for those rows through its own functions and screens. 
 it needs to write one: `crmSaveCase`, `crmCaseAudience`, `crmCanReadCase`, `crmVisibleCases`,
 `crmSerializeCaseList`, `crmSeededId` and `crmAddTimeline`.
 
+The shared header also has optional `sourceKind`, `waitingFor` and `nextContactAt` fields. Extensions
+can separate their work queues and record the next contact without changing the case lifecycle or
+resetting its SLA. These fields do not grant access: company scope and case audience still apply.
+An owning extension may call `crmReassignCase(ctx, input, extensionKind)` from its trusted service;
+the kind must match the stored row. The public `crm.case.reassign` function does not accept that
+argument and remains restricted to CRM-owned kinds. Assignment still validates teams, active
+members, edit scope, version and command idempotency.
+
 `receiveAttachment` is exported for the same reason: an extension whose records carry photographs
 should not reimplement streaming, upload limits, checksums and object keys — that is what `storage`
 is for.
@@ -260,6 +282,24 @@ KET_VISUAL_SQLITE=/tmp/crm-visual.db npm run visual:crm:seed
 ```
 
 The seed prints the sign-in it created. Point the server at that file and open `/admin/crm/pipeline`.
+
+## Canonical shipping evidence
+
+`ketsuite/shipping` exports `SHIPPING_STATUSES`, `ShippingStatus`,
+`isShippingStatus` and `ShippingStatusEvidence`. Version 1 mirrors the 20 Pancake
+shipping codes with uppercase enum values:
+
+`WAITING`, `REQUEST_RECEIVED`, `PROCESSING_PICKED_UP`, `PICKING_UP`, `DELAY_PICKUP`,
+`PICKED_UP`, `WAITING_ON_THE_WAY`, `ON_THE_WAY`, `CONTACT_DELIVERY_COMPANY`,
+`OUT_FOR_DELIVERY`, `DELAY_DELIVERY`, `INFORM_RECIPIENT`, `UNDELIVERABLE`,
+`WAITING_FOR_RETURN`, `DELIVERED`, `DELIVERED_COD`, `RETURNING`, `RETURNED`,
+`RETURNED_COD`, `CANCELED`.
+
+Adapters own provider mapping. The evidence contract keeps `statusRaw` separately;
+unknown provider codes retain their raw value and have canonical `status: null`.
+Strict validation accepts only listed uppercase values. Shipping status is separate
+from sales order status and Customer Care case stage. Provider-specific ingestion,
+company configuration and case routing belong to the consuming deployment.
 
 ## Sales dashboard data contract
 
@@ -322,7 +362,82 @@ that no conversation occurred. Consumers must show the coverage caveat for histo
 The stale-contact signal likewise means no recorded successful contact, using creation as the
 baseline when there is no contact history.
 
-Activity deadlines remain calendar dates. Overdue is measured in local calendar days; hour-level
-labels such as “overdue 2h” are unsupported. Current pipeline must not be presented as a historical
+Ordinary activity deadlines use calendar dates. Imported first-contact tasks may also have an exact
+`dueAt` timestamp; overdue detection honors it when present. Date-only rescheduling clears that timestamp.
+General hour-level elapsed labels such as “overdue 2h” are not implemented. Current pipeline must not be presented as a historical
 snapshot. Delivered net revenue, refunds, repeat purchasing and private snapshot orchestration belong
 to downstream integrations and are not included in this public sales report.
+
+
+## Lead imports and record tags
+
+The native backend provides `/admin/crm/imports`, `/admin/crm/imports/new`,
+`/admin/crm/imports/{id}`, `/admin/crm/tags`, and `/admin/crm/tagged-records`.
+Each screen includes localized Help through the shared HelpDrawer/MarkdownContent contract.
+
+The four-step import accepts CSV, TSV, XLSX (worksheet selection), or pasted spreadsheet cells.
+Upload and configure save a draft without creating CRM records. Preview uses the same matching and
+assignment decisions as the worker. Start freezes the plan and enqueues `crm.importChunk`.
+The deployment worker must be running; the HTTP process alone does not consume jobs.
+
+- Limits: 10 MiB upload, 20,000 data rows, 64 columns, 8,000 characters per cell, ten record tags,
+  and twenty newly materialized catalogue tags/customer labels per batch. XLSX is read without a
+  third-party package: ZIP entries are inflated within size bounds, DOCTYPE/entity/CDATA parts are
+  refused, and one linear tag scan reads the chosen worksheet, shared strings and date formats (1900
+  and 1904 systems) under the same row/column/cell bounds. CSV preserves quoted values and phone zeros.
+- Mapping requires a name and either phone or email. Contacts and tag names are normalized; duplicate
+  contacts within the file and existing records have explicit skip/create/add-to-open-record outcomes.
+  A matched existing customer can receive a new case without creating another shared customer.
+- Rules support source/medium/campaign, normal assignment rules, a team's assignment policy,
+  a chosen person, or unassigned records. Team capacity/cursor changes commit with accepted rows.
+- Mapped tag values may use existing tags, create new tags (configuration permission), or be ignored.
+  Unknown values are reported to a non-configurator rather than silently creating catalogue entries.
+  Adding a new batch-tag choice saves the draft; catalogue creation happens at Start.
+- Optional first contact uses an exact two-hour deadline or a local calendar date. The company
+  accounting timezone determines the date (Asia/Ho_Chi_Minh fallback). An unassigned case's task
+  belongs to the importer. This does not establish customer consent or send a message.
+
+`crm.ImportBatch`, `crm.ImportRow` and `crm.ImportControl` persist the plan, row receipts and
+company-local serialization. A worker commits up to 25 rows, their receipts and the cursor together.
+A failed chunk writes none of them. Deterministic row IDs and cursor/version checks make retries safe.
+The worker rechecks the importing user's active status and permissions; revocation stops the batch.
+Stop retains committed rows. Resume handles remaining rows and is also available after a stalled job.
+Error CSVs neutralize spreadsheet formula prefixes. Reports count unique visible cases, recorded
+successful contact, won cases and their expected value, grouped by owner or tag; they are not booked revenue.
+
+Undo is available for 72 hours. It archives newly created cases that have not subsequently changed,
+removes batch-owned links and cancels unchanged first-contact tasks, and preserves edited cases, rescheduled
+or completed tasks, prior links and shared customer identities. Shared customers are never deleted:
+other business modules may reference them. Row receipts remain as the audit trail.
+
+Tag creation/editing rejects normalized duplicates and serializes against import/merge writes.
+New tag links record their creation time for last-use reporting; legacy links without it use case creation as a documented fallback. Archive hides a tag from new selections while retaining existing classification. Merge moves links
+and batch tag rules to the target, then archives the source. Bulk tagging is additive, checks every
+record's edit audience, refuses the combined tag limit, and requires a centered confirmation for removal.
+Partial refusals identify failed records without losing successful updates.
+
+`crm.view` supplies read functions. The separate `crm.import` bundle supplies upload/configure/start,
+preview/export, stop/resume and batch tagging. `crm.configure` supplies undo and catalogue changes;
+`crm.agent-operate` supplies per-record tags. Company, audience and batch-owner checks run on the server.
+The Cosmetic CRM Manager template includes `crm.import` at version 5. Other templates are unchanged.
+
+The wizard and command forms render natively on the server, with a disposable enhancement island
+for conditional rules and progress polling. Collection controls/results/footer use the shared
+collection book and one paged read, including debounced search, URL history, cancellation, loading,
+empty, denied and retry states. The product owns content and route adapters; the public DS owns
+markup, spacing and interactions, and the kit's `ui/crm-import.tsx` owns the native command forms,
+hidden values and the rule fields the island reveals. No custom style sheet is required.
+
+Focused verification in the Cosmetic dependency boundary:
+
+```sh
+# Run from: ketsuite/ (focused checks, not the full repository test suite)
+./node_modules/.bin/tsc -p tsconfig.crm-import.json --pretty false
+node --test .build/test/crm-import-format.test.js .build/test/crm-import-domain.test.js
+KET_CRM_IMPORT_PG=1 node --test .build/test/crm-import-domain.test.js
+node .build/tools/zero-dep-audit.js && node .build/tools/ui-audit.js
+node --input-type=module -e "import {buildBackendClients} from './tools/build-backend-client.mjs'; await buildBackendClients({only:'crm-import'})"
+```
+
+The PostgreSQL test variant creates and drops isolated temporary databases on the local server;
+`KET_CRM_IMPORT_PG_URL` may override its administrative connection. It never reuses an application database.

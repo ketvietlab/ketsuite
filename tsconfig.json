@@ -15,5 +15,7 @@
     "test/**/*",
     "tools/**/*",
     "bench/**/*"
-  ]
+  ],
+  // The bundled Mermaid for screen help is generated, minified output (tools/build-backend-mermaid.mjs).
+  "exclude": ["node_modules", "packages/ketsuite/src/modules/backend/design/client/mermaid"]
 }

@@ -6,8 +6,8 @@ import type { RelationOption } from '../backend/relation-select.ts'
 type Req = Parameters<Route>[1]
 
 /**
- * Flow's relational fields, as pickers rather than bare selects — direct copy
- * of crm_backend/relation-control.ts's shape against Flow's own functions.
+ * Flow's relational fields, as pickers rather than bare selects — a copy of the
+ * CRM's former relation controls, against Flow's own functions.
  *
  * There is deliberately no sprint picker: a project holds a handful of
  * sprints, and the rule this module inherits from crm_backend is that a field

@@ -23,6 +23,10 @@ packages/ketsuite/src/modules/crm_backend/client/crm-case-modal.mjs
 packages/ketsuite/src/modules/crm_backend/client/crm-case-modal.mjs.map
 packages/ketsuite/src/modules/crm_backend/client/crm-configuration-modal.mjs
 packages/ketsuite/src/modules/crm_backend/client/crm-configuration-modal.mjs.map
+packages/ketsuite/src/modules/crm_backend/client/crm-sales-screen.mjs
+packages/ketsuite/src/modules/crm_backend/client/crm-sales-screen.mjs.map
+packages/ketsuite/src/modules/crm_backend/client/crm-import.mjs
+packages/ketsuite/src/modules/crm_backend/client/crm-import.mjs.map
 packages/ketsuite/src/modules/user_backend/client/user-modal.mjs
 packages/ketsuite/src/modules/user_backend/client/user-modal.mjs.map
 packages/ketsuite/src/modules/user_backend/client/role-modal.mjs
@@ -33,6 +37,12 @@ packages/ketsuite/src/modules/product_backend/client/product-modal.mjs
 packages/ketsuite/src/modules/product_backend/client/product-modal.mjs.map
 packages/ketsuite/src/modules/product_backend/client/attribute-modal.mjs
 packages/ketsuite/src/modules/product_backend/client/attribute-modal.mjs.map
+packages/ketsuite/src/modules/product_backend/client/product-list.mjs
+packages/ketsuite/src/modules/product_backend/client/product-list.mjs.map
+packages/ketsuite/src/modules/product_backend/client/uom-list.mjs
+packages/ketsuite/src/modules/product_backend/client/uom-list.mjs.map
+packages/ketsuite/src/modules/product_backend/client/uom-modal.mjs
+packages/ketsuite/src/modules/product_backend/client/uom-modal.mjs.map
 packages/ketsuite/src/modules/backend/design/client/relation-select.mjs
 packages/ketsuite/src/modules/backend/design/client/relation-select.mjs.map
 packages/ketsuite/src/modules/backend/design/client/lightbox.mjs
@@ -54,6 +64,8 @@ packages/ketsuite/src/modules/backend/design/design-system.css
 # reason the Live Doc editor does — tools/build-chart-client.mjs, on every build.
 packages/ketsuite/src/modules/backend/design/client/chart.mjs
 packages/ketsuite/src/modules/backend/design/client/chart.mjs.map
+# Mermaid for screen help, bundled with its lazy diagram chunks by tools/build-backend-mermaid.mjs.
+packages/ketsuite/src/modules/backend/design/client/mermaid/
 # The KetAtlas island runtime bundles @ketvietlab/ketjs-view itself (a self-contained
 # mock has no server to resolve it from) — tools/build-design-system-atlas-runtime.mjs,
 # on every build.

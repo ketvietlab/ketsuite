@@ -14,7 +14,8 @@ export default defineModule({
   islands,
   routes,
   fills: {
-    'backend:sidebar.foot': `{% island "mail.inbox-indicator" %}`,
+    // Only for whoever may read their inbox: the count would be refused, and the link with it.
+    'backend:sidebar.foot': `{% if may.mail.countUnread %}{% island "mail.inbox-indicator" %}{% endif %}`,
   },
   messages: {
     vi: {

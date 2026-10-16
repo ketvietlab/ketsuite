@@ -130,6 +130,40 @@ test('closing sprint records commitment and carries work only within its project
     idempotencyKey: 'after-close',
   })
   assert.deepEqual(read(s).sprints.find((x) => x.id === sprint.id).report.tasks, frozen)
+  const frozenReport = structuredClone(read(s).sprints.find((x) => x.id === sprint.id).report)
+  s.call('flow.entity.action', {
+    companyId: 'demo',
+    collection: 'sprints',
+    entityId: sprint.id,
+    action: 'close',
+    carryTo: 'Sprint 13',
+    idempotencyKey: 'close-again-after-edit',
+  })
+  assert.deepEqual(read(s).sprints.find((x) => x.id === sprint.id).report, frozenReport)
+})
+test('realistic Core fixtures have one active sprint per project and frozen historical reports', () => {
+  const session = createOrganizationSession('baseline', 'sprints', { profile: 'realistic' })
+  const data = read(session)
+  for (const project of data.projects)
+    assert.ok(
+      data.sprints.filter((sprint) => sprint.projectId === project.id && sprint.state === 'active').length <=
+        1,
+    )
+  const past = data.sprints.find((sprint) => sprint.state === 'closed')
+  assert.ok(past.report.tasks.length)
+  assert.equal(past.report.carried, 0)
+  assert.equal(past.report.completed, past.report.tasks.length)
+  assert.equal(past.report.closedAt, past.end + 'T17:00:00.000Z')
+  const frozen = structuredClone(past.report)
+  session.call('flow.entity.action', {
+    companyId: 'demo',
+    collection: 'sprints',
+    entityId: past.id,
+    action: 'close',
+    carryTo: 'Backlog',
+    idempotencyKey: 'retry-history',
+  })
+  assert.deepEqual(read(session).sprints.find((sprint) => sprint.id === past.id).report, frozen)
 })
 test('configured task fields survive save and validate required completion values', () => {
   const s = createOrganizationSession(),

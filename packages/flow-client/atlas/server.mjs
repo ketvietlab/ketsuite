@@ -1,13 +1,27 @@
 import { createServer } from 'node:http'
-import { realpathSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { realpathSync, existsSync } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
+import { brotliCompressSync, gzipSync, constants as zlib } from 'node:zlib'
 import { dirname, resolve, sep, extname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { randomUUID } from 'node:crypto'
-import { renderIsland } from '@ketvietlab/ketjs-view'
+import { randomUUID, createHash } from 'node:crypto'
+import { renderIsland, renderToString, trustedMarkup, html } from '@ketvietlab/ketjs-view'
+import {
+  createKetServer,
+  compose,
+  sqliteAdapter,
+  navigablePage,
+  isNavigationRequest,
+} from '@ketvietlab/ketjs'
 import { createFlowWorkspace, routes } from '@ketvietlab/flow-client/workspace.mjs'
+import { setFlowLocale, normalizeFlowLocale } from '@ketvietlab/flow-client/i18n.mjs'
+import { flowShellData } from '@ketvietlab/flow-client/shell-model.mjs'
+import { atlasShellRequest, atlasShellProps } from './shell-request.mjs'
 import { createOrganizationSession } from './organization-store.mjs'
+import { fixtureResponse } from './fixture-response.mjs'
 import { BLANK_OWNER, blankStages } from './blank-organization.mjs'
+import { todayDate } from '@ketvietlab/flow-client/timeline.mjs'
+import { notFoundPage } from './not-found-page.mjs'
 // Every entry point (including KetAtlas's renderer command) needs these browser bundles.
 import './build-vendor.mjs'
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -15,7 +29,10 @@ const ui = dirname(fileURLToPath(import.meta.resolve('@ketvietlab/flow-ui')))
 const vendor = fileURLToPath(new URL('./vendor/', import.meta.url))
 const view = dirname(fileURLToPath(import.meta.resolve('@ketvietlab/ketjs-view')))
 const tokens = fileURLToPath(import.meta.resolve('@ketvietlab/design-system/tokens.css'))
-export function startAtlasServer({
+// Seeded dates follow the browser's calendar (the client computes "overdue" from
+// the real date), so the mock never ages into "everything is overdue".
+const atlasToday = () => todayDate('Asia/Ho_Chi_Minh')
+export async function startAtlasServer({
   createSession = createOrganizationSession,
   extraImports = {},
   extraStyles = [],
@@ -91,6 +108,7 @@ export function startAtlasServer({
     '.woff2': 'font/woff2',
     '.png': 'image/png',
   }
+  const stylesheets = `<link rel="icon" type="image/png" href="/flow-client/brand/logo-flow-light-160.png"><link rel="stylesheet" href="/design-system/tokens.css"><link rel="stylesheet" href="/flow-ui/styles.css">${extraStyles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}<link rel="stylesheet" href="/flow-client/brand/brand.css">`
   const imports = {
     '@ketvietlab/ketsuite/livedoc': '/flow-live-doc.mjs',
     '@ketvietlab/ketjs-view/jsx-runtime': '/_ket/view/jsx-runtime.js',
@@ -106,22 +124,118 @@ export function startAtlasServer({
     '@ketvietlab/flow-client/': '/flow-client/',
     ...extraImports,
   }
-  const json = (res, code, value) => {
-    res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-    res.end(JSON.stringify(value))
+  const mounts = [
+    ['/_ket/view/', view],
+    ['/flow-ui/', ui],
+    ...extraMounts,
+    ['/flow-client/', resolve(root, 'dist')],
+    ['/atlas/', resolve(root, 'atlas')],
+  ]
+  // A document has one language (switching starts a new SSR document), so the
+  // browser loads only that locale of each message catalog: the import map
+  // redirects every catalog module, bare or relative, to its `?locale=` variant.
+  const catalogs = mounts
+    .filter(([prefix, base]) => prefix !== '/atlas/' && existsSync(resolve(base, 'messages.mjs')))
+    .map(([prefix]) => prefix + 'messages.mjs')
+  const documentImports = (lang) => {
+    const localized = Object.fromEntries(catalogs.map((path) => [path, `${path}?locale=${lang}`]))
+    for (const [spec, target] of Object.entries(imports))
+      if (spec.endsWith('/') && localized[target + 'messages.mjs'])
+        localized[spec + 'messages.mjs'] = localized[target + 'messages.mjs']
+    return { ...imports, ...localized }
   }
+  const localeModule = async (file, lang) => {
+    const catalog = await import(pathToFileURL(file).href)
+    return Object.entries(catalog)
+      .map(
+        ([name, value]) =>
+          `export const ${name} = ${JSON.stringify(value && typeof value === 'object' && lang in value ? { [lang]: value[lang] } : value)}\n`,
+      )
+      .join('')
+  }
+  // Compress the way a production edge would. Dynamic bodies use fast settings;
+  // static files are compressed once per build (path + mtime) at full quality.
+  const compressed = new Map()
+  const encodingOf = (req) => {
+    const accept = String(req?.headers['accept-encoding'] ?? '')
+    return /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null
+  }
+  const encode = (encoding, bytes, quality) =>
+    encoding === 'br'
+      ? brotliCompressSync(bytes, {
+          params: {
+            [zlib.BROTLI_PARAM_QUALITY]: quality,
+            [zlib.BROTLI_PARAM_SIZE_HINT]: bytes.length,
+          },
+        })
+      : gzipSync(bytes, { level: quality > 5 ? 9 : 6 })
+  const send = (res, code, headers, body, cacheKey) => {
+    const bytes = typeof body === 'string' ? Buffer.from(body) : body
+    const encoding = bytes.length > 1024 ? encodingOf(res.req) : null
+    const vary = [headers.vary, 'Accept-Encoding'].filter(Boolean).join(', ')
+    if (!encoding) {
+      res.writeHead(code, { ...headers, vary, 'content-length': bytes.length })
+      return res.end(res.req?.method === 'HEAD' ? undefined : bytes)
+    }
+    const key = cacheKey && `${cacheKey}:${encoding}`
+    let out = key && compressed.get(key)
+    if (!out) {
+      out = encode(encoding, bytes, cacheKey ? 11 : 5)
+      if (key) compressed.set(key, out)
+    }
+    res.writeHead(code, {
+      ...headers,
+      vary,
+      'content-encoding': encoding,
+      'content-length': out.length,
+    })
+    res.end(res.req?.method === 'HEAD' ? undefined : out)
+  }
+  const json = (res, code, value) =>
+    send(
+      res,
+      code,
+      { 'content-type': 'application/json', 'cache-control': 'no-store' },
+      JSON.stringify(value),
+    )
   const serialize = (x) => JSON.stringify(x).replace(/</g, '\\u003c')
+  // Use KetJS's published browser runtime; do not copy its navigation code.
+  const buildId = createHash('sha256')
+    .update(await readFile(resolve(root, 'dist/workspace.mjs')))
+    .digest('hex')
+    .slice(0, 16)
+  const runtimeAdapter = sqliteAdapter(':memory:')
+  const framework = await createKetServer({
+    manifest: compose([]),
+    adapter: runtimeAdapter,
+    buildId,
+    islandClients: { 'flow.workspace': { src: entry, export: 'createAtlasWorkspace' } },
+    browserBehaviors: {
+      'flow.navigation': {
+        src: '/atlas/entry.mjs',
+        export: 'attachAtlasNavigation',
+        when: '[data-flow-app]',
+      },
+    },
+  })
   const handler = async (req, res) => {
     try {
       if (process.env.FLOW_DEBUG) console.log(req.method, req.url)
       const url = new URL(req.url, 'http://127.0.0.1')
       const path = decodeURIComponent(url.pathname)
+      if (path === '/_ket/islands.js') {
+        framework.server.emit('request', req, res)
+        return
+      }
       if (path === '/flow-live-doc.mjs' || path === '/flow-ketjs-i18n.mjs') {
-        const bytes = await readFile(
-          resolve(vendor, path === '/flow-live-doc.mjs' ? 'live-doc.mjs' : 'ketjs-i18n.mjs'),
+        const file = resolve(vendor, path === '/flow-live-doc.mjs' ? 'live-doc.mjs' : 'ketjs-i18n.mjs')
+        return send(
+          res,
+          200,
+          { 'content-type': 'text/javascript' },
+          await readFile(file),
+          `${file}:${(await stat(file)).mtimeMs}`,
         )
-        res.writeHead(200, { 'content-type': 'text/javascript' })
-        return res.end(bytes)
       }
       if (path === '/__atlas/ready') return json(res, 200, { ok: true })
       if (path === '/_ket/upload' && req.method === 'POST') {
@@ -209,22 +323,53 @@ export function startAtlasServer({
         }
         const result = session.call(name, input)
         if (result.value?.screenBaseURL) result.value.screenBaseURL = `http://127.0.0.1:${previewPort}/flow/`
-        return json(res, 200, result)
+        return json(res, 200, fixtureResponse(session, name, result))
       }
       if (path.startsWith('/flow/')) {
         const screen = path.slice('/flow/'.length) || 'my-work'
-        if (!routes[screen]) return json(res, 404, { ok: false, message: 'Unknown Flow screen' })
-        const scenario = url.searchParams.get('state') ?? 'baseline'
-        const session = randomUUID()
-        sessions.set(session, {
-          ...createSession(scenario, screen, { profile: 'realistic' }),
-          touched: Date.now(),
-        })
+        if (!routes[screen]) {
+          res.writeHead(404, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+          return res.end(
+            notFoundPage({
+              company: url.searchParams.get('company'),
+              lang: url.searchParams.get('lang'),
+              head: stylesheets,
+            }),
+          )
+        }
+        const cookieName = `flow-atlas-${port}`
+        const cookieSession = String(req.headers.cookie ?? '')
+          .split(';')
+          .map((part) => part.trim())
+          .find((part) => part.startsWith(cookieName + '='))
+          ?.slice(cookieName.length + 1)
+        const previous = sessions.get(cookieSession)
+        const scenario = url.searchParams.get('state') ?? previous?.scenario ?? 'baseline'
+        const reuse = previous && previous.scenario === scenario
+        const session = reuse ? cookieSession : randomUUID()
+        if (!reuse)
+          sessions.set(session, {
+            ...createSession(scenario, screen, { profile: 'realistic', today: atlasToday() }),
+            touched: Date.now(),
+          })
+        sessions.get(session).touched = Date.now()
+        const documentLang = normalizeFlowLocale(url.searchParams.get('lang'))
+        setFlowLocale(documentLang)
         const props = {
+          serverShell: true,
+          scope: url.searchParams.get('scope') ?? (url.searchParams.has('project') ? 'project' : 'workspace'),
+          view: url.searchParams.get('view') ?? '',
+          projectFilter: url.searchParams.get('projectFilter') ?? 'all',
+          visibility: url.searchParams.get('visibility') ?? 'shared',
+          docq: url.searchParams.get('docq') ?? '',
+          returnTo: url.searchParams.get('returnTo') ?? '',
           screen,
+          background: url.searchParams.get('background') ?? '',
+          focus: url.searchParams.get('focus') ?? '',
           companyId: url.searchParams.get('company') ?? 'demo',
           workspaceId: url.searchParams.get('workspace') ?? '',
           record: url.searchParams.get('id') ?? 'KV-142',
+          recordProvided: url.searchParams.has('id'),
           project: url.searchParams.get('project') ?? 'core',
           query: url.searchParams.get('q') ?? '',
           status: url.searchParams.get('status') ?? 'all',
@@ -237,26 +382,59 @@ export function startAtlasServer({
             ? { email: BLANK_OWNER.email, password: BLANK_OWNER.password }
             : null,
         }
-        const island = renderIsland('flow.workspace', createFlowWorkspace, props, { tag: 'div' })
-        res.writeHead(200, {
-          'content-type': 'text/html; charset=utf-8',
-          'cache-control': 'no-store',
+        // Only authorized chrome is rendered here. Business records stay in the
+        // data island and are fetched through the client adapter after mount.
+        const shellData = sessions
+          .get(session)
+          .call('flow.workspace.bootstrap', atlasShellRequest(props)).value
+        const initialShellData = flowShellData(shellData)
+        const shellProps = atlasShellProps(props, initialShellData)
+        const island = renderIsland('flow.workspace', createFlowWorkspace, shellProps, {
+          tag: 'div',
+          key: ['companyId', 'workspaceId'],
         })
-        return res.end(
-          `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Flow</title><link rel="stylesheet" href="/design-system/tokens.css"><link rel="stylesheet" href="/flow-ui/styles.css">${extraStyles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}<link rel="stylesheet" href="/flow-client/brand/brand.css"><script type="importmap">${serialize({ imports })}</script></head><body style="margin:0">${island}<script type="application/json" id="flow-environment">${serialize({ session })}</script><script type="module" src="${entry}"></script></body></html>`,
+        const chrome = createFlowWorkspace(shellProps, { initialShellData })
+        let page
+        try {
+          if (isNavigationRequest(req)) {
+            const response = navigablePage(req, {
+              title: 'Flow',
+              document: () => html``,
+              slots: chrome.fragmentSlots(trustedMarkup(island)),
+            })
+            return send(
+              res,
+              response.status ?? 200,
+              {
+                'content-type': response.type + '; charset=utf-8',
+                'cache-control': 'no-store',
+                'x-ket-build': buildId,
+                ...response.headers,
+              },
+              response.body,
+            )
+          }
+          page = renderToString(chrome.shellView(trustedMarkup(island)))
+        } finally {
+          chrome.dispose()
+        }
+        return send(
+          res,
+          200,
+          {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-ket-build': buildId,
+            vary: 'X-Ket-Navigation',
+            'set-cookie': `${cookieName}=${session}; Path=/flow/; HttpOnly; SameSite=Strict`,
+          },
+          `<!doctype html><html lang="${documentLang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Flow</title>${stylesheets}<script type="importmap">${serialize({ imports: documentImports(documentLang) })}</script></head><body style="margin:0">${page}<script type="application/json" id="flow-environment">${serialize({ session })}</script><script type="module" src="/_ket/islands.js"></script></body></html>`,
         )
       }
       let file
       if (entryFile && path === entry) file = entryFile
       else if (path === '/design-system/tokens.css') file = tokens
       else {
-        const mounts = [
-          ['/_ket/view/', view],
-          ['/flow-ui/', ui],
-          ...extraMounts,
-          ['/flow-client/', resolve(root, 'dist')],
-          ['/atlas/', resolve(root, 'atlas')],
-        ]
         const mount = mounts.find(([prefix]) => path.startsWith(prefix))
         if (!mount) throw new Error('404')
         const [prefix, base, allowed] = mount
@@ -265,14 +443,30 @@ export function startAtlasServer({
         if (allowed && !allowed.some((p) => path.slice(prefix.length).startsWith(p))) throw new Error('404')
         if (prefix === '/atlas/' && path !== '/atlas/entry.mjs') throw new Error('404')
       }
+      const locale = url.searchParams.get('locale')
+      if (path.endsWith('/messages.mjs') && ['en', 'ja', 'vi'].includes(locale ?? ''))
+        return send(
+          res,
+          200,
+          { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' },
+          await localeModule(file, locale),
+          `${file}:${(await stat(file)).mtimeMs}:${locale}`,
+        )
       const bytes = await readFile(file)
-      res.writeHead(200, {
-        'content-type': `${types[extname(file)] ?? 'application/octet-stream'}; charset=utf-8`,
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      })
-      res.end(bytes)
-    } catch (error) {
+      send(
+        res,
+        200,
+        {
+          'content-type': `${types[extname(file)] ?? 'application/octet-stream'}; charset=utf-8`,
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        },
+        bytes,
+        extname(file) === '.woff2' || extname(file) === '.png'
+          ? undefined
+          : `${file}:${(await stat(file)).mtimeMs}`,
+      )
+    } catch {
       json(res, 404, { ok: false, message: 'Not found' })
     }
   }
@@ -289,6 +483,7 @@ export function startAtlasServer({
       clearInterval(sweep)
       server.close()
       previewServer.close()
+      void runtimeAdapter.close()
     })
 
   return { server, previewServer }

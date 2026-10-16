@@ -13,6 +13,15 @@
     --kv-description-columns: 3;
   }
 
+  /* Fit the width: 12rem tracks, never more than four. Empty tracks stay, so lists of
+     the same width share their columns. */
+  :where([data-kv-design-system]) [data-ui="description-list"][data-columns="auto"] {
+    grid-template-columns: repeat(
+        auto-fill,
+        minmax(min(100%, max(12rem, calc((100% - 3 * var(--kv-space-5)) / 4))), 1fr)
+      );
+  }
+
   :where([data-kv-design-system]) [data-ui="description-list"][data-layout="strip"] {
     display: flex;
     flex-wrap: wrap;
@@ -41,6 +50,8 @@
   :where([data-kv-design-system]) [data-ui="key-value"] {
     display: grid;
     min-width: 0;
+    /* A taller neighbour stretches the item; the label and value stay together at the top. */
+    align-content: start;
     gap: var(--kv-space-1);
   }
 

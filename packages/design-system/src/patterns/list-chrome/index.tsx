@@ -101,18 +101,27 @@ export type ListChromeProps = {
   filtersToggle?: ListFiltersToggle
   viewsLabel?: string
   search?: ListSearch
+  /**
+   * A richer query control, such as an expanded `SearchFilter`, in place of `search`. It leads the
+   * query row at its own width; views, sort and actions sit at the end of that row, level with its
+   * search bar, and wrap under it where the row runs out.
+   */
+  query?: JSXChild
   facets?: readonly ListFacet[]
   views?: readonly ListFacet[]
   sort?: ListSort
   status?: JSXChild
   actions?: JSXChild
   bulk?: BulkActionsProps
+  /** Replace the query toolbar while controlled page selection is nonempty. */
+  bulkPresentation?: 'below' | 'replace'
   pager?: PagerBarProps
 }
 
 export const HOOKS = [
   'list-chrome',
   'list-chrome-row',
+  'list-query',
   'list-search',
   'list-search-label',
   'list-search-input',
@@ -246,10 +255,10 @@ export const BulkActions = (props: BulkActionsProps): TemplateResult => (
       ) : (
         props.clearLabel &&
         props.form && (
-          // The table that owns the selection clears it (KetTable listens for this
-          // command); a native reset would race the table's own render.
+          // The table clears its selection model; reset also clears the browser's
+          // dirty checkbox values in the associated native form.
           <Button
-            type="button"
+            type={props.form ? 'reset' : 'button'}
             form={props.form}
             name={BULK_CLEAR_COMMAND}
             label={props.clearLabel}
@@ -304,31 +313,32 @@ export const PagerBar = (props: PagerBarProps): TemplateResult => (
       </span>
     )}
     <span data-ui="pager-actions">
-      {props.previousHref ? (
-        <a
-          data-ui="pager-link"
-          href={props.previousHref}
-          rel="prev"
-          aria-label={props.previousLabel ?? 'Previous page'}
-        >
-          ‹
-        </a>
-      ) : (
-        <span data-ui="pager-link" data-disabled="true" aria-hidden="true">
-          ‹
-        </span>
-      )}
-      {props.nextHref ? (
-        <a data-ui="pager-link" href={props.nextHref} rel="next" aria-label={props.nextLabel ?? 'Next page'}>
-          ›
-        </a>
-      ) : (
-        <span data-ui="pager-link" data-disabled="true" aria-hidden="true">
-          ›
-        </span>
-      )}
+      {pagerStep(props.previousHref, 'prev', props.previousLabel ?? 'Previous page', '‹')}
+      {pagerStep(props.nextHref, 'next', props.nextLabel ?? 'Next page', '›')}
     </span>
   </nav>
+)
+
+// A step is the same link whether it leads anywhere or not, so a runtime that pages in place keeps the
+// focus on the step that reached the end: without an address it is a disabled link, out of the tab order.
+const pagerStep = (
+  href: string | null | undefined,
+  rel: 'prev' | 'next',
+  label: string,
+  glyph: string,
+): TemplateResult => (
+  <a
+    data-ui="pager-link"
+    data-disabled={href ? null : 'true'}
+    href={href || undefined}
+    rel={href ? rel : null}
+    role={href ? undefined : 'link'}
+    aria-disabled={href ? null : 'true'}
+    tabindex={href ? null : '-1'}
+    aria-label={label}
+  >
+    {glyph}
+  </a>
 )
 
 export const ListChrome = (props: ListChromeProps): TemplateResult => {
@@ -386,13 +396,31 @@ export const ListChrome = (props: ListChromeProps): TemplateResult => {
         {meta}
       </div>
     ) : null
+  const replaceQuery = props.bulkPresentation === 'replace' && (props.bulk?.selectedCount ?? 0) > 0
   return (
-    <div data-ui="list-chrome" data-pattern="list-chrome" data-filters={toggle ? 'collapsible' : null}>
-      <div data-ui="list-chrome-row" data-row="query">
-        {props.search && <SearchControl {...props.search} />}
-        {tail}
-      </div>
-      {props.bulk && <BulkActions {...props.bulk} />}
+    <div
+      data-ui="list-chrome"
+      data-pattern="list-chrome"
+      data-filters={toggle ? 'collapsible' : null}
+      data-bulk-presentation={props.bulkPresentation ?? null}
+    >
+      {replaceQuery && props.bulk ? (
+        <BulkActions {...props.bulk} />
+      ) : (
+        <div
+          data-ui="list-chrome-row"
+          data-row="query"
+          data-query={props.query !== undefined ? 'slot' : null}
+        >
+          {props.query !== undefined ? (
+            <div data-ui="list-query">{props.query}</div>
+          ) : (
+            props.search && <SearchControl {...props.search} />
+          )}
+          {tail}
+        </div>
+      )}
+      {!replaceQuery && props.bulk && props.bulkPresentation !== 'replace' && <BulkActions {...props.bulk} />}
     </div>
   )
 }

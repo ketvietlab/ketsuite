@@ -5,7 +5,143 @@ import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { html, renderToStaticString } from '@ketvietlab/ketjs-view'
 import * as ui from '../src/index.mjs'
-import { FlowEvidenceValue } from '../src/workspace.mjs'
+import { FlowEvidenceValue, FlowHint } from '../src/workspace.mjs'
+
+test('standalone selection uses a native label and field composition never nests labels', async () => {
+  const { FlowCheckboxField } = await import('../src/workspace.mjs')
+  const output = renderToStaticString(
+    ui.FlowCheckbox({
+      target: 'standalone',
+      label: 'Chọn KV-142',
+      checked: false,
+      indeterminate: true,
+    }),
+  )
+  assert.match(output, /<label data-flow="checkbox-target"/)
+  assert.match(output, /<input[^>]*aria-label="Chọn KV-142"/)
+  assert.match(output, /aria-checked="mixed"/)
+  assert.equal((output.match(/type="checkbox"/g) ?? []).length, 1)
+  const field = renderToStaticString(
+    FlowCheckboxField({ name: 'preserveAccess', value: 'yes', label: 'Giữ quyền', checked: true }),
+  )
+  assert.equal((field.match(/<label/g) ?? []).length, 1)
+  assert.doesNotMatch(field, /checkbox-target/)
+  assert.match(field, /name="preserveAccess"/)
+  assert.match(field, /value="yes"/)
+})
+
+test('confirmation associates its question, describes the outcome and keeps a safe cancel action', () => {
+  const output = renderToStaticString(
+    ui.FlowConfirmDialog({
+      id: 'discard',
+      title: 'Bỏ thay đổi?',
+      message: 'Thay đổi chưa được lưu.',
+      cancelLabel: 'Tiếp tục chỉnh sửa',
+      confirmLabel: 'Bỏ thay đổi',
+      onCancel: () => {},
+      onConfirm: () => {},
+    }),
+  )
+  assert.match(output, /<dialog[^>]*data-size="confirm"/)
+  assert.match(output, /role="alertdialog"/)
+  assert.match(output, /aria-labelledby="discard-title"/)
+  assert.match(output, /aria-describedby="discard-description"/)
+  assert.match(output, /id="discard-description">Thay đổi chưa được lưu/)
+  assert.match(output, /data-variant="secondary"[^>]*>\s*Tiếp tục chỉnh sửa/)
+  assert.match(output, /data-variant="danger"[^>]*>\s*Bỏ thay đổi/)
+})
+
+test('confirmation details expose blockers while disabling only the destructive command', () => {
+  const output = renderToStaticString(
+    ui.FlowConfirmDialog({
+      id: 'archive',
+      title: 'Lưu trữ Workspace',
+      message: 'Lưu trữ Sản phẩm?',
+      details: FlowHint({ children: 'Chuyển dự án đang hoạt động trước.' }),
+      cancelLabel: 'Hủy',
+      confirmLabel: 'Lưu trữ',
+      confirmDisabled: true,
+      onCancel: () => {},
+      onConfirm: () => {},
+    }),
+  )
+  assert.match(output, /id="archive-description">Lưu trữ Sản phẩm\?/)
+  assert.match(output, /Chuyển dự án đang hoạt động trước/)
+  assert.match(output, /data-variant="danger"[^>]*disabled/)
+  assert.doesNotMatch(output, /data-variant="secondary"[^>]*disabled/)
+  assert.equal((output.match(/<button[^>]*disabled/g) ?? []).length, 1)
+})
+
+test('manual confirmation does not auto-open and pending confirmations disable cancellation', () => {
+  const output = renderToStaticString(
+    ui.FlowConfirmDialog({
+      id: 'reset',
+      title: 'Khôi phục?',
+      message: 'Thay đổi sẽ bị thay thế.',
+      cancelLabel: 'Giữ lại',
+      confirmLabel: 'Khôi phục',
+      autoOpen: false,
+      loading: true,
+      onCancel: () => {},
+      onConfirm: () => {},
+    }),
+  )
+  assert.doesNotMatch(output, /data-flow-route-modal/)
+  assert.equal((output.match(/disabled="true"/g) ?? []).length, 3)
+})
+
+test('pending dialog actions block Escape and backdrop dismissal as well as the close button', () => {
+  let closed = 0,
+    prevented = 0
+  const dialog = ui.FlowDialog({
+    id: 'pending',
+    title: 'Đang lưu',
+    body: '',
+    closeDisabled: true,
+    onRequestClose: () => closed++,
+  })
+  const cancelIndex = dialog.strings.findIndex((s) => s.endsWith('on:cancel='))
+  const clickIndex = dialog.strings.findIndex((s) => s.endsWith('on:click='))
+  dialog.values[cancelIndex]({ preventDefault: () => prevented++ })
+  dialog.values[clickIndex]({})
+  assert.equal(prevented, 1)
+  assert.equal(closed, 0)
+})
+
+test('textarea and select field errors are visible and associated with the native controls', async () => {
+  const { FlowTextarea, FlowSelectField } = await import('../src/workspace.mjs')
+  for (const [id, view] of [
+    ['reason', FlowTextarea({ id: 'reason', label: 'Lý do', error: 'Cần nhập lý do' })],
+    [
+      'owner',
+      FlowSelectField({
+        name: 'owner',
+        label: 'Phụ trách',
+        value: '',
+        options: [],
+        error: 'Cần chọn người phụ trách',
+      }),
+    ],
+  ]) {
+    const output = renderToStaticString(view)
+    assert.match(output, /aria-invalid="true"/)
+    assert.ok(output.includes(`aria-describedby="${id}-error"`))
+    assert.ok(output.includes(`id="${id}-error" data-flow="field-error"`))
+  }
+})
+test('input and textarea names remain their labels while errors are separate descriptions', async () => {
+  const { FlowTextarea } = await import('../src/workspace.mjs')
+  for (const view of [
+    ui.FlowInput({ id: 'name', label: 'Tên', error: 'Nhập tên có nội dung.' }),
+    FlowTextarea({ id: 'name', label: 'Tên', error: 'Nhập tên có nội dung.' }),
+  ]) {
+    const output = renderToStaticString(view)
+    assert.match(output, /<span id="name-label">Tên<\/span>/)
+    assert.match(output, /aria-labelledby="name-label"/)
+    assert.match(output, /aria-describedby="name-error"/)
+    assert.match(output, /id="name-error"[^>]*>Nhập tên có nội dung\./)
+  }
+})
 
 test('loading actions are disabled and named; event handlers never leak into SSR', () => {
   const output = renderToStaticString(
@@ -23,6 +159,7 @@ test('loading actions are disabled and named; event handlers never leak into SSR
   assert.doesNotMatch(output, /on:click|must not execute/)
   const enabled = renderToStaticString(ui.FlowButton({ label: 'Tạo', icon: 'plus', iconOnly: true }))
   assert.match(enabled, /aria-label="Tạo"/)
+  assert.match(enabled, /data-icon-only="true"/)
   assert.doesNotMatch(enabled, /disabled/)
 })
 
@@ -80,6 +217,22 @@ test('row selection and record opening are separate accessible controls', () => 
   assert.match(output, /Review &lt;script&gt;/)
 })
 
+test('textarea keeps unique DOM associations independently of its native submission name', async () => {
+  const { FlowTextarea } = await import('../src/workspace.mjs')
+  const field = (id) =>
+    renderToStaticString(FlowTextarea({ id, name: 'reason', label: id, error: 'Required' }))
+  for (const id of ['review-reason', 'close-reason']) {
+    const output = field(id)
+    assert.match(output, new RegExp(`id="${id}" name="reason"`))
+    assert.match(output, new RegExp(`aria-labelledby="${id}-label"`))
+    assert.match(output, new RegExp(`aria-describedby="${id}-error"`))
+  }
+  assert.match(
+    renderToStaticString(FlowTextarea({ id: 'legacy-reason', label: 'Reason' })),
+    /name="legacy-reason"/,
+  )
+})
+
 test('dialog is native and has a unique associated heading', () => {
   const output = renderToStaticString(
     ui.FlowDialog({ id: 'create', title: 'Tạo việc', body: html`<p>Nội dung</p>` }),
@@ -97,7 +250,7 @@ test('package publishes only built output; components have no Suite dependency o
   const source = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /data-ui=|from ['"].*(?:ketsuite|design-system)/)
   const components = Object.keys(ui).filter((name) => name.startsWith('Flow'))
-  assert.equal(components.length, 24)
+  assert.equal(components.length, 25)
   const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.doesNotMatch(css, /:root|\[data-kv-design-system\]/)
   // Every rule that styles an element must explicitly opt into the Flow root.
@@ -230,6 +383,28 @@ test('Atlas viewer slot stays a labeled host without copying viewer markup', asy
   assert.match(output, /data-flow="atlas-viewport"/)
   assert.match(output, /aria-label="Atlas · &lt;private&gt;"/)
   assert.doesNotMatch(output, /iframe|script/)
+})
+
+test('document data workspace composes beneath existing SSR chrome without another frame or tabs', async () => {
+  const { FlowDocsShell } = await import('../src/documents.mjs')
+  const output = renderToStaticString(
+    FlowDocsShell({
+      bodyOnly: true,
+      sidebar: 'Duplicate sidebar',
+      top: 'Duplicate header',
+      navigation: 'Duplicate project tabs',
+      tree: 'Document tree',
+      toolbar: 'Document actions',
+      inspector: 'Document outline',
+      children: 'Document content',
+    }),
+  )
+  assert.match(output, /data-chrome="external"/)
+  assert.match(output, /Document tree|Document content/)
+  assert.doesNotMatch(
+    output,
+    /Duplicate|data-flow="shell"|data-flow="shell-header"|data-flow="shell-sidebar"/,
+  )
 })
 
 test('Atlas onboarding labels its illustration and keeps setup guidance accessible', async () => {
@@ -427,7 +602,12 @@ test('timeline editing exposes independent accessible handles only for writable,
 test('scope menu labels and destinations remain distinct with a personal footer placement', async () => {
   const { FlowScopeMenu } = await import('../src/workspace.mjs')
   const output = renderToStaticString(
-    FlowScopeMenu({ label: 'Mai Anh', placement: 'up', items: [{ label: 'Cài đặt cá nhân', onClick() {} }] }),
+    FlowScopeMenu({
+      label: 'Mai Anh',
+      placement: 'up',
+      align: 'start',
+      items: [{ label: 'Cài đặt cá nhân', onClick() {} }],
+    }),
   )
   assert.match(output, /data-placement="up"/)
   assert.match(output, /<summary>Mai Anh/)
@@ -499,7 +679,9 @@ test('organization components expose independent context, access sources and pro
 })
 
 test('layout surfaces distinguish page gutters from embedded content', async () => {
-  const { FlowSection, FlowToolbar, FlowMetrics, FlowListItem } = await import('../src/workspace.mjs')
+  const { FlowSection, FlowToolbar, FlowMetrics, FlowListItem, FlowStack } = await import(
+    '../src/workspace.mjs'
+  )
   const embedded = renderToStaticString(
     FlowSection({
       inset: 'none',
@@ -513,6 +695,15 @@ test('layout surfaces distinguish page gutters from embedded content', async () 
   assert.equal((embedded.match(/data-inset="none"/g) || []).length, 3)
   assert.match(renderToStaticString(FlowSection({ children: 'Body' })), /data-inset="page"/)
   assert.match(renderToStaticString(FlowToolbar({ children: 'Filters' })), /data-inset="page"/)
+  assert.match(renderToStaticString(FlowStack({ children: 'Nested' })), /data-inset="none"/)
+  const collection = renderToStaticString(
+    FlowStack({
+      inset: 'page',
+      children: FlowToolbar({ inset: 'none', children: 'Pagination' }),
+    }),
+  )
+  assert.equal((collection.match(/data-inset="page"/g) ?? []).length, 1)
+  assert.equal((collection.match(/data-inset="none"/g) ?? []).length, 1)
   const described = renderToStaticString(
     FlowSection({
       title: 'Workspace',
@@ -631,6 +822,25 @@ test('setup form owns responsive field grid, submit actions and rich inheritance
   assert.doesNotMatch(output, /<p>\s*<dl/)
   assert.match(output, /Engineering/)
 })
+test('dialog footer submits its associated setup form without duplicating actions in the scrolling body', async () => {
+  const { FlowSetupForm } = await import('../src/workspace.mjs')
+  const output = renderToStaticString(
+    ui.FlowDialog({
+      id: 'setup-dialog',
+      title: 'Dự án',
+      body: FlowSetupForm({
+        id: 'setup-draft',
+        onSubmit: () => {},
+        children: ui.FlowInput({ id: 'setup-title', label: 'Tên', required: true }),
+      }),
+      footer: ui.FlowButton({ label: 'Lưu', type: 'submit', form: 'setup-draft' }),
+    }),
+  )
+  assert.match(output, /<form id="setup-draft"[^>]*data-flow="setup-form"/)
+  assert.doesNotMatch(output, /data-flow="setup-actions"/)
+  assert.match(output, /<\/form>[\s\S]*<footer>[\s\S]*type="submit" form="setup-draft"/)
+  assert.equal((output.match(/type="submit"/g) ?? []).length, 1)
+})
 test('task-focused shared surfaces expose disclosure, grouped content and named calendar actions', async () => {
   const { FlowDisclosure, FlowList, FlowListItem, FlowHint, FlowCalendarEvent } = await import(
     '../src/workspace.mjs'
@@ -684,11 +894,25 @@ test('table headings support a named mixed select-all checkbox', async () => {
   assert.match(output, /aria-label="Chọn tất cả công việc trong nhóm"/)
 })
 
+test('task geometry is explicit and horizontal collections remain keyboard reachable', async () => {
+  const { FlowTable } = await import('../src/workspace.mjs')
+  const columns = ['A', 'B', 'C', 'D', 'E', 'F']
+  const generic = renderToStaticString(FlowTable({ label: 'Danh mục', columns, children: null }))
+  const tasks = renderToStaticString(
+    FlowTable({ label: 'Công việc', layout: 'tasks', columns, children: null }),
+  )
+  assert.match(generic, /data-layout="default"/)
+  assert.doesNotMatch(generic, /data-layout="tasks"/)
+  assert.match(tasks, /data-layout="tasks"/)
+  assert.match(tasks, /role="region" aria-label="Công việc" tabindex="0"/)
+})
+
 test('error toast carries its recovery action inside the active dialog', async () => {
   const { FlowToast } = await import('../src/workspace.mjs')
   const toast = FlowToast({
     title: 'Chưa lưu được',
     message: 'Kết nối gián đoạn',
+    placement: 'inline',
     tone: 'error',
     onClose: () => {},
     action: ui.FlowButton({ label: 'Thử lại', onClick: () => {} }),
@@ -697,6 +921,9 @@ test('error toast carries its recovery action inside the active dialog', async (
     ui.FlowDialog({ id: 'edit', title: 'Chỉnh sửa', body: html`<p>Thông tin</p>`, feedback: toast }),
   )
   assert.match(output, /data-flow="toast" data-tone="error"/)
+  assert.match(output, /data-placement="inline"/)
+  assert.match(output, /data-flow="dialog-feedback"/)
+  assert.doesNotMatch(output, /popover="manual"/)
   assert.match(output, /role="alert" aria-live="assertive"/)
   assert.match(output, /Thử lại/)
   assert.ok(output.indexOf('data-flow="toast"') > output.indexOf('data-flow="dialog-body"'))
@@ -715,4 +942,43 @@ test('the shared tone tint never fills text-only surfaces as a bare block', asyn
     'evidence cells show status through FlowTag',
   )
   assert.doesNotMatch(renderToStaticString(FlowEvidenceValue({ value: 'x' })), /data-tone/)
+})
+
+test('an avatar keeps one identity hue per name, spread over the chart palette and never a status colour', async () => {
+  const hue = (name) => Number(renderToStaticString(ui.FlowAvatar({ name })).match(/data-color="(\d)"/)[1])
+  const team = [
+    'Mai Anh',
+    'Trần Quốc Bảo',
+    'Lê Minh Châu',
+    'Phạm Thu Hà',
+    'Nguyễn Văn Khoa',
+    'Võ Bảo Ngọc',
+    'Đặng Minh Đức',
+    'Bùi Quang Huy',
+  ]
+  assert.equal(hue('Mai Anh'), hue('Mai Anh'), 'the same person keeps the same colour on every screen')
+  assert.ok(team.every((name) => hue(name) >= 0 && hue(name) <= 4))
+  assert.ok(new Set(team.map(hue)).size >= 4, 'a team is told apart by colour, not one or two shared hues')
+  assert.match(renderToStaticString(ui.FlowAvatar({ name: 'Mai Anh' })), />MA<\/span>$/)
+  const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const avatarRules = css.match(/\[data-flow="avatar"\]\[data-color="\d"\] \{[^}]*\}/g)
+  assert.equal(avatarRules.length, 4)
+  assert.ok(
+    avatarRules.every((rule) => /--kv-chart-[2-5]\)/.test(rule)),
+    'hues come from the chart palette',
+  )
+  assert.doesNotMatch(avatarRules.join('\n'), /danger|warning/)
+})
+
+test('a divided stack separates settings rows with one hairline and stays plain by default', async () => {
+  const { FlowStack } = await import('../src/workspace.mjs')
+  const rows = html`<section>A</section><section>B</section>`
+  assert.match(renderToStaticString(FlowStack({ divided: true, children: rows })), /data-divided/)
+  assert.doesNotMatch(renderToStaticString(FlowStack({ children: rows })), /data-divided/)
+  const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(
+    css,
+    /\[data-flow="stack"\]\[data-divided\] > \* \+ \* \{\s*border-top: 1px solid var\(--flow-border\);/,
+    'the hairline sits between rows, not above the first one',
+  )
 })

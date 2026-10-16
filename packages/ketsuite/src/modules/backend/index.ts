@@ -84,6 +84,7 @@ export {
   choices,
   frameOf,
   inLocale,
+  jointFor,
   localeQuery,
   localized,
   optional,

@@ -48,6 +48,10 @@ export const models: Record<string, ModelDef> = {
       descriptionDoc: 'text?',
       revisionId: 'text?',
       listPrice: 'decimal',
+      // The struck-through price during a discount; above `listPrice` when set.
+      compareAtPrice: 'decimal?',
+      // Harmonized System code for customs, 6 to 10 digits.
+      hsCode: 'text?',
       saleOk: 'bool',
       purchaseOk: 'bool',
       active: 'bool',

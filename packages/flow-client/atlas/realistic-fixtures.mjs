@@ -1,4 +1,5 @@
 // Deterministic synthetic organization. Used by Atlas, never imported by product code.
+import { sprintReport } from './sprint-report.mjs'
 const date = (offset) => new Date(Date.UTC(2026, 8, 22 + offset)).toISOString().slice(0, 10)
 const names = [
   'Nguyễn Minh Linh',
@@ -129,7 +130,27 @@ const actions = [
   'Xác nhận kết quả bàn giao',
   'Theo dõi sau phát hành',
 ]
-export function expandRealisticFixtures(d, scenario, hooks) {
+/**
+ * @param {any} d
+ * @param {string} scenario
+ * @param {any} hooks
+ * @param {{phase?: number}} [clock] days the live clock lands after the fixture anchor (0–6)
+ */
+export function expandRealisticFixtures(d, scenario, hooks, { phase = 0 } = {}) {
+  // Open work is due from today onwards whichever weekday the clock lands on, spread over
+  // the next four working weeks; one task in eleven is already late, as in a healthy team.
+  const weekend = (/** @type {number} */ offset) =>
+    new Date(date(offset) + 'T00:00:00Z').getUTCDay() % 6 === 0
+  const workdays = (/** @type {number} */ offset, /** @type {number} */ count, step = 1) => {
+    while (weekend(offset)) offset += step
+    for (let n = 0; n < count; n++) {
+      offset += step
+      while (weekend(offset)) offset += step
+    }
+    return offset
+  }
+  const openDueOffset = (/** @type {number} */ i) =>
+    i % 11 === 1 ? workdays(phase - 1, i % 4, -1) : workdays(phase, i % 20)
   // Explicit recovery/empty fixtures must retain their original meaning.
   if (scenario === 'empty' || hooks?.first('skipRealistic', scenario)) return
   const prefix = d.company.id === 'demo' ? '' : d.company.id + '-'
@@ -177,6 +198,16 @@ export function expandRealisticFixtures(d, scenario, hooks) {
     })
     const sprintIds = []
     for (let s = 0; s < 3; s++) {
+      const existing =
+        s === 0
+          ? null
+          : d.sprints.find(
+              (sprint) => sprint.projectId === projectId && sprint.state === (s === 1 ? 'active' : 'planned'),
+            )
+      if (existing) {
+        sprintIds.push(existing.id)
+        continue
+      }
       const id = prefix + key + '-iteration-' + s
       sprintIds.push(id)
       d.sprints.push({
@@ -186,7 +217,7 @@ export function expandRealisticFixtures(d, scenario, hooks) {
         description: `Hoàn thiện ${subjects[s]} và kiểm tra trước bàn giao.`,
         start: date(-15 + s * 14),
         end: date(-2 + s * 14),
-        state: ['completed', 'active', 'planned'][s],
+        state: ['closed', 'active', 'planned'][s],
       })
     }
     subjects.forEach((subject, j) => {
@@ -204,7 +235,9 @@ export function expandRealisticFixtures(d, scenario, hooks) {
         status = ['todo', 'progress', 'progress', 'review', 'done', 'done', 'done', 'todo'][i % 8]
       const count = [1, 1, 2, 3, 1, 5, 0, 1][i % 8],
         owners = Array.from({ length: count }, (_, n) => pool[(i + p + n) % pool.length])
-      const dueOffset = status === 'done' ? -15 + (i % 13) : -8 + (i % 29),
+      // One done task in three closes on the active sprint's first day, so running sprints show progress.
+      const doneInSprint = status === 'done' && i % 8 === 4
+      const dueOffset = doneInSprint ? -1 : status === 'done' ? -15 + (i % 13) : openDueOffset(i),
         undated = i % 13 === 0
       const id = prefix + code + '-' + (200 + i),
         points = [1, 2, 3, 5, 8][i % 5]
@@ -227,7 +260,9 @@ export function expandRealisticFixtures(d, scenario, hooks) {
         archived: i === 46,
         followed: i % 11 === 0,
         tags: [['tech', 'risk', 'release'][i % 3]],
-        sprint: d.sprints.find((s) => s.id === sprintIds[status === 'done' ? 0 : i % 3 === 0 ? 2 : 1]).title,
+        sprint: d.sprints.find(
+          (s) => s.id === sprintIds[doneInSprint ? 1 : status === 'done' ? 0 : i % 3 === 0 ? 2 : 1],
+        ).title,
         epic: prefix + key + '-epic-' + Math.floor(i / 12),
         description: `${action} cho ${subject.toLowerCase()} trong dự án ${title}.\n\nPhạm vi\nKiểm tra dữ liệu hiện có, thao tác chính và trường hợp không đủ quyền.\n\nTiêu chí nghiệm thu\n• Kết quả đúng với dữ liệu đối chiếu.\n• Có bằng chứng kiểm thử và hướng dẫn khôi phục.\n• Người nhận xác nhận trước khi đóng công việc.`,
       }
@@ -235,7 +270,20 @@ export function expandRealisticFixtures(d, scenario, hooks) {
       if (i > 0 && status === 'todo' && i % 7 === 0) task.blockedBy = [prefix + code + '-' + (199 + i)]
       d.tasks.push(task)
       generated.push(task)
-      hooks?.notify('realisticTask', { d, task, id, count, owners, pool, status, points, dueOffset, i, date })
+      hooks?.notify('realisticTask', {
+        d,
+        task,
+        id,
+        count,
+        owners,
+        pool,
+        status,
+        points,
+        dueOffset,
+        openDueOffset,
+        i,
+        date,
+      })
       const actor = owners[0] ?? pool[0]
       for (let h = 0; h < 3; h++)
         d.history.push({
@@ -301,5 +349,16 @@ export function expandRealisticFixtures(d, scenario, hooks) {
         createdAt: date(-Math.floor(i / 8)) + 'T08:30:00Z',
       })
     })
+  for (const sprint of d.sprints.filter((sprint) => sprint.state === 'closed' && !sprint.report)) {
+    const tasks = d.tasks.filter(
+      (task) => task.projectId === sprint.projectId && task.sprint === sprint.title,
+    )
+    const initial = tasks.map(({ id, points }) => ({ id, points }))
+    sprint.commitment = initial
+    sprint.report =
+      hooks?.first('sprintReport', { data: d, sprintTasks: tasks, initial, args: {} }) ??
+      sprintReport(d, tasks, initial)
+    sprint.report.closedAt = sprint.end + 'T17:00:00.000Z'
+  }
   d.fixtureProfile = { id: 'realistic', anchorDate: '2026-09-22', synthetic: true }
 }

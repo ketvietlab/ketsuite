@@ -1,5 +1,8 @@
 // The frame a screen sits in, and the shared arrangements inside it.
 
+import { suiteApplications, suiteMainMenu } from './application-switcher.ts'
+import { applicationIcon } from './brand.ts'
+import type { AppSwitcherProps } from '@ketvietlab/design-system'
 import { each, html } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { NAVIGATION_TYPE, fragment, isNavigationRequest, page, withHeaders } from '@ketvietlab/ketjs'
@@ -31,13 +34,15 @@ export const HOOKS = [
 ] as const
 
 export type Extras = {
-  runtime?: JSXChild
   'topbar.end'?: JSXChild
   'sidebar.foot'?: JSXChild
   'nav.items'?: JSXChild
 }
 
 export type Frame = {
+  counts?: Readonly<Record<string, number>>
+  locale?: string
+  applications?: AppSwitcherProps
   globalSearchQuery?: string
   /** Server request URL for native collection controls; never browser state. */
   collectionUrl?: string
@@ -126,9 +131,10 @@ export const shell = (
 ): TemplateResult => {
   const { viewer = null, extras = {}, menu = [], indicators = [] } = frame
   const sidebarOptions = {
-    menu,
+    menu: suiteMainMenu(menu),
     viewer,
     indicators,
+    counts: frame.counts,
     rootList: frame.rootList,
     navItems: extras['nav.items'],
     footItems: extras['sidebar.foot'],
@@ -147,17 +153,17 @@ export const shell = (
   // The design-system application shell. The theme scope sits above it, as the
   // shell's own styles expect, in the grouped presentation the product mocks use:
   // one page gutter token (`--kv-page-padding-x`) for context, header, toolbar and
-  // body. The island runtime stays outside the swapped slots, and the four slots
-  // keep the names fragment navigation reconciles.
+  // body. The four slots keep the names fragment navigation reconciles; the island
+  // runtime belongs to the document, so `backendPage` places it.
   return (
     <div data-kv-design-system data-presentation="grouped" data-density="compact">
       {AppShell({
+        applications: frame.applications ?? suiteApplications(menu, _),
         mode: 'viewport',
         location: <div data-ket-slot="backend.global-topbar">{locationBar(_, frame)}</div>,
         sidebar: sidebarMain(_, sidebarOptions),
         main: (
           <>
-            {extras.runtime ?? ''}
             <div data-ket-slot="backend.topbar">{topbarRegion(_, title, frame)}</div>
             <div data-ui="content" data-ket-slot="backend.content">
               {body}
@@ -169,10 +175,33 @@ export const shell = (
   )
 }
 
+/**
+ * The document's island runtime: every `backend:runtime` fill, such as the record
+ * modals that open from a `?record=` link on any screen.
+ *
+ * Fragment navigation never replaces it, so whichever screen loads the document
+ * decides whether it exists. It used to come from each screen's frame, and a module
+ * that assembled its own frame left it out: after opening that screen first, every
+ * record link elsewhere changed the URL and opened nothing until a reload. Placing it
+ * with the document gives every full load exactly one runtime. It sits in its own
+ * design-system scope beside the shell, because its dialogs open in the top layer.
+ */
+const documentRuntime = async (ctx: ServeContext, req: Parameters<Route>[1], url?: URL) => (
+  <div data-kv-design-system data-presentation="grouped" data-density="compact" data-ui="document-runtime">
+    {
+      await ctx.joint(
+        url ?? new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`),
+        req,
+        'backend:runtime',
+      )
+    }
+  </div>
+)
+
 export const backendPage = async (
   ctx: ServeContext,
   req: Parameters<Route>[1],
-  options: { lang: string; title: string; body: TemplateResult; status?: number },
+  options: { lang: string; title: string; body: TemplateResult; status?: number; url?: URL },
 ) => {
   if (isNavigationRequest(req))
     return withHeaders(fragment(options.body, { status: options.status, type: NAVIGATION_TYPE }), {
@@ -183,8 +212,8 @@ export const backendPage = async (
       body: ctx.document({
         lang: options.lang,
         title: options.title,
-        head: html`${prepaintTheme}${await ctx.styles(req)}`,
-        body: options.body,
+        head: html`${applicationIcon}${prepaintTheme}${await ctx.styles(req)}`,
+        body: html`${options.body}${await documentRuntime(ctx, req, options.url)}`,
       }),
       status: options.status,
     }),

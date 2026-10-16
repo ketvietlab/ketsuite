@@ -5,6 +5,10 @@ import type { IslandController, IslandElement, IslandProps, TemplateResult } fro
 export const HOOKS = [
   'search-filter',
   'search-filter-bar',
+  'search-filter-tools',
+  'search-filter-expanded',
+  'search-filter-rule-toggle',
+  'search-filter-rule-editor',
   'search-filter-section-toggle',
   'search-filter-sheet',
   'search-filter-clear',
@@ -140,6 +144,8 @@ export type SearchFilterOption = {
   active: boolean
   /** Options sharing a `group` are OR'd together, set off from the next group by a divider. */
   group?: string
+  /** Visible label for this preset group in the expanded presentation. */
+  groupLabel?: string
   options?: SearchFilterOption[]
 }
 
@@ -163,7 +169,7 @@ export type SearchFilterCustomRule = {
 export type SearchFilterManager = {
   applyFunction: string
   bodyId: string
-  /** Static, screen-owned input kept with every apply request (for example the active locale). */
+  /** Static, screen-owned input sent with every apply, delete and set-default request (for example the list key). */
   applyInput?: Record<string, unknown>
   saveFavoriteFunction?: string
   deleteFavoriteFunction?: string
@@ -184,7 +190,10 @@ export type SearchFilterLabels = {
   /** Accessible name for the combined mobile Filters/Group By/Favorites sheet. */
   toggleLabel: string
   filters: string
+  /** Expanded quick-filter fallback when no option is applied. */
+  allValues?: string
   groupBy: string
+  noGrouping?: string
   groupByApplied?: string
   groupByAdd?: string
   groupByClear?: string
@@ -200,6 +209,8 @@ export type SearchFilterLabels = {
   customFilterOperator: string
   customFilterValue: string
   customFilterAdd: string
+  /** Optional short label for opening the expanded rule editor; add keeps its action label. */
+  customFilterToggle?: string
   customGroupByPlaceholder: string
   saveSearch: string
   favoriteName: string
@@ -222,6 +233,13 @@ export type SearchFilterLabels = {
 
 export type SearchFilterConfig = {
   name: string
+  /** Expanded keeps filters inline and grouping/saved searches independently reachable at every width.
+   * Omitted preserves the existing compact popup/mobile-sheet contract. */
+  presentation?: 'compact' | 'expanded'
+  /** Applies the typed text after a short pause (Enter applies at once) instead of waiting for a
+   * suggestion; the text stays in the field and never becomes a query chip. Filters and grouping
+   * always apply as they are chosen. */
+  applyOnInput?: boolean
   /** Disable unsupported editors while retaining the same search and preset-facet interaction. */
   capabilities?: { groupBy?: boolean; favorites?: boolean; customFilters?: boolean }
   /** Keeps the standard interaction while reducing the search bar's visual density. */
@@ -267,6 +285,19 @@ export const searchFilterRuleLabel = (options: {
 }
 
 type SearchFilterIslandProps = IslandProps & { id: string; config: SearchFilterConfig }
+
+/** An owning collection can apply through its own controlled data runtime. */
+export type SearchFilterApplyInput = Record<string, unknown> & {
+  query: string
+  facets: SearchFacet[]
+  filters: string[]
+  groupBy: string[]
+  favoriteId: string | null
+  customFilters: Omit<SearchFilterCustomRule, 'label'>[]
+}
+export type SearchFilterIntegration = {
+  apply(input: SearchFilterApplyInput, signal: AbortSignal): void | Promise<void>
+}
 type ApiPayload = { ok?: boolean; value?: unknown; message?: unknown; errors?: Array<{ message?: unknown }> }
 type CustomFilterRule = { field: string; operator: SearchFilterOperator; value: string }
 type Draft = { facets: SearchFacet[]; rules: Record<string, CustomFilterRule> }
@@ -315,9 +346,15 @@ const flatten = <Option extends { id: string; label: string; options?: Option[] 
   options: readonly Option[],
 ): Option[] => options.flatMap((option) => (option.options?.length ? flatten(option.options) : [option]))
 
-export function createSearchFilterView(props: SearchFilterIslandProps): IslandController {
-  const { config } = props
+export function createSearchFilterView(
+  props: SearchFilterIslandProps,
+  integration?: SearchFilterIntegration,
+): IslandController {
+  let { config } = props
+  const expanded = config.presentation === 'expanded'
   const labels = {
+    allValues: 'All',
+    noGrouping: 'None',
     clearFilters: 'Clear filters',
     close: 'Close',
     favoriteCancel: 'Cancel',
@@ -334,7 +371,7 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
   const operatorLabel = (operator: SearchFilterOperator): string =>
     labels.operatorLabels?.[operator] ?? operatorLabels[operator]
   const capabilities = config.capabilities ?? {}
-  const manager = config.manager
+  let manager = config.manager
   const hasGrouping = capabilities.groupBy !== false && config.groupBy.length > 0
   const groupByOptions = flatten(config.groupBy)
   const fieldSuggestions = (text: string): CustomFilterField[] =>
@@ -360,6 +397,9 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
   const customFilterValue = signal('')
   const menuOpen = signal(false)
   const panel = signal<'filter' | 'groupBy' | 'favorite'>('filter')
+  const presetGroup = signal('')
+  const ruleEditorOpen = signal(false)
+  let ruleEditorOpener: HTMLElement | null = null
   const sheetOpen = signal(false)
   const savingFavorite = signal(false)
   const customFilterEnd = signal('')
@@ -457,6 +497,17 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
     facets().filter((facet) => facet.type === kind).length
   const activeFavoriteId = (): string => facets().find((facet) => facet.type === 'favorite')?.id ?? ''
   const groupByFacets = (): SearchFacet[] => facets().filter((facet) => facet.type === 'groupBy')
+  // Options may arrive after the bar is drawn: a collection's data-backed choices (its vendors, its
+  // locations) come with its read's answer, not with the page the server rendered.
+  const filterOptions = signal<SearchFilterOption[]>(config.filters)
+  const presetGroups = (): string[] => [...new Set(filterOptions().map((option) => option.group ?? ''))]
+  const visibleFacets = (): SearchFacet[] =>
+    expanded
+      ? facets().filter(
+          (facet) =>
+            facet.type === 'field' || (facet.type === 'filter' && Boolean(customFilterRules()[facet.id])),
+        )
+      : facets()
   const operatorsFor = (fieldValue: string): readonly SearchFilterOperator[] => {
     const field = config.customFilterFields.find((entry) => entry.value === fieldValue)
     return field ? defaultOperators[field.type] : []
@@ -479,13 +530,19 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
   let applyVersion = 0
   let navigationRequest: AbortController | null = null
   let startingNavigation = false
+  let reconcilingNavigation: AbortController | null = null
   /**
    * Sends the current facets. `consumed` is text the triggering action moved
    * out of the search field into a chip; a failed request hands it back.
    */
   const apply = async (consumed = ''): Promise<void> => {
+    const restoreOpener =
+      expanded && menuOpen() && menuOpener?.closest('details')?.contains(document.activeElement)
+        ? menuOpener
+        : null
     closeMenu()
-    if (!manager?.applyFunction) return
+    if (restoreOpener) queueMicrotask(() => restoreOpener.focus())
+    if (!integration && !manager?.applyFunction) return
     const version = ++applyVersion
     navigationRequest?.abort()
     const request = new AbortController()
@@ -495,11 +552,13 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
     error.set('')
     retryDraft.set(null)
     try {
-      const value = (await callApi(manager.applyFunction, applyPayload())) as
-        | { html?: unknown; href?: unknown }
-        | undefined
+      const value = (
+        integration
+          ? await integration.apply(applyPayload(), request.signal)
+          : await callApi(manager!.applyFunction, applyPayload())
+      ) as { html?: unknown; href?: unknown } | undefined
       if (version !== applyVersion) return
-      const body = document.getElementById(manager.bodyId)
+      const body = !integration && manager?.bodyId ? document.getElementById(manager.bodyId) : null
       if (body && typeof value?.html === 'string') body.innerHTML = value.html
       if (typeof value?.href === 'string' && typeof value.html !== 'string') {
         // The shell owns routing, history and island reconciliation. A standalone
@@ -513,14 +572,19 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
             navigation = result
           },
         }
-        startingNavigation = true
+        reconcilingNavigation = request
         try {
-          document.dispatchEvent?.(new CustomEvent('ket:search-filter-navigate', { detail }))
+          startingNavigation = true
+          try {
+            document.dispatchEvent?.(new CustomEvent('ket:search-filter-navigate', { detail }))
+          } finally {
+            startingNavigation = false
+          }
+          if (navigation) await navigation
+          else window.location.assign(value.href)
         } finally {
-          startingNavigation = false
+          if (reconcilingNavigation === request) reconcilingNavigation = null
         }
-        if (navigation) await navigation
-        else window.location.assign(value.href)
       } else if (typeof value?.href === 'string') {
         history.pushState(null, '', value.href)
       }
@@ -638,15 +702,37 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
     void apply()
   }
 
+  let typing: ReturnType<typeof setTimeout> | undefined
+  const applyTyped = (): void => {
+    clearTimeout(typing)
+    typing = undefined
+    clearFavorite()
+    suggestionsOpen.set(false)
+    void apply()
+  }
+
   const handleSearchInput = (event: Event): void => {
     if (!(event.currentTarget instanceof HTMLInputElement)) return
     query.set(event.currentTarget.value)
+    if (config.applyOnInput) {
+      clearTimeout(typing)
+      typing = setTimeout(applyTyped, 250)
+      return
+    }
     suggestionsOpen.set(event.currentTarget.value.trim() !== '')
   }
 
   const selectGenericSuggestion = (): void => {
     const value = query().trim()
-    if (!value) return
+    if (!value) {
+      if (integration) {
+        clearFavorite()
+        facets.set(facets().filter((facet) => facet.type !== 'field'))
+        suggestionsOpen.set(false)
+        void apply()
+      }
+      return
+    }
     clearFavorite()
     facets.set([
       ...facets().filter((facet) => facet.type !== 'field'),
@@ -687,7 +773,8 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
     if (!(event instanceof KeyboardEvent)) return
     if (event.key === 'Enter') {
       event.preventDefault()
-      selectGenericSuggestion()
+      if (config.applyOnInput) applyTyped()
+      else selectGenericSuggestion()
     } else if (event.key === 'Escape') {
       suggestionsOpen.set(false)
     }
@@ -951,9 +1038,11 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
       <section data-ui="search-filter-grouping" aria-label={labels.groupByApplied}>
         <div data-ui="search-filter-grouping-head">
           <span>{labels.groupByApplied}</span>
-          <button data-ui="search-filter-grouping-clear" type="button" onClick={clearGroupBy}>
-            {labels.groupByClear}
-          </button>
+          {!expanded || grouped.length > 1 ? (
+            <button data-ui="search-filter-grouping-clear" type="button" onClick={clearGroupBy}>
+              {labels.groupByClear}
+            </button>
+          ) : null}
         </div>
         <ol data-ui="search-filter-grouping-list">
           {each(
@@ -1120,87 +1209,93 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
       {countOf(kind) ? <span data-ui="menu-trigger-count">{String(countOf(kind))}</span> : null}
     </button>
   )
-  const panelContent = (): TemplateResult => (
+  const panelContent = (section?: 'filter' | 'groupBy' | 'favorite'): TemplateResult => (
     <div
       data-ui="search-filter-columns"
       data-columns={1 + Number(hasGrouping) + Number(hasFavorites())}
-      data-panel={sheetOpen() ? 'all' : panel()}
+      data-panel={section ?? (sheetOpen() ? 'all' : panel())}
     >
-      <div data-ui="search-filter-column" data-facet-type="filter">
-        {columnTitle(labels.filters, countOf('filter'))}
-        {each(
-          config.filters,
-          (option) => option.id,
-          (option, index) => filterMenuItem(option, index === 0 ? null : config.filters[index - 1]),
-        )}
-        {capabilities.customFilters !== false && config.customFilterFields.length > 0 && (
-          <>
-            <hr data-ui="menu-separator" />
-            <div data-ui="custom-filter">
-              <div data-ui="custom-filter-row">
-                <select
-                  aria-label={labels.customFilterField}
-                  onChange={(event) => {
-                    if (event.currentTarget instanceof HTMLSelectElement) {
-                      customFilterField.set(event.currentTarget.value)
-                      customFilterOperator.set('')
-                      customFilterValue.set('')
-                      customFilterEnd.set('')
-                    }
-                  }}
+      {(!section || section === 'filter') && (
+        <div data-ui="search-filter-column" data-facet-type="filter">
+          {!expanded || section !== 'filter' ? (
+            <>
+              {columnTitle(labels.filters, countOf('filter'))}
+              {each(
+                filterOptions(),
+                (option) => option.id,
+                (option, index) => filterMenuItem(option, index === 0 ? null : filterOptions()[index - 1]),
+              )}
+            </>
+          ) : null}
+          {capabilities.customFilters !== false && config.customFilterFields.length > 0 && (
+            <>
+              {!expanded || section !== 'filter' ? <hr data-ui="menu-separator" /> : null}
+              <div data-ui="custom-filter">
+                <div data-ui="custom-filter-row">
+                  <select
+                    aria-label={labels.customFilterField}
+                    onChange={(event) => {
+                      if (event.currentTarget instanceof HTMLSelectElement) {
+                        customFilterField.set(event.currentTarget.value)
+                        customFilterOperator.set('')
+                        customFilterValue.set('')
+                        customFilterEnd.set('')
+                      }
+                    }}
+                  >
+                    <option value="" disabled selected={!customFilterField()}>
+                      {labels.customFilterField}
+                    </option>
+                    {each(
+                      config.customFilterFields,
+                      (field) => field.value,
+                      (field) => (
+                        <option value={field.value} selected={field.value === customFilterField()}>
+                          {field.label}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  <select
+                    aria-label={labels.customFilterOperator}
+                    disabled={!customFilterField()}
+                    onChange={(event) => {
+                      if (event.currentTarget instanceof HTMLSelectElement) {
+                        customFilterOperator.set(event.currentTarget.value)
+                        customFilterValue.set('')
+                        customFilterEnd.set('')
+                      }
+                    }}
+                  >
+                    <option value="" disabled selected={!customFilterOperator()}>
+                      {labels.customFilterOperator}
+                    </option>
+                    {each(
+                      operatorsFor(customFilterField()),
+                      (operator) => operator,
+                      (operator) => (
+                        <option value={operator} selected={operator === customFilterOperator()}>
+                          {operatorLabel(operator)}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  {valueEditor()}
+                </div>
+                <button
+                  data-ui="custom-filter-add"
+                  type="button"
+                  disabled={!canAddRule()}
+                  onClick={addCustomFilter}
                 >
-                  <option value="" disabled selected={!customFilterField()}>
-                    {labels.customFilterField}
-                  </option>
-                  {each(
-                    config.customFilterFields,
-                    (field) => field.value,
-                    (field) => (
-                      <option value={field.value} selected={field.value === customFilterField()}>
-                        {field.label}
-                      </option>
-                    ),
-                  )}
-                </select>
-                <select
-                  aria-label={labels.customFilterOperator}
-                  disabled={!customFilterField()}
-                  onChange={(event) => {
-                    if (event.currentTarget instanceof HTMLSelectElement) {
-                      customFilterOperator.set(event.currentTarget.value)
-                      customFilterValue.set('')
-                      customFilterEnd.set('')
-                    }
-                  }}
-                >
-                  <option value="" disabled selected={!customFilterOperator()}>
-                    {labels.customFilterOperator}
-                  </option>
-                  {each(
-                    operatorsFor(customFilterField()),
-                    (operator) => operator,
-                    (operator) => (
-                      <option value={operator} selected={operator === customFilterOperator()}>
-                        {operatorLabel(operator)}
-                      </option>
-                    ),
-                  )}
-                </select>
-                {valueEditor()}
+                  {labels.customFilterAdd}
+                </button>
               </div>
-              <button
-                data-ui="custom-filter-add"
-                type="button"
-                disabled={!canAddRule()}
-                onClick={addCustomFilter}
-              >
-                {labels.customFilterAdd}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-      {hasGrouping && (
+            </>
+          )}
+        </div>
+      )}
+      {hasGrouping && (!section || section === 'groupBy') && (
         <div data-ui="search-filter-column" data-facet-type="groupBy">
           {columnTitle(labels.groupBy, countOf('groupBy'))}
           {groupByPipeline()}
@@ -1212,8 +1307,8 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
             (option) => option.id,
             (option, index) => groupByMenuItem(option, index === 0 ? null : config.groupBy[index - 1]),
           )}
-          {groupByOptions.length ? <hr data-ui="menu-separator" /> : null}
-          {groupByOptions.length ? (
+          {!expanded && groupByOptions.length ? <hr data-ui="menu-separator" /> : null}
+          {!expanded && groupByOptions.length ? (
             <select
               data-ui="custom-group-by"
               disabled={groupByFacets().length >= (config.maxGroupBy ?? Infinity)}
@@ -1240,7 +1335,7 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
           ) : null}
         </div>
       )}
-      {hasFavorites() && (
+      {hasFavorites() && (!section || section === 'favorite') && (
         <div data-ui="search-filter-column" data-facet-type="favorite">
           {columnTitle(labels.favorites, activeFavoriteId() ? 1 : 0)}
           {config.favoriteHref ? (
@@ -1329,6 +1424,116 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
     </div>
   )
 
+  // Clamp to this component while anchoring each disclosure to its own trigger.
+  const placeExpandedMenu = (opener: HTMLElement): void => {
+    queueMicrotask(() => {
+      if (!menuOpen() || typeof opener.getBoundingClientRect !== 'function') return
+      const menu = opener.closest('details')
+      const popup = menu?.querySelector('[data-ui="menu-panel"]')
+      const frameElement = opener.closest('[data-ui="search-filter"]')
+      if (
+        !(menu instanceof HTMLElement) ||
+        !(popup instanceof HTMLElement) ||
+        !(frameElement instanceof HTMLElement)
+      )
+        return
+      const frame = frameElement.getBoundingClientRect()
+      const anchor = menu.getBoundingClientRect()
+      const width = popup.getBoundingClientRect().width
+      const left = Math.max(frame.left, Math.min(anchor.left, frame.right - width))
+      popup.style.setProperty('--kv-search-filter-menu-offset', `${left - anchor.left}px`)
+    })
+  }
+  const expandedMenu = (
+    kind: 'filter' | 'groupBy' | 'favorite',
+    label: string,
+    options: SearchFilterOption[] = [],
+    group = '',
+  ): TemplateResult => {
+    const id =
+      kind === 'filter' ? `${props.id}-preset-${presetGroups().indexOf(group)}` : `${props.id}-${kind}`
+    const selected =
+      kind === 'filter'
+        ? flatten(options)
+            .filter((option) => isActive('filter', option.id))
+            .map((option) => option.label)
+            .join(', ')
+        : kind === 'groupBy'
+          ? groupByFacets()
+              .map((facet) => facet.label)
+              .join(' → ')
+          : (favorites().find((favorite) => favorite.id === activeFavoriteId())?.label ?? '')
+    const isOpen = (): boolean =>
+      menuOpen() && panel() === kind && (kind !== 'filter' || presetGroup() === group)
+    return (
+      <details
+        data-ui="menu"
+        data-variant="search-filter"
+        data-section={kind}
+        open={isOpen() ? true : undefined}
+        onToggle={(event: Event) => {
+          if (!(event.currentTarget instanceof HTMLDetailsElement)) return
+          if (event.currentTarget.open) {
+            if (kind === 'filter') presetGroup.set(group)
+            openPanel(kind)
+            if (menuOpener) placeExpandedMenu(menuOpener)
+          } else if (panel() === kind && (kind !== 'filter' || presetGroup() === group)) closeMenu()
+        }}
+      >
+        <summary
+          data-ui="search-filter-section-toggle"
+          data-section={kind}
+          role="button"
+          aria-expanded={String(isOpen())}
+          aria-controls={`${id}-panel`}
+          title={selected ? `${label}: ${selected}` : undefined}
+          onClick={(event: Event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            menuOpener = event.currentTarget as HTMLElement
+            if (isOpen()) closeMenu()
+            else {
+              if (kind === 'filter') presetGroup.set(group)
+              openPanel(kind)
+              placeExpandedMenu(menuOpener)
+            }
+          }}
+        >
+          {kind !== 'filter' ? icon(kind) : null}
+          <span>{selected || kind !== 'favorite' ? `${label}:` : label}</span>
+          {selected ? (
+            <span>{selected}</span>
+          ) : kind === 'filter' ? (
+            <span>{labels.allValues}</span>
+          ) : kind === 'groupBy' ? (
+            <span>{labels.noGrouping}</span>
+          ) : null}
+          <svg
+            data-ui="search-filter-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            aria-hidden="true"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </summary>
+        <div id={`${id}-panel`} data-ui="menu-panel" role="group" aria-label={label}>
+          {kind === 'filter'
+            ? each(
+                options,
+                (option) => option.id,
+                (option) => filterMenuItem(option, null),
+              )
+            : panelContent(kind)}
+        </div>
+      </details>
+    )
+  }
+
   const notice = (): TemplateResult | null =>
     error() ? (
       <aside data-ui="notice" data-pattern="notice" data-tone="danger" role="alert">
@@ -1353,9 +1558,19 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
         aria-label={labels.searchLabel}
         data-name={config.name}
         data-size={config.size ?? 'default'}
+        data-presentation={config.presentation ?? 'compact'}
         data-busy={pending() ? 'true' : null}
         onKeydown={(event: KeyboardEvent) => {
-          if (event.key !== 'Escape' || sheetOpen() || !menuOpen()) return
+          if (event.key !== 'Escape' || sheetOpen()) return
+          if (!menuOpen()) {
+            if (expanded && ruleEditorOpen()) {
+              event.preventDefault()
+              event.stopPropagation()
+              ruleEditorOpen.set(false)
+              queueMicrotask(() => ruleEditorOpener?.focus())
+            }
+            return
+          }
           if (dismissDisclosure(event)) return
           event.preventDefault()
           event.stopPropagation()
@@ -1405,55 +1620,112 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
               </div>
             ) : null}
           </div>
-          <details
-            data-ui="menu"
-            data-variant="search-filter"
-            data-align="end"
-            data-active={countOf('filter') ? 'true' : null}
-            open={menuOpen() === true ? true : undefined}
-            onToggle={(event: Event) => {
-              if (!(event.currentTarget instanceof HTMLDetailsElement)) return
-              if (event.currentTarget.open) menuOpen.set(true)
-              else closeMenu()
-            }}
-          >
-            <summary
-              data-ui="search-filter-toggle"
-              role="button"
-              aria-expanded={String(sheetOpen() || (menuOpen() && panel() === 'filter'))}
-              aria-label={labels.filters}
-              title={labels.filters}
-              onClick={togglePanel}
-              aria-controls={`${props.id}-panel`}
+          {!expanded && (
+            <details
+              data-ui="menu"
+              data-variant="search-filter"
+              data-align="end"
+              data-active={countOf('filter') ? 'true' : null}
+              open={menuOpen() === true ? true : undefined}
+              onToggle={(event: Event) => {
+                if (!(event.currentTarget instanceof HTMLDetailsElement)) return
+                if (event.currentTarget.open) menuOpen.set(true)
+                else closeMenu()
+              }}
             >
-              {icon('filter')}
-              <span>{labels.filters}</span>
-              {countOf('filter') ? (
-                <span data-ui="menu-trigger-count">{String(countOf('filter'))}</span>
-              ) : null}
-            </summary>
-            <div
-              id={`${props.id}-panel`}
-              data-ui="menu-panel"
-              role="group"
-              aria-label={
-                panel() === 'filter'
-                  ? labels.filters
-                  : panel() === 'groupBy'
-                    ? labels.groupBy
-                    : labels.favorites
-              }
-            >
-              {!sheetOpen() ? panelContent() : null}
+              <summary
+                data-ui="search-filter-toggle"
+                role="button"
+                aria-expanded={String(sheetOpen() || (menuOpen() && panel() === 'filter'))}
+                aria-label={labels.filters}
+                title={labels.filters}
+                onClick={togglePanel}
+                aria-controls={`${props.id}-panel`}
+              >
+                {icon('filter')}
+                <span>{labels.filters}</span>
+                {countOf('filter') ? (
+                  <span data-ui="menu-trigger-count">{String(countOf('filter'))}</span>
+                ) : null}
+              </summary>
+              <div
+                id={`${props.id}-panel`}
+                data-ui="menu-panel"
+                role="group"
+                aria-label={
+                  panel() === 'filter'
+                    ? labels.filters
+                    : panel() === 'groupBy'
+                      ? labels.groupBy
+                      : labels.favorites
+                }
+              >
+                {!sheetOpen() ? panelContent() : null}
+              </div>
+            </details>
+          )}
+          {!expanded && hasGrouping ? sectionTrigger('groupBy', labels.groupBy) : null}
+          {!expanded && hasFavorites() ? sectionTrigger('favorite', labels.favorites) : null}
+          {expanded && (hasGrouping || hasFavorites()) ? (
+            <div data-ui="search-filter-tools">
+              {hasGrouping ? expandedMenu('groupBy', labels.groupBy) : null}
+              {hasFavorites() ? expandedMenu('favorite', labels.favorites) : null}
             </div>
-          </details>
-          {hasGrouping ? sectionTrigger('groupBy', labels.groupBy) : null}
-          {hasFavorites() ? sectionTrigger('favorite', labels.favorites) : null}
+          ) : null}
         </div>
-        {facets().length ? (
+        {expanded ? (
+          <>
+            <div data-ui="search-filter-expanded" role="group" aria-label={labels.filters}>
+              {each(
+                presetGroups(),
+                (group) => group,
+                (group) => {
+                  const options = filterOptions().filter((option) => (option.group ?? '') === group)
+                  const label =
+                    options.find((option) => option.groupLabel)?.groupLabel ??
+                    (options.length === 1 ? options[0].label : labels.filters)
+                  return expandedMenu('filter', label, options, group)
+                },
+              )}
+              {capabilities.customFilters !== false && config.customFilterFields.length ? (
+                <button
+                  data-ui="search-filter-rule-toggle"
+                  type="button"
+                  aria-expanded={String(ruleEditorOpen())}
+                  aria-controls={`${props.id}-rules`}
+                  onClick={(event: Event) => {
+                    ruleEditorOpener = event.currentTarget as HTMLElement
+                    const opening = !ruleEditorOpen()
+                    ruleEditorOpen.set(opening)
+                    if (opening)
+                      queueMicrotask(() => focusControl('[data-ui="search-filter-rule-editor"] select'))
+                  }}
+                >
+                  + {labels.customFilterToggle ?? labels.customFilterAdd}
+                </button>
+              ) : null}
+              {facets().some((facet) => facet.type === 'filter' || facet.type === 'favorite') ? (
+                <button data-ui="search-filter-clear" type="button" onClick={clearFilters}>
+                  {labels.clearFilters}
+                </button>
+              ) : null}
+            </div>
+            {ruleEditorOpen() ? (
+              <div
+                id={`${props.id}-rules`}
+                data-ui="search-filter-rule-editor"
+                role="group"
+                aria-label={labels.customFilterAdd}
+              >
+                {panelContent('filter')}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        {visibleFacets().length ? (
           <ul data-ui="search-filter-facets">
-            {each(facets(), (facet) => facet.id, facetChip)}
-            {facets().some((facet) => facet.type === 'filter' || facet.type === 'favorite') ? (
+            {each(visibleFacets(), (facet) => facet.id, facetChip)}
+            {!expanded && facets().some((facet) => facet.type === 'filter' || facet.type === 'favorite') ? (
               <li>
                 <button data-ui="search-filter-clear" type="button" onClick={clearFilters}>
                   {labels.clearFilters}
@@ -1510,8 +1782,58 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
         {!sheetOpen() ? notice() : null}
       </div>
     ),
+    update: (nextProps) => {
+      const next = nextProps.config as SearchFilterConfig
+      const queryChanged = (config.query ?? '') !== (next.query ?? '')
+      const facetsChanged = JSON.stringify(config.facets) !== JSON.stringify(next.facets)
+      const rulesChanged =
+        JSON.stringify(config.customFilters ?? []) !== JSON.stringify(next.customFilters ?? [])
+      if (queryChanged || facetsChanged || rulesChanged) {
+        // The shell reconciles this island before committing the new URL. Its own
+        // successful response must not abort that still-active navigation.
+        const ownResponse =
+          reconcilingNavigation !== null &&
+          navigationRequest === reconcilingNavigation &&
+          !reconcilingNavigation.signal.aborted
+        if (!ownResponse) {
+          applyVersion++
+          navigationRequest?.abort()
+        }
+        pending.set(false)
+        error.set('')
+        retryDraft.set(null)
+        if (queryChanged) setQuery(next.query ?? '')
+        facets.set(next.facets)
+        if (rulesChanged)
+          customFilterRules.set(
+            Object.fromEntries(
+              (next.customFilters ?? []).map((rule) => [
+                rule.id,
+                {
+                  field: rule.field,
+                  operator: rule.operator,
+                  value: rule.value,
+                },
+              ]),
+            ),
+          )
+        settled = { facets: facets(), rules: customFilterRules() }
+      }
+      if (JSON.stringify(config.favorites) !== JSON.stringify(next.favorites)) favorites.set(next.favorites)
+      if (JSON.stringify(config.filters) !== JSON.stringify(next.filters)) filterOptions.set(next.filters)
+      config = next
+      manager = next.manager
+    },
     mount: ({ root, lifetime }) => {
       mountedRoot = root
+      if (expanded && typeof window !== 'undefined')
+        window.addEventListener(
+          'resize',
+          () => {
+            if (menuOpen() && menuOpener) placeExpandedMenu(menuOpener)
+          },
+          { signal: lifetime },
+        )
       document.addEventListener(
         'ket:navigation-start',
         () => {
@@ -1543,6 +1865,7 @@ export function createSearchFilterView(props: SearchFilterIslandProps): IslandCo
       )
     },
     dispose: () => {
+      clearTimeout(typing)
       applyVersion++
       pending.set(false)
       dialogElement()?.close()

@@ -70,7 +70,7 @@ export function createTaskComposer(ctx) {
     view() {
       revision()
       const d = draft(),
-        disabled = !ctx.canWrite()
+        disabled = !ctx.canWrite() || !!ctx.busy?.()
       const propertyIcons = {
         projectId: 'folder',
         type: 'list',
@@ -90,6 +90,7 @@ export function createTaskComposer(ctx) {
           label,
           icon: propertyIcons[id],
           value: d[id],
+          error: ctx.errors()[id],
           disabled,
           onInput: (e) => {
             d[id] = e.target.value
@@ -102,6 +103,7 @@ export function createTaskComposer(ctx) {
           label,
           value: d[id],
           placeholder,
+          error: ctx.errors()[id],
           disabled,
           onInput: (e) => {
             d[id] = e.target.value
@@ -114,6 +116,7 @@ export function createTaskComposer(ctx) {
           icon: propertyIcons[name],
           value: d[name],
           options,
+          error: ctx.errors()[name],
           disabled,
           onChange: (e) => {
             d[name] = e.target.value
@@ -165,7 +168,7 @@ export function createTaskComposer(ctx) {
                     d.descriptionDoc = value.snapshot
                   },
                 },
-              )}${FlowDisclosure({ title: tr('flow.ui.checklist.subtasks.files'), children: html`${area('checklist', 'Checklist', tr('flow.ui.one.checklist.item.per.line'))}${area('subtasks', tr('flow.ui.subtasks'), tr('flow.ui.one.subtask.per.line.created.with.this.task'))}${FlowInput({ id: 'attachments', label: tr('flow.ui.attachments'), type: 'file', multiple: true, disabled })}${FlowNotice({ title: tr('flow.ui.files.in.this.prototype'), message: tr('flow.ui.stores.names.and.sizes.for.layout.preview.file.contents.are.not.uploaded') })}` })}`,
+              )}${FlowDisclosure({ title: tr('flow.ui.checklist.subtasks.files'), children: html`${area('checklist', 'Checklist', tr('flow.ui.one.checklist.item.per.line'))}${area('subtasks', tr('flow.ui.subtasks'), tr('flow.ui.one.subtask.per.line.created.with.this.task'))}${FlowInput({ id: 'attachments', label: tr('flow.ui.attachments'), type: 'file', multiple: true, error: ctx.errors().attachments, disabled })}${FlowNotice({ title: tr('flow.ui.files.in.this.prototype'), message: tr('flow.ui.stores.names.and.sizes.for.layout.preview.file.contents.are.not.uploaded') })}` })}`,
             }),
           }),
           aside: FlowPropertyFields({

@@ -15,7 +15,13 @@ export {
   websiteRoleTemplates,
   websiteThemeRoleTemplates,
 } from './website-role-templates.ts'
-export { DEFAULT_PHONE_REGION, normalizePhone, phoneKey, phoneSearchFragment } from './phone.ts'
+export {
+  DEFAULT_PHONE_REGION,
+  normalizePhone,
+  phoneKey,
+  phoneSearchFragment,
+  phoneSearchFragments,
+} from './phone.ts'
 export {
   customerAccessEffects,
   customerAccessForSite,

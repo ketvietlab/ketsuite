@@ -1,8 +1,5 @@
 @layer ket.app {
-  /* The single Filters/Group By/Favorites trigger reuses [data-ui="menu"] and its
-     [data-ui="menu-panel"]/[data-ui="menu-item"]/… descendants from
-     ../menu/styles.css (widened below for its 3-column content) — only the hooks
-     unique to this island get rules here. */
+  /* Compact popups and expanded independent menus reuse the public menu geometry. */
   :where([data-kv-design-system]) [data-ui="search-filter"] {
     position: relative;
     container: search-filter / inline-size;
@@ -182,7 +179,7 @@
     background: transparent;
     color: var(--kv-text-main);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   :where([data-kv-design-system]) [data-ui="search-filter-suggestion"]:is(:hover, :focus-visible) {
@@ -277,6 +274,102 @@
     line-height: var(--kv-line-sm);
     text-decoration: underline;
     cursor: pointer;
+  }
+  :where([data-kv-design-system])
+    [data-ui="search-filter"][data-presentation="expanded"]
+    [data-ui="search-filter-bar"] {
+    flex-wrap: wrap;
+  }
+  :where([data-kv-design-system])
+    [data-ui="search-filter"][data-presentation="expanded"]
+    [data-ui="search-filter-field"] {
+    flex: 1 1 16rem;
+    min-inline-size: min(100%, 16rem);
+  }
+  :where([data-kv-design-system]) :is([data-ui="search-filter-tools"], [data-ui="search-filter-expanded"]) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--kv-space-2);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+  :where([data-kv-design-system])
+    [data-ui="search-filter"][data-presentation="expanded"]
+    [data-ui="menu"][data-variant="search-filter"] {
+    position: relative;
+    max-inline-size: 100%;
+  }
+  :where([data-kv-design-system])
+    [data-ui="search-filter"][data-presentation="expanded"]
+    [data-ui="menu"][data-variant="search-filter"]
+    [data-ui="menu-panel"] {
+    left: var(--kv-search-filter-menu-offset, 0px);
+    right: auto;
+    inline-size: min(26rem, 100cqi);
+    max-inline-size: min(26rem, 100cqi);
+  }
+  /* A filter section lists only its values, so its panel is as wide as the longest
+     value (at least its trigger and 12rem) instead of the 26rem the forms need. */
+  :where([data-kv-design-system])
+    [data-ui="search-filter"][data-presentation="expanded"]
+    [data-ui="menu"][data-variant="search-filter"][data-section="filter"]
+    [data-ui="menu-panel"] {
+    inline-size: max-content;
+    min-inline-size: min(max(100%, 12rem), 100cqi);
+  }
+  :where([data-kv-design-system])
+    [data-ui="search-filter"][data-presentation="expanded"]
+    [data-ui="search-filter-section-toggle"],
+  :where([data-kv-design-system]) [data-ui="search-filter-rule-toggle"] {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--kv-space-1);
+    white-space: nowrap;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    min-block-size: var(--kv-control-height);
+    block-size: var(--kv-control-height);
+    padding: 0 var(--kv-space-2);
+    border: 1px solid var(--kv-border-default);
+    border-radius: var(--kv-control-radius);
+    background: var(--kv-panel-bg);
+    color: var(--kv-text-main);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    font-weight: var(--kv-weight-medium);
+    cursor: pointer;
+  }
+  :where([data-kv-design-system]) [data-ui="search-filter-section-toggle"] > span {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :where([data-kv-design-system]) [data-ui="search-filter-section-toggle"] > span:first-of-type {
+    flex-shrink: 0;
+  }
+  :where([data-kv-design-system]) [data-ui="search-filter-rule-toggle"]:hover {
+    background: var(--kv-surface-hover);
+  }
+  :where([data-kv-design-system])
+    :is([data-ui="search-filter-section-toggle"], [data-ui="search-filter-rule-toggle"]):focus-visible {
+    outline: 2px solid var(--kv-focus-border);
+    outline-offset: 1px;
+  }
+  :where([data-kv-design-system]) [data-ui="search-filter-rule-editor"] {
+    padding-block-start: var(--kv-space-2);
+    border-block-start: 1px solid var(--kv-border-default);
+  }
+  :where([data-kv-design-system])
+    [data-ui="search-filter-rule-editor"]
+    :is([data-ui="custom-filter-row"] > select, [data-ui="custom-filter-row"] > input) {
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+  }
+  :where([data-kv-design-system]) [data-ui="search-filter-section-toggle"]::-webkit-details-marker {
+    display: none;
   }
   :where([data-kv-design-system]) [data-ui="search-filter-sheet"] {
     padding: 0;
@@ -498,7 +591,7 @@
     background: transparent;
     color: var(--kv-text-main);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   :where([data-kv-design-system]) [data-ui="favorite-save-toggle"]:hover {

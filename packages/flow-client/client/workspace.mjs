@@ -1,7 +1,8 @@
 import { auditChange } from './audit-display.mjs'
+import { projectRecord, taskEpic } from './project-record.mjs'
 import { mutationFeedback } from './mutation-feedback.mjs'
-import { FlowLiveDoc, FlowLiveDocText, FlowLiveDocLegacyBlocks } from '@ketvietlab/flow-ui'
-import { tr, flowLocaleTag, flowLocale, setFlowLocale, FLOW_LANGUAGES } from './i18n.mjs'
+import { FlowLiveDoc, FlowLiveDocText } from '@ketvietlab/flow-ui'
+import { tr, flowLocaleTag, flowLocale, setFlowLocale, normalizeFlowLocale, FLOW_LANGUAGES } from './i18n.mjs'
 import {
   taskAssigneeIds,
   taskUsers,
@@ -9,13 +10,25 @@ import {
   isAssignedTo,
   taskUserOptions,
 } from './task-assignees.mjs'
-import { taskColumns, taskTags, projectStatuses, statusKind, isDone } from './project-catalogs.mjs'
-import { html, each, signal, batch } from '@ketvietlab/ketjs-view'
+import {
+  taskColumns,
+  taskTags,
+  projectStatuses,
+  statusKind,
+  isDone,
+  taskTypeIcons,
+} from './project-catalogs.mjs'
+import { html, each, signal, batch, effect, hydrateRoot, domHost } from '@ketvietlab/ketjs-view'
+import { readFlowAppearance, writeFlowAppearance } from './preferences.mjs'
+import { normalizeBulkOutcome, selectionAfterBulk, bulkReasonKey } from './bulk.mjs'
+import { createFormLeaveGuard } from './form-leave.mjs'
+import { createFlowHistory, createHistoryLeaveGuard } from './navigation-history.mjs'
 import {
   FlowShell,
+  FlowShellHeader,
   FlowDialog,
+  FlowConfirmDialog,
   FlowButton,
-  FlowSearch,
   FlowSelect,
   FlowInput,
   FlowCheckbox,
@@ -40,11 +53,9 @@ import {
   FlowHint,
   FlowContextPicker,
   FlowProjectDirectory,
-  FlowSearchTrigger,
   FlowScopeMenu,
   FlowScopeTabs,
   FlowUserMenu,
-  FlowSpotlight,
   FlowTagPicker,
   FlowColorPicker,
   FlowNavigation,
@@ -64,6 +75,7 @@ import {
   FlowRecordLayout,
   FlowRecordAsideTrigger,
   FlowProperties,
+  FlowSetupForm,
   FlowPropertyFields,
   FlowTextarea,
   FlowSelectField,
@@ -73,17 +85,25 @@ import {
   FlowSheet,
   FlowLoading,
 } from '@ketvietlab/flow-ui/workspace'
-import { attachFlowUI } from '@ketvietlab/flow-ui/runtime'
-import { routeScope, pageRoutes, libraryReturn, managementNavigation } from './navigation.mjs'
+import { attachFlowUI, syncFlowThemeButton, syncFlowShellNavigation } from '@ketvietlab/flow-ui/runtime'
+import {
+  routeScope,
+  pageRoutes,
+  libraryReturn,
+  managementNavigation,
+  workspaceRecordTarget,
+} from './navigation.mjs'
 import { routes } from './routes.mjs'
-import { commandResults } from './command-search.mjs'
+import { createGlobalSearch } from './global-search.mjs'
 import { contentWidthFor } from './content-layout.mjs'
 import { appliesTo, validateCustomFields } from './custom-fields.mjs'
 import { createOperations, operationRoutes } from './operations.mjs'
-import { flowExtensions, extensionRoutes, extensionForms } from './extensions.mjs'
+import { flowExtensions, extensionRoutes, extensionForms, extensionErrors } from './extensions.mjs'
 import { createOrganization, organizationRoutes, organizationForms } from './organization.mjs'
 import { canManageScope } from './access-model.mjs'
 import { createDocuments, documentRoutes } from './documents.mjs'
+import { retainedDocumentSnapshot } from './document-navigation.mjs'
+import { documentMoveCandidates } from './document-tree.mjs'
 import { todayDate, addDays } from './timeline.mjs'
 import { sortedListTasks, taskPage, orderedTasks, taskGroupValue, taskGroups } from './task-order.mjs'
 import { createTaskAutosave } from './task-autosave.mjs'
@@ -92,7 +112,7 @@ import { usesSprints, nextSprint } from './sprint-cadence.mjs'
 import { createFirstRun } from './first-run.mjs'
 import { createTaskComposer } from './task-composer.mjs'
 import { createTransientNotice } from './notice.mjs'
-import { createFnClient, createFileUploader } from './api.mjs'
+import { createFnClient, createFileUploader, FlowApiError } from './api.mjs'
 
 const moreRoutes = {
   dashboard: ['flow.ui.overview', 'flow.ui.manage'],
@@ -135,6 +155,13 @@ export const taskModalRoutes = new Set([
   'comment',
 ])
 const documentKeys = new Set(['pages', 'all-pages', 'page-archived'])
+const taskWriteDestinations = new Set([
+  'issue-new',
+  'subtask-new',
+  'subtask-link',
+  'dependency-new',
+  'issue-archive',
+])
 const formDefinitions = {
   'project-new': {
     collection: 'projects',
@@ -193,30 +220,15 @@ const formDefinitions = {
     },
     back: 'epics',
   },
-  'page-new': {
-    collection: 'pages',
-    get title() {
-      return tr('flow.ui.create.document')
-    },
-    back: 'pages',
-  },
-  'page-child': {
-    collection: 'pages',
-    get title() {
-      return tr('flow.ui.add.child.document')
-    },
-    back: 'page',
-  },
 }
-const documentModalRoutes = new Set(['page-new', 'page-child', 'page-move'])
+const documentModalRoutes = new Set(['page-move'])
 const coreFormModals = new Set([
-  ...Object.keys(formDefinitions),
+  ...Object.keys(formDefinitions).filter((key) => key !== 'project-profile'),
   ...Object.keys(organizationForms),
   'page-move',
   'sprint-close',
   'display',
   'timezone',
-  'cmdk',
 ])
 // Extensions register their forms after this module loads, so membership is checked on use.
 const formModalRoutes = { has: (key) => coreFormModals.has(key) || Object.hasOwn(extensionForms, key) }
@@ -231,8 +243,27 @@ const modalFallback = (key) =>
     display: 'all-issues',
     timezone: 'workspace-settings',
     cmdk: 'my-work',
+    'board-move': 'board',
   }[key] ??
   'my-work'
+const parseBackground = (value, companyId, base) => {
+  if (typeof value !== 'string' || !value.startsWith(base)) return null
+  try {
+    const url = new URL(value, 'http://flow.local')
+    const screen = url.pathname.slice(base.length)
+    if (
+      url.origin !== 'http://flow.local' ||
+      !routes[screen] ||
+      modalRoutes.has(screen) ||
+      (url.searchParams.get('company') ?? 'demo') !== companyId
+    )
+      return null
+    url.searchParams.delete('background')
+    return { screen, url: url.pathname + url.search, record: url.searchParams.get('id') ?? 'KV-142' }
+  } catch {
+    return null
+  }
+}
 const tidy = (s) =>
   String(s)
     .normalize('NFD')
@@ -266,9 +297,35 @@ const stack = (...children) =>
       (x) => html`${x}`,
     )}`,
   })
+// How long navigation may show a screen read again without asking, how many such reads are
+// kept, and how long writes must pause before the screen is read again after a patched write.
+const READ_REUSE_MS = 30_000,
+  READS_KEPT = 8,
+  REVALIDATE_MS = 300
 
 /** Product island factory. Environment changes the transport, never the presenters. */
 export function createFlowWorkspace(props = {}, dependencies = {}) {
+  const fallbackBackground = () => {
+    const screen = modalFallback(props.screen)
+    const url = new URL((props.basePath ?? '/flow/') + screen, 'http://flow.local')
+    for (const [key, value] of Object.entries({
+      company: props.companyId,
+      workspace: props.workspaceId,
+      project: routeScope(screen) === 'project' ? props.project : undefined,
+      q: props.query || undefined,
+      status: props.status === 'all' ? undefined : props.status,
+    }))
+      if (value) url.searchParams.set(key, value)
+    return { screen, url: url.pathname + url.search }
+  }
+  const initialBackground = modalRoutes.has(props.screen)
+    ? (parseBackground(props.background, props.companyId ?? 'demo', props.basePath ?? '/flow/') ??
+      fallbackBackground())
+    : null
+  const backgroundParams = initialBackground
+    ? new URL(initialBackground.url, 'http://flow.local').searchParams
+    : null
+  const history = globalThis.history ? createFlowHistory(globalThis.history) : null
   const transport = dependencies.call ?? createFnClient()
   const upload = dependencies.upload ?? createFileUploader()
   const companyId = signal(props.companyId ?? 'demo'),
@@ -279,9 +336,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     recentCommands = new Map()
   const call = (name, input = {}, options = {}) =>
     transport(name, { companyId: companyId(), workspaceId: workspaceId(), ...input }, options)
-  const data = signal(null),
-    loading = signal(true),
-    failure = signal(null),
+  const data = signal(dependencies.initialShellData ?? props.chrome ?? null),
+    primaryReady = signal(!props.serverShell),
+    loading = signal(!dependencies.initialShellData),
+    failure = signal(dependencies.initialShellData?.problem ?? null),
+    readFailure = signal(false),
     busy = signal(false),
     notice = signal('')
   const feedback = createTransientNotice((value) => notice.set(value))
@@ -289,38 +348,148 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   // Files dropped on a task save immediately; a failed save keeps them here for retry.
   const pendingFiles = signal(null),
     previewFile = signal('')
-  const selectedView = signal(props.view ?? '')
+  const selectedView = signal(backgroundParams?.get('view') ?? props.view ?? '')
   const savedViewOpen = signal(false)
   let savedViewDraft = { title: '', description: '' }
   const modalRoute = signal(modalRoutes.has(props.screen) ? props.screen : null)
   const activeRoute = () => modalRoute() ?? screen()
   const screen = signal(
-      modalRoutes.has(props.screen) ? modalFallback(props.screen) : (props.screen ?? 'my-work'),
+      modalRoutes.has(props.screen)
+        ? (initialBackground?.screen ?? modalFallback(props.screen))
+        : props.screen === 'cmdk'
+          ? 'my-work'
+          : (props.screen ?? 'my-work'),
     ),
     record = signal(props.record ?? 'KV-142'),
-    project = signal(props.project ?? 'core'),
+    recordProvided = signal(props.recordProvided ?? props.record != null),
+    project = signal(backgroundParams ? (backgroundParams.get('project') ?? '') : (props.project ?? 'core')),
     modalProject = signal(props.project ?? 'core'),
     modalScope = signal(props.scope ?? '')
-  const query = signal(props.query ?? ''),
-    status = signal(props.status ?? 'all'),
+  const query = signal(backgroundParams?.get('q') ?? props.query ?? ''),
+    status = signal(backgroundParams?.get('status') ?? props.status ?? 'all'),
     selected = signal([]),
     theme = signal('light'),
     density = signal('compact')
   const formError = signal({}),
-    commandQuery = signal(''),
-    commandActive = signal(''),
     groupBy = signal('status')
   let lifetime, readController, runtime, host, observer
-  let lastOp = null
+  const pendingLeave = signal(null)
+  const pendingAction = signal(null)
+  const returningHistory = signal(false)
+  let submittedForm = null
+  const formGuard = createFormLeaveGuard({
+    context: () => {
+      const key = modalRoute()
+      if (
+        ['issue-new', 'subtask-new', 'cmdk', 'display', 'timezone', 'personal-settings'].includes(
+          key ?? screen(),
+        )
+      )
+        return ''
+      const guarded =
+        (formModalRoutes.has(key) && !['cmdk', 'display', 'timezone'].includes(key)) ||
+        (taskModalRoutes.has(key) && !detailKeys.has(key) && !['issue-new', 'subtask-new'].includes(key))
+      const form =
+        host?.querySelector('dialog[data-flow-route-modal] form') ??
+        host?.querySelector('[data-flow="shell-main"] form')
+      return guarded || form
+        ? [
+            companyId(),
+            workspaceId(),
+            key ?? screen(),
+            record(),
+            modalRoute() ? modalProject() || project() : project(),
+            form?.closest('dialog')?.id ?? 'page',
+          ].join('|')
+        : ''
+    },
+    forms: () => {
+      const modal = host?.querySelectorAll('dialog[data-flow-route-modal] form') ?? []
+      return modal.length ? modal : (host?.querySelectorAll('[data-flow="shell-main"] form') ?? [])
+    },
+  })
+  const requestLeave = (action) => {
+    const leave = () => {
+      formGuard.discard()
+      action()
+    }
+    if (formGuard.hasChanges()) pendingLeave.set({ action: leave })
+    else leave()
+  }
+  const discardConfirmation = () =>
+    pendingLeave()
+      ? FlowConfirmDialog({
+          id: 'flow-discard-confirm',
+          title: tr('flow.draft.title'),
+          message: pendingLeave().message ?? tr('flow.draft.message'),
+          cancelLabel: tr('flow.draft.keep'),
+          confirmLabel: tr('flow.draft.discard'),
+          loading: returningHistory(),
+          onCancel: () => pendingLeave.set(null),
+          onConfirm: () => {
+            const leave = pendingLeave()
+            formGuard.discard()
+            pendingLeave.set(null)
+            leave?.action()
+          },
+        })
+      : null
+  const destructiveConfirmation = () =>
+    pendingAction()
+      ? FlowConfirmDialog({
+          id: 'flow-action-confirm',
+          title: pendingAction().title,
+          message: pendingAction().message,
+          cancelLabel: tr('flow.ui.cancel'),
+          confirmLabel: pendingAction().label,
+          tone: pendingAction().tone,
+          loading: busy(),
+          feedback: feedbackToast('inline'),
+          onCancel: () => pendingAction.set(null),
+          onConfirm: async () => {
+            if (busy()) return
+            const request = pendingAction()
+            if (await request.action()) pendingAction.set(null)
+          },
+        })
+      : null
+  const confirmAction = (request) => {
+    if (busy() || !canWrite() || pendingAction()) return false
+    const submission = submittedForm
+    submittedForm = null
+    pendingAction.set({
+      ...request,
+      action: () => {
+        submittedForm = submission
+        return request.action()
+      },
+    })
+    return true
+  }
+  let appearanceStorage
+  const changeAppearance = (key, value) => {
+    if (!writeFlowAppearance(appearanceStorage, key, value)) return
+    if (key === 'theme') theme.set(value)
+    else if (key === 'density') density.set(value)
+  }
+  const pendingOperations = new Map()
   let mutationTail = Promise.resolve()
   const saveRevision = signal(0)
-  const documentScope = signal(props.scope ?? ''),
+  const documentScope = signal(
+      backgroundParams
+        ? (backgroundParams.get('scope') ?? (backgroundParams.has('project') ? 'project' : 'workspace'))
+        : (props.scope ?? ''),
+    ),
     libraryFilter = signal(props.projectFilter ?? 'all'),
-    librarySearch = signal(''),
-    libraryVisibility = signal('shared'),
-    documentReturn = signal('')
-  let modalBackground = { screen: modalFallback(props.screen), url: '', record: props.record ?? 'KV-142' }
-  let scrollPositions = new Map()
+    librarySearch = signal(props.docq ?? ''),
+    libraryVisibility = signal(props.visibility === 'private' ? 'private' : 'shared'),
+    documentReturn = signal(libraryReturn(props.returnTo, props.basePath ?? '/flow/'))
+  let modalBackground = initialBackground ?? {
+    screen: modalFallback(props.screen),
+    url: '',
+    record: props.record ?? 'KV-142',
+  }
+  const scrollPositions = new Map()
   const base = props.basePath ?? '/flow/'
   const canWrite = () => {
     if (data()?.capabilities?.write !== true) return false
@@ -349,6 +518,14 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       ...params,
     })
     if (!scoped) q.delete('project')
+    if (props.serverShell && modalRoutes.has(key)) {
+      const background = modalRoute()
+        ? modalBackground.url
+        : typeof location !== 'undefined'
+          ? location.pathname + location.search
+          : ''
+      if (background) q.set('background', background)
+    }
     for (const [name, value] of q) if (!value || value === 'undefined' || value === 'null') q.delete(name)
     return `${base}${key}${q.size ? `?${q}` : ''}`
   }
@@ -373,8 +550,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   }
   const currentTask = () => {
     saveRevision()
-    const task =
-      data()?.tasks.find((t) => t.id === record()) ?? (record() === 'KV-142' ? data()?.tasks[0] : null)
+    const task = data()?.tasks.find((t) => t.id === record())
     return task ? { ...task, ...autosave.draft(task.id) } : null
   }
   const mapped = (t) => ({
@@ -387,13 +563,21 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   })
   const readUrl = () =>
     batch(() => {
+      pendingAction.set(null)
       const url = new URL(location.href)
       savedViewOpen.set(url.searchParams.get('modal') === 'save-view')
       selectedView.set(url.searchParams.get('view') ?? '')
       const nextCompany = url.searchParams.get('company') ?? props.companyId ?? 'demo'
       const changedCompany = nextCompany !== companyId()
-      if (changedCompany || (url.searchParams.get('workspace') ?? '') !== workspaceId())
+      if (
+        changedCompany ||
+        (url.searchParams.get('workspace') ?? (props.serverShell ? props.workspaceId : '') ?? '') !==
+          workspaceId()
+      ) {
+        selected.set([])
+        bulkOutcome.set(null)
         for (const x of extensions) x.reset?.()
+      }
       if (changedCompany) {
         readController?.abort()
         data.set(null)
@@ -401,11 +585,30 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         failure.set(null)
         feedback.clear()
         dismissedDataNotice.set('')
+        bulkOutcome.set(null)
         companyId.set(nextCompany)
       }
-      workspaceId.set(url.searchParams.get('workspace') ?? '')
+      workspaceId.set(url.searchParams.get('workspace') ?? (props.serverShell ? props.workspaceId : '') ?? '')
       personalWorkspace.set(url.searchParams.get('workspaceFilter') ?? 'all')
-      const key = url.pathname.slice(base.length).replace(/\/$/, '') || 'my-work'
+      const requestedKey = url.pathname.slice(base.length).replace(/\/$/, '') || 'my-work'
+      const key = requestedKey === 'cmdk' ? 'my-work' : requestedKey
+      const workspaceTarget = workspaceRecordTarget(
+        key,
+        url.searchParams.get('id'),
+        url.searchParams.has('id'),
+        url.searchParams.get('workspace'),
+      )
+      if (workspaceTarget !== null && !url.searchParams.has('id')) {
+        url.searchParams.set('id', workspaceTarget)
+        history.replaceState(history.state, '', url)
+      }
+      tagPreview.set(null)
+      fieldKind.set(null)
+      columnKind.set(null)
+      pageParent.set(null)
+      sprintCarryTo.set('Backlog')
+      recordProvided.set(url.searchParams.has('id'))
+      if (requestedKey === 'cmdk') searchEntryPending = true
       documentScope.set(
         url.searchParams.get('scope') ?? (url.searchParams.has('project') ? 'project' : 'workspace'),
       )
@@ -426,7 +629,9 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       }
       documentReturn.set(libraryReturn(url.searchParams.get('returnTo'), base))
       if (modalRoutes.has(key)) {
-        const stored = history.state?.flowBackground
+        const stored =
+          parseBackground(url.searchParams.get('background'), companyId(), base) ??
+          history.state?.flowBackground
         if (
           stored &&
           routes[stored.screen] &&
@@ -469,12 +674,45 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       groupBy.set(
         ['status', 'priority', 'assignee', 'sprint', 'none'].includes(grouping) ? grouping : 'status',
       )
+      const sort = viewUrl.searchParams.get('sort') ?? 'due'
+      listSort.set(['due', 'priority', 'manual'].includes(sort) ? sort : 'due')
       failure.set(null)
       formError.set({})
       for (const x of extensions) void x.sync?.()
-      if (changedCompany && mounted) void reload()
+      globalSearch.contextChanged()
+      if (mounted && data() && primaryReady()) documents.enter()
+      if (changedCompany && mounted) void reload({ navigation: true })
+      else if (mounted) void ensureRecord()
     })
+  let documentNavigation = 0,
+    nativeNavigation = 0
   const navigate = (key, params = {}, navigation = {}) => {
+    if (key === 'cmdk') {
+      globalSearch.focus()
+      return
+    }
+    globalSearch.close()
+    if (!navigation.documentSaved && mounted && documents.hasPendingNotes()) {
+      const request = ++documentNavigation
+      void documents.flush().then((ok) => {
+        if (request !== documentNavigation) return
+        if (ok) navigate(key, params, { ...navigation, documentSaved: true })
+        else
+          pendingLeave.set({
+            message: tr('flow.draft.documentMessage'),
+            action: () => {
+              documents.discardPendingNotes()
+              navigate(key, params, { ...navigation, documentSaved: true })
+            },
+          })
+      })
+      return
+    }
+    if (!navigation.confirmed && formGuard.hasChanges()) {
+      if (!busy())
+        pendingLeave.set({ action: () => navigate(key, params, { ...navigation, confirmed: true }) })
+      return
+    }
     if (params.project) {
       const target = data()?.projects.find((p) => p.id === params.project)
       if (target) {
@@ -483,9 +721,38 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       }
       if (target?.workspaceId) params = { workspace: target.workspaceId, ...params }
     }
-    if (key === 'cmdk' && modalRoute() !== 'cmdk') {
-      commandQuery.set('')
-      commandActive.set('')
+    if (props.serverShell && mounted && !modalRoutes.has(key)) {
+      if (!navigation.tasksSaved) {
+        const request = ++nativeNavigation
+        void autosave.flushAll().then(() => {
+          if (
+            request !== nativeNavigation ||
+            lifetime?.aborted ||
+            data()?.tasks.some((t) => autosave.state(t.id) === 'error')
+          )
+            return
+          navigate(key, params, { ...navigation, tasksSaved: true })
+        })
+        return
+      }
+      const target = href(key, params)
+      for (const x of extensions) x.beforeNavigate?.(key)
+      // A revalidation may remove the current Workspace (for example after
+      // archiving it). Its keyed island cannot claim the retained sidebar of
+      // another context. Establish fresh SSR chrome at that boundary only.
+      if (
+        dependencies.navigatePage &&
+        (props.companyId ?? 'demo') === companyId() &&
+        (props.workspaceId ?? '') === workspaceId()
+      )
+        void dependencies
+          .navigatePage(target, { replace: !!navigation.replace, fallback: 'error' })
+          .catch((error) => {
+            if (error.name !== 'AbortError') feedback.show(tr('flow.ui.unable.to.open.flow'))
+          })
+      else if (navigation.replace) location.replace(target)
+      else location.assign(target)
+      return
     }
     if (organizationForms[key]) organization.reset()
     for (const x of extensions) x.beforeNavigate?.(key)
@@ -493,8 +760,8 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     if (!modalRoutes.has(key) && (key !== screen() || (params.project && params.project !== project())))
       operations.reset()
     if (key === 'tag-edit') tagPreview.set(null)
-    if (key === 'field-edit') fieldKind.set('text')
-    if (key === 'column-edit') columnKind.set('todo')
+    if (key === 'field-edit') fieldKind.set(null)
+    if (key === 'column-edit') columnKind.set(null)
     const area = host?.querySelector('[data-flow="shell-content"]')
     if (area) scrollPositions.set(screen(), area.scrollTop)
     const docArea = host?.querySelector('[data-flow="docs-scroll"]')
@@ -552,98 +819,267 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       },
     })
   const navButton = (key, label, icon, variant = 'secondary', params = {}) =>
-    FlowButton({ label, icon, variant, size: 'sm', onClick: () => navigate(key, params) })
-  const reload = async () => {
+    FlowButton({
+      label,
+      icon,
+      variant,
+      size: 'sm',
+      disabled: taskWriteDestinations.has(key) && (!canWrite() || busy()),
+      onClick: () => navigate(key, params),
+    })
+  const showRead = (next) => {
+    data.set({
+      ...next,
+      columns: next.columns.map((c) =>
+        c.labelKey
+          ? {
+              ...c,
+              get label() {
+                return tr(c.labelKey)
+              },
+            }
+          : c,
+      ),
+    })
+    if (next.context) {
+      workspaceId.set(next.context.workspaceId)
+      if (next.context.projectId && scopeOf(activeRoute()) === 'project')
+        (modalRoute() ? modalProject : project).set(next.context.projectId)
+      if (typeof location !== 'undefined') {
+        const url = new URL(location.href)
+        url.searchParams.set('company', next.context.companyId)
+        if (next.context.workspaceId) url.searchParams.set('workspace', next.context.workspaceId)
+        else url.searchParams.delete('workspace')
+        if (next.context.projectId && scopeOf(activeRoute()) === 'project')
+          url.searchParams.set('project', next.context.projectId)
+        history.replaceState(history.state, '', url)
+      }
+    }
+    documentContext()
+    failure.set(next.problem ?? null)
+    readFailure.set(false)
+    primaryReady.set(true)
+    for (const x of extensions) void x.sync?.()
+    globalSearch.contextChanged()
+    if (!next.problem) documents.enter()
+    void ensureRecord()
+  }
+  // Navigation shows a screen read again for a short while instead of asking for it. Any
+  // write, and any read that is not navigation, drops them all: only browsing reuses a read.
+  const reads = new Map()
+  let writes = 0,
+    readAfterWrite = -1
+  const reload = async ({ navigation = false } = {}) => {
     readController?.abort()
     const controller = new AbortController()
     const requestedCompany = companyId()
     readController = controller
-    if (lifetime?.aborted) return
+    if (lifetime?.aborted) return false
+    const input = {
+      projectId: scopeOf(activeRoute()) === 'project' ? activeProject() : undefined,
+      route: activeRoute(),
+      recordId:
+        taskModalRoutes.has(activeRoute()) ||
+        extensionForms[activeRoute()] ||
+        ['page', 'page-child', 'page-move'].includes(activeRoute())
+          ? record()
+          : undefined,
+    }
+    const key = JSON.stringify([
+        requestedCompany,
+        workspaceId(),
+        input.projectId,
+        input.route,
+        input.recordId,
+      ]),
+      kept = navigation ? reads.get(key) : null
+    if (kept && Date.now() - kept.at < READ_REUSE_MS) {
+      reads.delete(key)
+      reads.set(key, kept)
+      showRead(kept.value)
+      loading.set(false)
+      return true
+    }
+    if (!navigation) reads.clear()
+    const written = writes
+    readAfterWrite = writes
     const abort = () => controller.abort()
     lifetime?.addEventListener('abort', abort, { once: true })
     if (!data()) loading.set(true)
     try {
-      const next = await call(
-        'flow.workspace.bootstrap',
-        {
-          projectId: scopeOf(activeRoute()) === 'project' ? activeProject() : undefined,
-          route: activeRoute(),
-          recordId:
-            taskModalRoutes.has(activeRoute()) ||
-            extensionForms[activeRoute()] ||
-            ['page', 'page-child', 'page-move'].includes(activeRoute())
-              ? record()
-              : undefined,
-        },
-        { signal: controller.signal },
-      )
+      const next = await call('flow.workspace.bootstrap', input, { signal: controller.signal })
       if (!controller.signal.aborted && requestedCompany === companyId()) {
-        data.set({
-          ...next,
-          columns: next.columns.map((c) =>
-            c.labelKey
-              ? {
-                  ...c,
-                  get label() {
-                    return tr(c.labelKey)
-                  },
-                }
-              : c,
-          ),
-        })
-        if (next.context) {
-          workspaceId.set(next.context.workspaceId)
-          if (next.context.projectId && scopeOf(activeRoute()) === 'project')
-            (modalRoute() ? modalProject : project).set(next.context.projectId)
-          if (typeof location !== 'undefined') {
-            const url = new URL(location.href)
-            url.searchParams.set('company', next.context.companyId)
-            if (next.context.workspaceId) url.searchParams.set('workspace', next.context.workspaceId)
-            else url.searchParams.delete('workspace')
-            if (next.context.projectId && scopeOf(activeRoute()) === 'project')
-              url.searchParams.set('project', next.context.projectId)
-            history.replaceState(history.state, '', url)
-          }
+        // A write finished while this read was out: the read may predate it, and the write's
+        // own read (or patch and revalidation) follows. Keep what the write left.
+        if (written !== writes) return false
+        if (!next.problem) {
+          reads.delete(key)
+          reads.set(key, { value: next, at: Date.now() })
+          if (reads.size > READS_KEPT) reads.delete(reads.keys().next().value)
         }
-        documentContext()
-        failure.set(next.problem ?? null)
-        for (const x of extensions) void x.sync?.()
+        showRead(next)
+        return true
       }
+      return false
     } catch (e) {
-      if (e.name !== 'AbortError') failure.set({ code: e.code, message: e.message })
+      if (e.name !== 'AbortError') {
+        if ((props.serverShell && !primaryReady()) || ['forbidden', 'unauthenticated'].includes(e.code))
+          data.set(null)
+        failure.set({ code: e.code, message: e.message })
+        readFailure.set(true)
+        primaryReady.set(true)
+      }
+      return false
     } finally {
       lifetime?.removeEventListener('abort', abort)
       if (!controller.signal.aborted) loading.set(false)
     }
   }
+  // A read for a screen carries task summaries (`summary: true`). Opening one, in the task
+  // detail or an extension form, reads its body, discussion, history and extension records;
+  // until they arrive the dialog shows them loading, so no editor starts from a text not read.
+  let recordController = null,
+    pendingRecord = ''
+  const recordFailed = signal('')
+  // An extension form opens a task only when the URL names one (`id`); `record()` has a default.
+  const opensTask = (key) => detailKeys.has(key) || (!!extensionForms[key] && recordProvided())
+  const ensureRecord = async () => {
+    const id = record(),
+      task = opensTask(activeRoute()) ? data()?.tasks.find((t) => t.id === id) : null
+    if (!task?.summary || pendingRecord === id) return
+    recordController?.abort()
+    const controller = new AbortController(),
+      requestedCompany = companyId()
+    recordController = controller
+    pendingRecord = id
+    recordFailed.set('')
+    let stale = false
+    try {
+      const value = await call('flow.issue.detail', { id }, { signal: controller.signal })
+      const current = data()?.tasks.find((t) => t.id === id)
+      if (controller.signal.aborted || requestedCompany !== companyId() || !current?.summary) return
+      // A newer read replaced the list meanwhile; read the record again rather than step back.
+      stale = (value.task.version ?? 0) < (current.version ?? 0)
+      if (stale) return
+      data.set(foldRecord(data(), value))
+    } catch (e) {
+      if (e.name !== 'AbortError' && recordController === controller) recordFailed.set(id)
+    } finally {
+      if (recordController === controller) pendingRecord = ''
+      if (stale) void ensureRecord()
+    }
+  }
+  const recordPending = (t) =>
+    !t?.summary
+      ? null
+      : recordFailed() === t.id
+        ? FlowNotice({
+            title: tr('flow.record.loadFailed'),
+            tone: 'red',
+            action: FlowButton({ label: tr('flow.ui.try.again'), onClick: () => void ensureRecord() }),
+          })
+        : FlowLoading({ label: tr('flow.record.loading') })
+  const openTaskPending = () => recordPending(data()?.tasks.find((t) => t.id === record()))
+  const foldRecord = (current, detail) => {
+    const id = detail.task.id,
+      others = (x) => x.taskId !== id
+    let next = {
+      ...current,
+      tasks: current.tasks.map((t) => (t.id === id ? detail.task : t)),
+      comments: [...current.comments.filter(others), ...detail.comments],
+      history: [...current.history.filter(others), ...detail.history],
+    }
+    for (const x of extensions) next = x.recordDetail?.(next, detail) ?? next
+    return next
+  }
+  // A write that changed one task alone returns its detail (`record`). The task is patched
+  // in place, a summary staying a summary, and the screen is read again once writes pause.
+  const patchRecord = (detail) => {
+    const id = detail?.task?.id,
+      local = id == null ? null : data()?.tasks.find((t) => t.id === id)
+    if (!local) return false
+    if (local.summary) {
+      const { description, descriptionDoc, ...summary } = detail.task
+      data.set({
+        ...data(),
+        tasks: data().tasks.map((t) => (t.id === id ? { ...summary, summary: true } : t)),
+      })
+    } else data.set(foldRecord(data(), detail))
+    return true
+  }
+  let revalidation = 0
+  const revalidate = () => {
+    const ticket = ++revalidation
+    setTimeout(() => {
+      if (ticket !== revalidation || lifetime?.aborted) return
+      void mutationTail.then(() => {
+        // A read that began after the last write already brings what it changed.
+        if (readAfterWrite !== writes) void reload()
+      })
+    }, REVALIDATE_MS)
+  }
   const mutate = (name, input = {}, success, opts = {}) => {
     if (!canWrite()) return Promise.resolve(false)
+    // KetJS can delegate submit before our root capture listener. The focused
+    // native form is the same submission boundary for keyboard and pointer use.
+    const submission =
+      submittedForm ??
+      formGuard.submission(
+        host?.ownerDocument.activeElement?.form ?? host?.ownerDocument.activeElement?.closest('form'),
+      )
+    submittedForm = null
     const mutationCompany = companyId()
+    const mutationRoute = activeRoute()
     const execute = async () => {
       if (mutationCompany !== companyId()) return false
       busy.set(true)
       failure.set(null)
+      readFailure.set(false)
       formError.set({})
       try {
         // Input may be async (e.g. uploading file bytes before saving their metadata).
         if (typeof input === 'function') input = await input()
-        const signature = JSON.stringify([name, input])
-        const key = lastOp?.signature === signature ? lastOp.key : crypto.randomUUID()
-        lastOp = { signature, key }
+        const signature = JSON.stringify([mutationCompany, data()?.user?.id, name, input])
+        const key = pendingOperations.get(signature) ?? crypto.randomUUID()
+        pendingOperations.set(signature, key)
         const value = await call(name, { ...input, idempotencyKey: key }, { signal: lifetime, key })
-        lastOp = null
+        if (name === 'flow.issue.bulk' && !normalizeBulkOutcome(value, input.ids ?? [])) {
+          bulkOutcome.set({ invalid: true, applied: 0, refused: [] })
+          throw new FlowApiError(tr('flow.bulk.unknown'), 'bulkResult')
+        }
+        pendingOperations.delete(signature)
+        reads.clear()
         if (mutationCompany !== companyId()) return false
-        await reload()
+        writes++
+        if (patchRecord(value?.record)) revalidate()
+        else await reload()
+        formGuard.accept(submission)
         if (!opts.quiet)
           feedback.show(opts.message ? opts.message(value) : mutationFeedback(name, input, value, data()))
+        // The command and its revalidation have finished. Completion callbacks
+        // may now close a guarded dialog or navigate to the accepted record.
+        busy.set(false)
         if (success) success(value)
         return true
       } catch (e) {
         if (e.name !== 'AbortError') {
-          const claimed = extensionValue('mutationError', e, input)
+          const claimed = e.code === 'bulkResult' ? {} : extensionValue('mutationError', e, input)
           if (!claimed) failure.set({ code: e.code, message: e.message })
           else if (claimed.message) failure.set({ code: e.code, message: claimed.message })
           formError.set(e.fields ?? {})
+          if (Object.keys(e.fields ?? {}).length && typeof requestAnimationFrame === 'function')
+            requestAnimationFrame(() => {
+              if (lifetime?.aborted || mutationCompany !== companyId() || mutationRoute !== activeRoute())
+                return
+              const form =
+                submission?.form ??
+                host?.querySelector('dialog[data-flow-route-modal] form') ??
+                host?.querySelector('[data-flow="shell-main"] form')
+              if (form) {
+                if (runtime?.focusInvalid) runtime.focusInvalid(form)
+                else form.querySelector('[aria-invalid="true"]')?.focus()
+              }
+            })
         }
         return false
       } finally {
@@ -731,7 +1167,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     }
     autosave.edit(task.id, { status: value })
   }
-  const closeModal = () => {
+  const finishCloseModal = () => {
     previewFile.set('')
     if (taskModalRoutes.has(modalRoute()) && !['issue-new', 'subtask-new'].includes(modalRoute()))
       void autosave.flush(record())
@@ -742,11 +1178,31 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       readUrl()
     }
   }
-  const switchContext = async (nextCompany, nextWorkspace = '', afterSave = false) => {
+  const closeModal = () => {
+    if (busy()) return
+    requestLeave(finishCloseModal)
+  }
+  const switchContext = async (nextCompany, nextWorkspace = '', afterSave = false, confirmed = false) => {
+    if (!confirmed && formGuard.hasChanges()) {
+      if (!busy())
+        pendingLeave.set({ action: () => switchContext(nextCompany, nextWorkspace, afterSave, true) })
+      return
+    }
     if (busy() && !afterSave) return
-    if (nextCompany !== companyId()) {
+    if (nextCompany !== companyId() || props.serverShell) {
       await autosave.flushAll()
       if (data()?.tasks.some((t) => autosave.state(t.id) === 'error')) return
+    }
+    if (props.serverShell && mounted) {
+      if (!(await documents.flush())) return
+      location.assign(
+        href(nextWorkspace ? 'workspace-overview' : 'organization', {
+          company: nextCompany,
+          workspace: nextWorkspace,
+          project: '',
+        }),
+      )
+      return
     }
     pendingFiles.set(null)
     previewFile.set('')
@@ -754,6 +1210,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     feedback.clear()
     failure.set(null)
     selected.set([])
+    bulkOutcome.set(null)
     formError.set({})
     data.set(null)
     loading.set(true)
@@ -791,6 +1248,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   const composer = createTaskComposer({
     data,
     canWrite,
+    busy,
     project: activeProject,
     record,
     route: activeRoute,
@@ -824,29 +1282,73 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       loading: busy(),
     })
   const taskOpen = (t) => navigate('issue', { id: t.id, project: t.projectId })
-  const filtered = () =>
-    orderedTasks(data().tasks).filter((t) => {
-      if (screen() === 'issues-archived' ? !t.archived : t.archived) return false
-      if (
-        (['project-issues', 'board', 'calendar', 'bulk', 'filter-limit'].includes(screen()) ||
-          routes[screen()]?.taskSearch) &&
-        t.projectId !== project()
-      )
-        return false
-      const owner = data().projects.find((p) => p.id === t.projectId)
-      if (
-        data().workspaces &&
-        (screen() === 'my-work'
-          ? personalWorkspace() !== 'all' && owner?.workspaceId !== personalWorkspace()
-          : scopeOf(screen()) !== 'project' && owner?.workspaceId !== workspaceId())
-      )
-        return false
-      if (screen() === 'my-work' && !isAssignedTo(data(), t, data().user.id)) return false
-      return (
-        (status() === 'all' || t.status === status()) &&
-        tidy(`${t.id} ${t.title} ${taskAssigneeNames(data(), t)}`).includes(tidy(query()))
-      )
-    })
+  // Last-value caches for the task model. Inputs are signal values (data is replaced,
+  // never edited in place), so re-renders that change none of them skip the scan.
+  const cached = (inputs, compute) => {
+    let last, value
+    return () => {
+      const now = inputs()
+      if (!last || now.some((x, i) => x !== last[i])) {
+        last = now
+        value = compute()
+      }
+      return value
+    }
+  }
+  const taskById = cached(
+    () => [data()],
+    () => new Map(data().tasks.map((t) => [t.id, t])),
+  )
+  const projectById = cached(
+    () => [data()],
+    () => new Map(data().projects.map((p) => [p.id, p])),
+  )
+  const filtered = cached(
+    () => [data(), screen(), project(), workspaceId(), personalWorkspace(), status(), query()],
+    () => {
+      const needle = tidy(query()),
+        projects = projectById()
+      return orderedTasks(data().tasks).filter((t) => {
+        if (screen() === 'issues-archived' ? !t.archived : t.archived) return false
+        if (
+          (['project-issues', 'board', 'calendar', 'bulk', 'filter-limit'].includes(screen()) ||
+            routes[screen()]?.taskSearch) &&
+          t.projectId !== project()
+        )
+          return false
+        const owner = projects.get(t.projectId)
+        if (
+          data().workspaces &&
+          (screen() === 'my-work'
+            ? personalWorkspace() !== 'all' && owner?.workspaceId !== personalWorkspace()
+            : scopeOf(screen()) !== 'project' && owner?.workspaceId !== workspaceId())
+        )
+          return false
+        if (screen() === 'my-work' && !isAssignedTo(data(), t, data().user.id)) return false
+        return (
+          (status() === 'all' || t.status === status()) &&
+          (!needle || tidy(`${t.id} ${t.title} ${taskAssigneeNames(data(), t)}`).includes(needle))
+        )
+      })
+    },
+  )
+  // One pass per task list and grouping field instead of one filter per group or column.
+  const groupCache = new WeakMap()
+  const tasksIn = (tasks, field, value) => {
+    let byField = groupCache.get(tasks)
+    if (!byField) groupCache.set(tasks, (byField = new Map()))
+    let groups = byField.get(field)
+    if (!groups) {
+      groups = new Map()
+      for (const t of tasks) {
+        const key = taskGroupValue(t, field)
+        if (groups.has(key)) groups.get(key).push(t)
+        else groups.set(key, [t])
+      }
+      byField.set(field, groups)
+    }
+    return groups.get(value) ?? []
+  }
   const setFilter = (setter, value) => {
     setter.set(value)
     selectedView.set('')
@@ -857,13 +1359,31 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     url.searchParams.set('status', status())
     history.replaceState({}, '', url)
   }
+  const clearListFilters = () => {
+    batch(() => {
+      query.set('')
+      status.set('all')
+      selectedView.set('')
+      selected.set([])
+      if (screen() === 'my-work') personalWorkspace.set('all')
+    })
+    const url = new URL(location.href)
+    for (const key of ['q', 'status', 'view']) url.searchParams.delete(key)
+    if (screen() === 'my-work') url.searchParams.delete('workspaceFilter')
+    history.replaceState(history.state, '', url)
+  }
   const taskGrouping = () => (screen() === 'board' && groupBy() === 'none' ? 'status' : groupBy())
+  const selectedInView = cached(
+    () => [filtered(), selected()],
+    () => orderedTasks(filtered().filter((t) => selected().includes(t.id))),
+  )
+  // Every row asks for its drag count, so a single task is an index lookup, not a scan.
   const draggedTasks = (id) =>
-    orderedTasks(
-      listKeys.has(screen()) && selected().includes(id)
-        ? filtered().filter((t) => selected().includes(t.id))
-        : data().tasks.filter((t) => t.id === id),
-    )
+    listKeys.has(screen()) && selected().includes(id)
+      ? selectedInView()
+      : taskById().has(id)
+        ? [taskById().get(id)]
+        : []
   const dragRejection = (id, field, value) => {
     const moving = draggedTasks(id)
     if (!moving.length) return ''
@@ -911,9 +1431,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       expectedOrderRevision: data().taskOrderRevision ?? 0,
     })
   }
-  const dropAtEnd = (id, field, value) => {
+  // `within` limits "end" to the cards shown, so a drop on a bounded column stays in view.
+  const dropAtEnd = (id, field, value, within = filtered()) => {
     const moving = new Set(draggedTasks(id).map((t) => t.id))
-    const peers = filtered().filter((t) => !moving.has(t.id) && taskGroupValue(t, field) === value)
+    const peers = within.filter((t) => !moving.has(t.id) && taskGroupValue(t, field) === value)
     return reorderTask(id, peers.at(-1)?.id ?? null, 'after', field, value)
   }
   const taskDragProps = (t, field) =>
@@ -941,6 +1462,16 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             }
           },
         }
+  // One row menu is open at a time; only its options are built. Closing another
+  // menu (auto popovers close each other in either order) never clears this one.
+  const openRowMenu = signal('')
+  const rowMenu = (id) => ({
+    open: openRowMenu() === id,
+    onToggle: (open) => {
+      if (open) openRowMenu.set(id)
+      else if (openRowMenu.peek() === id) openRowMenu.set('')
+    },
+  })
   const table = (
     tasks,
     dragField = null,
@@ -949,9 +1480,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     preserveOrder = false,
   ) =>
     FlowTable({
+      layout: 'tasks',
       label: tr('flow.ui.tasks'),
       columns: [
         FlowCheckbox({
+          target: 'standalone',
           label: tr('flow.ui.select.all.tasks.in.group'),
           checked: tasks.length > 0 && tasks.every((t) => selected().includes(t.id)),
           indeterminate:
@@ -987,6 +1520,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             task: { ...mapped(t), project: t.projectId === contextProject ? '' : mapped(t).project },
             assigneeControl: FlowUserPicker({
               id: tableId + '-assignees-' + t.id,
+              menu: rowMenu(tableId + '-assignees-' + t.id),
               label: tr('flow.ui.assignee.312f99') + t.id,
               size: 'sm',
               value: taskAssigneeIds(data(), t),
@@ -996,6 +1530,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             }),
             statusControl: FlowChoiceField({
               id: tableId + '-status-' + t.id,
+              menu: rowMenu(tableId + '-status-' + t.id),
               label: tr('flow.ui.status.6bb83a') + t.id,
               size: 'sm',
               value: t.status,
@@ -1005,6 +1540,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             }),
             priorityControl: FlowChoiceField({
               id: tableId + '-priority-' + t.id,
+              menu: rowMenu(tableId + '-priority-' + t.id),
               label: tr('flow.ui.priority.e2ea65') + t.id,
               size: 'sm',
               value: t.priority,
@@ -1019,6 +1555,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             dueControl: FlowDateField({
               overdue: !isDone(data(), t) && !!t.dueDate && t.dueDate < todayDate(data().timezone),
               id: tableId + '-due-' + t.id,
+              menu: rowMenu(tableId + '-due-' + t.id),
               label: tr('flow.ui.due.date.fe6fe5') + t.id,
               value: t.dueDate ?? '',
               min: t.startDate || undefined,
@@ -1036,29 +1573,35 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         },
       )}`,
     })
-  const metrics = (tasks) =>
-    FlowMetrics({
+  // One pass per task list; today is read once, not once per task.
+  const metricCache = new WeakMap()
+  const metricCounts = (tasks) => {
+    const today = todayDate(data().timezone),
+      hit = metricCache.get(tasks)
+    if (hit?.today === today) return hit
+    const counts = { today, progress: 0, review: 0, done: 0, overdue: 0 }
+    for (const t of tasks) {
+      const done = isDone(data(), t)
+      if (t.status === 'progress') counts.progress++
+      if (statusKind(data(), t) === 'review') counts.review++
+      if (done) counts.done++
+      else if (t.dueDate && t.dueDate < today) counts.overdue++
+    }
+    metricCache.set(tasks, counts)
+    return counts
+  }
+  const metrics = (tasks) => {
+    const counts = metricCounts(tasks)
+    return FlowMetrics({
       items: [
         { label: tr('flow.ui.total.tasks'), value: tasks.length },
-        { label: tr('flow.ui.in.progress'), value: tasks.filter((t) => t.status === 'progress').length },
-        {
-          label: tr('flow.ui.awaiting.acceptance.9782f0'),
-          value: tasks.filter((t) => statusKind(data(), t) === 'review').length,
-        },
-        {
-          label: tr('flow.ui.done'),
-          value: tasks.filter((t) => isDone(data(), t)).length,
-          tone: 'green',
-        },
-        {
-          label: tr('flow.ui.overdue'),
-          value: tasks.filter(
-            (t) => !isDone(data(), t) && t.dueDate && t.dueDate < todayDate(data().timezone),
-          ).length,
-          tone: 'red',
-        },
+        { label: tr('flow.ui.in.progress'), value: counts.progress },
+        { label: tr('flow.ui.awaiting.acceptance.9782f0'), value: counts.review },
+        { label: tr('flow.ui.done'), value: counts.done, tone: 'green' },
+        { label: tr('flow.ui.overdue'), value: counts.overdue, tone: 'red' },
       ],
     })
+  }
   const groupOptions = () => [
     { value: 'status', label: tr('flow.ui.group.status') },
     { value: 'priority', label: tr('flow.ui.group.priority') },
@@ -1066,14 +1609,21 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     { value: 'sprint', label: tr('flow.ui.group.sprint') },
     { value: 'none', label: tr('flow.ui.no.grouping') },
   ]
-  const changeGroup = (value) => {
-    groupBy.set(value)
+  const setListPresentationURL = (name, value) => {
     const url = new URL(modalRoute() ? modalBackground.url : location.href, location.href)
-    url.searchParams.set('group', value)
+    url.searchParams.set(name, value)
     if (modalRoute()) {
       modalBackground = { ...modalBackground, url: url.pathname + url.search }
       history.replaceState({ ...history.state, flowBackground: modalBackground }, '', location.href)
     } else history.replaceState(history.state, '', url)
+  }
+  const changeGroup = (value) => {
+    groupBy.set(value)
+    setListPresentationURL('group', value)
+  }
+  const changeSort = (value) => {
+    listSort.set(value)
+    setListPresentationURL('sort', value)
   }
   const workspaceFilter = () =>
     FlowSelect({
@@ -1090,15 +1640,6 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         history.replaceState(history.state, '', u)
       },
     })
-  const taskSearch = () =>
-    FlowSearch({
-      label: tr('flow.ui.search.tasks'),
-      value: query(),
-      placeholder: tr('flow.ui.search.by.name.id.or.assignee'),
-      onInput: (e) => setFilter(query, e.target.value),
-    })
-  const hasTaskSearch = () =>
-    listKeys.has(screen()) || ['board', 'calendar'].includes(screen()) || routes[screen()]?.taskSearch
   const filterbar = () =>
     FlowToolbar({
       children: html`${data().views.find((v) => v.id === (typeof location !== 'undefined' ? new URL(location.href).searchParams.get('view') : props.view)) ? FlowHint({ children: tr('flow.review.viewConditions', [data().views.find((v) => v.id === (typeof location !== 'undefined' ? new URL(location.href).searchParams.get('view') : props.view))?.title, query() || '—', data().columns.find((c) => c.id === status())?.label ?? tr('flow.ui.all.statuses')]) }) : null}${screen() === 'my-work' && data().workspaces ? workspaceFilter() : null}${FlowSelect({ label: tr('flow.ui.filter.status'), value: status(), options: [{ value: 'all', label: tr('flow.ui.all.statuses') }, ...(scopeOf(screen()) === 'project' ? taskColumns(data(), project()) : data().columns).map((c) => ({ value: c.id, label: c.label }))], onChange: (e) => setFilter(status, e.target.value) })}`,
@@ -1120,7 +1661,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 { value: 'priority', label: tr('flow.list.sortPriority') },
                 { value: 'manual', label: tr('flow.list.sortManual') },
               ],
-              onChange: (e) => listSort.set(e.target.value),
+              onChange: (e) => changeSort(e.target.value),
             })
           : null,
         navButton('display', tr('flow.ui.display'), 'settings'),
@@ -1137,9 +1678,17 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     listLimits = signal({})
   const bulkPreview = signal(false),
     bulkStatus = signal('done'),
+    bulkOutcome = signal(null),
+    bulkRecovering = signal(false),
     showCompleted = signal(false)
-  const bulkExclusion = (t) =>
-    !taskColumns(data(), t.projectId).some((c) => c.id === bulkStatus())
+  const bulkWriteInput = () => ({ ids: [...selected()], action: 'move', value: bulkStatus() })
+  const hasPendingBulk = () =>
+    pendingOperations.has(
+      JSON.stringify([companyId(), data()?.user?.id, 'flow.issue.bulk', bulkWriteInput()]),
+    )
+  const bulkExclusion = (t) => {
+    if (t.status === bulkStatus() && !hasPendingBulk()) return tr('flow.bulk.noChange')
+    const reason = !taskColumns(data(), t.projectId).some((c) => c.id === bulkStatus())
       ? tr('flow.ui.different.project.status.set')
       : data().projects.find((p) => p.id === t.projectId)?.accessInfo?.role === 'viewer'
         ? tr('flow.ui.view.only')
@@ -1154,8 +1703,17 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             ? tr('flow.ui.blocked')
             : validateCustomFields(data().fields, t.customFields, t.projectId, true)
           : null
+    const gate = transitionFor(t, bulkStatus())
+    return reason || (gate?.blocked || gate?.action ? (gate.message ?? tr('flow.bulk.reason.other')) : null)
+  }
+  const eligibleBulkTasks = () =>
+    data().tasks.filter((task) => selected().includes(task.id) && !bulkExclusion(task))
+  const listTasks = cached(
+    () => [filtered(), listSort()],
+    () => sortedListTasks(filtered(), listSort()),
+  )
   const issueList = () => {
-    const tasks = sortedListTasks(filtered(), listSort())
+    const tasks = listTasks()
     const scopeKey = JSON.stringify([
       companyId(),
       workspaceId(),
@@ -1172,7 +1730,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         ? [{ id: 'none', items: tasks }]
         : taskGroups(data(), groupBy(), scopeOf(screen()) === 'project' ? project() : undefined).map((c) => ({
             ...c,
-            items: tasks.filter((t) => taskGroupValue(t, groupBy()) === c.id),
+            items: tasksIn(tasks, groupBy(), c.id),
           }))
     const visibleTasks = listGroups.flatMap(
       (c) => taskPage(c.items, listLimits()[scopeKey + ':' + c.id] ?? 10).visible,
@@ -1181,7 +1739,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       const key = scopeKey + ':' + id,
         limit = listLimits()[key] ?? 10
       const page = taskPage(items, limit)
-      return stack(
+      const parts = [
         table(
           page.visible,
           groupBy(),
@@ -1191,6 +1749,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         ),
         items.length > 10
           ? FlowToolbar({
+              inset: 'none',
               children: FlowHint({ children: tr('flow.list.showing', [page.visible.length, items.length]) }),
               trailing: inline(
                 page.remaining
@@ -1210,10 +1769,75 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               ),
             })
           : null,
-      )
+      ]
+      return FlowStack({
+        inset: id === 'none' ? 'page' : 'none',
+        children: each(
+          parts,
+          (_, i) => i,
+          (part) => html`${part}`,
+        ),
+      })
     }
     return stack(
       filterbar(),
+      bulkOutcome()
+        ? FlowSection({
+            children: FlowNotice({
+              title: tr('flow.bulk.resultTitle'),
+              tone: bulkOutcome().invalid ? 'red' : bulkOutcome().refused.length ? 'yellow' : 'green',
+              message: bulkOutcome().invalid
+                ? tr('flow.bulk.unknown')
+                : bulkOutcome().refused.length
+                  ? tr('flow.bulk.result', [bulkOutcome().applied, bulkOutcome().refused.length])
+                  : tr('flow.bulk.complete', [bulkOutcome().applied]),
+              action: bulkOutcome().invalid
+                ? FlowButton({
+                    label: tr('flow.bulk.reload'),
+                    loading: bulkRecovering(),
+                    disabled: busy(),
+                    onClick: async () => {
+                      bulkRecovering.set(true)
+                      try {
+                        if (await reload()) bulkOutcome.set(null)
+                      } finally {
+                        bulkRecovering.set(false)
+                      }
+                    },
+                  })
+                : undefined,
+              children: bulkOutcome().invalid
+                ? undefined
+                : stack(
+                    FlowHint({
+                      children: bulkOutcome().refused.length
+                        ? tr('flow.bulk.result', [bulkOutcome().applied, bulkOutcome().refused.length])
+                        : tr('flow.bulk.complete', [bulkOutcome().applied]),
+                    }),
+                    bulkOutcome().refused.length
+                      ? FlowList({
+                          children: each(
+                            bulkOutcome().refused,
+                            (r) => r.id,
+                            (r) =>
+                              FlowListItem({
+                                title: r.id,
+                                description: tr(bulkReasonKey(r.code, extensionErrors)),
+                                actions: data().tasks.some((t) => t.id === r.id)
+                                  ? FlowButton({
+                                      label: tr('flow.ui.open.task'),
+                                      size: 'sm',
+                                      onClick: () => navigate('issue', { id: r.id }),
+                                    })
+                                  : null,
+                              }),
+                          ),
+                        })
+                      : null,
+                  ),
+            }),
+          })
+        : null,
       query() || status() !== 'all'
         ? FlowToolbar({
             children: inline(
@@ -1225,10 +1849,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             trailing: FlowButton({
               label: tr('flow.ui.clear.all.filters'),
               size: 'sm',
-              onClick: () => {
-                setFilter(query, '')
-                setFilter(status, 'all')
-              },
+              onClick: clearListFilters,
             }),
           })
         : null,
@@ -1241,7 +1862,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                   taskGroups(data(), groupBy(), scopeOf(screen()) === 'project' ? project() : undefined),
                   (c) => c.id,
                   (c) => {
-                    const group = tasks.filter((t) => taskGroupValue(t, groupBy()) === c.id)
+                    const group = tasksIn(tasks, groupBy(), c.id)
                     return FlowGroup({
                       title: c.kind
                         ? FlowStatus({ status: c.kind, label: c.label, color: c.color })
@@ -1262,10 +1883,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             description: tr('flow.ui.change.filters.or.create.your.first.task'),
             action: FlowButton({
               label: tr('flow.ui.clear.filters'),
-              onClick: () => {
-                setFilter(query, '')
-                setFilter(status, 'all')
-              },
+              onClick: clearListFilters,
             }),
           }),
       screen() === 'issues-archived'
@@ -1295,10 +1913,13 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 onChange: (e) => bulkStatus.set(e.target.value),
               }),
               FlowHint({
-                children: tr(
-                  'flow.ui.tasks.selected.blocked.tasks.cannot.be.completed.open.them.to.resolve.dependenci',
-                  [selected().length],
-                ),
+                children: tr('flow.bulk.previewHelp', [selected().length]),
+              }),
+              FlowHint({
+                children: tr('flow.bulk.previewCount', [
+                  eligibleBulkTasks().length,
+                  selected().length - eligibleBulkTasks().length,
+                ]),
               }),
               FlowList({
                 children: html`${each(
@@ -1307,30 +1928,52 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                   (t) =>
                     FlowListItem({
                       title: t.id + ' · ' + t.title,
+                      description: html`${data().columns.find((column) => column.id === t.status)?.label ?? t.status} → ${data().columns.find((column) => column.id === bulkStatus())?.label ?? bulkStatus()}. ${bulkExclusion(t) ?? tr('flow.bulk.previewReady')}`,
                       meta: FlowTag({
-                        label: bulkExclusion(t)
-                          ? tr('flow.ui.excluded') + bulkExclusion(t)
-                          : tr('flow.ui.will.update'),
+                        label: bulkExclusion(t) ? tr('flow.bulk.previewReview') : tr('flow.ui.will.update'),
+                        tone: bulkExclusion(t) ? 'yellow' : 'neutral',
                       }),
                     }),
                 )}`,
               }),
               actions(
                 FlowButton({ label: tr('flow.ui.cancel'), onClick: () => bulkPreview.set(false) }),
-                action(
-                  tr('flow.ui.apply'),
-                  () => {
-                    const ids = data()
-                      .tasks.filter((t) => selected().includes(t.id) && !bulkExclusion(t))
-                      .map((t) => t.id)
+                FlowButton({
+                  label: tr('flow.ui.apply'),
+                  variant: 'primary',
+                  disabled:
+                    !canWrite() ||
+                    !eligibleBulkTasks().length ||
+                    !!bulkOutcome()?.invalid ||
+                    bulkRecovering(),
+                  disabledReason: bulkOutcome()?.invalid ? tr('flow.bulk.unknown') : undefined,
+                  loading: busy(),
+                  onClick: () => {
+                    if (
+                      !canWrite() ||
+                      busy() ||
+                      !eligibleBulkTasks().length ||
+                      bulkOutcome()?.invalid ||
+                      bulkRecovering()
+                    )
+                      return
+                    // Preview is advisory. The server validates every selected
+                    // ID and reports refusals, including stale/missing tasks.
+                    const ids = [...selected()]
                     if (ids.length)
-                      mutate('flow.issue.bulk', { ids, status: bulkStatus() }, () => {
-                        selected.set(selected().filter((id) => !ids.includes(id)))
-                        bulkPreview.set(false)
-                      })
+                      mutate(
+                        'flow.issue.bulk',
+                        bulkWriteInput(),
+                        (value) => {
+                          const outcome = normalizeBulkOutcome(value, ids)
+                          selected.set(selectionAfterBulk(selected(), ids, outcome))
+                          bulkOutcome.set(outcome ?? { invalid: true, applied: 0, refused: [] })
+                          bulkPreview.set(selected().length > 0)
+                        },
+                        { quiet: true },
+                      )
                   },
-                  'primary',
-                ),
+                }),
               ),
             ),
           })
@@ -1339,6 +1982,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         ? FlowToolbar({
             children: inline(
               FlowCheckbox({
+                target: 'standalone',
                 label: tr('flow.ui.select.all.visible.tasks'),
                 checked: visibleTasks.length > 0 && visibleTasks.every((t) => selected().includes(t.id)),
                 onChange: () =>
@@ -1361,37 +2005,74 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         : null,
     )
   }
-  const board = () =>
-    stack(
+  // Columns show a bounded page of cards; the header keeps the column total.
+  const BOARD_PAGE = 20
+  const boardLimits = signal({})
+  const board = () => {
+    const field = taskGrouping()
+    const scope = JSON.stringify([companyId(), workspaceId(), project(), query(), status(), field])
+    return stack(
       filterbar(),
       FlowBoard({
-        columns: taskGroups(data(), taskGrouping(), project()).map((c) => {
-          const field = taskGrouping()
-          const tasks = filtered().filter((t) => taskGroupValue(t, field) === c.id)
+        columns: taskGroups(data(), field, project()).map((c) => {
+          const tasks = tasksIn(filtered(), field, c.id)
+          const done = field === 'status' && c.kind === 'done',
+            key = scope + ':' + c.id,
+            folded = done && !showCompleted(),
+            limit = folded ? 3 : (boardLimits()[key] ?? BOARD_PAGE),
+            page = taskPage(tasks, limit)
           return {
             id: c.id,
             title: c.kind ? FlowStatus({ status: c.kind, label: c.label, color: c.color }) : c.label,
             count: tasks.length,
             onDragCheck: (id) => dragRejection(id, field, c.id),
-            onDropTask: canWrite() && !busy() ? (id) => dropAtEnd(id, field, c.id) : undefined,
+            onDropTask:
+              canWrite() && !busy()
+                ? (id) => {
+                    const moved = draggedTasks(id).length
+                    const pending = dropAtEnd(id, field, c.id, folded ? undefined : page.visible)
+                    // Grow the page by the moved cards so they and the cards above stay shown.
+                    if (pending && !folded && page.remaining)
+                      boardLimits.set({ ...boardLimits(), [key]: limit + moved })
+                    return pending
+                  }
+                : undefined,
             children: stack(
               html`${each(
-                field === 'status' && c.kind === 'done' && !showCompleted() ? tasks.slice(0, 3) : tasks,
+                page.visible,
                 (t) => t.id,
                 (t) =>
                   FlowTaskCard({
                     task: { ...mapped(t), project: undefined },
+                    statusHint: extensionValue('taskStatusHint', t),
                     onOpen: () => taskOpen(t),
                     ...taskDragProps(t, field),
                   }),
               )}`,
-              field === 'status' && c.kind === 'done' && tasks.length > 3
+              !folded && page.remaining
+                ? FlowButton({
+                    label: tr('flow.list.showMore', [Math.min(BOARD_PAGE, page.remaining), page.remaining]),
+                    size: 'sm',
+                    onClick: () => boardLimits.set({ ...boardLimits(), [key]: limit + BOARD_PAGE }),
+                  })
+                : null,
+              !done && limit > BOARD_PAGE
+                ? FlowButton({
+                    label: tr('flow.ui.collapse'),
+                    size: 'sm',
+                    onClick: () => boardLimits.set({ ...boardLimits(), [key]: BOARD_PAGE }),
+                  })
+                : null,
+              done && tasks.length > 3
                 ? FlowButton({
                     label: showCompleted()
                       ? tr('flow.ui.collapse')
                       : tr('flow.ui.show') + (tasks.length - 3) + tr('flow.ui.completed.tasks'),
                     size: 'sm',
-                    onClick: () => showCompleted.set(!showCompleted()),
+                    onClick: () => {
+                      if (showCompleted()) boardLimits.set({ ...boardLimits(), [key]: BOARD_PAGE })
+                      showCompleted.set(!showCompleted())
+                    },
                   })
                 : null,
             ),
@@ -1399,6 +2080,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         }),
       }),
     )
+  }
   const taskDetail = () => {
     const t = currentTask()
     if (!t)
@@ -1407,6 +2089,9 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         description: tr('flow.ui.this.task.may.have.been.moved.or.archived'),
       })
     const children = data().tasks.filter((x) => x.parentId === t.id)
+    const epic = taskEpic(data().epics, t)
+    // A summary has no body or discussion yet; never offer an editor over a text not read.
+    const pending = recordPending(t)
     return FlowRecordLayout({
       main: stack(
         FlowToolbar({
@@ -1415,9 +2100,15 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             FlowTag({
               label: data().types.find((x) => x.id === (t.type ?? 'task'))?.title ?? tr('flow.ui.tasks'),
             }),
-            FlowTag({ label: t.epic ?? tr('flow.ui.no.epic') }),
+            FlowTag({ label: epic?.title ?? tr(t.epic ? 'flow.record.notFound' : 'flow.ui.no.epic') }),
           ),
           trailing: inline(
+            canWrite()
+              ? navButton('board-move', tr('flow.ui.change.status'), 'status', 'ghost', {
+                  id: t.id,
+                  project: t.projectId,
+                })
+              : null,
             action(
               t.followed ? tr('flow.ui.following') : tr('flow.ui.follow'),
               () => mutate('flow.issue.follow', { id: t.id }),
@@ -1439,20 +2130,21 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               onInput: (e) => autosave.edit(t.id, { title: e.target.value }, { delay: 600 }),
               onBlur: () => autosave.flush(t.id),
             }),
-            FlowLiveDoc({
-              id: `${companyId()}-task-${t.id}`,
-              label: tr('flow.ui.description'),
-              text: t.description,
-              snapshot: t.descriptionDoc,
-              readOnly: !canWrite(),
-              onChange: (value) =>
-                autosave.edit(
-                  t.id,
-                  { description: FlowLiveDocText(value), descriptionDoc: value.snapshot },
-                  { delay: 600 },
-                ),
-              onBlur: () => autosave.flush(t.id),
-            }),
+            pending ??
+              FlowLiveDoc({
+                id: `${companyId()}-task-${t.id}`,
+                label: tr('flow.ui.description'),
+                text: t.description,
+                snapshot: t.descriptionDoc,
+                readOnly: !canWrite(),
+                onChange: (value) =>
+                  autosave.edit(
+                    t.id,
+                    { description: FlowLiveDocText(value), descriptionDoc: value.snapshot },
+                    { delay: 600 },
+                  ),
+                onBlur: () => autosave.flush(t.id),
+              }),
             navButton('history', tr('flow.ui.change.history'), 'clock', 'ghost', { id: t.id }),
             t.followed
               ? FlowHint({
@@ -1463,7 +2155,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               : null,
           ),
         }),
-        ...extensions.map((x) => x.taskSection?.(t) ?? null),
+        ...(t.summary ? [] : extensions.map((x) => x.taskSection?.(t) ?? null)),
         t.checklist?.length
           ? FlowSection({
               title: 'Checklist',
@@ -1471,6 +2163,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 ...t.checklist.map((item) =>
                   inline(
                     FlowCheckbox({
+                      target: 'standalone',
                       label: item.text,
                       checked: item.checked,
                       disabled: !canWrite(),
@@ -1569,25 +2262,27 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         FlowSection({
           title: activeRoute() === 'history' ? tr('flow.ui.change.history') : tr('flow.ui.discussion'),
           children: stack(
-            FlowActivity({
-              items:
-                activeRoute() === 'history'
-                  ? data()
-                      .history.filter((h) => h.taskId === t.id)
-                      .map((h) => ({
-                        ...h,
-                        messageKey: h.changes ? null : h.messageKey,
-                        text: h.changes
-                          ? tr('flow.review.taskUpdated', [h.version]) +
-                            ' · ' +
-                            h.changes.map((c) => auditChange(c, data())).join('; ')
-                          : h.text,
-                        time: h.time?.includes('T')
-                          ? new Date(h.time).toLocaleString(flowLocaleTag())
-                          : h.time,
-                      }))
-                  : data().comments.filter((c) => c.taskId === t.id),
-            }),
+            t.summary
+              ? null
+              : FlowActivity({
+                  items:
+                    activeRoute() === 'history'
+                      ? data()
+                          .history.filter((h) => h.taskId === t.id)
+                          .map((h) => ({
+                            ...h,
+                            messageKey: h.changes ? null : h.messageKey,
+                            text: h.changes
+                              ? tr('flow.review.taskUpdated', [h.version]) +
+                                ' · ' +
+                                h.changes.map((c) => auditChange(c, data())).join('; ')
+                              : h.text,
+                            time: h.time?.includes('T')
+                              ? new Date(h.time).toLocaleString(flowLocaleTag())
+                              : h.time,
+                          }))
+                      : data().comments.filter((c) => c.taskId === t.id),
+                }),
             html`<form
               on:submit=${async (e) => {
                 e.preventDefault()
@@ -1596,7 +2291,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 if (await mutate('flow.issue.comment', { id: t.id, text: v.comment })) form.reset()
               }}
             >
-              ${stack(FlowTextarea({ id: 'comment', label: tr('flow.ui.comment'), placeholder: tr('flow.ui.write.a.reply.or.mention.someone'), required: true, disabled: !canWrite() }), submit(tr('flow.ui.post.comment')))}
+              ${stack(FlowTextarea({ id: 'comment', label: tr('flow.ui.comment'), placeholder: tr('flow.ui.write.a.reply.or.mention.someone'), required: true, error: formError().text, disabled: !canWrite() || busy() }), submit(tr('flow.ui.post.comment')))}
             </form>`,
           ),
         }),
@@ -1644,7 +2339,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 options: options([
                   'Backlog',
                   ...data()
-                    .sprints.filter((s) => s.projectId === t.projectId)
+                    .sprints.filter(
+                      (s) =>
+                        s.projectId === t.projectId &&
+                        (s.title === t.sprint || (!s.archived && ['planned', 'active'].includes(s.state))),
+                    )
                     .map((s) => s.title),
                 ]),
                 onChange: (e) => autosave.edit(t.id, { sprint: e.target.value }),
@@ -1694,12 +2393,13 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             name: 'task-epic',
             label: tr('flow.review.epic'),
             icon: 'layers',
-            value: t.epic ?? '',
+            value: epic?.id ?? t.epic ?? '',
             disabled: !canWrite(),
             options: [
               { value: '', label: tr('flow.ui.not.linked') },
+              ...(t.epic && !epic ? [{ value: t.epic, label: tr('flow.record.notFound') }] : []),
               ...data()
-                .epics.filter((e) => e.projectId === t.projectId)
+                .epics.filter((e) => e.projectId === t.projectId && (!e.archived || e.id === epic?.id))
                 .map((e) => ({ value: e.id, label: e.title })),
             ],
             onChange: (e) => autosave.edit(t.id, { epic: e.target.value || null }),
@@ -1794,135 +2494,128 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     canWrite,
     busy,
     errors: formError,
-    close: closeModal,
+    feedback: () => feedbackToast('inline'),
+    close: () =>
+      activeRoute() === 'project-profile' ? navigate('settings', { project: activeProject() }) : closeModal(),
     save: (args, editing) =>
       mutate('flow.entity.save', args, (value) => {
         projectSetup.reset()
-        if (editing) closeModal()
-        else navigate(args.defaultView, { project: value.id, workspace: args.workspaceId }, { replace: true })
+        if (editing) navigate('settings', { project: args.projectId }, { replace: true, confirmed: true })
+        else
+          navigate(
+            args.defaultView,
+            { project: value.id, workspace: args.workspaceId },
+            { replace: true, confirmed: true },
+          )
       }),
   })
   const tagPreview = signal(null),
-    fieldKind = signal('text'),
-    columnKind = signal('todo')
-  const pageDocDrafts = new Map()
+    fieldKind = signal(null),
+    columnKind = signal(null)
   const kanbanProject = () =>
     FlowEmpty({
       title: tr('flow.cadence.off.title'),
       description: tr('flow.cadence.off.description'),
-      action: canManageScope(data(), 'project', project())
+      action: canManageScope(data(), 'project', activeProject())
         ? navButton('project-profile', tr('flow.cadence.off.action'), 'settings', 'secondary')
         : null,
     })
-  const recordForm = () => {
-    if (['project-new', 'project-profile'].includes(activeRoute())) return projectSetup.view()
-    if (activeRoute() === 'sprint-new' && !usesSprints(selectedProject()))
-      return sheet(formDefinitions['sprint-new'].title, kanbanProject(), 'sprints')
-    const original = formDefinitions[activeRoute()]
-    const def = {
-      ...original,
-      ...(original.collection === 'pages' ? { back: activeRoute() === 'page-child' ? 'page' : 'pages' } : {}),
+  const recordForm = ({ separateActions = false } = {}) => {
+    if (['project-new', 'project-profile'].includes(activeRoute()))
+      return projectSetup.view({
+        separateActions,
+        layout: activeRoute() === 'project-profile' ? 'page' : 'embedded',
+      })
+    // The guard reads the project the form writes to, not the background screen's project.
+    if (
+      activeRoute() === 'sprint-new' &&
+      !usesSprints(data()?.projects.find((x) => x.id === activeProject()))
+    ) {
+      const body = kanbanProject()
+      return separateActions
+        ? { body, footer: null }
+        : sheet(formDefinitions['sprint-new'].title, body, 'sprints')
     }
-    const parentPage = activeRoute() === 'page-child' ? data().pages.find((p) => p.id === record()) : null
+    const def = formDefinitions[activeRoute()]
     const p = data().projects.find((x) => x.id === activeProject())
-    const tag = activeRoute() === 'tag-edit' ? data().tags.find((x) => x.id === record()) : null
+    const catalog = ['columns', 'types', 'fields', 'tags'].includes(def.collection)
+    const held = catalog ? data()[def.collection]?.find((x) => x.id === record()) : null
+    const tag = activeRoute() === 'tag-edit' ? held : null
+    if (catalog && recordProvided() && !held) {
+      const body = FlowEmpty({
+        title: tr('flow.catalog.notFound'),
+        description: tr('flow.catalog.notFoundHelp'),
+        action: FlowButton({ label: tr('flow.ui.cancel'), onClick: closeModal }),
+      })
+      return separateActions ? { body, footer: null } : sheet(def.title, body, def.back)
+    }
+    const editable = canWrite() && (!catalog || canManageScope(data(), 'company', companyId()))
+    const selectedFieldKind = fieldKind() ?? held?.kind ?? 'text'
+    const selectedColumnKind = columnKind() ?? held?.kind ?? 'todo'
     const upcoming =
       activeRoute() === 'sprint-new'
         ? nextSprint(data(), selectedProject(), todayDate(data().timezone))
         : null
-    const pageDraftKey = `${companyId()}:${activeRoute()}:${record()}:${activeProject()}`
-    if (!pageDocDrafts.has(pageDraftKey)) pageDocDrafts.set(pageDraftKey, {})
-    const pageDraft = pageDocDrafts.get(pageDraftKey)
-    return sheet(
-      def.title,
-      html`<form
+    const footer = actions(
+      formModalRoutes.has(modalRoute())
+        ? FlowButton({ label: tr('flow.ui.cancel'), onClick: closeModal, disabled: busy() })
+        : navButton(def.back, tr('flow.ui.cancel')),
+      FlowButton({
+        label: held ? tr('flow.ui.save.changes') : def.title,
+        type: 'submit',
+        form: 'flow-record-form',
+        variant: 'primary',
+        disabled: !editable,
+        loading: busy(),
+      }),
+    )
+    const body = html`<form
+        id="flow-record-form"
+        data-flow-record-form
         on:submit=${(e) => {
           e.preventDefault()
-          const values = { ...collect(e), ...(def.collection === 'pages' ? pageDraft : {}) }
+          if (!editable || busy()) return
+          const values = collect(e)
           const args = {
             ...values,
-            ...(def.collection === 'pages' && !values.description && values.template
-              ? {
-                  description: {
-                    brief: tr('flow.ui.goal.scope.deliverables.and.acceptance.criteria.owner'),
-                    meeting: tr('flow.ui.meeting.purpose.decisions.action.items.assignee.due.date'),
-                    guide: tr('flow.ui.purpose.prerequisites.steps.verify.results'),
-                  }[values.template],
-                }
-              : {}),
             ...(def.collection === 'projects'
               ? { workspaceId: values.workspaceId ?? workspaceId(), access: values.access ?? 'workspace' }
               : {}),
-            projectId:
-              def.collection === 'pages'
-                ? parentPage
-                  ? parentPage.projectId
-                  : scopeOf(activeRoute()) === 'workspace'
-                    ? null
-                    : activeProject()
-                : scopeOf(activeRoute()) === 'project'
-                  ? activeProject()
-                  : null,
-            ...(def.collection === 'pages' ? { visibility: parentPage?.visibility ?? 'shared' } : {}),
+            projectId: catalog
+              ? (held?.projectId ?? null)
+              : scopeOf(activeRoute()) === 'project'
+                ? activeProject()
+                : null,
           }
           mutate(
             'flow.entity.save',
             {
               ...args,
               collection: def.collection,
-              entityId: tag?.id ?? (def.edit ? p?.id : undefined),
-              parentId: activeRoute() === 'page-child' ? record() : null,
+              entityId: held?.id ?? (def.edit ? p?.id : undefined),
+              parentId: null,
             },
-            (value) => {
-              if (def.collection === 'pages') {
-                pageDocDrafts.delete(pageDraftKey)
-                navigate(
-                  'page',
-                  {
-                    id: value.id,
-                    project: args.projectId ?? '',
-                    scope: args.projectId ? 'project' : 'workspace',
-                  },
-                  { replace: true },
-                )
-              } else closeModal()
-            },
+            // The mutation has accepted this form; close without the user-action busy guard.
+            () => finishCloseModal(),
           )
         }}
       >
         ${stack(
-          def.collection === 'pages'
-            ? FlowSelectField({
-                name: 'template',
-                label: tr('flow.ui.start.from'),
-                value: '',
-                options: [
-                  { value: '', label: tr('flow.ui.blank.page') },
-                  { value: 'brief', label: tr('flow.ui.project.brief') },
-                  { value: 'meeting', label: tr('flow.ui.meeting.notes') },
-                  { value: 'guide', label: tr('flow.ui.operating.guide') },
-                ],
-              })
-            : null,
-          def.collection === 'pages'
+          !editable && catalog
             ? FlowNotice({
-                title: tr('flow.ui.ownership'),
-                message: parentPage
-                  ? tr('flow.ui.child.document.of', [parentPage.title])
-                  : scopeOf(activeRoute()) === 'workspace'
-                    ? data().company.name
-                    : (data().projects.find((p) => p.id === activeProject())?.title ??
-                      tr('flow.ui.no.project.selected')),
+                title: tr('flow.ui.view.only'),
+                message: tr('flow.catalog.managerRequired'),
+                tone: 'yellow',
               })
             : null,
           FlowInput({
             id: 'title',
             label: tr('flow.ui.name'),
-            value: tag?.title ?? upcoming?.title ?? (def.edit ? (p?.title ?? '') : ''),
+            value: held?.title ?? held?.label ?? upcoming?.title ?? (def.edit ? (p?.title ?? '') : ''),
             placeholder: def.title,
             required: true,
             error: formError().title,
-            disabled: !canWrite(),
+            disabled: !editable,
           }),
           activeRoute() === 'project-new' && data().workspaces
             ? FlowSelectField({
@@ -1951,7 +2644,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 name: 'color',
                 label: tr('flow.ui.label.color'),
                 value: tagPreview() ?? tag?.color ?? 'blue',
-                disabled: !canWrite(),
+                disabled: !editable,
                 onChange: tagPreview.set,
               })
             : null,
@@ -1963,27 +2656,13 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 required: true,
               })
             : null,
-          def.collection === 'pages'
-            ? FlowLiveDoc({
-                id: `page-draft-${pageDraftKey}`,
-                label: tr('flow.ui.content'),
-                snapshot: pageDraft.liveDoc,
-                text: pageDraft.description,
-                readOnly: !canWrite(),
-                onChange: (value) =>
-                  Object.assign(pageDraft, {
-                    liveDoc: value.snapshot,
-                    description: FlowLiveDocText(value),
-                    blocks: FlowLiveDocLegacyBlocks(value),
-                  }),
-              })
-            : FlowTextarea({
-                id: 'description',
-                label: activeRoute() === 'sprint-new' ? tr('flow.ui.cycle.goal') : tr('flow.ui.description'),
-                value: tag?.description ?? (def.edit ? (p?.description ?? '') : ''),
-                placeholder: tr('flow.ui.context.goals.and.completion.criteria'),
-                disabled: !canWrite(),
-              }),
+          FlowTextarea({
+            id: 'description',
+            label: activeRoute() === 'sprint-new' ? tr('flow.ui.cycle.goal') : tr('flow.ui.description'),
+            value: held?.description ?? (def.edit ? (p?.description ?? '') : ''),
+            placeholder: tr('flow.ui.context.goals.and.completion.criteria'),
+            disabled: !editable,
+          }),
           activeRoute() === 'tag-edit'
             ? stack(
                 FlowTag({
@@ -2005,6 +2684,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                   type: 'date',
                   value: upcoming?.start ?? todayDate(data().timezone),
                   required: true,
+                  error: formError().start,
                 }),
                 FlowInput({
                   id: 'end',
@@ -2012,6 +2692,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                   type: 'date',
                   value: upcoming?.end ?? addDays(todayDate(data().timezone), 13),
                   required: true,
+                  error: formError().end,
                 }),
               )
             : null,
@@ -2022,8 +2703,14 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                   label: tr('flow.ui.epic.owner'),
                   value: data().user.name,
                   options: data().people.map((p) => ({ value: p, label: p })),
+                  error: formError().owner,
                 }),
-                FlowTextarea({ id: 'outcome', label: tr('flow.ui.target.outcome'), required: true }),
+                FlowTextarea({
+                  id: 'outcome',
+                  label: tr('flow.ui.target.outcome'),
+                  required: true,
+                  error: formError().outcome,
+                }),
                 routes.goals
                   ? FlowSelectField({
                       name: 'goalId',
@@ -2043,9 +2730,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             ? FlowSelectField({
                 name: 'kind',
                 label: tr('flow.ui.data.type'),
-                value: fieldKind(),
+                value: selectedFieldKind,
+                error: formError().kind,
                 onChange: (e) => fieldKind.set(e.target.value),
-                disabled: !canWrite(),
+                disabled: !editable,
                 options: [
                   { value: 'text', label: tr('flow.ui.text') },
                   { value: 'number', label: tr('flow.ui.number') },
@@ -2060,9 +2748,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             ? FlowSelectField({
                 name: 'kind',
                 label: tr('flow.ui.status.group'),
-                value: columnKind(),
+                value: selectedColumnKind,
+                error: formError().kind,
                 onChange: (e) => columnKind.set(e.target.value),
-                disabled: !canWrite(),
+                disabled: !editable,
                 options: [
                   { value: 'todo', label: tr('flow.ui.not.started') },
                   { value: 'progress', label: tr('flow.ui.in.progress.ae8756') },
@@ -2076,12 +2765,17 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 FlowSelectField({
                   name: 'icon',
                   label: tr('flow.ui.icon'),
-                  value: 'list',
-                  options: [
-                    { value: 'list', label: tr('flow.ui.tasks') },
-                    { value: 'flag', label: tr('flow.ui.flag') },
-                    { value: 'layers', label: tr('flow.ui.deliverable.category') },
-                  ],
+                  value: held?.icon ?? 'list',
+                  error: formError().icon,
+                  disabled: !editable,
+                  options: taskTypeIcons.map((icon) => ({
+                    value: icon,
+                    label: tr(
+                      { list: 'flow.ui.tasks', flag: 'flow.ui.flag', layers: 'flow.ui.deliverable.category' }[
+                        icon
+                      ],
+                    ),
+                  })),
                 }),
                 FlowHint({
                   children: tr(
@@ -2095,7 +2789,8 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 FlowSelectField({
                   name: 'required',
                   label: tr('flow.ui.required.before.completion'),
-                  value: 'false',
+                  value: String(held?.required ?? false),
+                  disabled: !editable,
                   options: [
                     { value: 'false', label: tr('flow.ui.no') },
                     { value: 'true', label: tr('flow.ui.yes') },
@@ -2104,31 +2799,45 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 FlowSelectField({
                   name: 'appliesTo',
                   label: tr('flow.ui.applies.to'),
-                  value: 'all',
-                  options: [
-                    { value: 'all', label: tr('flow.ui.all.projects.in.organization') },
-                    ...data().projects.map((p) => ({ value: p.id, label: p.title })),
-                  ],
+                  value: held?.projectId ?? held?.appliesTo ?? 'all',
+                  error: formError().appliesTo,
+                  disabled: !editable,
+                  options: held?.projectId
+                    ? [
+                        {
+                          value: held.projectId,
+                          label:
+                            data().projects.find((project) => project.id === held.projectId)?.title ??
+                            held.projectId,
+                        },
+                      ]
+                    : [
+                        { value: 'all', label: tr('flow.ui.all.projects.in.organization') },
+                        ...data().projects.map((p) => ({ value: p.id, label: p.title })),
+                      ],
                 }),
-                ['select', 'multi-select'].includes(fieldKind())
+                ['select', 'multi-select'].includes(selectedFieldKind)
                   ? FlowTextarea({
                       id: 'options',
                       label: tr('flow.ui.options.one.value.per.line'),
+                      value: (held?.options ?? []).join('\n'),
                       required: true,
+                      error: formError().options,
+                      disabled: !editable,
                     })
                   : null,
                 FlowDisclosure({
                   title: tr('flow.ui.preview.in.task.properties'),
                   open: true,
                   children:
-                    fieldKind() === 'boolean'
+                    selectedFieldKind === 'boolean'
                       ? FlowCheckbox({ label: tr('flow.ui.sample.field'), checked: false, disabled: true })
-                      : ['select', 'multi-select'].includes(fieldKind())
+                      : ['select', 'multi-select'].includes(selectedFieldKind)
                         ? FlowTag({ label: tr('flow.ui.selected.value') })
                         : FlowInput({
                             id: 'field-preview',
                             label: tr('flow.ui.sample.field'),
-                            type: fieldKind(),
+                            type: selectedFieldKind,
                             disabled: true,
                           }),
                 }),
@@ -2137,13 +2846,13 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           activeRoute() === 'column-edit'
             ? stack(
                 FlowStatus({
-                  status: columnKind(),
+                  status: selectedColumnKind,
                   label: {
                     todo: tr('flow.ui.not.started'),
                     progress: tr('flow.ui.in.progress.ae8756'),
                     review: tr('flow.ui.awaiting.acceptance.9782f0'),
                     done: tr('flow.ui.done'),
-                  }[columnKind()],
+                  }[selectedColumnKind],
                 }),
                 FlowHint({
                   children: tr(
@@ -2160,24 +2869,18 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 ),
               })
             : null,
-          actions(
-            formModalRoutes.has(modalRoute())
-              ? FlowButton({ label: tr('flow.ui.cancel'), onClick: closeModal })
-              : navButton(def.back, tr('flow.ui.cancel')),
-            submit(activeRoute() === 'tag-edit' ? tr('flow.ui.save.label') : def.title),
-          ),
+          separateActions ? null : footer,
         )}
-      </form>`,
-      def.back,
-    )
+      </form>`
+    return separateActions ? { body, footer } : sheet(def.title, body, def.back)
   }
   const taskLookup = signal('')
   const taskOperation = () => {
     const t = currentTask()
-    if (!t)
+    if (!t || (t.archived && ['dependency-new', 'subtask-link'].includes(activeRoute())))
       return FlowEmpty({
-        title: tr('flow.ui.no.tasks.yet'),
-        description: tr('flow.ui.create.a.task.before.using.this.action'),
+        title: tr('flow.ui.task.not.found'),
+        description: tr('flow.ui.this.task.may.have.been.moved.or.archived'),
       })
     const key = activeRoute()
     let body
@@ -2239,7 +2942,9 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     } else if (key === 'issue-sprint')
       body = stack(
         ...data()
-          .sprints.filter((s) => s.state !== 'closed' && s.projectId === t.projectId)
+          .sprints.filter(
+            (s) => !s.archived && ['planned', 'active'].includes(s.state) && s.projectId === t.projectId,
+          )
           .map((s) =>
             FlowNotice({
               title: s.title,
@@ -2259,10 +2964,20 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             }),
           ),
       )
-    else if (['dependency-new', 'subtask-link'].includes(key))
+    else if (['dependency-new', 'subtask-link'].includes(key)) {
+      const related = data().tasks.filter(
+        (x) =>
+          x.id !== t.id &&
+          !x.archived &&
+          x.projectId === t.projectId &&
+          (key === 'dependency-new' ? !t.blockedBy.includes(x.id) : x.parentId !== t.id) &&
+          tidy(x.id + ' ' + x.title).includes(tidy(taskLookup())),
+      )
       body = stack(
-        FlowSearch({
+        FlowInput({
           label: tr('flow.ui.search.related.tasks'),
+          name: 'taskLookup',
+          id: 'flow-related-task-lookup',
           placeholder: tr('flow.ui.task.id.or.name'),
           value: taskLookup(),
           onInput: (e) => taskLookup.set(e.target.value),
@@ -2274,36 +2989,45 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               ? tr('flow.ui.this.task.cannot.be.completed.until.the.selected.task.is.done')
               : tr('flow.ui.the.selected.task.keeps.its.status.and.assignee'),
         }),
-        ...data()
-          .tasks.filter(
-            (x) =>
-              x.id !== t.id &&
-              !x.archived &&
-              x.projectId === t.projectId &&
-              tidy(x.id + ' ' + x.title).includes(tidy(taskLookup())),
-          )
-          .map((x) =>
-            FlowNotice({
-              title: x.id,
-              message: `${x.title} · ${key === 'dependency-new' ? t.id + tr('flow.ui.blocked.by.20f5f4') + x.id : tr('flow.ui.current.parent') + (x.parentId ?? tr('flow.ui.none')) + ' → ' + t.id + tr('flow.ui.parent.and.subtask.work.volume.is.not.counted.twice')}`,
-              action: action(tr('flow.ui.select.1171ca'), () =>
-                mutate(
-                  key === 'dependency-new' ? 'flow.issue.dependency' : 'flow.issue.linkChild',
-                  { id: t.id, target: x.id },
-                  () => navigate('issue', { id: t.id }),
-                ),
+        !related.length
+          ? FlowEmpty({
+              title: tr('flow.ui.no.matching.tasks'),
+              description: tr('flow.related.emptyHint'),
+              action: taskLookup()
+                ? FlowButton({ label: tr('flow.ui.clear.filters'), onClick: () => taskLookup.set('') })
+                : null,
+            })
+          : null,
+        ...related.map((x) =>
+          FlowNotice({
+            title: x.id,
+            message: `${x.title} · ${key === 'dependency-new' ? t.id + tr('flow.ui.blocked.by.20f5f4') + x.id : tr('flow.ui.current.parent') + (x.parentId ?? tr('flow.ui.none')) + ' → ' + t.id + tr('flow.ui.parent.and.subtask.work.volume.is.not.counted.twice')}`,
+            action: action(tr('flow.ui.select.1171ca'), () =>
+              mutate(
+                key === 'dependency-new' ? 'flow.issue.dependency' : 'flow.issue.linkChild',
+                {
+                  id: t.id,
+                  target: x.id,
+                  expectedVersion: t.version,
+                  ...(key === 'subtask-link' ? { expectedChildVersion: x.version } : {}),
+                },
+                () => navigate('issue', { id: t.id }),
               ),
-            }),
-          ),
+            ),
+          }),
+        ),
       )
-    else if (key === 'issue-archive')
+    } else if (key === 'issue-archive')
       body = html`<form
+        id="flow-task-archive-form"
         on:submit=${(e) => {
           e.preventDefault()
-          mutate('flow.issue.archive', { id: t.id, ...collect(e) }, () => navigate('issues-archived'))
+          mutate('flow.issue.archive', { id: t.id, expectedVersion: t.version, ...collect(e) }, () =>
+            navigate('issues-archived'),
+          )
         }}
       >
-        ${stack(FlowNotice({ title: tr('flow.ui.remove.task.from.active.views'), message: tr('flow.ui.archiving.is.not.completion.subtasks.remain.dependent.tasks.stay.blocked.restore', [data().tasks.filter((x) => x.parentId === t.id).length, data().tasks.filter((x) => x.blockedBy.includes(t.id) && !isDone(data(), x)).length]), tone: 'yellow' }), FlowTextarea({ id: 'reason', label: tr('flow.ui.reason.for.archiving'), required: true }), submit(tr('flow.ui.confirm.archive')))}
+        ${stack(FlowTextarea({ id: 'reason', label: tr('flow.ui.reason.for.archiving'), required: true, error: formError().reason, disabled: !canWrite() || busy() }), !modalRoute() ? submit(tr('flow.ui.confirm.archive')) : null)}
       </form>`
     else if (key === 'comment')
       body = html`<form
@@ -2314,52 +3038,56 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           )
         }}
       >
-        ${stack(FlowTextarea({ id: 'text', label: tr('flow.ui.comment'), required: true, placeholder: tr('flow.ui.reply') }), submit(tr('flow.ui.post.comment')))}
+        ${stack(FlowTextarea({ id: 'text', label: tr('flow.ui.comment'), required: true, error: formError().text, placeholder: tr('flow.ui.reply'), disabled: !canWrite() || busy() }), submit(tr('flow.ui.post.comment')))}
       </form>`
     else body = taskDetail()
     /** In the modal the dialog body already pads a single picker or form; only the standalone sheet needs a section. */
     return modalRoute() ? body : sheet(routes[key].title, FlowSection({ children: body }))
   }
-  const resourceList = (collection, target, create) =>
-    FlowSection({
+  const resourceList = (collection, target, create) => {
+    const items = data()[collection].filter(
+      (x) =>
+        !x.archived &&
+        (collection === 'projects'
+          ? !data().workspaces || x.workspaceId === workspaceId()
+          : screen() === 'all-epics'
+            ? data().projects.some((p) => p.id === x.projectId && p.workspaceId === workspaceId())
+            : x.projectId === project()),
+    )
+    const canCreate =
+      canWrite() && (collection !== 'projects' || canManageScope(data(), 'workspace', workspaceId()))
+    return FlowSection({
       title: routes[screen()].title,
-      actions: create ? navButton(create, tr('flow.ui.create.new'), 'plus', 'primary') : null,
-      children: !data()[collection].some((x) => !x.archived)
+      actions: create && canCreate ? navButton(create, tr('flow.ui.create.new'), 'plus', 'primary') : null,
+      children: !items.length
         ? FlowEmpty({
             title: tr('flow.ui.no.data.yet'),
             description: tr('flow.ui.create.the.first.item.to.start.working.with.your.team'),
           })
         : FlowCardGrid({
             children: html`${each(
-              data()[collection].filter(
-                (x) =>
-                  !x.archived &&
-                  (collection === 'projects'
-                    ? !data().workspaces || x.workspaceId === workspaceId()
-                    : screen() === 'all-epics'
-                      ? data().projects.some((p) => p.id === x.projectId && p.workspaceId === workspaceId())
-                      : x.projectId === project()),
-              ),
+              items,
               (x) => x.id,
               (x) =>
                 FlowResourceCard({
                   title: x.title,
                   description:
                     collection === 'projects'
-                      ? `${data().members?.find((m) => m.id === x.ownerId)?.name ?? tr('flow.ui.unassigned.1f3799')} · ${x.end ?? tr('flow.ui.no.target.date')}`
+                      ? `${data().members?.find((m) => m.id === x.ownerId)?.name ?? tr('flow.ui.unassigned.1f3799')} · ${x.end || tr('flow.ui.no.target.date')}`
                       : (x.description ?? ''),
                   progress: undefined,
                   meta: FlowTag({ label: collection === 'projects' ? x.code : tr('flow.ui.active') }),
                   onOpen: () => {
                     if (collection === 'projects') {
                       project.set(x.id)
-                      navigate('board')
+                      navigate(x.defaultView === 'project-issues' ? 'project-issues' : 'board')
                     } else navigate(target, { id: x.id, project: x.projectId })
                   },
                 }),
             )}`,
           }),
     })
+  }
   const sprints = () =>
     !usesSprints(selectedProject())
       ? kanbanProject()
@@ -2379,7 +3107,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               ),
             }),
             ...data()
-              .sprints.filter((s) => s.projectId === project())
+              .sprints.filter((s) => s.projectId === project() && !s.archived)
               .map((s) => {
                 const tasks = data().tasks.filter(
                   (t) => t.projectId === s.projectId && t.sprint === s.title && !t.archived,
@@ -2422,15 +3150,44 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               }),
           ),
         })
-  const sprintClose = () => {
-    const s =
-      data().sprints.find((s) => s.id === record()) ??
-      data().sprints.find((s) => s.projectId === activeProject() && s.state === 'active')
-    if (!s) return FlowEmpty({ title: tr('flow.ui.no.active.sprint.found') })
-    const pending = data().tasks.filter(
-      (t) => t.projectId === s.projectId && t.sprint === s.title && !isDone(data(), t),
+  const sprintCarryTo = signal('Backlog')
+  const sprintClose = ({ separateActions = false } = {}) => {
+    const recovery = (body) => (separateActions ? { body, footer: null } : body)
+    const s = projectRecord(
+      data().sprints,
+      activeProject(),
+      record(),
+      recordProvided(),
+      (sprint) => sprint.state === 'active',
     )
-    return sheet(
+    if (!s)
+      return recovery(
+        FlowEmpty({
+          title: tr('flow.record.notFound'),
+          description: tr('flow.record.notFoundHelp'),
+          action: navButton('sprints', routes.sprints.title, 'arrow'),
+        }),
+      )
+    if (['closed', 'completed'].includes(s.state))
+      return recovery(
+        FlowEmpty({
+          title: tr('flow.sprint.alreadyClosed'),
+          description: tr('flow.sprint.closedHelp'),
+          action: navButton('sprint-report', tr('flow.ui.view.summary'), 'arrow', 'primary', { id: s.id }),
+        }),
+      )
+    if (s.state !== 'active')
+      return recovery(
+        FlowEmpty({
+          title: tr('flow.sprint.invalidState'),
+          description: tr('flow.sprint.closeActiveOnly'),
+          action: navButton('sprints', routes.sprints.title, 'arrow'),
+        }),
+      )
+    const pending = data().tasks.filter(
+      (t) => t.projectId === s.projectId && t.sprint === s.title && !t.archived && !isDone(data(), t),
+    )
+    const body = sheet(
       tr('flow.ui.close') + s.title,
       stack(
         FlowHint({
@@ -2448,46 +3205,94 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             }),
           ),
         ),
-        html`<form on:submit=${(e) => {
+        html`<form id="flow-sprint-close-form" on:submit=${(e) => {
           e.preventDefault()
           mutate(
             'flow.entity.action',
-            { collection: 'sprints', entityId: s.id, action: 'close', carryTo: collect(e).carryTo },
-            () => navigate('sprint-report', { id: s.id }),
+            {
+              collection: 'sprints',
+              entityId: s.id,
+              projectId: s.projectId,
+              action: 'close',
+              carryTo: collect(e).carryTo,
+            },
+            () => navigate('sprint-report', { id: s.id, project: s.projectId }),
           )
         }}>${stack(
           FlowSelectField({
             name: 'carryTo',
             label: tr('flow.ui.move.remaining.work.to'),
-            value: 'Backlog',
+            value: sprintCarryTo(),
+            error: formError().carryTo,
+            disabled: !canWrite(),
+            onChange: (event) => sprintCarryTo.set(event.target.value),
             options: [
               { value: 'Backlog', label: 'Backlog' },
               ...data()
-                .sprints.filter((x) => x.projectId === s.projectId && x.id !== s.id && x.state !== 'closed')
+                .sprints.filter(
+                  (x) =>
+                    x.projectId === s.projectId &&
+                    !x.archived &&
+                    x.id !== s.id &&
+                    ['planned', 'active'].includes(x.state),
+                )
                 .map((x) => ({ value: x.title, label: x.title + ' · ' + x.start + ' → ' + x.end })),
             ],
           }),
-          submit(tr('flow.ui.confirm.sprint.closure')),
+          separateActions ? null : submit(tr('flow.ui.confirm.sprint.closure')),
         )}</form>`,
       ),
       'sprints',
     )
+    return separateActions
+      ? {
+          body,
+          footer: FlowInline({
+            align: 'end',
+            children: html`${FlowButton({ label: tr('flow.ui.cancel'), onClick: closeModal, disabled: busy() })}${FlowButton({ label: tr('flow.ui.confirm.sprint.closure'), type: 'submit', form: 'flow-sprint-close-form', variant: 'primary', disabled: !canWrite(), loading: busy() })}`,
+          }),
+        }
+      : body
   }
-  const pageParent = signal('')
-  const pageMove = () => {
+  const pageParent = signal(null)
+  const pageMove = ({ separateActions = false } = {}) => {
     const page = data().pages.find((p) => p.id === record())
-    if (!page) return FlowEmpty({ title: tr('flow.ui.document.not.found') })
-    const candidates = data().pages.filter(
-      (p) =>
-        p.id !== page.id &&
-        !p.archived &&
-        (p.projectId ?? null) === (page.projectId ?? null) &&
-        (p.workspaceId ?? null) === (page.workspaceId ?? null) &&
-        (p.visibility ?? 'shared') === (page.visibility ?? 'shared'),
+    if (!page || page.archived) {
+      const body = FlowEmpty({
+        title: tr('flow.ui.document.not.found'),
+        description: tr('flow.ui.select.a.document.in.the.tree.or.create.one.here'),
+        action: FlowButton({ label: tr('flow.ui.cancel'), onClick: closeModal }),
+      })
+      return separateActions ? { body, footer: null } : body
+    }
+    const key = `${companyId()}:${page.id}`
+    const selectedParent = pageParent()?.key === key ? pageParent().value : (page.parentId ?? '')
+    const editable = canWrite() && page.access?.write !== false
+    const candidates = documentMoveCandidates(data().pages, page)
+    const footer = actions(
+      FlowButton({ label: tr('flow.ui.cancel'), onClick: closeModal, disabled: busy() }),
+      FlowButton({
+        label: tr('flow.ui.confirm.move.69b8f6'),
+        type: 'submit',
+        form: 'flow-document-move-form',
+        variant: 'primary',
+        loading: busy(),
+        disabled: !editable || selectedParent === (page.parentId ?? ''),
+      }),
     )
-    return sheet(
-      tr('flow.ui.move.document'),
-      stack(
+    const body = FlowSetupForm({
+      id: 'flow-document-move-form',
+      actions: separateActions ? null : footer,
+      onSubmit: (e) => {
+        e.preventDefault()
+        if (!editable || busy()) return
+        void mutate(
+          'flow.entity.action',
+          { collection: 'pages', entityId: page.id, action: 'move', parentId: selectedParent || null },
+          () => navigate('page', { id: page.id }, { replace: true, confirmed: true }),
+        )
+      },
+      children: stack(
         FlowProperties({
           items: [
             {
@@ -2509,32 +3314,23 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         FlowSelectField({
           name: 'new-parent',
           label: tr('flow.ui.new.parent.document'),
-          value: pageParent(),
+          value: selectedParent,
+          disabled: !editable || busy(),
           options: [
             { value: '', label: tr('flow.ui.root') },
             ...candidates.map((p) => ({ value: p.id, label: p.title })),
           ],
-          onChange: (e) => pageParent.set(e.target.value),
+          onChange: (e) => pageParent.set({ key, value: e.target.value }),
         }),
         FlowHint({
           children: tr(
             'flow.ui.new.path.ownership.and.access.stay.unchanged.only.the.tree.location.changes',
-            [candidates.find((p) => p.id === pageParent())?.title ?? tr('flow.ui.root'), page.title],
+            [candidates.find((p) => p.id === selectedParent)?.title ?? tr('flow.ui.root'), page.title],
           ),
         }),
-        action(
-          tr('flow.ui.confirm.move.69b8f6'),
-          () =>
-            mutate(
-              'flow.entity.action',
-              { collection: 'pages', entityId: page.id, action: 'move', parentId: pageParent() || null },
-              () => navigate('page', { id: page.id }, { replace: true }),
-            ),
-          'primary',
-        ),
       ),
-      'pages',
-    )
+    })
+    return separateActions ? { body, footer } : body
   }
   const settings = () =>
     FlowSection({
@@ -2632,20 +3428,42 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         }),
       ),
     })
-  const workspaceSettings = () =>
-    FlowSection({
+  // Settings read as a column of titled sections, each owning its action. Integrations
+  // already has its own tab, so it is not repeated here.
+  const workspaceSettings = () => {
+    const workspace = data().workspaces.find((w) => w.id === workspaceId())
+    return FlowSection({
       title: tr('flow.ui.workspace.settings'),
-      children: stack(
-        FlowStack({
-          gap: 'md',
-          children: html`${FlowListItem({ variant: 'plain', title: data().workspaces.find((w) => w.id === workspaceId())?.title ?? 'Workspace', description: tr('flow.ui.manage.workspace.information.members.and.teams'), actions: inline(navButton('workspace-edit', tr('flow.ui.workspace.information'), 'settings', 'ghost'), navButton('workspace-members', tr('flow.ui.member'), 'user', 'ghost')) })}${FlowHint({ children: tr('flow.ui.the.shared.task.library.belongs.to.projects.with.custom.statuses.and.labels.keep', [data().company.name]) })}`,
-        }),
-        navButton('organization-settings', tr('flow.review.library'), 'arrow'),
-        routes['workspace-integrations']
-          ? navButton('workspace-integrations', tr('flow.ui.integrations'), 'link')
-          : null,
-      ),
+      children: FlowStack({
+        divided: true,
+        children: html`${each(
+          [
+            FlowSection({
+              inset: 'none',
+              title: workspace?.title ?? 'Workspace',
+              description: tr('flow.ui.manage.workspace.information.members.and.teams'),
+              actions: inline(
+                navButton('workspace-edit', tr('flow.ui.workspace.information'), 'settings'),
+                navButton('workspace-members', tr('flow.ui.member'), 'user'),
+              ),
+            }),
+            FlowSection({
+              inset: 'none',
+              title: tr('flow.review.library'),
+              description: tr(
+                'flow.ui.the.shared.task.library.belongs.to.projects.with.custom.statuses.and.labels.keep',
+                [data().company.name],
+              ),
+              actions: navButton('organization-settings', tr('flow.ui.open'), 'arrow'),
+            }),
+            ...extensions.map((x) => x.settingsSection?.('workspace-settings', workspace) ?? null),
+          ],
+          (_, i) => i,
+          (x) => html`${x}`,
+        )}`,
+      }),
     })
+  }
   const dashboard = () => {
     const projects = data().projects.filter((p) => p.workspaceId === workspaceId()),
       tasks = data().tasks.filter((t) => !t.archived && projects.some((p) => p.id === t.projectId))
@@ -2740,7 +3558,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           id: 'flow-view-modal',
           title: tr('flow.ui.save.view'),
           onRequestClose: closeSavedView,
-          feedback: feedbackToast(),
+          feedback: feedbackToast('inline'),
           body: html`<form id="flow-view-create" on:submit=${async (e) => {
             e.preventDefault()
             const ok = await mutate('flow.entity.save', {
@@ -2796,38 +3614,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           ),
         })
       : null
-  const cmdk = () => {
-    const groups = commandResults(data(), commandQuery(), {
-      workspaceId: workspaceId(),
-      recent: recentCommands.get(companyId()) ?? [],
-    })
-    return FlowSpotlight({
-      id: 'flow-command-modal',
-      feedback: feedbackToast(),
-      title: routes.cmdk.title,
-      query: commandQuery(),
-      scope: data().company.name,
-      activeId: commandActive(),
-      groups,
-      onQuery: (value) =>
-        batch(() => {
-          commandQuery.set(value)
-          commandActive.set('')
-        }),
-      onActive: commandActive.set,
-      onSelect: (id) => {
-        const item = groups.flatMap((g) => g.items).find((x) => x.id === id)
-        if (item) {
-          recentCommands.set(
-            companyId(),
-            [id, ...(recentCommands.get(companyId()) ?? []).filter((x) => x !== id)].slice(0, 8),
-          )
-          navigate(item.route, item.params)
-        }
-      },
-      onClose: closeModal,
-    })
-  }
+  const cmdk = () => null
   const display = () =>
     sheet(
       tr('flow.ui.display.options'),
@@ -2851,7 +3638,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             { value: 'compact', label: tr('flow.ui.compact.36px.rows') },
             { value: 'comfortable', label: tr('flow.ui.comfortable.44px.rows') },
           ],
-          onChange: (e) => density.set(e.target.value),
+          onChange: (e) => changeAppearance('density', e.target.value),
         }),
         FlowHint({
           children: tr(
@@ -2863,7 +3650,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             label: tr('flow.ui.restore.defaults'),
             onClick: () => {
               changeGroup('status')
-              density.set('comfortable')
+              changeAppearance('density', 'compact')
             },
           }),
           FlowButton({
@@ -2949,13 +3736,12 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       case 'all-epics':
         return resourceList('epics', 'epic', 'epic-new')
       case 'epic': {
-        const epic =
-          data().epics.find((x) => x.id === backgroundRecord() && x.projectId === project()) ??
-          data().epics.find((x) => x.projectId === project())
+        const epic = projectRecord(data().epics, project(), backgroundRecord(), recordProvided())
         if (!epic)
           return FlowEmpty({
-            title: tr('flow.ui.no.epics.yet'),
-            action: navButton('epic-new', tr('flow.ui.create.epic.c4da32'), 'plus'),
+            title: tr('flow.record.notFound'),
+            description: tr('flow.record.notFoundHelp'),
+            action: navButton('epics', routes.epics.title, 'arrow'),
           })
         const tasks = data().tasks.filter(
           (t) => t.projectId === project() && (t.epic === epic.id || t.epic === epic.title),
@@ -3028,9 +3814,13 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       case 'sprint-close':
         return sprintClose()
       case 'sprint-report': {
-        const sprint =
-          data().sprints.find((s) => s.id === backgroundRecord()) ??
-          data().sprints.find((s) => s.projectId === project())
+        const sprint = projectRecord(data().sprints, project(), backgroundRecord(), recordProvided())
+        if (!sprint)
+          return FlowEmpty({
+            title: tr('flow.record.notFound'),
+            description: tr('flow.record.notFoundHelp'),
+            action: navButton('sprints', routes.sprints.title, 'arrow'),
+          })
         const tasks = data().tasks.filter(
           (t) =>
             t.projectId === project() &&
@@ -3083,8 +3873,17 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       case 'tags':
         return FlowSection({
           title: tr('flow.ui.task.labels.organization'),
-          actions: navButton('tag-edit', tr('flow.ui.add.label'), 'plus'),
+          actions:
+            canWrite() && canManageScope(data(), 'company', companyId())
+              ? navButton('tag-edit', tr('flow.ui.add.label'), 'plus')
+              : null,
           children: stack(
+            !canManageScope(data(), 'company', companyId())
+              ? FlowNotice({ title: tr('flow.ui.view.only'), message: tr('flow.catalog.managerRequired') })
+              : null,
+            !data().tags.some((t) => !t.archived && !t.projectId)
+              ? FlowHint({ children: tr('flow.catalog.noActiveLabels') })
+              : null,
             ...data()
               .tags.filter((t) => !t.archived && !t.projectId)
               .map((t) =>
@@ -3099,17 +3898,48 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                   ),
                   action: inline(
                     navButton('tag-edit', tr('flow.ui.edit.label'), 'settings', 'secondary', { id: t.id }),
-                    action(tr('flow.ui.archive'), () => {
-                      if (confirm(tr('flow.ui.archive.label', [t.title])))
-                        mutate('flow.entity.action', {
-                          collection: 'tags',
-                          entityId: t.id,
-                          action: 'archive',
+                    canManageScope(data(), 'company', companyId())
+                      ? action(tr('flow.ui.archive'), () => {
+                          pendingAction.set({
+                            title: tr('flow.ui.archive.label', [t.title]),
+                            message: tr('flow.labels.archiveHelp'),
+                            label: tr('flow.ui.archive'),
+                            action: () =>
+                              mutate('flow.entity.action', {
+                                collection: 'tags',
+                                entityId: t.id,
+                                action: 'archive',
+                              }),
+                          })
                         })
-                    }),
+                      : null,
                   ),
                 }),
               ),
+            data().tags.some((t) => t.archived && !t.projectId)
+              ? FlowDisclosure({
+                  title: tr('flow.catalog.archivedLabels'),
+                  children: stack(
+                    ...data()
+                      .tags.filter((t) => t.archived && !t.projectId)
+                      .map((t) =>
+                        FlowNotice({
+                          title: FlowTag({ label: t.title, tone: t.color ?? 'neutral' }),
+                          message: tr('flow.labels.archiveHelp'),
+                          action: canManageScope(data(), 'company', companyId())
+                            ? action(tr('flow.ui.restore'), () =>
+                                mutate('flow.entity.action', {
+                                  collection: 'tags',
+                                  entityId: t.id,
+                                  action: 'restore',
+                                }),
+                              )
+                            : null,
+                        }),
+                      ),
+                  ),
+                })
+              : null,
           ),
         })
       case 'dashboard':
@@ -3125,26 +3955,35 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     }
   }
   const sidebar = () =>
-    FlowNavigation({
-      name: 'Flow',
-      company: data().workspaces
-        ? `${data().company.name} · ${data().workspaces.find((w) => w.id === workspaceId())?.title ?? 'Workspace'}`
-        : data().company.name,
-      context: data().workspaces
-        ? FlowContextPicker({
-            companyId: companyId(),
-            workspaceId: workspaceId(),
-            companies: data().companies,
-            workspaces: data().workspaces,
-            disabled: busy(),
-            onWorkspace: (id) => void switchContext(companyId(), id),
-            onManage:
-              data().members?.find((m) => m.id === data().user.id)?.role === 'guest'
-                ? undefined
-                : () => navigate('workspace-overview'),
-          })
-        : null,
-      children: html`${FlowSearchTrigger({ onClick: () => navigate('cmdk') })}
+    !data()
+      ? FlowNavigation({
+          name: 'Flow',
+          company: '',
+          search: globalSearch.trigger(),
+          children: null,
+          footer: null,
+        })
+      : FlowNavigation({
+          name: 'Flow',
+          search: globalSearch.trigger(),
+          company: data().workspaces
+            ? `${data().company.name} · ${data().workspaces.find((w) => w.id === workspaceId())?.title ?? 'Workspace'}`
+            : data().company.name,
+          context: data().workspaces
+            ? FlowContextPicker({
+                companyId: companyId(),
+                workspaceId: workspaceId(),
+                companies: data().companies,
+                workspaces: data().workspaces,
+                disabled: busy(),
+                onWorkspace: (id) => void switchContext(companyId(), id),
+                onManage:
+                  data().members?.find((m) => m.id === data().user.id)?.role === 'guest'
+                    ? undefined
+                    : () => navigate('workspace-overview'),
+              })
+            : null,
+          children: html`
       ${FlowNavGroup({ title: tr('flow.ui.personal'), children: stack(link('my-work', tr('flow.ui.my.tasks'), 'inbox'), link('inbox', tr('flow.ui.inbox'), 'inbox'), ...extensionLinks('personal')) })}
       ${
         data().members?.find((m) => m.id === data().user.id)?.role !== 'guest'
@@ -3180,39 +4019,41 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       })}
       ${!data().workspaces ? link('workspace-settings', tr('flow.ui.workspace.settings'), 'settings') : null}`,
 
-      footer: inline(
-        FlowAvatar({ name: data().user.name }),
-        FlowUserMenu({
-          language: flowLocale(),
-          languages: FLOW_LANGUAGES,
-          onLanguage: changeLanguage,
-          name: data().user.name,
-          companyId: companyId(),
-          companies: data().companies ?? [{ id: companyId(), name: data().company.name }],
-          disabled: busy(),
-          onCompany: (id) => void switchContext(id),
-          items: [
-            { label: tr('flow.ui.personal.settings'), onClick: () => navigate('personal-settings') },
-            ...(data().members?.find((m) => m.id === data().user.id)?.role === 'guest'
-              ? []
-              : [
-                  {
-                    label: tr('flow.ui.organization.d9c0c0') + data().company.name,
-                    onClick: () => navigate('organization'),
-                    active: managementNavigation(screen())?.scope === 'company',
-                  },
-                ]),
-          ],
-        }),
-        FlowButton({
-          label: theme() === 'light' ? tr('flow.ui.switch.to.dark.mode') : tr('flow.ui.switch.to.light.mode'),
-          icon: theme() === 'light' ? 'moon' : 'sun',
-          iconOnly: true,
-          variant: 'ghost',
-          onClick: () => theme.set(theme() === 'light' ? 'dark' : 'light'),
-        }),
-      ),
-    })
+          footer: inline(
+            FlowAvatar({ name: data().user.name }),
+            FlowUserMenu({
+              language: flowLocale(),
+              languages: FLOW_LANGUAGES,
+              onLanguage: changeLanguage,
+              name: data().user.name,
+              companyId: companyId(),
+              companies: data().companies ?? [{ id: companyId(), name: data().company.name }],
+              disabled: busy(),
+              onCompany: (id) => void switchContext(id),
+              items: [
+                { label: tr('flow.ui.personal.settings'), onClick: () => navigate('personal-settings') },
+                ...(data().members?.find((m) => m.id === data().user.id)?.role === 'guest'
+                  ? []
+                  : [
+                      {
+                        label: tr('flow.ui.organization.d9c0c0') + data().company.name,
+                        onClick: () => navigate('organization'),
+                        active: managementNavigation(screen())?.scope === 'company',
+                      },
+                    ]),
+              ],
+            }),
+            FlowButton({
+              label:
+                theme() === 'light' ? tr('flow.ui.switch.to.dark.mode') : tr('flow.ui.switch.to.light.mode'),
+              icon: theme() === 'light' ? 'moon' : 'sun',
+              action: 'theme',
+              iconOnly: true,
+              variant: 'ghost',
+              onClick: () => changeAppearance('theme', theme() === 'light' ? 'dark' : 'light'),
+            }),
+          ),
+        })
   const openListView = (id) => {
     const v = data().views.find((v) => v.id === id && (v.projectId ?? 'core') === project())
     navigate('project-issues', {
@@ -3318,6 +4159,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     close: closeModal,
     canWrite,
     busy,
+    requestLeave,
+    confirmAction,
+    clearCompletedFeedback: feedback.clear,
+    formError,
     mutate,
     navigate,
     filtered,
@@ -3337,7 +4182,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           { value: 'light', label: tr('flow.ui.light') },
           { value: 'dark', label: tr('flow.ui.dark') },
         ],
-        onChange: (e) => theme.set(e.target.value),
+        onChange: (e) => changeAppearance('theme', e.target.value),
       }),
   })
   // Extensions see the same narrow context the built-in feature modules get; core never names them.
@@ -3361,6 +4206,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     call,
     navigate,
     close: closeModal,
+    requestLeave,
+    confirmAction,
+    history,
+    formError,
     feedback,
     feedbackView: () => feedbackToast(),
   }
@@ -3381,6 +4230,20 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     return null
   }
   const transitionFor = (task, columnId) => extensionValue('transition', task, columnId)
+  let searchEntryPending = props.screen === 'cmdk'
+  const globalSearch = createGlobalSearch({
+    data,
+    companyId,
+    call,
+    root: () => host,
+    navigate,
+    recent: () => recentCommands.get(companyId()) ?? [],
+    remember: (id) =>
+      recentCommands.set(
+        companyId(),
+        [id, ...(recentCommands.get(companyId()) ?? []).filter((x) => x !== id)].slice(0, 8),
+      ),
+  })
   const firstRun = createFirstRun({
     call,
     reload,
@@ -3389,13 +4252,16 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     finish: (id) => switchContext(companyId(), id, true),
   })
   const organization = createOrganization({
+    confirmAction,
     settingsSection: (key, entity) => extensions.map((x) => x.settingsSection?.(key, entity) ?? null),
     data,
     workspaceId,
     projectId: activeProject,
     record,
+    recordProvided,
     canWrite,
     busy,
+    formError,
     mutate,
     call,
     navigate,
@@ -3406,8 +4272,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       typeof location === 'undefined' ? props : Object.fromEntries(new URL(location.href).searchParams),
   })
   const documents = createDocuments({
+    serverShell: props.serverShell,
+    focusDocument: props.focus === 'content',
     sidebar,
     data,
+    loading,
     workspaceId,
     project: () => (scopeOf(screen()) === 'project' ? project() : null),
     projectViews,
@@ -3426,10 +4295,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     documentReturn,
     returnToLibrary: () => {
       const target = libraryReturn(documentReturn(), base)
-      if (target) {
-        history.pushState({}, '', target)
-        readUrl()
-      } else navigate('all-pages')
+      navigate(
+        'all-pages',
+        target ? Object.fromEntries(new URL(target, 'http://flow.local').searchParams) : {},
+      )
     },
     libraryURL: () =>
       typeof location === 'undefined' ? href('all-pages') : location.pathname + location.search,
@@ -3441,6 +4310,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     navigate,
     root: () => host,
     routeTitle: () => routes[screen()].title,
+    confirmAction,
     notices: () =>
       html`${!canWrite() ? FlowNotice({ title: tr('flow.ui.view.only'), message: tr('flow.ui.you.can.read.documents.but.cannot.edit.them'), tone: 'yellow' }) : null}`,
   })
@@ -3448,15 +4318,30 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     const key = modalRoute()
     if (!formModalRoutes.has(key)) return null
     if (key === 'cmdk') return cmdk()
+    // An extension form over a task waits for the task's record, as the task detail does; its
+    // body is not composed from a summary.
+    const pending = opensTask(key) ? openTaskPending() : null
+    const record =
+      formDefinitions[key] && !(isGuest() && adminRoutes.has(key))
+        ? recordForm({ separateActions: true })
+        : key === 'page-move'
+          ? pageMove({ separateActions: true })
+          : key === 'sprint-close'
+            ? sprintClose({ separateActions: true })
+            : organizationForms[key] && !isGuest()
+              ? organization.modal(key, { separateActions: true })
+              : extensionForms[key] && !pending
+                ? extensionFor(key)?.modalRecord?.(key)
+                : null
     const body =
       isGuest() && (adminRoutes.has(key) || organizationForms[key])
         ? denied()
         : extensionForms[key]
-          ? extensionFor(key)?.modal?.(key)
+          ? (pending ?? record?.body ?? extensionFor(key)?.modal?.(key))
           : organizationForms[key]
-            ? organization.modal(key)
-            : formDefinitions[key]
-              ? recordForm()
+            ? record?.body
+            : record
+              ? record.body
               : key === 'page-move'
                 ? pageMove()
                 : key === 'sprint-close'
@@ -3466,23 +4351,74 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                     : key === 'timezone'
                       ? timezone()
                       : cmdk()
+    if (record?.confirmation)
+      return FlowConfirmDialog({
+        id: 'flow-form-modal',
+        title: routes[key].title,
+        ...record.confirmation,
+        cancelLabel: tr('flow.ui.cancel'),
+        confirmLabel: tr('flow.ui.archive.workspace'),
+        loading: busy(),
+        onCancel: closeModal,
+        feedback: feedbackToast('inline'),
+      })
     return FlowDialog({
       id: documentModalRoutes.has(key) ? 'flow-document-modal' : 'flow-form-modal',
-      title: routes[key].title,
+      title: extensionFor(key)?.modalTitle?.(key) ?? routes[key].title,
       size:
         extensionForms[key]?.size ?? (['project-new', 'project-profile'].includes(key) ? 'setup' : 'default'),
       onRequestClose: closeModal,
+      closeDisabled: busy(),
       body,
-      feedback: feedbackToast(),
+      footer: record?.footer,
+      feedback: feedbackToast('inline'),
     })
   }
   const taskModal = () => {
     const key = modalRoute()
     if (!taskModalRoutes.has(key)) return null
+    const task = currentTask()
+    if (key === 'subtask-new' && (!task || task.archived))
+      return FlowDialog({
+        id: 'flow-task-modal',
+        title: routes[key].title,
+        onRequestClose: closeModal,
+        body: FlowEmpty({
+          title: tr('flow.ui.task.not.found'),
+          description: tr('flow.ui.this.task.may.have.been.moved.or.archived'),
+        }),
+      })
+    if (key === 'issue-archive' && task)
+      return FlowConfirmDialog({
+        id: 'flow-task-modal',
+        title: `${routes[key].title} · ${task.id}`,
+        message: tr(
+          'flow.ui.archiving.is.not.completion.subtasks.remain.dependent.tasks.stay.blocked.restore',
+          [
+            data().tasks.filter((item) => item.parentId === task.id).length,
+            data().tasks.filter((item) => item.blockedBy.includes(task.id) && !isDone(data(), item)).length,
+          ],
+        ),
+        details: taskOperation(),
+        confirmLabel: tr('flow.ui.confirm.archive'),
+        cancelLabel: tr('flow.ui.cancel'),
+        confirmDisabled: !canWrite(),
+        loading: busy(),
+        onCancel: closeModal,
+        onConfirm: () => host?.querySelector('#flow-task-archive-form')?.requestSubmit(),
+        feedback: feedbackToast('inline'),
+      })
     const creating = ['issue-new', 'subtask-new'].includes(key)
     /** Changing status, sprint, dependency, archive or comment is one short choice: it gets a form-width dialog, not the record layout. */
     const operation = !creating && !detailKeys.has(key)
     const body = creating ? composer.view() : operation ? taskOperation() : taskDetail()
+    if (!creating && !task)
+      return FlowDialog({
+        id: 'flow-task-modal',
+        title: key === 'issue' ? tr('flow.ui.task', [record()]) : routes[key].title,
+        onRequestClose: closeModal,
+        body,
+      })
     const state = creating ? null : autosave.state(record())
     const readOnly = FlowNotice({
       title: tr('flow.ui.view.only'),
@@ -3495,7 +4431,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         title: routes[key].title,
         onRequestClose: closeModal,
         body: canWrite() ? body : stack(readOnly, body),
-        feedback: feedbackToast(),
+        feedback: feedbackToast('inline'),
       })
     return FlowDialog({
       id: 'flow-task-modal',
@@ -3504,7 +4440,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       title: key === 'issue' ? tr('flow.ui.task', [currentTask()?.id ?? record()]) : routes[key].title,
       onRequestClose: closeModal,
       body: !canWrite() ? html`${FlowSection({ children: readOnly })}${body}` : body,
-      feedback: feedbackToast(),
+      feedback: feedbackToast('inline'),
       footer: creating
         ? actions(
             html`<span data-flow="muted">${tr('flow.ui.drafts.are.kept.in.this.session')}</span>`,
@@ -3537,7 +4473,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           ),
     })
   }
-  const feedbackToast = () => {
+  const feedbackToast = (placement = 'overlay') => {
     const problem = failure()
     if (problem && data()) {
       const expired = problem.code === 'fixtureSession'
@@ -3560,15 +4496,16 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               disabled: busy(),
               onClick: retryTaskSave,
             })
-          : problem.code === 'conflict'
+          : problem.code === 'conflict' || readFailure()
             ? FlowButton({
-                label: tr('flow.ui.load.new.version'),
+                label: tr(readFailure() ? 'flow.ui.try.again' : 'flow.ui.load.new.version'),
                 size: 'sm',
                 disabled: busy(),
                 onClick: reload,
               })
             : null
       return FlowToast({
+        placement,
         tone: 'error',
         title,
         message: problem.message,
@@ -3581,6 +4518,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     }
     if (notice())
       return FlowToast({
+        placement,
         message: notice().message ?? notice(),
         action: notice().target
           ? FlowButton({
@@ -3595,6 +4533,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       })
     if (data()?.notice && dismissedDataNotice() !== data().notice)
       return FlowToast({
+        placement,
         tone: 'warning',
         title: tr('flow.ui.incomplete.results'),
         message: data().notice,
@@ -3602,7 +4541,16 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       })
     return null
   }
-  const changeLanguage = (value) => {
+  const changeLanguage = async (value) => {
+    if (props.serverShell) {
+      if (formGuard.hasChanges()) {
+        requestLeave(() => void changeLanguage(value))
+        return
+      }
+      if (!(await documents.flush())) return
+      await autosave.flushAll()
+      if (data()?.tasks.some((t) => autosave.state(t.id) === 'error')) return
+    }
     setFlowLocale(value)
     try {
       localStorage.setItem('flow.language', flowLocale())
@@ -3612,40 +4560,423 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       const url = new URL(location.href)
       url.searchParams.set('lang', flowLocale())
       history.replaceState(history.state, '', url)
+      if (props.serverShell) location.reload()
     }
+  }
+  const mainContent = () =>
+    (props.serverShell && !primaryReady() ? FlowLoading({ label: tr('flow.ui.opening.flow') }) : null) ??
+    firstRun.page(failure()) ??
+    (loading() && !data()
+      ? FlowLoading({ label: tr('flow.ui.opening.flow') })
+      : !data()
+        ? FlowEmpty({
+            titleLevel: props.serverShell && props.chrome && !documentRoutes.has(screen()) ? undefined : 1,
+            title:
+              failure()?.code === 'forbidden'
+                ? tr('flow.ui.access.denied')
+                : tr('flow.ui.unable.to.open.flow'),
+            description:
+              (failure()?.message ?? tr('flow.ui.try.again.to.continue')) +
+              (failure()?.code === 'forbidden' ? ' · ' + tr('flow.review.accessHelp') : ''),
+            action: FlowButton({ label: tr('flow.ui.try.again'), onClick: reload }),
+          })
+        : documentRoutes.has(screen())
+          ? documents.view()
+          : html`${!canWrite() ? FlowNotice({ title: tr('flow.ui.view.only'), message: tr('flow.ui.you.can.view.content.but.cannot.change.data'), tone: 'yellow' }) : null}${content()}`)
+  const shellOptions = (children) =>
+    !data() || firstRun.page(failure())
+      ? { title: 'Flow', titleAsLabel: true, sidebar: sidebar(), children }
+      : documentRoutes.has(screen())
+        ? { ...documents.chrome(), sidebar: sidebar(), children }
+        : {
+            title:
+              screen() === 'issue'
+                ? tr('flow.ui.task', [currentTask()?.id ?? ''])
+                : (routes[screen()]?.title ?? 'Flow'),
+            breadcrumb:
+              scopeOf(screen()) === 'project'
+                ? `${data().workspaces?.find((w) => w.id === workspaceId())?.title ?? data().company.name} · ${selectedProject()?.title ?? ''}`
+                : scopeOf(screen()) === 'personal' ||
+                    (organizationRoutes[screen()] ?? extensionRoutes[screen()])?.group ===
+                      tr('flow.ui.organization') ||
+                    ['team', 'teams', 'permissions', 'workspaces'].includes(screen())
+                  ? data().company.name
+                  : (data().workspaces?.find((w) => w.id === workspaceId())?.title ?? data().company.name),
+            sidebar: sidebar(),
+            actions: inline(
+              scopeOf(screen()) === 'project' && selectedProject() ? projectActions() : null,
+              extensionRoutes[screen()]
+                ? extensionFor(screen())?.topAction?.(screen())
+                : organizationRoutes[screen()]
+                  ? organization.topAction(screen())
+                  : extensionRoutes[screen()] ||
+                      [
+                        'automations',
+                        'forms',
+                        'saved-views',
+                        'personal-settings',
+                        'workspace-settings',
+                        'workspace-integrations',
+                        'settings',
+                        'project-profile',
+                        'github',
+                        'tags',
+                      ].includes(screen())
+                    ? null
+                    : FlowButton({
+                        label: tr('flow.ui.create.task'),
+                        icon: 'plus',
+                        variant: 'primary',
+                        size: 'sm',
+                        disabled: !canWrite(),
+                        onClick: () => navigate('issue-new'),
+                      }),
+            ),
+            contentWidth: contentWidthFor(screen(), routes[screen()]),
+            contentMode: screen() === 'project-profile' ? 'form' : undefined,
+            navigation:
+              scopeOf(screen()) === 'project' && selectedProject() ? projectViews() : managementViews(),
+            children,
+          }
+  const chromeRegions = () => {
+    const p = shellOptions(null)
+    return {
+      sidebar: html`${p.sidebar}`,
+      header: html`${FlowShellHeader(p)}`,
+      tabs: html`${p.navigation ?? null}`,
+    }
+  }
+  const shellView = (children) => {
+    const p = shellOptions(children)
+    const regions = chromeRegions()
+    return html`<div data-flow-ui data-flow-app data-rendering="server-shell" lang=${flowLocale()} data-theme=${theme()} data-density=${density()}>
+      ${FlowShell({
+        ...p,
+        sidebar: html`<div data-flow-chrome="sidebar">${p.sidebar}</div>`,
+        header: html`<div data-flow-chrome="header" data-ket-slot="flow.header">${regions.header}</div>`,
+        navigation: html`<div data-flow-chrome="tabs" data-ket-slot="flow.tabs">${regions.tabs}</div>`,
+        children: html`<div data-ket-slot="flow.content">${children}</div>`,
+      })}
+    </div>`
+  }
+  const chromeRoots = new Map()
+  let chromeBound = false,
+    appearanceStop
+  const enhanceChrome = () => {
+    if (!props.serverShell || chromeBound) return
+    // Hydrate the exact SSR snapshot before auth/bootstrap can change its shape.
+    // Anonymous first-run chrome is valid even without business data.
+    chromeBound = true
+    const regions = chromeRegions()
+    for (const [name, template] of Object.entries(regions)) {
+      const element = host.querySelector(`[data-flow-chrome="${name}"]`)
+      if (element)
+        chromeRoots.set(
+          name,
+          hydrateRoot(domHost(), element, name === 'sidebar' ? template : html`${template}`),
+        )
+    }
+    runtime.sync()
   }
   const view = () =>
     html`<div data-flow-ui lang=${flowLocale()} data-theme=${theme()} data-density=${density()}>
-      ${firstRun.page(failure()) ?? (loading() && !data() ? FlowLoading({ label: tr('flow.ui.opening.flow') }) : !data() ? FlowEmpty({ title: failure()?.code === 'forbidden' ? tr('flow.ui.access.denied') : tr('flow.ui.unable.to.open.flow'), description: (failure()?.message ?? tr('flow.ui.try.again.to.continue')) + ' · ' + tr('flow.review.accessHelp'), action: FlowButton({ label: tr('flow.ui.try.again'), onClick: reload }) }) : documentRoutes.has(screen()) ? documents.view() : FlowShell({ title: screen() === 'issue' ? tr('flow.ui.task', [currentTask()?.id ?? '']) : (routes[screen()]?.title ?? 'Flow'), breadcrumb: scopeOf(screen()) === 'project' ? `${data().workspaces?.find((w) => w.id === workspaceId())?.title ?? data().company.name} · ${selectedProject()?.title ?? ''}` : scopeOf(screen()) === 'personal' || (organizationRoutes[screen()] ?? extensionRoutes[screen()])?.group === tr('flow.ui.organization') || ['team', 'teams', 'permissions', 'workspaces'].includes(screen()) ? data().company.name : (data().workspaces?.find((w) => w.id === workspaceId())?.title ?? data().company.name), sidebar: sidebar(), search: hasTaskSearch() ? taskSearch() : organizationRoutes[screen()] ? organization.topSearch(screen()) : null, actions: inline(scopeOf(screen()) === 'project' && selectedProject() ? projectActions() : null, extensionRoutes[screen()] ? extensionFor(screen())?.topAction?.(screen()) : organizationRoutes[screen()] ? organization.topAction(screen()) : extensionRoutes[screen()] || ['automations', 'forms', 'saved-views', 'personal-settings', 'workspace-settings', 'workspace-integrations', 'settings', 'github', 'tags'].includes(screen()) ? null : FlowButton({ label: tr('flow.ui.create.task'), icon: 'plus', variant: 'primary', size: 'sm', disabled: !canWrite(), onClick: () => navigate('issue-new') })), contentWidth: contentWidthFor(screen(), routes[screen()]), navigation: scopeOf(screen()) === 'project' && selectedProject() ? projectViews() : managementViews(), children: html`${!canWrite() ? FlowNotice({ title: tr('flow.ui.view.only'), message: tr('flow.ui.you.can.view.content.but.cannot.change.data'), tone: 'yellow' }) : null}${content()}`, footer: html`<span>${data().company.name}</span><span>${routes[screen()]?.footer === false ? '' : tr('flow.ui.september.2026.tasks', [data().tasks.length])}</span>` }))}
-      ${data() ? taskModal() : null}${data() && modalRoute() ? filePreview() : null}${data() ? formModal() : null}${data() ? savedViewDialog() : null}
-      ${!modalRoute() && !savedViewOpen() && !extensions.some((x) => x.ownsFeedback?.()) ? feedbackToast() : null}
+      ${props.serverShell ? mainContent() : data() && documentRoutes.has(screen()) && !firstRun.page(failure()) ? documents.view() : FlowShell(shellOptions(mainContent()))}
+      ${data() && primaryReady() ? taskModal() : null}${data() && primaryReady() && modalRoute() ? filePreview() : null}${data() && primaryReady() ? formModal() : null}${data() && primaryReady() ? savedViewDialog() : null}
+      ${discardConfirmation()}
+      ${destructiveConfirmation()}
+      ${globalSearch.view()}
+      ${screen() !== 'project-profile' && !pendingAction() && !pendingLeave() && !modalRoute() && !savedViewOpen() && !extensions.some((x) => x.ownsFeedback?.()) ? feedbackToast() : null}
     </div>`
   return {
     view,
+    shellView,
+    chromeRegions,
+    fragmentSlots(children) {
+      const regions = chromeRegions()
+      return {
+        'flow.header': () => regions.header,
+        'flow.tabs': () => regions.tabs,
+        'flow.content': () => html`${children}`,
+      }
+    },
+    // KetJS reconciles this keyed island in place. Chrome arrives as SSR slots;
+    // the existing sidebar and its hydrated callbacks remain mounted.
+    update(nextProps) {
+      readController?.abort()
+      const retained = retainedDocumentSnapshot(
+        data(),
+        {
+          ready: primaryReady(),
+          screen: screen(),
+          workspaceId: workspaceId(),
+          project: scopeOf(screen()) === 'project' ? project() : '',
+        },
+        nextProps,
+      )
+      if (nextProps.screen === 'project-profile' || props.screen === 'project-profile') projectSetup.reset()
+      props = nextProps
+      if (!props.serverShell) {
+        if (mounted) {
+          readUrl()
+          void reload({ navigation: true })
+        }
+        return
+      }
+      batch(() => {
+        primaryReady.set(!!retained)
+        loading.set(true)
+        failure.set(null)
+        readFailure.set(false)
+        companyId.set(props.companyId ?? 'demo')
+        workspaceId.set(props.workspaceId ?? '')
+        screen.set(props.screen === 'cmdk' ? 'my-work' : props.screen)
+        modalRoute.set(null)
+        project.set(props.project ?? '')
+        modalProject.set(props.project ?? '')
+        modalScope.set(props.scope ?? '')
+        documentScope.set(props.scope ?? 'workspace')
+        libraryFilter.set(props.projectFilter ?? 'all')
+        librarySearch.set(props.docq ?? '')
+        libraryVisibility.set(props.visibility === 'private' ? 'private' : 'shared')
+        documentReturn.set(libraryReturn(props.returnTo, base))
+        record.set(props.record ?? 'KV-142')
+        recordProvided.set(props.recordProvided ?? false)
+        query.set(props.query ?? '')
+        status.set(props.status ?? 'all')
+        selectedView.set(props.view ?? '')
+        selected.set([])
+        pendingAction.set(null)
+        formError.set({})
+        operations.reset()
+        data.set(retained ?? props.chrome ?? null)
+        if (props.focus === 'content') documents.requestFocus()
+      })
+      const regions = chromeRegions()
+      for (const name of ['header', 'tabs']) {
+        chromeRoots.get(name)?.dispose({ remove: false })
+        const element = host.querySelector(`[data-flow-chrome="${name}"]`)
+        if (element) chromeRoots.set(name, hydrateRoot(domHost(), element, html`${regions[name]}`))
+      }
+      const options = shellOptions(null)
+      syncFlowShellNavigation(host, {
+        width: options.contentWidth,
+        mode: options.contentMode,
+        activeHref: (href) => {
+          const url = new URL(href, location.href)
+          const key = url.pathname.slice(base.length).replace(/\/$/, '')
+          if (url.searchParams.has('project'))
+            return scopeOf(screen()) === 'project' && url.searchParams.get('project') === project()
+          return (
+            key === screen() ||
+            (key === 'all-pages' && pageRoutes.has(screen()) && scopeOf(screen()) === 'workspace')
+          )
+        },
+      })
+      runtime?.sync()
+      const area = host?.querySelector('[data-flow="shell-content"]')
+      if (area && !retained) area.scrollTop = 0
+    },
     mount(context) {
+      try {
+        appearanceStorage = localStorage
+      } catch {}
+      const appearance = readFlowAppearance(appearanceStorage)
+      theme.set(appearance.theme)
+      density.set(appearance.density)
       if (typeof location !== 'undefined') {
         let saved
         try {
           saved = localStorage.getItem('flow.language')
         } catch {}
-        setFlowLocale(new URL(location.href).searchParams.get('lang') ?? saved ?? 'en')
+        const requested = new URL(location.href).searchParams.get('lang')
+        setFlowLocale(requested ?? saved ?? 'en')
+        // A server-rendered document has one language and loads only its message
+        // catalog. A different saved preference starts a document in that language.
+        if (props.serverShell && typeof document !== 'undefined' && !requested) {
+          const rendered = normalizeFlowLocale(document.documentElement.lang)
+          if (flowLocale() !== rendered) {
+            const url = new URL(location.href)
+            url.searchParams.set('lang', flowLocale())
+            setFlowLocale(rendered)
+            location.replace(url)
+          }
+        }
         if (typeof document !== 'undefined') document.documentElement.lang = flowLocale()
       }
-      host = context.root
+      host = props.serverShell ? (context.root.closest('[data-flow-app]') ?? context.root) : context.root
+      if (props.serverShell)
+        appearanceStop = effect(() => {
+          host.setAttribute('data-theme', theme())
+          host.setAttribute('data-density', density())
+          host.setAttribute('lang', flowLocale())
+          syncFlowThemeButton(host, theme())
+        })
       lifetime = context.lifetime
-      if (typeof location !== 'undefined') readUrl()
+      if (typeof location !== 'undefined') {
+        if (props.serverShell && props.chrome?.context) {
+          // Adopt authorized route ownership before binding SSR chrome. A record
+          // opened with stale workspace parameters must not hydrate another frame.
+          const initialURL = new URL(location.href)
+          const initialWorkspaceTarget = workspaceRecordTarget(
+            props.screen,
+            props.record,
+            props.recordProvided,
+            props.workspaceId,
+          )
+          if (initialWorkspaceTarget !== null && !initialURL.searchParams.has('id'))
+            initialURL.searchParams.set('id', initialWorkspaceTarget)
+          if (props.workspaceId) initialURL.searchParams.set('workspace', props.workspaceId)
+          else initialURL.searchParams.delete('workspace')
+          if (routeScope(props.screen, props.scope) === 'project' && props.project)
+            initialURL.searchParams.set('project', props.project)
+          if (props.recordProvided && ['page', 'page-child', 'page-move'].includes(props.screen)) {
+            initialURL.searchParams.set('scope', props.scope)
+            if (props.scope === 'workspace') initialURL.searchParams.delete('project')
+          }
+          if (initialURL.href !== location.href) history?.replaceState(history.state, '', initialURL)
+        }
+        history?.initialize(location.href)
+        readUrl()
+      }
       runtime = attachFlowUI(host)
+      globalSearch.contextChanged()
+      enhanceChrome()
+      globalSearch.afterRender()
       observer = new MutationObserver(() => {
+        enhanceChrome()
         runtime.sync()
+        documents.afterRender()
+        globalSearch.afterRender()
+        if (searchEntryPending && data()) {
+          searchEntryPending = false
+          globalSearch.focus()
+        }
         for (const x of extensions) void x.afterRender?.()
+        formGuard.sync()
       })
       observer.observe(host, {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ['value', 'checked', 'data-flow-value', 'data-focus-key', 'aria-selected'],
+        attributeFilter: [
+          'value',
+          'checked',
+          'data-flow-value',
+          'data-focus-key',
+          'aria-selected',
+          'data-live-key',
+          'data-open',
+        ],
       })
-      window.addEventListener('popstate', readUrl, { signal: lifetime })
+      const pendingTaskSaves = () => data()?.tasks.some((task) => autosave.state(task.id) !== 'saved')
+      const readHistory = () => {
+        const target = new URL(location.href)
+        const key = target.pathname.slice(base.length).replace(/\/$/, '')
+        if (
+          props.serverShell &&
+          dependencies.navigatePage &&
+          !modalRoutes.has(key) &&
+          (key !== screen() || (target.searchParams.get('project') ?? '') !== project())
+        )
+          void dependencies.navigatePage(target.href, { replace: true, fallback: 'error' }).catch((error) => {
+            if (error.name !== 'AbortError') feedback.show(tr('flow.ui.unable.to.open.flow'))
+          })
+        else readUrl()
+      }
+      let finishHistoryRestore
+      const historyGuard = history
+        ? createHistoryLeaveGuard(history, {
+            hasChanges: () => formGuard.hasChanges() || documents.hasPendingNotes() || !!pendingTaskSaves(),
+            request: (action, returning) => {
+              returningHistory.set(returning)
+              const restored = returning
+                ? new Promise((resolve) => {
+                    finishHistoryRestore = resolve
+                  })
+                : Promise.resolve()
+              if (formGuard.hasChanges()) pendingLeave.set({ action })
+              else
+                void (async () => {
+                  const notesSaved = await documents.flush()
+                  await autosave.flushAll()
+                  await restored
+                  if (lifetime.aborted) return
+                  if (notesSaved && !pendingTaskSaves()) action()
+                  else if (!notesSaved)
+                    pendingLeave.set({
+                      message: tr('flow.draft.documentMessage'),
+                      action: () => {
+                        documents.discardPendingNotes()
+                        action()
+                      },
+                    })
+                })()
+            },
+            restored: () => {
+              returningHistory.set(false)
+              finishHistoryRestore?.()
+              finishHistoryRestore = undefined
+            },
+            read: readHistory,
+          })
+        : null
+      if (props.serverShell && dependencies.navigatePage) {
+        document.addEventListener(
+          'ket:navigation-complete',
+          (event) => {
+            history?.navigated(event.detail.url, event.detail.mode)
+            readUrl()
+            void reload({ navigation: true })
+          },
+          { signal: lifetime },
+        )
+        document.addEventListener(
+          'ket:popstate',
+          (event) => {
+            const target = new URL(event.detail.url)
+            const key = target.pathname.slice(base.length).replace(/\/$/, '')
+            if (
+              historyGuard?.restoring ||
+              modalRoute() ||
+              modalRoutes.has(key) ||
+              formGuard.hasChanges() ||
+              documents.hasPendingNotes() ||
+              pendingTaskSaves()
+            ) {
+              event.preventDefault()
+              if (historyGuard) historyGuard.pop(target.pathname + target.search)
+              else readUrl()
+            }
+          },
+          { signal: lifetime },
+        )
+      } else
+        window.addEventListener(
+          'popstate',
+          () => (historyGuard ? historyGuard.pop(location.pathname + location.search) : readUrl()),
+          { signal: lifetime },
+        )
+      host.addEventListener(
+        'submit',
+        (event) => {
+          if (!(event.target instanceof HTMLFormElement)) return
+          const submission = formGuard.submission(event.target)
+          submittedForm = submission
+          queueMicrotask(() => {
+            if (submittedForm === submission) submittedForm = null
+          })
+        },
+        { capture: true, signal: lifetime },
+      )
+      window.addEventListener(
+        'beforeunload',
+        (event) => {
+          if (!formGuard.hasChanges() && !documents.hasChanges()) return
+          event.preventDefault()
+          event.returnValue = ''
+        },
+        { signal: lifetime },
+      )
       if (typeof location !== 'undefined') {
         const params = new URL(location.href).searchParams
         savedViewOpen.set(params.get('modal') === 'save-view')
@@ -3657,10 +4988,14 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
             e.preventDefault()
             if (e.repeat) return
-            if (modalRoute() === 'cmdk') closeModal()
-            else navigate('cmdk')
+            if (!modalRoute() && !savedViewOpen()) globalSearch.focus()
           }
-          if (e.key === 'Escape') {
+          if (
+            e.key === 'Escape' &&
+            !modalRoute() &&
+            !savedViewOpen() &&
+            !(e.target instanceof Element && e.target.closest('dialog, [popover]'))
+          ) {
             selected.set([])
             if (screen() === 'cmdk') navigate('my-work')
           }
@@ -3687,9 +5022,15 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       reload()
     },
     dispose() {
+      appearanceStop?.()
+      for (const root of chromeRoots.values()) root.dispose({ remove: false })
+      formGuard.dispose()
       feedback.dispose()
       for (const x of extensions) x.dispose?.()
       autosave.dispose()
+      pendingOperations.clear()
+      documents.dispose()
+      globalSearch.dispose()
       readController?.abort()
       observer?.disconnect()
       runtime?.dispose()

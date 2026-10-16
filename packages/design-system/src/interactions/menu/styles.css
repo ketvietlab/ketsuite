@@ -73,22 +73,31 @@
     display: none;
   }
 
+  :where([data-kv-design-system]) [data-ui="menu-trigger"][aria-disabled="true"] {
+    color: var(--kv-text-disabled);
+    cursor: not-allowed;
+  }
+
   :where([data-kv-design-system]) [data-ui="menu-panel"] {
     position: absolute;
     z-index: var(--kv-layer-menu);
     top: calc(100% + var(--kv-space-1));
     left: 0;
     display: grid;
-    min-width: 13rem;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: min(13rem, var(--kv-menu-available-inline, 100vw));
     width: max-content;
-    max-width: min(22rem, calc(100vw - var(--kv-space-8)));
-    max-height: min(28rem, calc(100dvh - var(--kv-space-8)));
+    max-width: min(22rem, calc(100vw - var(--kv-space-8)), var(--kv-menu-available-inline, 100vw));
+    max-height: min(28rem, calc(100dvh - var(--kv-space-8)), var(--kv-menu-available-block, 100dvh));
     overflow-y: auto;
     padding: var(--kv-space-1);
     border: 1px solid var(--kv-border-default);
     border-radius: var(--kv-radius-md);
     background: var(--kv-panel-bg);
     box-shadow: var(--kv-shadow-popover);
+    transform: translate(var(--kv-menu-shift-inline, 0px), var(--kv-menu-shift-block, 0px));
+    /* Geometry correction must be immediate; a colour transition cannot delay bounds. */
+    transition-property: none;
   }
 
   /* A group stacks its heading and items like the panel does, so grouping adds
@@ -99,6 +108,8 @@
   }
 
   :where([data-kv-design-system]) [data-ui="menu-label"] {
+    min-width: 0;
+    overflow-wrap: anywhere;
     padding: var(--kv-space-2) var(--kv-space-3) var(--kv-space-1);
     color: var(--kv-text-muted);
     font-size: var(--kv-text-2xs);
@@ -125,8 +136,17 @@
     bottom: calc(100% + var(--kv-space-1));
   }
 
+  /* Side rails anchor beside the trigger, with the panel growing upwards. */
+  :where([data-kv-design-system]) [data-ui="menu"][data-placement="right"] [data-ui="menu-panel"] {
+    top: auto;
+    bottom: 0;
+    left: calc(100% + var(--kv-space-2));
+    right: auto;
+  }
+
   :where([data-kv-design-system]) [data-ui="menu-item"] {
     display: flex;
+    min-width: 0;
     width: 100%;
     min-height: var(--kv-control-height);
     align-items: center;
@@ -137,7 +157,7 @@
     background: transparent;
     color: var(--kv-text-main);
     font: inherit;
-    text-align: left;
+    text-align: start;
     text-decoration: none;
     cursor: pointer;
   }
@@ -160,6 +180,7 @@
     min-width: 0;
     flex: 1;
     gap: var(--kv-space-0-5);
+    overflow-wrap: anywhere;
   }
 
   :where([data-kv-design-system]) :is([data-ui="menu-item-leading"], [data-ui="menu-item-check"]) {

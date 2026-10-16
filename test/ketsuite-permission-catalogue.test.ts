@@ -60,8 +60,14 @@ test('public production permission catalogue covers every function owned by its 
     // 116: a re-baseline, not 17 new exemptions. The figures above were carried over when KetSuite
     // moved into ketsuite/ (KetJS 0.1.41), where the composition already counted 116 on the day it
     // moved; no exemption has been declared since.
+    // 119: crm_backend.sales.read, .search and .export, the internal reads of the CRM sales screens, each
+    // behind the route that checks the screen's own permission first.
+    // 131: the CRM sales commands the route calls after checking the user's own permission: crm_backend.sales
+    // .sendQuotation, .sendEmail, .retryEmail, .importPreview, .saveImportPreview and .rescheduleActivity;
+    // crm_sale.sale.attachQuotation, .followMerge, .recordQuotationStep, .reviseQuotation and
+    // .saveQuotationPolicy; and crm.lostReason.save under the pipeline's configuration right.
     // The reasons live beside their declarations.
-    Object.keys(manifest.permissions.exemptions).length <= 116,
+    Object.keys(manifest.permissions.exemptions).length <= 131,
     'a new permission exemption was added — say why, in the declaration',
   )
 

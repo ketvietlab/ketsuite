@@ -1,3 +1,4 @@
+import { exampleApplications } from '../packages/design-system/src/catalogue/application-switcher.ts'
 import { withoutGlobalSearchDialog } from './helpers/shell.ts'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -14,6 +15,7 @@ import {
 test('topbar exposes a compact dialog launcher and a native GET fallback', () => {
   const output = renderToString(
     <AppShell
+      applications={exampleApplications}
       sidebar="Menu"
       main="Content"
       topbar={

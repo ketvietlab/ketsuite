@@ -1,4 +1,6 @@
 const vi = {
+  'menu.imports': 'Nhập lead',
+  'menu.tags': 'Nhãn hồ sơ',
   'interaction.title': 'Ghi nhận tương tác',
   'interaction.channel': 'Kênh liên hệ',
   'interaction.outcome': 'Kết quả',
@@ -24,6 +26,9 @@ const vi = {
   'menu.cases': 'Hồ sơ bán hàng',
   'menu.activities': 'Công việc & lịch',
   'menu.configuration': 'Cấu hình',
+  'menu.settings.people': 'Đội & phân công',
+  'menu.settings.process': 'Quy trình bán hàng',
+  'menu.settings.scoring': 'Chấm điểm lead',
   'pipeline.title': 'Pipeline CRM',
   'cases.title': 'Hồ sơ CRM',
   'case.create.partnerHintTitle': 'Khách hàng không tự trở thành lead',
@@ -279,9 +284,15 @@ const vi = {
   'configuration.emptyFilteredTitle': 'Không có mục nào ở trạng thái này',
   'configuration.emptyFilteredHint': 'Chọn trạng thái khác để xem các mục còn lại.',
   'value.archivedTeam': '{name} (đã lưu trữ)',
+  'error.consentRequired': 'Khách chưa đồng ý liên hệ; ghi nhận đồng ý trước khi gửi email.',
+  'error.emailRequired': 'Hồ sơ chưa có email liên hệ.',
+  'error.noSender': 'Công ty chưa có email gửi đi. Thêm email cho công ty rồi gửi lại.',
+  'error.emailNotFailed': 'Thư không ở trạng thái gửi lỗi.',
 }
 
 const en: typeof vi = {
+  'menu.imports': 'Lead imports',
+  'menu.tags': 'Record tags',
   'interaction.title': 'Log interaction',
   'interaction.channel': 'Contact channel',
   'interaction.outcome': 'Outcome',
@@ -307,6 +318,9 @@ const en: typeof vi = {
   'menu.cases': 'Sales records',
   'menu.activities': 'Activities & calendar',
   'menu.configuration': 'Configuration',
+  'menu.settings.people': 'Teams & assignment',
+  'menu.settings.process': 'Sales process',
+  'menu.settings.scoring': 'Lead scoring',
   'pipeline.title': 'CRM pipeline',
   'cases.title': 'CRM records',
   'case.create.partnerHintTitle': 'A customer does not automatically become a lead',
@@ -563,6 +577,10 @@ const en: typeof vi = {
   'configuration.emptyFilteredTitle': 'Nothing in this status',
   'configuration.emptyFilteredHint': 'Choose another status to see the other entries.',
   'value.archivedTeam': '{name} (archived)',
+  'error.consentRequired': 'The customer has not agreed to be contacted; record consent before emailing.',
+  'error.emailRequired': 'The record has no contact email.',
+  'error.noSender': 'The company has no sending address. Add an email to the company, then send again.',
+  'error.emailNotFailed': 'The email has not failed.',
 }
 
 export const messages = { vi, en }

@@ -58,6 +58,11 @@ const RULES: Record<string, Rule> = {
   // libvips from npm (@img/*) with no install script or source build; the lockfile
   // records every platform's package, so a Linux image installs from a macOS lock.
   //
+  // marked is the fifth: a screen's Help is Markdown, and the design system's
+  // MarkdownContent takes its tokens from a lexer the host supplies rather than
+  // parsing itself. The CRM sales routes lex their Help with it on the server
+  // only; it has no dependencies of its own and never reaches a browser bundle.
+  //
   // One entry point, like everything else here: nothing imports a path inside
   // them. For chart.js that also decides the bundle — `chart.js/auto` would
   // register every controller ever written, while the root entry makes each
@@ -67,7 +72,11 @@ const RULES: Record<string, Rule> = {
       '@ketvietlab/design-system',
       '@ketvietlab/ketjs',
       '@ketvietlab/ketjs-view',
+      // Native Website Studio uses the browser-safe public SSR frame contract.
+      // publicOnly below still rejects private client implementation imports.
+      '@ketvietlab/website-client',
       'chart.js',
+      'marked',
       'sharp',
       'yjs',
       'ioredis',

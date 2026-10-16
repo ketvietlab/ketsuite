@@ -1,4 +1,3 @@
-import { withoutGlobalSearchDialog } from './helpers/shell.ts'
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import { tableNameFor } from '@ketvietlab/ketjs'
@@ -8,8 +7,6 @@ import { ketsuite } from '../apps/ketsuite/deployment.ts'
 
 const form = { 'content-type': 'application/x-www-form-urlencoded' }
 const post = { headers: form, redirect: 'manual' as const }
-
-import { renderCaseModal, type CaseModalPayload } from './crm-case-modal-helper.ts'
 
 const boot = async (t: TestContext) => {
   const app = await createTestDeployment(ketsuite)
@@ -161,91 +158,6 @@ test('crm: merging carries the whole record and refuses a second pass', async (t
   assert.equal((again.errors as Row[])[0]?.code, 'crm.error.alreadyMerged')
 })
 
-test('crm backend: the case workspace exposes assign, merge and the close decision', async (t) => {
-  const { app, call } = await boot(t)
-  await call('crm.case.save', {
-    id: 'workspace',
-    kind: 'opportunity',
-    name: 'Workspace opportunity',
-    partnerId: 'customer',
-    email: 'twin@example.test',
-    idempotencyKey: 'save-workspace-1',
-  })
-  await call('crm.case.save', {
-    id: 'workspace-twin',
-    kind: 'opportunity',
-    name: 'Workspace twin',
-    partnerId: 'customer',
-    email: 'twin@example.test',
-    idempotencyKey: 'save-twin-0001',
-  })
-  const page = await app.client.get('/admin/crm/cases/workspace?lang=en')
-  const html = renderCaseModal(
-    await call<CaseModalPayload>('crm.case.modalContext', { id: 'workspace', locale: 'en' }),
-  )
-  assert.equal(page.status, 200)
-  // Relational fields render as pickers, not as selects carrying every row.
-  assert.match(html, /data-island="backend.relation-select"/)
-  assert.doesNotMatch(html, /<select[^>]*name="partnerId"[^>]*>\s*<option[^>]*>—/)
-  assert.match(html, /data-record-dialog="assign"/)
-  assert.match(html, /data-record-dialog="merge"/)
-  assert.match(html, /data-record-dialog="close"/)
-  // Duplicate detection has always run here; now it renders what it found.
-  assert.match(html, /Possible duplicates/)
-  assert.match(html, /Workspace twin/)
-
-  const closePage = await app.client.get('/admin/crm/cases/workspace?modal=close&lang=en')
-  const closeHtml = renderCaseModal(
-    await call<CaseModalPayload>('crm.case.modalContext', { id: 'workspace', locale: 'en' }),
-    'overview',
-    'close',
-  )
-  assert.equal(closePage.status, 200)
-  assert.match(closeHtml, /name="__command" value="won"/)
-  assert.match(closeHtml, /name="closeReason"/)
-  assert.match(closeHtml, /name="confirm"/)
-
-  // Assignment is restricted to the team, which is why the membership has to
-  // exist before the picker's choice is accepted.
-  await call('crm.team.member.save', {
-    id: 'member-admin',
-    teamId: 'crm-team-sales',
-    userId: 'admin',
-    idempotencyKey: 'member-key-00001',
-  })
-  const workspaceRow = await call<Row>('crm.case.get', { id: 'workspace' })
-  const assigned = await app.client.post(
-    '/admin/crm/cases/workspace?lang=en',
-    new URLSearchParams({
-      action: 'assign',
-      assigneeUserId: 'admin',
-      expectedVersion: String(workspaceRow.version),
-    }),
-    post,
-  )
-  assert.equal(assigned.status, 303)
-  assert.equal((await call<Row>('crm.case.get', { id: 'workspace' })).assigneeUserId, 'admin')
-
-  const held = await call<Row>('crm.case.get', { id: 'workspace' })
-  const lost = await app.client.post(
-    '/admin/crm/cases/workspace?lang=en',
-    new URLSearchParams({
-      action: 'lost',
-      lostReason: 'Chose a competitor',
-      expectedVersion: String(held.version),
-    }),
-    post,
-  )
-  assert.equal(lost.status, 303)
-  const closed = await call<Row>('crm.case.get', { id: 'workspace' })
-  assert.equal(closed.terminalState, 'lost')
-  assert.equal(
-    (closed.salesDetail as Row).lostReason,
-    'Chose a competitor',
-    'the reason the user typed is stored, not "not_specified"',
-  )
-})
-
 test('crm backend: the timeline reads as words, not as message keys', async (t) => {
   const { app, call } = await boot(t)
   await call('crm.case.save', {
@@ -255,132 +167,16 @@ test('crm backend: the timeline reads as words, not as message keys', async (t) 
     partnerId: 'customer',
     idempotencyKey: 'save-readable-1',
   })
-  const page = await app.client.get('/admin/crm/cases/readable?tab=timeline&lang=en')
-  assert.equal(page.status, 200)
-  const html = renderCaseModal(
-    await call<CaseModalPayload>('crm.case.modalContext', { id: 'readable', locale: 'en' }),
-    'timeline',
+  assert.equal((await app.client.get('/admin/crm/cases/readable?lang=en')).status, 200)
+  const read = await app.client.post(
+    '/admin/crm/sales/read',
+    JSON.stringify({ query: 'screen=lead-detail&id=readable&lang=en' }),
+    { headers: { 'content-type': 'application/json' } },
   )
-  assert.match(html, /Record created/)
-  assert.doesNotMatch(html.replace(/<[^>]*>/g, ' '), /crm\.timeline\./)
-})
-
-test('crm backend: an activity can be completed from the case and from the planner', async (t) => {
-  const { app, call } = await boot(t)
-  await call('crm.case.save', {
-    id: 'follow-up',
-    kind: 'lead',
-    name: 'Follow up record',
-    partnerId: 'customer',
-    assigneeUserId: 'admin',
-    idempotencyKey: 'save-followup-1',
-  })
-  const scheduled = await call<Row>('crm.activity.schedule', {
-    id: 'activity-1',
-    caseId: 'follow-up',
-    summary: 'Call the buyer',
-    dueDate: '2026-09-01',
-    idempotencyKey: 'schedule-key-01',
-  })
-  assert.equal(scheduled.ok, true)
-
-  const casePage = await app.client.get('/admin/crm/cases/follow-up?tab=activities&lang=en')
-  assert.equal(casePage.status, 200)
-  const caseHtml = renderCaseModal(
-    await call<CaseModalPayload>('crm.case.modalContext', { id: 'follow-up', locale: 'en' }),
-    'activities',
-  )
-  assert.match(caseHtml, /Call the buyer/, 'the case lists the activities it owns')
-  assert.match(caseHtml, /data-record-dialog="complete"/)
-
-  const planner = await app.client.get('/admin/crm/activities?tab=mine&lang=en')
-  const plannerHtml = await planner.text()
-  assert.match(plannerHtml, /data-ui="list-page"/)
-  assert.doesNotMatch(plannerHtml, /name="action" value="schedule"/)
-  assert.match(plannerHtml, /name="action" value="complete"/)
-  assert.match(plannerHtml, /action="\/admin\/crm\/activities\?tab=mine&amp;lang=en"/)
-  assert.match(plannerHtml, /href="\/admin\/crm\/activities\?tab=calendar&amp;lang=en"/)
-  assert.match(plannerHtml, /href="\/admin\/crm\/cases\/follow-up\?lang=en"/)
-  const schedule = await app.client.get('/admin/crm/activities?tab=mine&schedule=1&lang=en')
-  const scheduleHtml = await schedule.text()
-  assert.match(scheduleHtml, /data-ui="modal-layer" data-route-modal="true"/)
-  assert.match(scheduleHtml, /name="action" value="schedule"/)
-
-  const completed = await app.client.post(
-    '/admin/crm/cases/follow-up?tab=activities&lang=en',
-    new URLSearchParams({ action: 'completeActivity', activityId: 'activity-1' }),
-    post,
-  )
-  assert.equal(completed.status, 303)
-  const row = await call<Row>('crm.case.get', { id: 'follow-up' })
-  assert.equal(
-    (row.activities as Row[]).every((item) => item.doneAt),
-    true,
-  )
-})
-
-test('crm backend: legacy configuration links redirect to sections and record modals', async (t) => {
-  const { app } = await boot(t)
-  const manual = { redirect: 'manual' as const }
-  const location = async (path: string) => {
-    const response = await app.client.get(path, manual)
-    assert.equal(response.status, 303, path)
-    return String(response.headers.get('location'))
-  }
-  // `tab` is the record modal's; a catalogue is a `section`, other query state survives.
-  assert.equal(
-    await location('/admin/crm/configuration?tab=stages&status=archived&lang=en'),
-    '/admin/crm/configuration?status=archived&lang=en&section=stages',
-  )
-  assert.equal(
-    await location('/admin/crm/configuration?tab=tags&edit=tag-1&lang=en'),
-    '/admin/crm/configuration?lang=en&section=tags&record=crm.tag%3Atag-1',
-  )
-  assert.equal(
-    await location('/admin/crm/configuration?tab=scoreRules&create=1'),
-    '/admin/crm/configuration?section=scoreRules&record=crm.scoreRule%3Anew',
-  )
-  assert.equal(
-    await location('/admin/crm/configuration/teams/new?lang=en'),
-    '/admin/crm/configuration?section=teams&lang=en&record=crm.team%3Anew',
-  )
-  assert.equal(
-    await location('/admin/crm/configuration/teams/crm-team-sales?member=new&lang=en'),
-    '/admin/crm/configuration?section=teams&lang=en&record=crm.team%3Acrm-team-sales',
-  )
-
-  // A modal tab next to its record is not a legacy catalogue tab: the page renders.
-  const open = await app.client.get(
-    '/admin/crm/configuration?section=teams&record=crm.team%3Acrm-team-sales&tab=members&lang=en',
-    manual,
-  )
-  const html = await open.text()
-  assert.equal(open.status, 200, html.slice(0, 400))
-  assert.match(html, /data-ui="record-modal-host" data-record-kind="crm\.team"/)
-  for (const kind of ['crm\\.stage', 'crm\\.tag', 'crm\\.assignmentRule', 'crm\\.scoreRule'])
-    assert.match(html, new RegExp(`data-record-kind="${kind}"`))
-  assert.doesNotMatch(
-    withoutGlobalSearchDialog(html),
-    /data-ui="modal-layer"/,
-    'the server renders every modal host closed',
-  )
-  assert.match(
-    html,
-    /href="\/admin\/crm\/configuration\?section=teams&amp;lang=en&amp;record=crm\.team%3Acrm-team-sales"/,
-  )
-  assert.match(
-    html,
-    /href="\/admin\/crm\/configuration\?section=teams&amp;lang=en&amp;record=crm\.team%3Anew"/,
-  )
-  assert.doesNotMatch(html, /\/admin\/crm\/configuration\/teams\//)
-
-  // Writes go through the CRM functions from the modal; the page takes no form posts.
-  const posted = await app.client.post(
-    '/admin/crm/configuration?section=teams&lang=en',
-    new URLSearchParams({ name: 'Posted team' }),
-    post,
-  )
-  assert.equal(posted.status, 405)
+  const history = JSON.stringify(((await read.json()) as { value: Row }).value)
+  // Its creation reads as an action the screen names in words, not as a message key.
+  assert.match(history, /"create"/)
+  assert.doesNotMatch(history, /crm\.timeline\./)
 })
 
 test('crm: configuration modal contexts carry defaults, choices and permissions', async (t) => {
@@ -527,27 +323,6 @@ test('crm: configuration saves are validated on the server', async (t) => {
   assert.equal(tag.color, '#ff0000')
 })
 
-test('crm backend: the configuration status filter lists archived entries and survives switching catalogues', async (t) => {
-  const { app, call } = await boot(t)
-  const saved = await call<Row>('crm.team.save', {
-    values: { id: 'team-retired', name: 'Retired team', code: 'retired', active: false },
-    idempotencyKey: 'team-retired-001',
-  })
-  assert.equal(saved.ok, true)
-  const active = await (await app.client.get('/admin/crm/configuration?section=teams&lang=en')).text()
-  assert.doesNotMatch(active, /Retired team/)
-  assert.match(active, /data-ui="list-facets"/)
-  const archived = await (
-    await app.client.get('/admin/crm/configuration?section=teams&status=archived&lang=en')
-  ).text()
-  assert.match(archived, /Retired team/)
-  assert.match(archived, /record=crm\.team%3Ateam-retired/)
-  assert.match(archived, /href="\/admin\/crm\/configuration\?section=stages&amp;status=archived&amp;lang=en"/)
-  const all = await (await app.client.get('/admin/crm/configuration?section=teams&status=all&lang=en')).text()
-  assert.match(all, /Retired team/)
-  assert.match(all, /Sales/)
-})
-
 test('crm backend: the leaderboard is reachable and refreshes', async (t) => {
   const { app, call } = await boot(t)
   await call('crm.case.save', {
@@ -658,22 +433,6 @@ test('crm: a case kind another module owns stays out of the CRM screens', async 
     )
     assert.equal(found.length, 1)
   })
-})
-
-test('crm backend: a cross-origin POST is refused', async (t) => {
-  const { app } = await boot(t)
-  const forged = await app.client.post(
-    '/admin/crm/cases?lang=en',
-    new URLSearchParams({ name: 'Forged', kind: 'lead' }),
-    { headers: { ...form, origin: 'https://evil.test' }, redirect: 'manual' },
-  )
-  assert.equal(forged.status, 403)
-  const forgedConfiguration = await app.client.post(
-    '/admin/crm/configuration?tab=teams&lang=en',
-    new URLSearchParams({ name: 'Forged team', code: 'forged' }),
-    { headers: { ...form, origin: 'https://evil.test' }, redirect: 'manual' },
-  )
-  assert.equal(forgedConfiguration.status, 403)
 })
 
 test('crm: a second company in the tenant gets its own pipeline', async (t) => {
@@ -850,99 +609,8 @@ test('crm website: a filled honeypot writes nothing', async (t) => {
   assert.equal(after.rows.length, 1)
 })
 
-test('crm sale: a quotation is written with the line the form asked for', async (t) => {
-  const { app, call, fixture } = await boot(t)
-  await fixture('uom.saveUnit', { id: 'unit', name: 'Unit', relativeFactor: '1' })
-  await fixture('product.saveTemplate', {
-    id: 'gift-box',
-    name: 'Gift box',
-    type: 'goods',
-    uomId: 'unit',
-    listPrice: '250000',
-    saleOk: true,
-    purchaseOk: true,
-  })
-  await fixture('product.saveVariant', { id: 'gift-box-1', templateId: 'gift-box', combinationKey: '' })
-  await fixture('stock.saveWarehouse', { id: 'main', code: 'MAIN', name: 'Main warehouse' })
-  await call('crm.case.save', {
-    id: 'quotable',
-    kind: 'opportunity',
-    name: 'Quotable opportunity',
-    partnerId: 'customer',
-    idempotencyKey: 'save-quotable-1',
-  })
-  const products = await call<Row[]>('crm_sale.sale.listQuotableProducts', { search: 'Gift' })
-  assert.ok(products.length >= 1, 'the picker finds a sellable variant')
-  const product = products[0]!
-
-  const page = await app.client.get('/admin/crm/cases/quotable?tab=sales&lang=en')
-  assert.equal(page.status, 200)
-  assert.match(
-    renderCaseModal(
-      await call<CaseModalPayload>('crm.case.modalContext', { id: 'quotable', locale: 'en' }),
-      'sales',
-      'quotation',
-    ),
-    /name="quantity"/,
-  )
-
-  const created = await app.client.post(
-    '/admin/crm/cases/quotable?tab=sales&lang=en',
-    new URLSearchParams({
-      action: 'quotation',
-      warehouseId: 'main',
-      productId: String(product.id),
-      productUomId: String(product.uomId),
-      quantity: '3',
-    }),
-    post,
-  )
-  assert.equal(created.status, 303)
-  const quotations = await call<Row[]>('crm_sale.sale.listQuotations', { caseId: 'quotable' })
-  assert.equal(quotations.length, 1)
-  assert.notEqual(Number(quotations[0]!.amountTotal), 0, 'the quotation has a line, so it has a total')
-
-  const withQuotation = await app.client.get('/admin/crm/cases/quotable?tab=sales&lang=en')
-  assert.equal(withQuotation.status, 200)
-  assert.match(
-    renderCaseModal(
-      await call<CaseModalPayload>('crm.case.modalContext', { id: 'quotable', locale: 'en' }),
-      'sales',
-    ),
-    /Quotations/,
-  )
-
-  const { caseModalDefinition } = await import(
-    '../packages/ketsuite/src/modules/crm_backend/modal/case-modal-view.tsx'
-  )
-  const { caseContext } = await import('./crm-case-modal-helper.ts')
-  const payload = await call<CaseModalPayload>('crm.case.modalContext', { id: 'quotable', locale: 'en' })
-  const form = new FormData()
-  form.set('productId', String(product.id))
-  form.set('warehouseId', 'main')
-  form.set('quantity', '2')
-  const input = caseModalDefinition.commands!.quotation!.input(
-    form,
-    caseContext(payload, 'sales', 'quotation'),
-    {},
-  )
-  assert.equal((input.products as Row[])[0]!.productUomId, product.uomId)
-  const fromModal = await call<Row>('crm_sale.sale.createQuotation', input)
-  assert.equal(fromModal.ok, true, JSON.stringify(fromModal))
-
-  // A quotation with no product is refused rather than silently created empty.
-  const empty = await call<Row>('crm_sale.sale.createQuotation', {
-    id: 'empty-order',
-    caseId: 'quotable',
-    warehouseId: 'main',
-    idempotencyKey: 'empty-key-00001',
-  })
-  assert.equal(empty.ok, false)
-  assert.equal((empty.errors as Row[])[0]?.code, 'crm_sale.error.productRequired')
-})
-
 test('crm pipeline: the header counts the board it is standing over, not the whole board', async (t) => {
-  const { app, call } = await boot(t)
+  const { call } = await boot(t)
   const save = (id: string, name: string, revenue: string, probability: string) =>
     call('crm.case.save', {
       id,
@@ -985,79 +653,10 @@ test('crm pipeline: the header counts the board it is standing over, not the who
   // And the filters the board runs are the filters the header runs.
   assert.equal((await call<Row>('crm.pipeline.summary', { search: 'Open one' })).openCount, 1)
   assert.equal((await call<Row>('crm.pipeline.summary', { mine: true })).openCount, 0)
-
-  const page = await app.client.get('/admin/crm/pipeline?lang=en')
-  const html = await page.text()
-  assert.equal(page.status, 200)
-  assert.match(html, /data-ui="metric-icon"/, 'the figures render as metric cards')
-  assert.match(html, /Weighted value/)
-  // The filters are the shared list chrome, not a form of their own above the board.
-  assert.match(html, /data-ui="chrome-search-input"/)
-  assert.match(html, /data-ui="view-kind"[^>]*data-kind="list"/)
-})
-
-test('crm pipeline: a column offers only the record kind that column can hold', async (t) => {
-  const { app, call } = await boot(t)
-  const board = await (await app.client.get('/admin/crm/pipeline?lang=en')).text()
-  // `crm-stage-proposition` accepts opportunities only, so its column may not
-  // offer a lead — the save would be refused for the kind it just asked for.
-  assert.match(board, /crm-stage-proposition&amp;kind=opportunity/)
-  assert.match(board, /crm-stage-new&amp;kind=lead/)
-  assert.doesNotMatch(board, /crm-stage-proposition&amp;kind=lead/)
-
-  // And the form the column points at arrives with that stage already chosen.
-  const create = await app.client.get(
-    '/admin/crm/cases/new?stageId=crm-stage-proposition&kind=opportunity&lang=en',
-  )
-  assert.equal(create.status, 200)
-  const html = renderCaseModal(
-    await call<CaseModalPayload>('crm.case.modalContext', {
-      kind: 'opportunity',
-      stageId: 'crm-stage-proposition',
-      locale: 'en',
-    }),
-  )
-  assert.match(
-    html,
-    /<select[^>]*name="stageId"[\s\S]*?<option[^>]*value="crm-stage-proposition"[^>]*selected/,
-  )
-
-  const made = await app.client.post(
-    '/admin/crm/cases?lang=en',
-    new URLSearchParams({
-      name: 'Straight into proposition',
-      kind: 'opportunity',
-      stageId: 'crm-stage-proposition',
-      priority: '1',
-    }),
-    post,
-  )
-  assert.equal(made.status, 303)
-  const rows = await app.client.call<{ rows: Row[] }>('crm.case.list', { search: 'Straight into' })
-  assert.equal(rows.value.rows[0]?.stageId, 'crm-stage-proposition')
-
-  // The stage picker belongs to the create form only. On a record that exists the
-  // stage moves through the action that records the move and checks the version.
-  await call('crm.case.save', {
-    id: 'held-record',
-    kind: 'opportunity',
-    name: 'Held record',
-    partnerId: 'customer',
-    idempotencyKey: 'held-record-0001',
-  })
-  const detail = await app.client.get('/admin/crm/cases/held-record?lang=en')
-  assert.equal(detail.status, 200)
-  const payload = await call<CaseModalPayload>('crm.case.modalContext', { id: 'held-record', locale: 'en' })
-  const detailHtml = renderCaseModal(payload)
-  assert.match(detailHtml, /data-record-dialog="move"/, 'the move action is still the way')
-  // One `stageId` on the page, and it belongs to that action. A second one in the
-  // record form would write the same column without recording the move.
-  assert.doesNotMatch(detailHtml, /name="stageId"/)
-  assert.match(renderCaseModal(payload, 'overview', 'move'), /name="stageId"/)
 })
 
 test('crm: a pipeline card carries its tags and the next thing owed on it', async (t) => {
-  const { app, call } = await boot(t)
+  const { call } = await boot(t)
   await call('crm.tag.save', { id: 'tag-gift', name: 'Gift' })
   await call('crm.case.save', {
     id: 'carded',
@@ -1085,8 +684,4 @@ test('crm: a pipeline card carries its tags and the next thing owed on it', asyn
   const activity = row.nextActivity as Row
   assert.equal(activity.summary, 'Call the buyer back')
   assert.equal(activity.overdue, true, 'a due date in the past is late, decided where today is known')
-
-  const board = await (await app.client.get('/admin/crm/pipeline?lang=en')).text()
-  assert.match(board, /Call the buyer back/)
-  assert.match(board, /crm-card-tag/)
 })

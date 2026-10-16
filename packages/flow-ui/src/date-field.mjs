@@ -2,7 +2,8 @@ import { tr } from './i18n.mjs'
 import { html } from '@ketvietlab/ketjs-view'
 import { FlowIcon, FlowInput, FlowButton } from './index.mjs'
 /** Compact date value opens the same native date input used by record forms.
- * @param {{id:string,label:string,value:string,min?:string,max?:string,disabled?:boolean,overdue?:boolean,onChange:(value:string)=>void}} p */
+ * With `menu`, the input and actions are built only while the consumer reports it open.
+ * @param {{id:string,label:string,value:string,min?:string,max?:string,disabled?:boolean,overdue?:boolean,menu?:{open:boolean,onToggle:(open:boolean)=>void},onChange:(value:string)=>void}} p */
 export function FlowDateField(p) {
   const formatted = p.value ? p.value.split('-').reverse().join('/') : tr('flow.ui.set.due.date')
   /** @param {HTMLElement} menu */
@@ -27,12 +28,14 @@ export function FlowDateField(p) {
    ${p.value ? html`<span>${p.value.slice(8, 10)}/${p.value.slice(5, 7)}</span>` : html`${FlowIcon('calendar')}<span>${tr('flow.ui.set.due.date')}</span>`}
   </button>
   <div id=${`${p.id}-menu`} data-flow="date-menu" popover="auto" role="dialog" aria-label=${p.label}
+   on:beforetoggle=${/** @param {ToggleEvent} e */ (e) => e.newState === 'open' && p.menu?.onToggle(true)}
    on:toggle=${
      /** @param {ToggleEvent} e */ (e) => {
        if (e.newState === 'open')
          /** @type {HTMLInputElement|null} */ (
            /** @type {HTMLElement} */ (e.currentTarget).querySelector('input')
          )?.focus()
+       else p.menu?.onToggle(false)
      }
 }
    on:keydown=${
@@ -41,21 +44,24 @@ export function FlowDateField(p) {
        if (e.key === 'Enter' && /** @type {HTMLElement} */ (e.target).tagName === 'INPUT') e.preventDefault()
      }
 }>
-   ${FlowInput({
-     id: `${p.id}-input`,
-     label: p.label,
-     type: 'date',
-     value: p.value,
-     min: p.min,
-     max: p.max,
-     disabled: p.disabled,
-     onChange: /** @param {Event} e */ (e) => {
-       const input = /** @type {HTMLInputElement} */ (e.currentTarget)
-       if (p.disabled) return
-       if (input.validity.valid) p.onChange(input.value)
-       else input.reportValidity()
-     },
-   })}
+   ${
+     p.menu && !p.menu.open
+       ? null
+       : html`${FlowInput({
+           id: `${p.id}-input`,
+           label: p.label,
+           type: 'date',
+           value: p.value,
+           min: p.min,
+           max: p.max,
+           disabled: p.disabled,
+           onChange: /** @param {Event} e */ (e) => {
+             const input = /** @type {HTMLInputElement} */ (e.currentTarget)
+             if (p.disabled) return
+             if (input.validity.valid) p.onChange(input.value)
+             else input.reportValidity()
+           },
+         })}
    <div data-flow="date-actions">${FlowButton({
      label: tr('flow.ui.clear.due.date'),
      size: 'sm',
@@ -64,7 +70,8 @@ export function FlowDateField(p) {
      onClick: () => {
        if (!p.disabled) p.onChange('')
      },
-   })}${FlowButton({ label: 'Xong', size: 'sm', onClick: /** @param {Event} e */ (e) => close(/** @type {HTMLElement} */ (/** @type {HTMLElement} */ (e.currentTarget).closest('[popover]'))) })}</div>
+   })}${FlowButton({ label: tr('flow.ui.picker.done'), size: 'sm', onClick: /** @param {Event} e */ (e) => close(/** @type {HTMLElement} */ (/** @type {HTMLElement} */ (e.currentTarget).closest('[popover]'))) })}</div>`
+}
   </div>
  </div>`
 }

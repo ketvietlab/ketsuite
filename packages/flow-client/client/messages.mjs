@@ -1,6 +1,101 @@
 /** Core product messages; no paid-feature catalog is required. */
 export const flowClientMessages = {
   en: {
+    'bulk.previewCount': '{0} eligible · {1} require review. Refused tasks stay selected.',
+    'bulk.noChange': 'Already in the target status; no change needed.',
+    'epic.invalidProject': 'Choose an active project. An existing epic keeps its project.',
+    'epic.invalidDate': 'Enter a valid date.',
+    'epic.dateOrder': 'The end date must be on or after the start date.',
+    'epic.invalidOwner': 'Choose an available epic owner.',
+    'epic.outcomeRequired': 'Describe the intended outcome.',
+    'catalog.duplicateTitle': 'This name is already used in the same catalog. Choose another name.',
+    'catalog.invalidKind': 'Choose a supported status group.',
+    'catalog.invalidIcon': 'Choose a supported task type icon.',
+    'catalog.statusInUse':
+      '{0} tasks use this status. Keep its group or move those tasks before changing it.',
+    'catalog.requiredStatusGroup': 'Keep at least one status in each workflow group.',
+    'documents.backToLibrary': 'Back to library',
+    'catalog.noActiveLabels':
+      'No active labels. Archived labels remain on existing tasks and can be restored below.',
+    'catalog.archivedLabels': 'Archived labels',
+    'catalog.invalidAction': 'This catalog action is not supported.',
+    'catalog.restoreDuplicate':
+      'An active label already uses this name. Rename it before restoring this label.',
+    'catalog.ownerImmutable': 'Editing this catalog cannot change its owner.',
+    'catalog.ownerInvalid': 'Choose a project within this catalog’s ownership.',
+    'catalog.incompatibleValues':
+      '{0} stored task values are incompatible. Keep the current type/options or update those values before changing this field.',
+    'project.notFound': 'Project unavailable',
+    'project.notFoundHelp':
+      'It may have been removed or no longer be visible. Return to the project list and choose an existing project.',
+    'project.manageRequired':
+      'Project administration permission is required to edit this profile. You can inspect the current values.',
+    'project.createRequired': 'Workspace administration permission is required to create a project.',
+    'catalog.notFound': 'Record unavailable',
+    'catalog.notFoundHelp':
+      'It may have been removed or no longer be visible. Return to the library and choose an existing record.',
+    'catalog.managerRequired':
+      'An organization manager can change this shared catalog. You can inspect the current values.',
+    'sprint.alreadyClosed': 'This sprint is already closed',
+    'record.notFound': 'Record unavailable',
+    'record.loading': 'Loading the description and discussion',
+    'record.loadFailed': 'The description and discussion could not be loaded.',
+    'notFound.title': 'Page not found',
+    'notFound.help': 'This link may be out of date, or the page has moved. Nothing in your work has changed.',
+    'notFound.action': 'Go to My work',
+    'organization.ownerProtected':
+      'The owner role is protected. Role changes and revocation are unavailable here.',
+    'organization.archiveProjects': 'Review {0} active projects',
+    'organization.restoreAccess': 'Restore Flow access',
+    'ui.confirmArchiveView':
+      'Archive “{0}”? Its saved filters will be hidden; tasks remain in their project.',
+    'organization.revokedRoleHelp':
+      'Changing the role does not restore access. Restore access explicitly when this person should return.',
+    'organization.confirmMemberRestore':
+      'Restore Flow access for {0} as {1}? Existing access sources will apply again.',
+    'organization.confirmInvitationRevoke':
+      'Revoke the pending invitation for {0}? It will no longer allow access.',
+    'organization.confirmTeamRemoval':
+      'Remove {0} from this Team? Access granted through this Team may be lost.',
+    'organization.confirmAccessRevoke':
+      'Revoke this direct access source? Access inherited from other sources may remain.',
+    'organization.confirmMemberRevoke':
+      'Revoke Flow access for {0}? Existing tasks keep their assignee and may need reassignment.',
+    'record.notFoundHelp':
+      'This record is unavailable in this project. Return to the list and choose an existing record.',
+    'sprint.invalidState': 'This sprint cannot perform that action',
+    'sprint.closeActiveOnly':
+      'Only an active sprint can be closed. Return to the sprint list to check its state.',
+    'sprint.invalidCarryTo': 'Choose Backlog or an unfinished sprint in the same project.',
+    'sprint.closedHelp':
+      'Its saved report is available. Completed and carried work will not be processed again.',
+    'bulk.reload': 'Reload task data',
+    'bulk.previewHelp':
+      '{0} selected tasks. Each task is checked when applied; refusals remain selected with a reason.',
+    'bulk.previewReady':
+      'No known blocker. Permissions and workflow conditions are checked again when applied.',
+    'bulk.previewReview': 'Needs review',
+    'labels.archiveHelp':
+      'The label will be hidden from active lists and future choices. Existing task references are retained.',
+    'draft.title': 'Discard unsaved changes?',
+    'draft.message':
+      'This form has changes that have not been saved. Keep editing to preserve them, or discard them to continue.',
+    'draft.documentMessage':
+      'This document could not be saved. Keep editing to preserve your draft, or discard the unsaved changes to continue.',
+    'draft.keep': 'Keep editing',
+    'documents.archiveHelp':
+      '“{0}” will leave active documents. Pending changes are saved first. You can restore it from Archive.',
+    'draft.discard': 'Discard changes',
+    'bulk.resultTitle': 'Bulk update result',
+    'bulk.result': 'Updated {0} tasks. Kept {1} tasks selected for review.',
+    'bulk.complete': 'Updated {0} tasks.',
+    'bulk.unknown': 'Could not confirm the batch result. Your selection is kept; reload before retrying.',
+    'bulk.reason.blocked': 'An unfinished dependency prevents this change.',
+    'bulk.reason.forbidden': 'You no longer have permission to edit this task.',
+    'bulk.reason.notFound': 'This task is unavailable in your scope.',
+    'bulk.reason.validation': 'Required fields or workflow rules are not satisfied.',
+    'bulk.reason.conflict': 'This task changed while the request was being processed.',
+    'bulk.reason.other': 'This task could not be updated. Open it to review the requirements.',
     'cadence.title': 'Sprints',
     'cadence.enable': 'Plan in sprints',
     'cadence.kanban':
@@ -104,7 +199,6 @@ export const flowClientMessages = {
     'members.rowActions': 'Actions',
     'members.more': '+{0} more',
     'members.total': '{0} with access · {1} in the organization without access',
-    'members.noMatch': 'No member matches “{0}”',
     'members.nobody': 'No one has access yet',
     'members.nobodyDetail': 'Grant a person or a team to start.',
     'members.title': 'Member access',
@@ -279,6 +373,7 @@ export const flowClientMessages = {
     'ui.assignee': 'Assignee · {0}',
     'ui.access': 'Access · {0}',
     'ui.content.blocks': '{0} content blocks',
+    'ui.project': 'Project',
     'ui.project.tasks': 'Project tasks',
     'ui.this.document.belongs.to.the.workspace.not.a.project':
       'This document belongs to the workspace, not a project.',
@@ -663,7 +758,6 @@ export const flowClientMessages = {
     'ui.accepted.points.out.of.committed.tasks.await.acceptance':
       '{0} accepted points out of {1} committed. Confirming: {2}.',
     'ui.personal.performance': 'Personal performance',
-    'ui.september.2026': 'September 2026',
     'ui.all.workspaces': 'All workspaces',
     'ui.all.projects': 'All projects',
     'ui.level.not.set': 'Level not set',
@@ -721,7 +815,6 @@ export const flowClientMessages = {
     'ui.you.can.respond.to.the.result': 'You can respond to the result',
     'ui.requests.are.saved.for.review.points.and.history.are.not.changed.automatically':
       'Requests are saved for review. Points and history are not changed automatically.',
-    'ui.workspace.setup': 'Workspace setup',
     'ui.workspace.844042': 'Workspace',
     'ui.work': 'Work',
     'ui.filter.and.group.tasks': 'Filter and group tasks',
@@ -815,6 +908,8 @@ export const flowClientMessages = {
     'ui.search': 'Search: ',
     'ui.clear.all.filters': 'Clear all filters',
     'ui.no.matching.tasks': 'No matching tasks',
+    'related.emptyHint':
+      'Link active tasks in the same project. Try another ID or name, or clear the filter.',
     'ui.change.filters.or.create.your.first.task': 'Change filters or create your first task.',
     'ui.clear.filters': 'Clear filters',
     'ui.restore.task': 'Restore task',
@@ -1058,7 +1153,6 @@ export const flowClientMessages = {
     'ui.unable.to.open.flow': 'Unable to open Flow',
     'ui.try.again.to.continue': 'Try again to continue.',
     'ui.you.can.view.content.but.cannot.change.data': 'You can view content but cannot change data.',
-    'ui.september.2026.tasks': 'September 2026 · {0} tasks',
     'ui.max.file.size': 'Up to {0} MB per file',
     'ui.file.too.large': '{0} is larger than {1} MB.',
     'ui.move.task': '{0} · Move task',
@@ -1144,6 +1238,97 @@ export const flowClientMessages = {
     'today.assigned': 'A task is ready for you to start',
   },
   ja: {
+    'bulk.previewCount': '適用可能 {0} 件・確認が必要 {1} 件。拒否されたタスクは選択されたままになります。',
+    'bulk.noChange': 'すでに移動先のステータスです。変更は不要です。',
+    'epic.invalidProject': '有効なプロジェクトを選択してください。既存のエピックの所属先は変更できません。',
+    'epic.invalidDate': '有効な日付を入力してください。',
+    'epic.dateOrder': '終了日は開始日以降にしてください。',
+    'epic.invalidOwner': '選択可能なエピック担当者を選んでください。',
+    'epic.outcomeRequired': '目標とする成果を入力してください。',
+    'catalog.duplicateTitle': '同じカタログでこの名前は使用中です。別の名前を選んでください。',
+    'catalog.invalidKind': '対応するステータスグループを選択してください。',
+    'catalog.invalidIcon': '対応するタスク種別アイコンを選択してください。',
+    'catalog.statusInUse':
+      'このステータスを使用するタスクが{0}件あります。グループを維持するか、タスクを移動してから変更してください。',
+    'catalog.requiredStatusGroup': '各ワークフローグループに少なくとも1つのステータスを残してください。',
+    'documents.backToLibrary': 'ライブラリに戻る',
+    'catalog.noActiveLabels':
+      '有効なラベルはありません。アーカイブ済みラベルは既存タスクに残り、下で復元できます。',
+    'catalog.archivedLabels': 'アーカイブ済みラベル',
+    'catalog.invalidAction': 'このカタログ操作は対応していません。',
+    'catalog.restoreDuplicate': '同名の有効なラベルがあります。名前を変更してから復元してください。',
+    'catalog.ownerImmutable': 'このカタログの編集では所有先を変更できません。',
+    'catalog.ownerInvalid': 'このカタログの所有範囲内のプロジェクトを選択してください。',
+    'catalog.incompatibleValues':
+      '保存済みのタスク値{0}件と互換性がありません。現在の型・選択肢を維持するか、値を更新してから変更してください。',
+    'project.notFound': 'プロジェクトを開けません',
+    'project.notFoundHelp':
+      '削除されたか、表示する権限がなくなった可能性があります。プロジェクト一覧に戻り、既存のプロジェクトを選択してください。',
+    'project.manageRequired':
+      'この情報を編集するにはプロジェクトの管理権限が必要です。現在の値は確認できます。',
+    'project.createRequired': 'プロジェクトを作成するにはワークスペースの管理権限が必要です。',
+    'catalog.notFound': 'レコードを開けません',
+    'catalog.notFoundHelp':
+      '削除されたか、閲覧権限が変更された可能性があります。ライブラリに戻り、現在のレコードを選択してください。',
+    'catalog.managerRequired':
+      'この共有カタログの変更には組織管理者の権限が必要です。現在の値は確認できます。',
+    'sprint.alreadyClosed': 'このスプリントはすでに終了しています',
+    'record.notFound': 'レコードを利用できません',
+    'record.loading': '説明とディスカッションを読み込んでいます',
+    'record.loadFailed': '説明とディスカッションを読み込めませんでした。',
+    'notFound.title': 'ページが見つかりません',
+    'notFound.help': 'リンクが古いか、ページが移動した可能性があります。作業内容は変わっていません。',
+    'notFound.action': 'マイワークへ',
+    'organization.ownerProtected':
+      '所有者の役割は保護されています。ここでは役割の変更やメンバーの権限取り消しはできません。',
+    'organization.archiveProjects': '{0} 件の有効なプロジェクトを確認',
+    'organization.restoreAccess': 'Flow アクセス権を復元',
+    'ui.confirmArchiveView':
+      '「{0}」をアーカイブしますか？保存したフィルターは非表示になります。タスクはプロジェクトに残ります。',
+    'organization.revokedRoleHelp':
+      '役割を変更してもアクセス権は復元されません。復帰させる場合は明示的にアクセス権を復元してください。',
+    'organization.confirmMemberRestore':
+      '{0} の Flow アクセス権を {1} として復元しますか？既存のアクセス権が再び適用されます。',
+    'organization.confirmInvitationRevoke':
+      '{0} の保留中の招待を取り消しますか？この招待ではアクセスできなくなります。',
+    'organization.confirmTeamRemoval':
+      '{0} をこのチームから削除しますか？チーム経由のアクセス権が失われる可能性があります。',
+    'organization.confirmAccessRevoke':
+      'この直接アクセス権を取り消しますか？他の経路から継承したアクセス権は残る場合があります。',
+    'organization.confirmMemberRevoke':
+      '{0} の Flow アクセス権を取り消しますか？既存のタスクの担当者は維持され、再割り当てが必要になる場合があります。',
+    'record.notFoundHelp':
+      'このプロジェクトではレコードを利用できません。一覧に戻って既存のレコードを選択してください。',
+    'sprint.invalidState': 'このスプリントではその操作を実行できません',
+    'sprint.closeActiveOnly': '進行中のスプリントのみ終了できます。一覧に戻って状態を確認してください。',
+    'sprint.invalidCarryTo': 'バックログ、または同じプロジェクトの未終了のスプリントを選択してください。',
+    'sprint.closedHelp': '保存済みのレポートを確認できます。完了済み・繰り越し済みの作業は再処理されません。',
+    'bulk.reload': 'タスクデータを再読み込み',
+    'bulk.previewHelp':
+      '{0}件を選択中。適用時に各タスクを確認し、拒否されたものは理由とともに選択したまま保持します。',
+    'bulk.previewReady': '既知の阻害要因はありません。適用時に権限とワークフロー条件を再確認します。',
+    'bulk.previewReview': '確認が必要',
+    'labels.archiveHelp':
+      'ラベルは有効な一覧と今後の選択肢から非表示になります。既存タスクの参照は保持されます。',
+    'draft.title': '未保存の変更を破棄しますか？',
+    'draft.message':
+      'このフォームには未保存の変更があります。編集を続けて保持するか、破棄して続行してください。',
+    'draft.documentMessage':
+      'この文書を保存できませんでした。編集を続けて下書きを保持するか、未保存の変更を破棄して続行してください。',
+    'draft.keep': '編集を続ける',
+    'documents.archiveHelp': '「{0}」をアーカイブします。変更を先に保存します。アーカイブから復元できます。',
+    'draft.discard': '変更を破棄',
+    'bulk.resultTitle': '一括更新の結果',
+    'bulk.result': '{0}件を更新しました。確認が必要な{1}件は選択したままです。',
+    'bulk.complete': '{0}件を更新しました。',
+    'bulk.unknown':
+      '処理結果を確認できませんでした。選択は保持しています。再試行前に再読み込みしてください。',
+    'bulk.reason.blocked': '未完了の依存タスクがあるため変更できません。',
+    'bulk.reason.forbidden': 'このタスクを編集する権限がなくなりました。',
+    'bulk.reason.notFound': 'このタスクは現在の範囲で利用できません。',
+    'bulk.reason.validation': '必須項目またはワークフローの条件を満たしていません。',
+    'bulk.reason.conflict': '処理中に別の更新がありました。',
+    'bulk.reason.other': '更新できませんでした。タスクを開いて条件を確認してください。',
     'cadence.title': 'スプリント',
     'cadence.enable': 'スプリントで計画する',
     'cadence.kanban':
@@ -1247,7 +1432,6 @@ export const flowClientMessages = {
     'members.rowActions': '操作',
     'members.more': 'ほか {0} 件',
     'members.total': 'アクセスあり {0} 人 · アクセスなしの組織メンバー {1} 人',
-    'members.noMatch': '「{0}」に一致するメンバーはいません',
     'members.nobody': 'まだ誰もアクセスできません',
     'members.nobodyDetail': '個人またはチームに権限を付与してください。',
     'members.title': 'メンバーの権限',
@@ -1422,6 +1606,7 @@ export const flowClientMessages = {
     'ui.assignee': '担当者・{0}',
     'ui.access': '権限・{0}',
     'ui.content.blocks': 'コンテンツブロック：{0}件',
+    'ui.project': 'プロジェクト',
     'ui.project.tasks': 'プロジェクトのタスク',
     'ui.this.document.belongs.to.the.workspace.not.a.project':
       'このドキュメントはプロジェクトではなくワークスペースに属しています。',
@@ -1806,7 +1991,6 @@ export const flowClientMessages = {
     'ui.accepted.points.out.of.committed.tasks.await.acceptance':
       'コミットした{1}ポイントのうち{0}ポイントが検収済みです。{2}件が検収待ちです。',
     'ui.personal.performance': '個人の実績',
-    'ui.september.2026': '2026年9月',
     'ui.all.workspaces': 'すべてのワークスペース',
     'ui.all.projects': 'すべてのプロジェクト',
     'ui.level.not.set': 'レベル未設定',
@@ -1864,7 +2048,6 @@ export const flowClientMessages = {
     'ui.you.can.respond.to.the.result': '結果に対して返信できます',
     'ui.requests.are.saved.for.review.points.and.history.are.not.changed.automatically':
       '依頼は確認用に保存されます。ポイントや履歴は自動変更されません。',
-    'ui.workspace.setup': 'ワークスペース設定',
     'ui.workspace.844042': 'ワークスペース',
     'ui.work': '作業',
     'ui.filter.and.group.tasks': 'タスクの絞り込みとグループ化',
@@ -1958,6 +2141,8 @@ export const flowClientMessages = {
     'ui.search': '検索：',
     'ui.clear.all.filters': 'すべてのフィルターを解除',
     'ui.no.matching.tasks': '一致するタスクはありません',
+    'related.emptyHint':
+      '同じプロジェクトの有効なタスクを選んでください。別のIDや名前を試すか、絞り込みを解除してください。',
     'ui.change.filters.or.create.your.first.task': 'フィルターを変更するか、最初のタスクを作成してください。',
     'ui.clear.filters': 'フィルターを解除',
     'ui.restore.task': 'タスクを復元',
@@ -2202,7 +2387,6 @@ export const flowClientMessages = {
     'ui.unable.to.open.flow': 'Flowを開けません',
     'ui.try.again.to.continue': '続行するには再試行してください。',
     'ui.you.can.view.content.but.cannot.change.data': '内容は閲覧できますが、データは変更できません。',
-    'ui.september.2026.tasks': '2026年9月・{0}件のタスク',
     'ui.max.file.size': '1ファイル{0} MBまで',
     'ui.file.too.large': '{0}は{1} MBを超えています。',
     'ui.move.task': '{0}・タスクを移動',
@@ -2286,6 +2470,98 @@ export const flowClientMessages = {
     'today.assigned': '着手できるタスクがあります',
   },
   vi: {
+    'bulk.previewCount': '{0} việc đủ điều kiện · {1} việc cần kiểm tra. Việc bị từ chối vẫn được chọn.',
+    'bulk.noChange': 'Đã ở trạng thái đích; không cần thay đổi.',
+    'epic.invalidProject': 'Chọn dự án đang hoạt động. Epic đã có giữ nguyên dự án.',
+    'epic.invalidDate': 'Nhập ngày hợp lệ.',
+    'epic.dateOrder': 'Ngày kết thúc phải từ ngày bắt đầu trở đi.',
+    'epic.invalidOwner': 'Chọn người phụ trách Epic còn khả dụng.',
+    'epic.outcomeRequired': 'Nhập kết quả mong muốn.',
+    'catalog.duplicateTitle': 'Tên này đã được dùng trong cùng danh mục. Chọn tên khác.',
+    'catalog.invalidKind': 'Chọn nhóm trạng thái được hỗ trợ.',
+    'catalog.invalidIcon': 'Chọn biểu tượng loại công việc được hỗ trợ.',
+    'catalog.statusInUse':
+      '{0} task đang dùng trạng thái này. Giữ nhóm hiện tại hoặc chuyển các task đó trước khi đổi nhóm.',
+    'catalog.requiredStatusGroup': 'Giữ ít nhất một trạng thái trong mỗi nhóm quy trình.',
+    'documents.backToLibrary': 'Quay lại thư viện',
+    'catalog.noActiveLabels':
+      'Chưa có nhãn đang dùng. Nhãn lưu trữ vẫn giữ trên task hiện có và có thể khôi phục bên dưới.',
+    'catalog.archivedLabels': 'Nhãn đã lưu trữ',
+    'catalog.invalidAction': 'Thao tác danh mục này chưa được hỗ trợ.',
+    'catalog.restoreDuplicate': 'Đã có nhãn đang dùng tên này. Đổi tên nhãn đó trước khi khôi phục.',
+    'catalog.ownerImmutable': 'Sửa danh mục không được đổi nơi sở hữu.',
+    'catalog.ownerInvalid': 'Chọn dự án trong phạm vi sở hữu của danh mục.',
+    'catalog.incompatibleValues':
+      '{0} giá trị task hiện có không tương thích. Giữ kiểu/lựa chọn hiện tại hoặc cập nhật các giá trị đó trước khi đổi trường.',
+    'project.notFound': 'Dự án không còn khả dụng',
+    'project.notFoundHelp':
+      'Dự án có thể đã bị xóa hoặc bạn không còn quyền xem. Quay lại danh sách và chọn dự án hiện có.',
+    'project.manageRequired':
+      'Cần quyền quản trị dự án để sửa hồ sơ. Bạn vẫn có thể xem các giá trị hiện tại.',
+    'project.createRequired': 'Cần quyền quản trị Workspace để tạo dự án.',
+    'catalog.notFound': 'Hồ sơ không còn khả dụng',
+    'catalog.notFoundHelp':
+      'Hồ sơ có thể đã bị xóa hoặc nằm ngoài quyền xem. Quay lại thư viện và chọn hồ sơ hiện có.',
+    'catalog.managerRequired':
+      'Quản lý tổ chức mới có thể sửa danh mục dùng chung. Bạn có thể xem các giá trị hiện tại.',
+    'sprint.alreadyClosed': 'Sprint này đã đóng',
+    'record.notFound': 'Hồ sơ không khả dụng',
+    'record.loading': 'Đang tải mô tả và thảo luận',
+    'record.loadFailed': 'Chưa tải được mô tả và thảo luận.',
+    'notFound.title': 'Không tìm thấy trang',
+    'notFound.help': 'Liên kết có thể đã cũ hoặc trang đã được chuyển đi. Công việc của bạn không thay đổi.',
+    'notFound.action': 'Về Việc của tôi',
+    'organization.ownerProtected':
+      'Vai trò chủ sở hữu được bảo vệ. Không đổi vai trò hoặc thu hồi thành viên này tại đây.',
+    'organization.archiveProjects': 'Xem {0} dự án đang hoạt động',
+    'organization.restoreAccess': 'Khôi phục truy cập Flow',
+    'ui.confirmArchiveView': 'Lưu trữ “{0}”? Bộ lọc đã lưu sẽ bị ẩn; công việc vẫn nằm trong dự án.',
+    'organization.revokedRoleHelp':
+      'Đổi vai trò không khôi phục truy cập. Chỉ khôi phục rõ ràng khi người này cần quay lại.',
+    'organization.confirmMemberRestore':
+      'Khôi phục truy cập Flow của {0} với vai trò {1}? Các nguồn quyền hiện có sẽ có hiệu lực trở lại.',
+    'organization.confirmInvitationRevoke':
+      'Thu hồi lời mời đang chờ của {0}? Lời mời này sẽ không còn cho phép truy cập.',
+    'organization.confirmTeamRemoval': 'Loại {0} khỏi Team này? Quyền được cấp qua Team có thể bị mất.',
+    'organization.confirmAccessRevoke':
+      'Thu hồi nguồn quyền trực tiếp này? Quyền kế thừa từ các nguồn khác có thể vẫn còn.',
+    'organization.confirmMemberRevoke':
+      'Thu hồi truy cập Flow của {0}? Công việc hiện có giữ người phụ trách và có thể cần giao lại.',
+    'record.notFoundHelp':
+      'Hồ sơ này không khả dụng trong dự án hiện tại. Quay lại danh sách và chọn hồ sơ đang có.',
+    'sprint.invalidState': 'Sprint này chưa thể thực hiện thao tác đó',
+    'sprint.closeActiveOnly':
+      'Chỉ đóng được sprint đang chạy. Quay lại danh sách sprint để kiểm tra trạng thái.',
+    'sprint.invalidCarryTo': 'Chọn Backlog hoặc sprint chưa kết thúc trong cùng dự án.',
+    'sprint.closedHelp':
+      'Bạn có thể xem báo cáo đã lưu. Công việc hoàn tất và chuyển tiếp sẽ không được xử lý lại.',
+    'bulk.reload': 'Tải lại dữ liệu công việc',
+    'bulk.previewHelp':
+      '{0} công việc đã chọn. Mỗi việc được kiểm tra khi áp dụng; việc bị từ chối vẫn được chọn và có lý do riêng.',
+    'bulk.previewReady': 'Chưa thấy điều kiện chặn. Quyền và quy trình được kiểm tra lại khi áp dụng.',
+    'bulk.previewReview': 'Cần kiểm tra',
+    'labels.archiveHelp':
+      'Nhãn sẽ ẩn khỏi danh sách đang dùng và lựa chọn mới. Liên kết trên công việc hiện có vẫn được giữ.',
+    'draft.title': 'Bỏ thay đổi chưa lưu?',
+    'draft.message':
+      'Form này có thay đổi chưa được lưu. Tiếp tục chỉnh sửa để giữ lại, hoặc bỏ thay đổi để tiếp tục.',
+    'draft.documentMessage':
+      'Không lưu được tài liệu. Tiếp tục chỉnh sửa để giữ bản nháp, hoặc bỏ thay đổi chưa lưu để tiếp tục.',
+    'draft.keep': 'Tiếp tục chỉnh sửa',
+    'documents.archiveHelp':
+      '“{0}” sẽ rời danh sách tài liệu đang dùng. Nháp được lưu trước khi lưu trữ. Bạn có thể khôi phục từ Lưu trữ.',
+    'draft.discard': 'Bỏ thay đổi',
+    'bulk.resultTitle': 'Kết quả cập nhật hàng loạt',
+    'bulk.result': 'Đã cập nhật {0} công việc. Giữ chọn {1} công việc cần kiểm tra.',
+    'bulk.complete': 'Đã cập nhật {0} công việc.',
+    'bulk.unknown':
+      'Chưa xác nhận được kết quả xử lý. Lựa chọn vẫn được giữ; tải lại dữ liệu trước khi thử lại.',
+    'bulk.reason.blocked': 'Còn công việc phụ thuộc chưa hoàn thành.',
+    'bulk.reason.forbidden': 'Bạn không còn quyền sửa công việc này.',
+    'bulk.reason.notFound': 'Công việc không còn hiển thị trong phạm vi của bạn.',
+    'bulk.reason.validation': 'Chưa đáp ứng trường bắt buộc hoặc quy tắc quy trình.',
+    'bulk.reason.conflict': 'Công việc đã thay đổi trong lúc xử lý yêu cầu.',
+    'bulk.reason.other': 'Chưa cập nhật được công việc này. Mở công việc để kiểm tra điều kiện.',
     'cadence.title': 'Sprint',
     'cadence.enable': 'Làm theo sprint',
     'cadence.kanban': 'Tắt là Kanban: việc chạy liên tục trên bảng, dự án không có tab Sprint.',
@@ -2386,7 +2662,6 @@ export const flowClientMessages = {
     'members.rowActions': 'Thao tác',
     'members.more': '+{0} nguồn khác',
     'members.total': '{0} người có quyền · {1} người trong tổ chức chưa có quyền',
-    'members.noMatch': 'Không có thành viên nào khớp “{0}”',
     'members.nobody': 'Chưa ai có quyền',
     'members.nobodyDetail': 'Cấp quyền cho một người hoặc một team để bắt đầu.',
     'members.title': 'Quyền của thành viên',
@@ -2395,7 +2670,7 @@ export const flowClientMessages = {
     'members.sources': 'Nguồn quyền',
     'members.teamWide': 'Cấp theo team · áp dụng cho cả {0} người trong {1}',
     'members.direct': 'Chỉ cấp riêng cho người này',
-    'members.inherited': 'Kế thừa từ cài đặt workspace',
+    'members.inherited': 'Kế thừa từ cài đặt Workspace',
     'members.removeDirect': 'Gỡ',
     'members.removeTeam': 'Gỡ cho cả team',
     'members.grantMore': 'Cấp thêm quyền',
@@ -2405,7 +2680,7 @@ export const flowClientMessages = {
     'members.noAccess': 'Chưa có quyền ở đây',
     'overview.moreOverdue': 'Xem thêm {0} việc quá hạn',
     'overview.viewAllCount': 'Xem cả {0}',
-    'overview.stats': 'Tổng quan workspace',
+    'overview.stats': 'Tổng quan Workspace',
     'overview.progress': 'Đã hoàn thành',
     'overview.progressDetail': '{0}% việc đã xong',
     'overview.overdueDetail': '{0} việc sắp đến hạn trong 7 ngày',
@@ -2561,6 +2836,7 @@ export const flowClientMessages = {
     'ui.assignee': 'Phụ trách · {0}',
     'ui.access': 'Quyền · {0}',
     'ui.content.blocks': '{0} khối nội dung',
+    'ui.project': 'Dự án',
     'ui.project.tasks': 'Công việc trong dự án',
     'ui.this.document.belongs.to.the.workspace.not.a.project':
       'Tài liệu này thuộc không gian, không gắn với một dự án.',
@@ -2945,7 +3221,6 @@ export const flowClientMessages = {
     'ui.accepted.points.out.of.committed.tasks.await.acceptance':
       '{0} điểm đã nghiệm thu trên {1} điểm cam kết. {2} công việc đang chờ nghiệm thu.',
     'ui.personal.performance': 'Hiệu suất cá nhân',
-    'ui.september.2026': 'Tháng 9, 2026',
     'ui.all.workspaces': 'Tất cả Workspace',
     'ui.all.projects': 'Tất cả Project',
     'ui.level.not.set': 'Chưa có cấp độ',
@@ -3003,7 +3278,6 @@ export const flowClientMessages = {
     'ui.you.can.respond.to.the.result': 'Có thể phản hồi kết quả',
     'ui.requests.are.saved.for.review.points.and.history.are.not.changed.automatically':
       'Yêu cầu được lưu để xem xét; không tự sửa điểm hoặc lịch sử.',
-    'ui.workspace.setup': 'Thiết lập không gian',
     'ui.workspace.844042': 'Không gian',
     'ui.work': 'Làm việc',
     'ui.filter.and.group.tasks': 'Lọc và nhóm công việc',
@@ -3098,6 +3372,8 @@ export const flowClientMessages = {
     'ui.search': 'Tìm: ',
     'ui.clear.all.filters': 'Bỏ tất cả bộ lọc',
     'ui.no.matching.tasks': 'Không có công việc phù hợp',
+    'related.emptyHint':
+      'Chọn công việc đang hoạt động trong cùng dự án. Thử mã hoặc tên khác, hoặc xóa bộ lọc.',
     'ui.change.filters.or.create.your.first.task': 'Thử thay đổi bộ lọc hoặc tạo công việc đầu tiên.',
     'ui.clear.filters': 'Xóa bộ lọc',
     'ui.restore.task': 'Khôi phục công việc',
@@ -3343,7 +3619,6 @@ export const flowClientMessages = {
     'ui.try.again.to.continue': 'Thử lại để tiếp tục.',
     'ui.you.can.view.content.but.cannot.change.data':
       'Bạn có thể xem nội dung nhưng không thể thay đổi dữ liệu.',
-    'ui.september.2026.tasks': 'Tháng 9, 2026 · {0} công việc',
     'ui.max.file.size': 'Tối đa {0} MB mỗi tệp',
     'ui.file.too.large': '{0} lớn hơn {1} MB.',
     'ui.move.task': '{0} · Di chuyển công việc',

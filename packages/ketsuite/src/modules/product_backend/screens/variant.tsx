@@ -105,12 +105,17 @@ export const variantScreen = (
           type: 'decimal',
           value: Number(row.volume ?? 0),
         },
-        {
-          name: 'standardPrice',
-          label: _('product_backend.field.standardPrice'),
-          type: 'decimal',
-          value: Number((row.cost as Record<string, unknown> | null)?.standardPrice ?? 0),
-        },
+        // `product.getVariant` drops the key for a role without `product.cost`.
+        ...('cost' in row
+          ? [
+              {
+                name: 'standardPrice',
+                label: _('product_backend.field.standardPrice'),
+                type: 'decimal' as const,
+                value: Number((row.cost as Record<string, unknown> | null)?.standardPrice ?? 0),
+              },
+            ]
+          : []),
         {
           name: 'uomId',
           label: _('product_backend.field.uom'),

@@ -2,7 +2,11 @@ import { html, each } from '@ketvietlab/ketjs-view'
 import { FlowIcon } from './index.mjs'
 /** @typedef {import('@ketvietlab/ketjs-view').Renderable} Child */
 /** A single choice with rich selected/option content; consumer owns persistence.
- * @param {{id:string,label:string,size?:'sm'|'md',icon?:Parameters<typeof FlowIcon>[0],value:string,options:{value:string,label:string,content:Child,disabled?:boolean,description?:string}[],disabled?:boolean,onChange:(value:string)=>void}} p */
+ * With `menu`, the options are built only while the consumer reports the menu open
+ * (one open menu per screen keeps long lists light); without it they are always built.
+ * `onToggle(true)` runs before the menu shows, `onToggle(false)` after it has hidden and
+ * returned focus, so another menu may already report open when a closed one reports.
+ * @param {{id:string,label:string,size?:'sm'|'md',icon?:Parameters<typeof FlowIcon>[0],value:string,options:{value:string,label:string,content:Child,disabled?:boolean,description?:string}[],disabled?:boolean,menu?:{open:boolean,onToggle:(open:boolean)=>void},onChange:(value:string)=>void}} p */
 export function FlowChoiceField(p) {
   const selected = p.options.find((o) => o.value === p.value)
   /** @param {HTMLElement} menu */
@@ -39,9 +43,12 @@ export function FlowChoiceField(p) {
    <span id=${`${p.id}-value`}>${selected?.content ?? selected?.label ?? p.value}</span>${FlowIcon('down')}
   </button>
   <div data-flow="choice-menu" id=${`${p.id}-menu`} popover="auto" role="listbox" aria-labelledby=${`${p.id}-label`}
+   on:beforetoggle=${/** @param {ToggleEvent} e */ (e) => e.newState === 'open' && p.menu?.onToggle(true)}
    on:toggle=${
      /** @param {ToggleEvent} e */ (e) => {
        if (e.newState === 'open') focusSelected(/** @type {HTMLElement} */ (e.currentTarget))
+       // Closed after the browser returned focus to the trigger, so dropping options cannot strand it.
+       else p.menu?.onToggle(false)
      }
 }
    on:keydown=${
@@ -61,12 +68,15 @@ export function FlowChoiceField(p) {
        choices[next]?.focus()
      }
 }>
-   ${each(
-     p.options,
-     (o) => o.value,
-     (
-       o,
-     ) => html`<button data-flow="choice-option" type="button" role="option" aria-label=${o.label} aria-selected=${String(o.value === p.value)} tabindex=${o.value === p.value ? 0 : -1} disabled=${p.disabled || o.disabled || false}
+   ${
+     p.menu && !p.menu.open
+       ? null
+       : each(
+           p.options,
+           (o) => o.value,
+           (
+             o,
+           ) => html`<button data-flow="choice-option" type="button" role="option" aria-label=${o.label} aria-selected=${String(o.value === p.value)} tabindex=${o.value === p.value ? 0 : -1} disabled=${p.disabled || o.disabled || false}
     on:click=${
       /** @param {MouseEvent} e */ (e) => {
         if (p.disabled || o.disabled) return
@@ -79,7 +89,8 @@ export function FlowChoiceField(p) {
         if (o.value !== p.value) p.onChange(o.value)
       }
     }>${o.description ? html`<span data-flow="choice-copy">${o.content}<small>${o.description}</small></span>` : o.content}${o.value === p.value ? FlowIcon('check') : null}</button>`,
-   )}
+         )
+}
   </div>
  </div></div>`
 }

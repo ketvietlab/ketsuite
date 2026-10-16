@@ -475,7 +475,7 @@
 }
 
 @layer ket.app {
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     [data-ui="sidebar-foot"] {
       --admin-control-height: var(--kv-touch-target);
     }
@@ -522,7 +522,7 @@
     inset-block-end: auto;
     max-inline-size: calc(100vw - var(--kv-space-4));
   }
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     [data-ui="sidebar-foot"][data-placement="header"]
       [data-ui="sidebar-tools"]
       :is([data-ui="action"], [data-ui="viewer-trigger"], [data-ui="indicator"]) {

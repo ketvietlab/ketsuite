@@ -14,7 +14,15 @@ export const createData = () => ({
     { id: 'task', title: 'Task' },
   ],
   fields: [
-    { id: 'env', title: 'Môi trường', description: 'Lựa chọn · Production / Staging' },
+    {
+      id: 'env',
+      title: 'Môi trường',
+      description: 'Lựa chọn · Production / Staging',
+      kind: 'select',
+      options: ['Production', 'Staging'],
+      required: false,
+      appliesTo: 'all',
+    },
     { id: 'version', title: 'Phiên bản', description: 'Văn bản' },
   ],
   members: [
@@ -312,30 +320,34 @@ export const createData = () => ({
   sprints: [
     {
       id: 's12',
+      projectId: 'core',
       title: 'Sprint 12',
       description: 'Ổn định luồng đồng bộ và hoàn thiện trải nghiệm quản lý công việc.',
       start: '2026-09-21',
-      end: '2026-10-02',
+      end: '2026-10-04',
       state: 'active',
     },
     {
       id: 's13',
+      projectId: 'core',
       title: 'Sprint 13',
       description: 'Tăng tốc cộng tác và giảm thao tác lặp.',
       start: '2026-10-05',
-      end: '2026-10-16',
+      end: '2026-10-18',
       state: 'planned',
     },
   ],
   epics: [
     {
       id: 'channels',
+      projectId: 'core',
       title: 'Kết nối kênh bán',
       description: 'Thông tin nhất quán từ đặt phòng đến thanh toán.',
       progress: 64,
     },
     {
       id: 'experience',
+      projectId: 'core',
       title: 'Trải nghiệm vận hành',
       description: 'Giảm bước thao tác cho nhóm tuyến đầu.',
       progress: 38,

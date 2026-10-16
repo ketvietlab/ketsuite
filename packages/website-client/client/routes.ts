@@ -170,7 +170,7 @@ export const coreRoutes: Record<string, WebsiteRoute> = {
   settings: {
     title: 'website.route.settings',
     path: 'settings',
-    nav: { group: 'settings', icon: 'settings' },
+    nav: { group: 'settings', icon: 'sliders-horizontal' },
     capability: 'website.site.manage',
   },
   customers: {

@@ -24,6 +24,7 @@ export const addDays = (date: string, days: number): string => {
 export const stateOf = (activity: Row, today: string): ActivityState => {
   if (activity.doneAt) return 'done'
   if (activity.canceledAt) return 'canceled'
+  if (activity.dueAt && Date.parse(String(activity.dueAt)) < Date.now()) return 'overdue'
   if (String(activity.dueDate) < today) return 'overdue'
   if (String(activity.dueDate) === today) return 'today'
   return 'planned'
@@ -65,6 +66,7 @@ export type ScheduleActivityInput = {
   summary: string
   note?: string
   dueDate: string
+  dueAt?: string
   attachmentIds?: string[]
   previousActivityId?: string
   createdAt?: string
@@ -72,6 +74,8 @@ export type ScheduleActivityInput = {
 
 export async function scheduleActivity(ctx: Ctx, input: ScheduleActivityInput): Promise<Row> {
   validText(input.summary, input.note)
+  if (input.dueAt && !Number.isFinite(Date.parse(input.dueAt)))
+    activityError('E_ACTIVITY_DUE_AT', 'invalid activity deadline')
   await activeThread(ctx, input.threadId)
   await activeType(ctx, input.typeId)
   await activeUser(ctx, input.assigneeUserId)
@@ -83,6 +87,7 @@ export async function scheduleActivity(ctx: Ctx, input: ScheduleActivityInput): 
       existing.typeId !== input.typeId ||
       existing.assigneeUserId !== input.assigneeUserId ||
       existing.dueDate !== input.dueDate ||
+      (existing.dueAt || null) !== (input.dueAt || null) ||
       existing.summary !== input.summary
     )
       activityError(
@@ -113,6 +118,7 @@ export async function scheduleActivity(ctx: Ctx, input: ScheduleActivityInput): 
     summary: input.summary.trim(),
     ...(input.note?.trim() ? { note: input.note.trim() } : {}),
     dueDate: input.dueDate,
+    ...(input.dueAt ? { dueAt: input.dueAt } : {}),
     active: true,
     ...(input.previousActivityId ? { previousActivityId: input.previousActivityId } : {}),
     createdAt: now,
@@ -158,6 +164,7 @@ export async function rescheduleActivity(
     activityError('E_ACTIVITY_NOTE', 'activity note exceeds 100000 characters')
   const values = {
     dueDate,
+    dueAt: null,
     ...(note === undefined ? {} : { note: note.trim() || null }),
     updatedAt: new Date().toISOString(),
   }

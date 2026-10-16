@@ -171,7 +171,7 @@
     background: var(--kv-chart-mark, var(--kv-chart-1));
   }
 
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     :where([data-kv-design-system]) [data-ui="bar-chart-row"] {
       grid-template-columns: minmax(0, 1fr) auto;
     }

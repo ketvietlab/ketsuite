@@ -15,7 +15,11 @@ const TODAY = '2026-09-23'
 const load = (profile = 'compact') =>
   createOrganizationSession('baseline', 'workspace-overview', { profile }).call('flow.workspace.bootstrap', {
     companyId: 'demo',
+    route: 'workspace-overview',
   }).value
+// The whole history, before the overview read keeps only the latest entries of each Workspace.
+const fullHistory = (profile) =>
+  createOrganizationSession('baseline', 'workspace-overview', { profile }).sessions.get('demo').data.history
 // Every click handler whose opening tag carries `marker`, in document order.
 const handlers = (node, marker, event, out = []) => {
   if (!node || typeof node !== 'object') return out
@@ -58,6 +62,7 @@ const setup = (profile) => {
   const overview = createWorkspaceOverview(ctx),
     ws = data.workspaces.find((w) => w.id === 'product')
   return {
+    ctx,
     data,
     nav,
     overview,
@@ -109,6 +114,26 @@ for (const profile of ['compact', 'realistic'])
     )
     assert.ok(m.goals.every((g) => g.workspaceId === 'product'))
     for (const p of m.people) assert.ok(p.open >= p.overdue && p.open > 0)
+    for (const kind of ['todo', 'progress', 'review', 'done'])
+      assert.equal(m.counts[kind], tasks.filter((t) => statusKind(data, t) === kind).length, kind)
+    const ids = new Set(tasks.map((t) => t.id)),
+      latest = (history) =>
+        history
+          .filter((h) => ids.has(h.taskId))
+          .sort((a, b) => b.time.localeCompare(a.time))
+          .slice(0, 6)
+    // The overview read already carries each Workspace's latest entries; the model must pick the
+    // same six from the whole history too.
+    const whole = { ...data, history: fullHistory(profile) }
+    if (profile === 'realistic') assert.equal(m.activity.length, 6)
+    assert.deepEqual(m.activity, latest(whole.history), 'the six latest entries, newest first')
+    assert.deepEqual(workspaceOverviewModel(whole, 'product', TODAY).activity, m.activity)
+    const reversed = { ...data, history: [...whole.history].reverse() }
+    assert.deepEqual(
+      workspaceOverviewModel(reversed, 'product', TODAY).activity.map((h) => h.time),
+      latest(reversed.history).map((h) => h.time),
+      'whatever order the history arrives in',
+    )
   })
 
 test('blocked counts only tasks whose blocker is still unfinished', () => {
@@ -135,7 +160,16 @@ test('overview page leads with clickable totals and a deadline chart whose days 
     'tiles navigate, they are not toggles',
   )
   assert.equal((html.match(/data-flow="column" /g) ?? []).length, HORIZON_DAYS + 1)
-  assert.match(html, /data-clipped="true"/, 'overdue backlog does not flatten the upcoming days')
+  // The overdue backlog stays off the shared scale, so it is drawn clipped exactly when it
+  // outgrows the busiest upcoming day instead of flattening them.
+  const late = m.horizon[0].tasks.length,
+    peak = Math.max(...m.horizon.slice(1).map((x) => x.tasks.length))
+  assert.ok(late > 0 && peak > 0)
+  assert.equal(
+    /data-clipped="true"/.test(html),
+    late > peak,
+    'overdue backlog does not flatten the upcoming days',
+  )
   assert.match(html, /<th scope="col" data-size="wide">Overdue tasks<\/th>/)
   assert.match(html, /aria-current="date"/)
   const day = m.horizon.findIndex((x, i) => i > 0 && x.tasks.length)
@@ -152,6 +186,19 @@ test('overview page leads with clickable totals and a deadline chart whose days 
   assert.deepEqual(nav.at(-1), ['dashboard', { risk: 'overdue' }])
 })
 
+test('the overview totals follow new data after a first render', () => {
+  const { ctx, data, render } = setup(),
+    progress = (html) => html.match(/data-flow="stat"[\s\S]*?(\d+ \/ \d+)/)?.[1]
+  const before = workspaceOverviewModel(data, 'product', TODAY)
+  assert.equal(progress(renderToStaticString(render())), `${before.counts.done} / ${before.tasks.length}`)
+  const gone = before.tasks[0].id,
+    next = { ...data, tasks: data.tasks.filter((t) => t.id !== gone) },
+    after = workspaceOverviewModel(next, 'product', TODAY)
+  ctx.data.set(next)
+  assert.equal(progress(renderToStaticString(render())), `${after.counts.done} / ${after.tasks.length}`)
+  assert.equal(after.tasks.length, before.tasks.length - 1)
+})
+
 test('each project row shows its status mix, risk and running sprint in one line', () => {
   const { render } = setup(),
     html = renderToStaticString(render())
@@ -163,4 +210,14 @@ test('each project row shows its status mix, risk and running sprint in one line
   assert.match(table, /\d+% <\/span>|\d+%<\/span>/)
   assert.match(table, /Actions for KetSuite Core/)
   assert.doesNotMatch(table, /data-flow="evidence-value" data-tone/)
+})
+
+test('status names follow the current language and the project catalogue, even after a language switch', (t) => {
+  const { render } = setup('realistic')
+  t.after(() => setFlowLocale('en'))
+  setFlowLocale('vi')
+  const html = renderToStaticString(render()),
+    table = html.slice(html.indexOf('data-flow="evidence-table"'))
+  assert.match(table, /data-flow="tag" data-tone="neutral">(Chờ nhận|Đang thực hiện)</)
+  assert.doesNotMatch(table, />(To do|In progress|Awaiting acceptance)</)
 })

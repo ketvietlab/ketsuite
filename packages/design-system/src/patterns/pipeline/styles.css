@@ -131,7 +131,7 @@
       grid-template-columns: 1fr auto;
       align-items: center;
       justify-items: start;
-      text-align: left;
+      text-align: start;
     }
 
     :where([data-kv-design-system]) [data-ui="pipeline-step"]::before,

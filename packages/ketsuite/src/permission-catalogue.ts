@@ -292,12 +292,31 @@ const sources = {
       'assignment',
       'configure',
       'merge',
+      'import',
       'report',
       'scope-company',
       'scope-team',
       'view',
     ],
     functions: {
+      'tag.catalogue': ['read', 'view'],
+      'tag.merge': ['configure', 'configure', 'crm.configuration-audit'],
+      'case.tags': ['operate', 'agent-operate'],
+      'case.tagged': ['read', 'view'],
+      'import.tag': ['operate', 'import'],
+      'import.performance': ['read', 'view'],
+      'import.upload': ['operate', 'import'],
+      'import.configure': ['operate', 'import'],
+      'import.start': ['operate', 'import'],
+      'import.preview': ['read', 'import'],
+      'import.resume': ['operate', 'import'],
+      'import.stop': ['operate', 'import'],
+      'import.undo': ['approve', 'configure', 'crm.import-policy'],
+      'import.export': ['sensitive', 'import', 'crm.import-policy'],
+      'import.list': ['read', 'view'],
+      'import.get': ['read', 'view'],
+      'import.rows': ['read', 'view'],
+      'import.options': ['read', 'view'],
       'activity.cancel': ['approve', 'approve', 'crm.domain-policy'],
       'activity.complete': ['approve', 'approve', 'crm.domain-policy'],
       'activity.listMine': ['read', 'view'],
@@ -352,13 +371,38 @@ const sources = {
       'team.modalContext': ['read', 'view'],
       'team.save': ['configure', 'configure', 'crm.configuration-audit'],
     },
-    exemptions: {},
+    exemptions: {
+      // `exposure: 'internal'`: a loss reason saved behind the sales command route, which checks
+      // `crm.stage.save` (the pipeline's configuration right) first.
+      'lostReason.save': ['internal-route', 'crm.trusted-route-worker-or-service'],
+    },
   },
   crm_backend: {
     posture: 'projection/bridge',
     bundles: [],
     functions: {},
-    exemptions: {},
+    exemptions: {
+      // `exposure: 'internal'`: the generic /_ket/fn/ path refuses it. The sales read route checks the
+      // permission of the screen it reads (the same one the screen's page needs), then calls it; every
+      // record in it has passed `caseAudience`.
+      'sales.read': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      // The record list's page and its export, behind the routes that check `crm.case.list` first.
+      'sales.search': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      'sales.export': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      // An activity's new day, behind the command route that checks `crm.activity.cancel` first; the
+      // function itself checks the record is the user's to change.
+      'sales.rescheduleActivity': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      // A record's email and its retry, behind the command route that checks `crm.case.addMessage`
+      // first; each checks the record is the user's to change.
+      'sales.sendEmail': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      'sales.retryEmail': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      // A record's quotation sent, behind the command route that checks `sale.sendQuotation` (and
+      // `crm.case.addMessage` for an email) first; it checks the record is the user's to change and
+      // applies the sale's own sending rule.
+      'sales.sendQuotation': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      'sales.saveImportPreview': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+      'sales.importPreview': ['internal-route', 'crm_backend.trusted-route-worker-or-service'],
+    },
   },
   crm_sale: {
     posture: 'permission-bearing',
@@ -368,7 +412,18 @@ const sources = {
       'sale.listQuotableProducts': ['read', 'view'],
       'sale.listQuotations': ['read', 'view'],
     },
-    exemptions: {},
+    exemptions: {
+      // `exposure: 'internal'`, behind the sales command route. A revision is checked against
+      // `crm_sale.sale.createQuotation`; an acceptance's history line follows `sale.confirmOrder` run as
+      // the user; quotations follow a `crm.case.merge` the user ran. Each checks the user reads the record.
+      'sale.reviseQuotation': ['internal-route', 'crm_sale.trusted-route-worker-or-service'],
+      'sale.recordQuotationStep': ['internal-route', 'crm_sale.trusted-route-worker-or-service'],
+      'sale.followMerge': ['internal-route', 'crm_sale.trusted-route-worker-or-service'],
+      // Attaching a quotation written in Sales is checked against `crm_sale.sale.createQuotation` and
+      // checks the user may change the record; the policy is checked against `crm.stage.save`.
+      'sale.attachQuotation': ['internal-route', 'crm_sale.trusted-route-worker-or-service'],
+      'sale.saveQuotationPolicy': ['internal-route', 'crm_sale.trusted-route-worker-or-service'],
+    },
   },
   crm_staff_channel: {
     posture: 'projection/bridge',
@@ -1094,13 +1149,17 @@ const sources = {
   },
   product: {
     posture: 'permission-bearing',
-    bundles: ['configure', 'operate', 'report', 'view'],
+    // `cost` stands apart from `view`: purchase cost and margin are management
+    // figures, and a role can browse the catalogue without reading them.
+    bundles: ['configure', 'cost', 'operate', 'report', 'view'],
     functions: {
       addProductUom: ['operate', 'operate'],
       addTemplateUom: ['operate', 'operate'],
       archiveTemplate: ['configure', 'configure', 'product.configuration-audit'],
+      configureAttributes: ['configure', 'configure', 'product.configuration-audit'],
       countTemplates: ['read', 'view'],
       deleteTemplates: ['configure', 'configure', 'product.configuration-audit'],
+      duplicateTemplate: ['configure', 'configure', 'product.configuration-audit'],
       generateVariants: ['operate', 'operate'],
       getTemplate: ['read', 'view'],
       getVariant: ['read', 'view'],
@@ -1112,9 +1171,10 @@ const sources = {
       listBrands: ['read', 'view'],
       listCategories: ['read', 'view'],
       listTemplates: ['read', 'view'],
-      listVariantCosts: ['read', 'view'],
+      listVariantCosts: ['read', 'cost'],
       listVariants: ['read', 'view'],
       removeAttributeLine: ['configure', 'configure', 'product.configuration-audit'],
+      removeTemplateUom: ['operate', 'operate'],
       saveAttribute: ['configure', 'configure', 'product.configuration-audit'],
       saveAttributeDraft: ['configure', 'configure', 'product.configuration-audit'],
       saveAttributeLine: ['configure', 'configure', 'product.configuration-audit'],
@@ -1125,6 +1185,7 @@ const sources = {
       saveVariant: ['configure', 'configure', 'product.configuration-audit'],
       saveVariantSetup: ['configure', 'configure', 'product.configuration-audit'],
       setCost: ['configure', 'configure', 'product.configuration-audit'],
+      setPackagingBarcodes: ['operate', 'operate'],
       setProductUom: ['configure', 'configure', 'product.configuration-audit'],
       templateModalContext: ['read', 'view'],
       attributeModalContext: ['read', 'view'],
@@ -1137,8 +1198,11 @@ const sources = {
     functions: {
       applySearchFilter: ['read', 'view'],
       applyAttributeSearchFilter: ['read', 'view'],
+      searchUnits: ['read', 'view'],
+      unitContext: ['read', 'view'],
       saveSearchFavorite: ['operate', 'operate'],
       deleteSearchFavorite: ['operate', 'operate'],
+      searchTemplates: ['read', 'view'],
       setDefaultSearchFavorite: ['operate', 'operate'],
     },
     exemptions: {},
@@ -1159,6 +1223,7 @@ const sources = {
     bundles: ['configure', 'operate', 'view'],
     functions: {
       attachMedia: ['operate', 'operate'],
+      getMediaAttachment: ['read', 'view'],
       listMedia: ['read', 'view'],
       listMediaByProducts: ['read', 'view'],
       listPrimaryMedia: ['read', 'view'],
@@ -1183,6 +1248,7 @@ const sources = {
       getRfqReport: ['sensitive', 'sensitive', 'purchase.sensitive-data'],
       listOrderMetrics: ['read', 'report'],
       listOrders: ['read', 'view'],
+      listProductVendors: ['read', 'view'],
       listSupplierInfo: ['read', 'view'],
       lockOrder: ['approve', 'approve', 'purchase.domain-policy'],
       receiveOrderReceipt: ['operate', 'operate'],
@@ -1257,6 +1323,7 @@ const sources = {
       getQuotationReport: ['sensitive', 'report', 'sale.sensitive-data'],
       getSalesOrderReport: ['sensitive', 'report', 'sale.sensitive-data'],
       listInvoicePolicies: ['read', 'view'],
+      productSales: ['read', 'view'],
       listOrders: ['read', 'view'],
       lockOrder: ['approve', 'confirm', 'sale.domain-policy'],
       removeLine: ['operate', 'quote-operate'],
@@ -1318,6 +1385,8 @@ const sources = {
       listPickingViews: ['read', 'view'],
       listProductAvailability: ['read', 'view'],
       listProductConfigs: ['read', 'view'],
+      productWorkspace: ['read', 'view'],
+      saveProductOrderpoints: ['operate', 'operate'],
       listQuants: ['read', 'view'],
       listRoutes: ['read', 'view'],
       listRules: ['read', 'view'],
@@ -1354,6 +1423,7 @@ const sources = {
       applySearchFilter: ['read', 'view'],
       saveSearchFavorite: ['operate', 'operate'],
       deleteSearchFavorite: ['operate', 'operate'],
+      searchProductTemplates: ['read', 'view'],
       setDefaultSearchFavorite: ['operate', 'operate'],
     },
     exemptions: {},
@@ -1768,6 +1838,7 @@ const sources = {
 const capabilityLabels: Record<string, { en: string; vi: string }> = {
   'agent-operate': { en: 'Agent operations', vi: 'Nghiệp vụ nhân viên' },
   analytics: { en: 'Analytics', vi: 'Phân tích' },
+  import: { en: 'Import CRM leads', vi: 'Nhập lead CRM' },
   approve: { en: 'Approve', vi: 'Phê duyệt' },
   publish: { en: 'Publish content', vi: 'Xuất bản nội dung' },
   author: { en: 'Write documents', vi: 'Soạn nội dung' },
@@ -1777,6 +1848,7 @@ const capabilityLabels: Record<string, { en: string; vi: string }> = {
   'compliance-operate': { en: 'Hospitality compliance', vi: 'Tuân thủ lưu trú' },
   configure: { en: 'Configure', vi: 'Cấu hình' },
   confirm: { en: 'Confirm', vi: 'Xác nhận' },
+  cost: { en: 'Cost', vi: 'Giá vốn' },
   'fulfillment-sync': { en: 'Synchronize fulfillment', vi: 'Đồng bộ thực hiện đơn' },
   'housekeeping-attend': { en: 'Attend housekeeping', vi: 'Thực hiện buồng phòng' },
   'housekeeping-supervise': { en: 'Supervise housekeeping', vi: 'Giám sát buồng phòng' },

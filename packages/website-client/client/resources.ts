@@ -17,6 +17,8 @@ export type ResourceSchema = { group: string; capability: string; fields: Resour
  */
 export type ResourceRecord = {
   id: string
+  /** Bundled native templates may be inspected; only the owning module can change them. */
+  readOnly?: boolean
   revisionId?: string | null
   title?: string
   kind?: string

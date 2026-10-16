@@ -1,8 +1,36 @@
 import { each } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
+import { Icon } from '../../primitives/icon/index.tsx'
 import { EmptyState, LoadingState, Notice } from '../../primitives/feedback/index.tsx'
 
-export const HOOKS = ['attachments', 'attachment', 'media-gallery', 'media-item'] as const
+export const HOOKS = ['attachments', 'attachment', 'media-gallery', 'media-item', 'thumbnail'] as const
+
+export type ThumbnailProps = {
+  src?: string | null
+  /** Use an empty alt when adjacent product text already names the image. */
+  alt: string
+  size?: 'small' | 'default' | 'large'
+  fit?: 'cover' | 'contain'
+}
+
+/** Square object media for list rows and ContentCard.leading; people use Avatar. */
+export const Thumbnail = (props: ThumbnailProps): TemplateResult => (
+  <span
+    data-ui="thumbnail"
+    data-size={props.size ?? 'default'}
+    data-fit={props.fit ?? 'cover'}
+    data-empty={props.src ? null : 'true'}
+    role="img"
+    aria-label={props.alt || undefined}
+    aria-hidden={props.alt ? undefined : 'true'}
+  >
+    {props.src ? (
+      <img src={props.src} alt="" loading="lazy" decoding="async" />
+    ) : (
+      <Icon name="image" tone="muted" />
+    )}
+  </span>
+)
 
 export type AttachmentItem = {
   id: string

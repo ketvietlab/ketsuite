@@ -3,15 +3,18 @@ title: Record modals
 description: The KetSuite contract for opening a collection's records in a client-side modal island.
 ---
 
-The design system settles *what* happens when a reader opens a row: the record opens in a
-`ModalSheet` over its collection, never on a separate page, and the modal is a client-side island
-(see "Collections open records in a modal" in `@ketvietlab/design-system`). This page is *how* every
-KetSuite module does it, so a care task, a sales case and a partner behave identically.
+The design system decides *where* a record opens: on its own page when it is a workspace (several
+tabs, money or line items, an activity log, a URL people share), in a `ModalSheet` over its collection
+when it is short and read in the flow of a queue, and in a non-modal `Peek` docked beside a dense spatial
+view only as a first step towards its page (see "Opening a record from a collection" and "Peek beside a
+spatial view" in `@ketvietlab/design-system`). This page
+is *how* a KetSuite module builds either one on the same client runtime, so a care task, a sales case
+and a partner behave identically once their presentation is chosen.
 
-A record that is a workspace of its own opens on its page instead (see [Record pages](#record-pages)):
-the same definition, rendered by the same client runtime in its page presentation.
-Administration profiles — a user, a role, an access policy — are the exception: they open on their own
-page on the same runtime with route-provided context. See [Administration profiles](#record-pages-for-administration-profiles) below.
+A record that opens on its page uses the same definition, rendered by the same client runtime in its
+page presentation (see [Record pages](#record-pages)). Administration profiles — a user, a role, an
+access policy — have their own page shape on that runtime with route-provided context. See
+[Administration profiles](#record-pages-for-administration-profiles) below.
 
 ## URL
 
@@ -36,7 +39,10 @@ One shape for every module:
 
 1. Rows and cards link with `recordModalHref`; create actions with `recordModalCreateHref`.
 2. The module declares one island per record kind with `defineRecordModalIsland({ kind, client, export })`
-   and places it through `backend:runtime`. Its props are empty.
+   and places it through `backend:runtime`. Its props are empty. `backendPage` renders that joint
+   once with every full backend document, beside the shell and outside the slots fragment navigation
+   swaps, so a screen's frame never carries it: a screen that assembles its own frame still leaves the
+   modals mounted for the screens reached from it.
 3. The module exposes one permission-checked read, `<module>.<kind>.modalContext({ id })`, returning
    `{ data, messages }`. `data` is everything the views need in one round trip, including the viewer's
    `permissions`; `messages` are the translated strings the views and the runtime use, including the
@@ -78,17 +84,21 @@ The runtime owns, for every module:
 | Height | A definition with more than one tab renders `ModalSheet height="fixed"`, and the runtime owns that height: it measures each tab it renders and holds the tallest as a min-height, so the dialog opens at the size of its content and never shrinks as the reader moves between tabs — and a record whose tabs are all short never gets a dialog the height of the screen. The floor belongs to the record and starts again with the next one. `TabbedView` keeps the bar fixed and only its `TabPanel` scrolls; the panel adds no horizontal padding. A single view and dialog layers size to their content. |
 | States | Loading, load failure with retry, not found. |
 | Cache | Each island keeps the last 30 contexts it read (including the create form's). Reopening one renders it at once and reads it again quietly behind it. A successful command drops the record it changed, and `ket:records-changed` for the kind drops the named ids (all when none are named). A definition sets `cache: false` when its context must never be shown before a fresh read. |
-| Commands | A form inside the modal names its command with a `__command` field (or a submit button with `name="__command"`). The runtime maps `FormData` through `command.input`, calls `/_ket/fn` with an idempotency key, and applies `after`: `close`, `reload`, `refresh`, `stay`, `{ tab }` or `{ dialog }`. |
+| Follow | A record page reads its record again when `ket:records-changed` names it; a modal keeps the context it opened with, so a draft is never replaced. A record that changes without the reader (a background job's status) sets `follow: true`: its open modal reads again on that event too, unless a command is running or the reader typed into it. The job's own island dispatches the event when the job finishes. |
+| Commands | A form inside the modal names its command with a `__command` field (or a submit button with `name="__command"`). The runtime maps `FormData` through `command.input`, calls `/_ket/fn` with an idempotency key, and applies `after`: `close`, `reload`, `refresh`, `stay`, `{ tab }` or `{ dialog }`. Every call except a preview carries that key, so the function behind a command, and behind each of its `also` steps, declares `idempotent: true`: KetJS refuses a key on any other function (`E_NOT_IDEMPOTENT`) and the save fails before it writes. `test/record-command-idempotency.test.tsx` holds every KetSuite record command to this. A step's `when(context, form)` also reads the submitted form, so a step whose field was left unchanged (a cost typed as it was) is skipped rather than called. |
 | Previews | A command marked `preview: true` asks what would happen instead of making it happen. Its function writes nothing, so the record is not re-read, the collection is not told and what was typed stays on screen. The answer reaches the view as `context.outcome<T>('<command>')`, beside the form that asked for it, and is cleared as soon as anything moves — another record, tab or dialog, a refusal, or the write itself. This is how a change with consequences is confirmed: one form, two submit buttons, and the commit offered only once the consequence has been read. |
 | Answers | `context.outcome` also carries what a command with `after: 'stay'` returned, which is how something the server can say only once — a one-time credential — reaches the reader. Every other `after` replaces the layer, and the answer goes with it. |
 | Refusals | Issues with a `field` are read back by the view through `context.fieldError(name)`; the rest render as a danger notice at the top of the layer. A code that neither `messages` nor `labels` translate reads as `recordModal.saveFailed`, never as the code itself. Text/select values survive through `context.draft(name, fallback)` and checkbox/radio state through `context.draftChecked(name, value, fallback)`. A child workflow can explicitly seed a field from the captured parent with `context.recordDraft?.(name, fallback)`; child drafts remain isolated until its command succeeds. If that command consumes parent fields, declare `clearRecordDrafts: [name]` on the command; only those drafts clear after successful completion, while refusal/cancel preserves them. |
+| Feedback | An untabbed record's header, its notice (saved or refused) and its body are one `Stack` with fixed positions, as are a record dialog's notice and view: the notice keeps the layout gap from what follows, and an empty slot renders nothing, so a notice appearing never rebuilds the form under it. A dialog opens without the last command's notice, whether a button or a link (`?dialog=`) opens it. A context may name a command's answer through `messages` (`recordModal.savedTitle`, `recordModal.saved`) when the record has one command whose outcome a generic "Saved" would misname (cancelling an import). |
+| Moved since read | A command sets `refreshOnRefusal: true` when a refusal may mean the record, or something it depends on, changed after it was read (a revision stamp, an availability slice). After the refusal the runtime reads the context again quietly, without a loading state: typed text, select, checkbox and radio drafts and the refusal's guidance stay, while hidden fields — never drafts — take the new stamps, so the retry is checked against what the reader now sees. |
+| Ancillary dialog mutation | A command with `after: 'refresh'` can set optional `retainDialogDraft: true` to keep current dialog values, checkboxes, baselines and view state while reading the updated context. Use it for a fresh shipping quote within an unfinished booking form. It never resubmits the main command, and it shows no saved notice: nothing the reader entered was saved. The default remains false: successful commands consume the dialog input as before. |
 | Success | A command that leaves the modal open says so where a refusal would have appeared: a positive notice at the top of the layer (`recordModal.savedTitle` / `recordModal.saved`). It clears on the next submit and when another record opens. A command that closes the modal says it by closing. |
 | Unsaved input | Switching tabs preserves text, select, checkbox and radio drafts without prompting. Closing asks `recordModal.unsaved` only for the top layer being discarded. |
-| Dialogs | An element with `data-record-dialog="<name>"` opens a dialog layer of the same record; `data-record-param-*` attributes become its params. Closing it returns to the record without reloading. |
-| Uploads | A command's `upload` names file fields; each file is stored through `/files` with the metadata the command gives, and the attachment ids reach `input` as its third argument. A `data-record-submit` file input submits on choice, and a `data-record-dropzone` form takes a dropped file. |
+| Dialogs | An element with `data-record-dialog="<name>"` opens a dialog layer of the same record; `data-record-param-*` attributes become its params. Closing it returns to the record without reloading. A link to the open record whose address names `dialog=<name>` (an overflow `ActionMenu` command) opens that dialog the same way: one history entry Back closes, focus inside the dialog, then back on the link — or on the menu's summary when the link sat in a disclosure that has closed since. `recordDialogHref(context, dialog, id?)` writes that link, with `dialogId=<id>` naming the item; the runtime reads the id from the link pressed, not from the address it is leaving. When a row's editor is a dialog, give the table `rowHref: (row) => recordDialogHref(c, 'editLine', row.id)` (only for a reader who may edit) instead of an edit button in a column: the whole row opens it. |
+| Uploads | A command's `upload` names file fields; each file is stored through `/files` with the metadata the command gives, and the attachment ids reach `input` as its third argument. A `data-record-submit` file input submits on choice, and a `data-record-dropzone` form takes a dropped file. A file input that waits for its form's button keeps the choice in view state: `state('file:<name>')` is an object URL of a chosen image (empty for any other file) and `state('file:<name>:name')` its file name. Pass them to `DropZone` as `preview` and `status`, so the picture shows before it is sent. The runtime revokes the URL when the choice changes and when it is disposed. |
 | View state | `context.state(key)` reads what a `data-record-state` control set: a button or link with `data-record-value` on click, an input or select on change. It resets when another record opens. |
 | Islands | `recordIsland(name, props)` places an island inside a view; the runtime asks the page's island manager to start it (`ket:islands-attach`) and to dispose it when its host leaves (`ket:islands-detach`). A joint filled with islands renders in a record modal this way. |
-| Collection | After a successful command the runtime dispatches `ket:records-changed`; the backend shell re-fetches the content slot as a fragment. The modal lives outside that slot and is untouched. |
+| Collection | After a successful command the runtime dispatches `ket:records-changed` (cancelable); the backend shell re-fetches the content slot as a fragment. The modal lives outside that slot and is untouched. A collection that is a client island reads itself again and calls `preventDefault()` on the event: the shell then leaves the slot alone. It decides after every listener has run, so an island that listens after the shell is still heard. Re-fetching anyway would be a second, stale read: a modal that closes announces before it leaves the address bar, so the fetch would put the record back in the URL and open it again. |
 
 Views are render-pure. They read the context and return design-system markup (`RecordForm`, `Field`,
 `DataTable`, `Notice`…); they never fetch, never touch history and never query the document. The runtime
@@ -100,6 +110,8 @@ value editor. Pass `dirty` when a structural edit changes the draft without leav
 input. The runtime combines that flag with native field checks when deciding whether closing needs a
 discard confirmation. A public `ReorderList` emits its ordered IDs through a native hidden input change;
 the record runtime captures all current fields before applying that view state.
+
+`recordStateSelectControl` is the control of a select whose choice changes what the rest of the form offers. Pass it as a public `Field`'s `control` with the field's `id`, `invalid` and `describedBy`: the control points `aria-describedby` at the help and error the Field draws (`<id>-help`, `<id>-error`), only those shown, so a reader hears why the choice is refused.
 
 A command may supply `issueField(path, submittedForm, context)` to map server validation paths to stable
 native control names. Ordered editors map indexed paths using the submitted order snapshot, so an error
@@ -118,6 +130,14 @@ fills cross: the context lists each fill's island, and the view places it with `
 template modal reads `product_backend:template.recordTabs` — a module fills it with one island placement, the
 island renders the panel with `{ templateId, locale }`, the tab is labelled by the module's
 `<module>.productTemplateTab` message and addressed as `tab=<module>`.
+
+A fill is one template for every viewer, so one whose island would only show a refusal names what it needs
+in its condition: `{% if may.<module>.<function> %}{% island "…" %}{% endif %}`. A server page renders such a
+joint with `jointFor(ctx, url, req, joint, props)` from `backend/screen.ts`, which adds a `may` prop answering
+each named function for the viewer (the joint declares `may: 'json?'`); a context function passes its
+permission check to `recordIslandsFor`, which leaves out a fill naming a function the viewer may not call.
+Both read the names with `ui/fill-needs.ts`. The shell's `backend:sidebar.foot` works the same way, so the
+inbox and activity counts are placed only for whoever may read them.
 
 ## Creating a record
 
@@ -198,11 +218,20 @@ state. Give editors for different records distinct field names so switching edit
 wrong draft. For an inline Cancel action, pass `resetFields: [name]` to discard only that
 editor's draft while preserving other fields and tabs. State triggers do not save a record.
 
+For a paged checkbox chooser, `context.draftCheckedValues?.(name)` returns the captured
+checked values of that field in the current layer, including unmounted pages. Submit
+hidden inputs only for selections outside the visible page, once per value; continue
+using `draftChecked(name, value, fallback)` for visible boxes. The optional API preserves
+compatibility with older contexts and never selects unseen rows. `resetFields: [name]`
+and successful command `clearRecordDrafts: [name]` clear all checkbox/radio values of
+that exact field, keeping similarly named fields and parent/child layers independent.
+The server must still validate every selected record and enforce permissions.
+
 Desktop `fixedHeight` is carried by `--kv-modal-fixed-height`; it never overrides the mobile full-screen height. Avoid inline `height: … !important` on a ModalSheet.
 
 ## Record pages
 
-Product templates open on their own page: `/admin/product/templates/{id}`, and
+Product templates, for example, open on their own page: `/admin/product/templates/{id}`, and
 `/admin/product/templates/new` for the create action. The record is still rendered client side. General and Attributes & variants are peer Surface cards,
 shown together without page tabs; each form keeps its own save action.
 
@@ -222,14 +251,41 @@ shown together without page tabs; each form keeps its own save action.
   unknown id before rendering anything.
 - `context.presentation` is `'page'`. Views use it to place controls: a page's actions sit in its header,
   so a menu opens downward, and its close trigger reads as the way back to the collection.
+- `pageActions` supplies the page header commands (falling back to `actions` for existing definitions).
+  `pageAside` and `pageAsideLabel` place supporting record facts in the native `RecordPage` rail;
+  on narrow screens the rail comes before the working blocks. These options apply to both page modes
+  and do not alter modal presentation. Long workspaces use titled `Surface` blocks rather than tabs.
+- A write form has one primary submit. When temporary persistence is needed, give it an explicit
+  secondary “Save draft” action beside the primary, backed by actual draft semantics. A workspace
+  must not repeat the same editable/save surface in its body and in its action dialog.
+- Draft capture treats a compound DateTimePicker as its single named wall-time value. The unnamed
+  date/time helpers cannot create competing drafts. Opening a populated dialog is clean; changing
+  only its date or time still participates in the discard guard and survives validation rendering.
+- Client page dialog/tab changes preserve the route's validated `back` as `returnTo`, so closing a
+  short action dialog and refreshing the page keeps the original collection filters and row anchor.
 - Closing (the close trigger, or a command with `after: 'close'`) navigates to `back` through the shell's
   own link handling. Switching tabs replaces the address in place; back and forward belong to the shell.
 - A command with `after: 'open'` on the create page replaces `new` in the address with the created id.
 - Nothing outside the page turns inert, and Escape and Tab are trapped only while a nested dialog is
   open.
+- Anchored returns use the framework's `[data-ket-reload]` path when the installed fragment navigator
+  discards URL hashes from response URLs. The shipping consumer opts its row/back links into this
+  native navigation; list filters still update in place. Close/delete returns also preserve a row hash.
 - A successful command announces `ket:records-changed` with `page: true`. The page reads its own
   context again, so the shell does not re-fetch the route behind it.
 - Links from the modal era (`?record=<kind>:<id>`) on the collection redirect to the page.
+
+## Record forms embedded in an SSR page
+
+Use `createRecordPanel(definition)(props)` when a record form belongs inside an existing
+page or route tab. Its server view is `recordPanelLoading(props)`. The first client
+render adopts that frame; the ready panel reuses record commands, validation, drafts,
+permissions and dialogs without rendering another RecordPage, title or navigation.
+The enclosing page owns its SSR tabs and content width. `pageActions` supplies the
+panel's action row; a submit button targets the single `RecordModalForm` by form ID.
+`pageAside` becomes supporting content below the form. Persistent tab hosts may hide
+the panel when another tab is selected, preserving the form draft until it is saved
+or the enclosing page is left. Parent route tabs are never intercepted as record tabs.
 
 ## Record pages for administration profiles
 
@@ -244,9 +300,44 @@ refusals behave exactly as in the modal.
    the client adopts the same markup and then shows the record without another request.
 3. The client exports `createRecordPage(definition)`: the modal definition without `header` and
    `tabs`, with `body` for the blocks — one titled `Surface` each, returned as siblings so the page
-   owns the gap between them — and `pageActions` for the header's commands.
+   owns the gap between them — and `pageActions` for the header's commands. A block's groups are
+   `Section`s in `Stack({ divided: true })`; block title and group titles are both 14/20/600, the
+   hairline before each group carrying the tier.
 4. Rows link to the page with the collection's state in `returnTo`. Creating stays a modal over the
    collection; its command `navigate`s to the new page. `?record=<kind>:<id>` redirects to the page.
+5. The way back keeps the reader's place. `returnTo` names the row (`rowAnchorHref(listUrl, id)`,
+   `#row=<id>`), and the page follows only a `returnTo` that points at its own collection. The
+   collection calls `rememberRowAnchor(link)` on a plain row click, `takeRowAnchor()` on arrival,
+   passes the id as `KetTable`'s `currentRow`, and calls `restoreRowAnchor(rows, anchor)` once its
+   rows render: Back puts the row where it stood, the page's way back centres it, focus goes to
+   its link, and a row no longer in the results is announced rather than guessed at.
+6. A step on the record (change the stay, move room, cancel) is a dialog nested in the page and
+   owned by its address (`dialog=<step>`), not a page of its own. A step with several decisions
+   reviews its result in a second step dialog before it saves; asking before a hard-to-undo
+   change is a `ConfirmDialog`. A step the record's state does not allow opens nothing and the
+   page says why. A rejected submit returns to the same dialog with the reader's values and
+   `aria-invalid` on the field, and the runtime focuses that field. The page header drops its
+   commands below the title once the page is narrower than 48rem.
 
 `close`, `reload`, `open` and tab afters only close the top dialog; the page itself never closes,
 and `ket:records-changed` for its id reloads it in place.
+
+### CSR accounting consumers
+
+`AppTopbar.search.mode="link"` leads directly to a search workspace and emits no
+native dialog/template/noscript subtree; `dialog` remains the default. `ListPage`
+accepts `busy` and `dimmed`: an island owns delay, stale reads and disposal; the
+pattern owns `aria-busy` and `--kv-opacity-pending`. `Peek.closeControl` accepts a
+public client trigger while keeping the summary non-modal. `ConfirmDialog` accepts
+`mode="client"`; its cancel command is handled by the client modal owner.
+
+Client-read record pages own `tab`, `dialog` and `dialogId` in browser history and
+retain their list trail. Record commands retain an idempotency intent across an
+uncertain response; changed input receives another intent, and success clears it.
+`recordChanged` exposes captured parent edits to a child decision; a posting
+confirmation must require saving those edits first. Runtime effects remain in the
+island. Static SSR shell props never carry business data, rights or field options.
+Peer Sections inside one Surface or modal use `Stack({ divided: true })`; its
+existing token hairline is mandatory, including in CSR presenters.
+
+Record runtime exposes `draftScope` (`record` / `dialog`) to namespace input IDs by owning layer. Route dialog metadata is present on both layers and must not determine control IDs. A refused submit focuses the first invalid control after rendering the retained draft.

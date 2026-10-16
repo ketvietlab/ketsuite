@@ -152,8 +152,22 @@
     color: var(--kv-text-main);
     font: inherit;
   }
+  :where([data-kv-design-system]) [data-ui="relation-menu"][popover] {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0;
+    max-inline-size: calc(100vw - var(--kv-space-2) * 2);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    scroll-margin-top: var(--kv-space-1);
+    scroll-margin-inline-start: var(--kv-space-2);
+  }
+  :where([data-kv-design-system]) [data-ui="relation-menu"][popover]:not(:popover-open) {
+    display: none;
+  }
   :where([data-kv-design-system]) [data-ui="relation-options"] {
     display: grid;
+    grid-auto-rows: max-content;
     max-block-size: 16rem;
     overflow: auto;
   }

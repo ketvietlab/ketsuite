@@ -1,3 +1,4 @@
+import { exampleApplications } from './application-switcher.ts'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { Icon } from '../primitives/icon/index.tsx'
 import { ReorderList } from '../interactions/reorder-list/index.tsx'
@@ -20,7 +21,7 @@ import {
   Stack,
   Surface,
 } from '../layouts/index.tsx'
-import { AppBrand, AppShell, AppTopbar, Page } from '../layouts/shell.tsx'
+import { AppBrand, AppShell, AppSwitcherHelp, AppTopbar, Page } from '../layouts/shell.tsx'
 import { NavigationToggle, AppNavigation } from '../layouts/app-navigation.tsx'
 import { DataTable } from '../patterns/data-table.tsx'
 import { BulkActions, ListChrome } from '../patterns/list-chrome.tsx'
@@ -30,14 +31,19 @@ import { ListPage } from '../patterns/list-page.tsx'
 import { FormPage } from '../patterns/form-page.tsx'
 import { RecordPage } from '../patterns/record-page.tsx'
 import { WorkspacePage } from '../patterns/workspace-page.tsx'
+import { HelpDrawer } from '../patterns/help-drawer/index.tsx'
+import { MermaidDiagram } from '../content/markdown/index.tsx'
 import { ModalSheet } from '../patterns/modal-sheet.tsx'
+import { Peek, PeekLayout } from '../patterns/peek/index.tsx'
+import { SettingsDirectory } from '../patterns/settings-directory/index.tsx'
 import { Pipeline } from '../patterns/pipeline.tsx'
-import { RecordForm } from '../patterns/record-form.tsx'
+import { FormGrid, RecordForm } from '../patterns/record-form.tsx'
 import { ActionMenu, Menu } from '../interactions/menu/index.tsx'
 import { ContextButton } from '../interactions/context-button/index.tsx'
 import { Popover } from '../interactions/popover/index.tsx'
 import { Tooltip } from '../interactions/tooltip/index.tsx'
 import { ConfirmDialog, Dialog } from '../interactions/dialog/index.tsx'
+import { rowAnchorHref } from '../runtime/row-anchor.js'
 import { ToastRegion } from '../interactions/toast/index.tsx'
 import { Spinner } from '../interactions/spinner/index.tsx'
 import { Skeleton } from '../interactions/skeleton/index.tsx'
@@ -59,7 +65,7 @@ import {
 } from '../forms/scalar-fields/index.tsx'
 import { Combobox, MultiCombobox, TagPicker } from '../forms/combobox/index.tsx'
 import { DatePickerExamples } from './date-pickers.tsx'
-import { DateTimePicker, TimePicker } from '../forms/date-time/index.tsx'
+import { DateRangePicker, DateTimePicker, TimePicker } from '../forms/date-time/index.tsx'
 import { DropZone, FileUpload, ImageDropZone } from '../forms/upload/index.tsx'
 import { RelationPicker } from '../forms/relation-picker/index.tsx'
 import {
@@ -76,12 +82,14 @@ import { DataGrid } from '../data-display/data-grid/index.tsx'
 import { Tree, TreeGrid } from '../data-display/tree/index.tsx'
 import { DataMatrix } from '../data-display/matrix/index.tsx'
 import { BarChart } from '../data-display/bar-chart/index.tsx'
+import { ColumnChart } from '../data-display/column-chart/index.tsx'
 import { TimeframeFilter } from '../data-operations/timeframe-filter/index.tsx'
 import { AvatarGroup, DescriptionList, Person, Status } from '../record/display/index.tsx'
 import { FormattedDate, FormattedMoney, FormattedNumber } from '../record/formatted-values/index.tsx'
 import { RecordActions, RecordRail, RecordSummary } from '../record/composition/index.tsx'
 import { ActivityTimeline, AuditLog } from '../record/activity/index.tsx'
-import { Attachments, MediaGallery } from '../record/media/index.tsx'
+import { StagePath } from '../record/stage-path/index.tsx'
+import { Attachments, MediaGallery, Thumbnail } from '../record/media/index.tsx'
 import { lightboxDemoConfig } from '../interactions/lightbox/demo.ts'
 import { createLightboxView } from '../interactions/lightbox/index.tsx'
 import { relationSelectDemoConfig } from '../interactions/relation-select/demo.ts'
@@ -133,6 +141,12 @@ const DemoSidebar = (props: { active: DemoLayout }): TemplateResult => (
     identity={<AppBrand label="KétSuite" href="#app-shell" />}
     context="Operations workspace"
     menuLabel="Workspace menu"
+    tools={{
+      searchLabel: 'Search menu',
+      searchPlaceholder: 'Find a function…',
+      emptyLabel: 'No matching function.',
+      collapseLabel: 'Collapse menu',
+    }}
     groups={[
       {
         id: `demo-primary-${props.active}`,
@@ -207,6 +221,14 @@ const DemoShell = (props: {
   railItems?: readonly JSXChild[]
 }): TemplateResult => (
   <AppShell
+    applications={{
+      ...exampleApplications,
+      items: [
+        ...exampleApplications.items,
+        { id: 'phone', label: 'Phone', icon: 'phone', unavailableLabel: 'Coming soon' },
+        { id: 'chat', label: 'Chat', icon: 'message-circle', unavailableLabel: 'Coming soon' },
+      ],
+    }}
     mode="embedded"
     location={
       <AppTopbar
@@ -358,6 +380,14 @@ export const componentGroups: readonly ComponentGroup[] = [
               <IconButton label="Toggle theme" icon="☾" />,
               <LinkButton label="Open record" href="#record-page" icon="package" iconOnly />,
               <Button label="Collapse details" variant="tertiary" expanded controls="button-details" />,
+              <Button label="A very long customer name remains available in the tooltip" truncateLabel />,
+              <Button
+                label="Selected brand choice"
+                logo={{
+                  src: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 24"><text x="40" y="18" text-anchor="middle" fill="#5856d6" font-family="sans-serif" font-size="18">Sample</text></svg>')}`,
+                }}
+                pressed
+              />,
             ]}
           />
         ),
@@ -414,7 +444,8 @@ export const componentGroups: readonly ComponentGroup[] = [
       {
         id: 'badges',
         name: 'Badge and tag',
-        description: 'Tones carry meaning; tags represent categories and active filters.',
+        description:
+          'Tones carry meaning; badges fit their labels inside Inline and stretching Stack layouts.',
         render: () => (
           <Inline
             items={[
@@ -426,6 +457,18 @@ export const componentGroups: readonly ComponentGroup[] = [
               <Badge label="Failed" tone="danger" />,
               <Tag label="Hà Nội" removeHref="#status" removeLabel="Remove Hà Nội filter" />,
               <CountBadge count={12} label="12 pending items" />,
+              <Stack
+                items={[
+                  <Badge label="Observation only" />,
+                  <Text variant="bodySm" tone="muted">
+                    The badge stays compact above its longer explanation.
+                  </Text>,
+                  <Badge
+                    label="A longer status remains readable and wraps within a narrow container"
+                    tone="info"
+                  />,
+                ]}
+              />,
             ]}
           />
         ),
@@ -517,17 +560,66 @@ export const componentGroups: readonly ComponentGroup[] = [
             columns={2}
             items={[
               <Surface
-                padding="none"
                 body={
                   <EmptyState
+                    visual="start"
                     title="No saved views"
                     message="Save the current filters to reuse them later."
                     actions={<Button label="Save current view" size="compact" />}
                   />
                 }
               />,
-              <Surface padding="none" body={<LoadingState label="Loading order history" lines={3} />} />,
+              <Surface body={<LoadingState label="Loading order history" lines={3} />} />,
             ]}
+          />
+        ),
+      },
+      {
+        id: 'empty-visuals',
+        name: 'Empty state visuals',
+        description:
+          'One frame and size everywhere; the badge names why the region is empty: nothing yet, first use, no match, cleared or not allowed.',
+        render: () => (
+          <Grid
+            columns={3}
+            items={[
+              <EmptyState title="No activity" message="Changes to this record appear here." />,
+              <EmptyState
+                visual="start"
+                title="No products yet"
+                message="Add the first product to start selling."
+                actions={<Button label="Add product" size="compact" />}
+              />,
+              <EmptyState
+                visual="search"
+                title="No matching orders"
+                message="Clear the filters to see every order."
+                actions={<Button label="Clear filters" size="compact" variant="secondary" />}
+              />,
+              <EmptyState
+                visual="done"
+                title="Nothing to review"
+                message="Every receipt has been checked."
+              />,
+              <EmptyState
+                visual="locked"
+                title="Costs are hidden"
+                message="Ask an accountant for access to purchase costs."
+              />,
+            ]}
+          />
+        ),
+      },
+      {
+        id: 'empty-long-content',
+        name: 'Empty state with a long search term',
+        description: 'Unbroken titles and search terms wrap within narrow panels without losing text.',
+        render: () => (
+          <EmptyState
+            visual="search"
+            title={'REFERENCE'.repeat(12)}
+            message={`No match for “${'W'.repeat(100)}”. Clear the filters to try again.`}
+            actions={<Button label="Clear filters" />}
           />
         ),
       },
@@ -601,6 +693,40 @@ export const componentGroups: readonly ComponentGroup[] = [
                     type="checkbox"
                     value
                     help="New orders can be assigned to this company."
+                  />,
+                ]}
+              />
+            }
+          />
+        ),
+      },
+      {
+        id: 'field-action',
+        name: 'Field with a command',
+        description:
+          'A short entry keeps a compact width with its command right after it; Enter runs the command.',
+        render: () => (
+          <Surface
+            body={
+              <FormGrid
+                items={[
+                  <Field
+                    id="catalogue-new-tag"
+                    name="newTag"
+                    label="New tag"
+                    maxLength={40}
+                    span="full"
+                    help="The tag is chosen for this batch at once."
+                    action={<Button label="Add" type="submit" variant="secondary" />}
+                  />,
+                  <Field
+                    id="catalogue-coupon"
+                    name="coupon"
+                    label="Coupon"
+                    value="SPRING"
+                    span="full"
+                    error="This code ended on 31 March."
+                    action={<Button label="Apply" type="submit" variant="secondary" />}
                   />,
                 ]}
               />
@@ -739,6 +865,54 @@ export const componentGroups: readonly ComponentGroup[] = [
     description: 'Quiet hierarchy for dense application screens.',
     examples: [
       {
+        id: 'stack-scroll-boundary',
+        name: 'Stack with a scrolling child',
+        description:
+          'A wrapper such as a client island stays within the stack; its table scrolls locally and each two-line cell keeps its text.',
+        render: () => {
+          const lines = (title: string, detail: string) => (
+            <Stack
+              gap="none"
+              items={[
+                <Text variant="bodyMd" children={title} />,
+                <Text variant="bodySm" tone="muted" children={detail} />,
+              ]}
+            />
+          )
+          const stops = [
+            'North terminal',
+            'Harbour depot',
+            'Airport cargo',
+            'Riverside warehouse',
+            'Old town hub',
+          ]
+          // Eight legs make the table wider than the canvas at every catalogue width.
+          const legs = [...stops, 'Dry dock', 'Rail yard', 'Customs gate']
+          return (
+            <Stack
+              items={[
+                <Text children="The layout keeps its width; the table scrolls in its own region." />,
+                <div>
+                  <KetTable
+                    caption="Deliveries"
+                    rows={stops.map((stop, index) => ({ id: `delivery-${index + 1}`, stop }))}
+                    id={(row) => row.id}
+                    rowHref={(row) => `#stack-scroll-boundary-${row.id}`}
+                    columns={legs.map((leg, column) => ({
+                      key: `leg-${column + 1}`,
+                      label: `Leg ${column + 1}`,
+                      cell: (row: { id: string; stop: string }) =>
+                        lines(row.id.toUpperCase(), `${row.stop} · ${leg} · signed on arrival`),
+                    }))}
+                    labels={ketTableDemoConfig.labels}
+                  />
+                </div>,
+              ]}
+            />
+          )
+        },
+      },
+      {
         id: 'surface-section',
         name: 'Surface and section',
         description: 'Layout components establish rhythm without domain assumptions.',
@@ -757,6 +931,7 @@ export const componentGroups: readonly ComponentGroup[] = [
                     value="148"
                     detail="+12 today"
                     tone="positive"
+                    change={{ label: '+12.4% vs previous 7 days', direction: 'up', tone: 'positive' }}
                     icon={
                       <svg
                         viewBox="0 0 24 24"
@@ -777,6 +952,7 @@ export const componentGroups: readonly ComponentGroup[] = [
                     detail="Oldest 42 min"
                     tone="warning"
                     href="#surface-section"
+                    change={{ label: '+3 since yesterday', direction: 'up', tone: 'danger' }}
                   />,
                   <Metric label="Blocked" value="2" detail="Credential required" tone="danger" />,
                   <Metric label="Archived" value="1 204" detail="No state to report" />,
@@ -891,6 +1067,37 @@ export const componentGroups: readonly ComponentGroup[] = [
                 }
               />
             }
+          />
+        ),
+      },
+      {
+        id: 'help-drawer',
+        name: 'Screen help',
+        description:
+          'Right-side modeless desktop guidance, fullscreen mobile help, SSR Markdown and the shared Mermaid theme. Hosts supply content and a lazy renderer. Open the connected demo to try the drawer; diagram source remains readable without JavaScript.',
+        render: () => (
+          <Stack
+            items={[
+              <LinkButton href="/demo2" label="Open screen help demo" />,
+              <AppSwitcherHelp label="Screen help in standalone navigation" />,
+              <LinkButton href="/help-theme" label="Inspect Mermaid theme" />,
+              <MermaidDiagram
+                source={'flowchart TD\n  A[Draft] --> B[Complete]\n  class B kv-positive'}
+                labels={{
+                  diagram: 'Order workflow',
+                  source: 'View Mermaid source',
+                  loading: 'Rendering…',
+                  error: 'Diagram unavailable; view its source.',
+                }}
+              />,
+              <HelpDrawer
+                id="catalogue-help-drawer"
+                label="Screen help"
+                title="Example screen"
+                closeLabel="Close help"
+                body="Screen-owned Markdown content"
+              />,
+            ]}
           />
         ),
       },
@@ -1012,6 +1219,70 @@ export const componentGroups: readonly ComponentGroup[] = [
                   />
                 }
                 asideLabel="Customer context"
+              />
+            }
+          />
+        ),
+      },
+      {
+        id: 'record-page-leading-rail',
+        name: 'Record with a leading rail',
+        description:
+          'A rail of blockers that leads the record once the page stacks; a wide page keeps it beside the record.',
+        render: () => (
+          <DemoShell
+            active="record"
+            main={
+              <RecordPage
+                variant="operational"
+                title="Order SO-1042"
+                status={<Badge label="Awaiting payment" tone="warning" />}
+                actions={<Button label="Confirm order" variant="primary" size="compact" />}
+                body={
+                  <Stack
+                    items={[
+                      <Surface
+                        title="Main information"
+                        body={<Text as="p">Customer, delivery and lines.</Text>}
+                      />,
+                      <Surface title="History" body={<Text as="p">Created, quoted, sent.</Text>} />,
+                    ]}
+                  />
+                }
+                aside={
+                  <Surface
+                    title="Needs attention"
+                    body={
+                      <Stack
+                        divided
+                        items={[
+                          <Stack
+                            gap="compact"
+                            items={[
+                              <Text variant="headingSm">No payment yet</Text>,
+                              <Text as="p" variant="bodySm" tone="muted">
+                                Take a deposit before the order ships.
+                              </Text>,
+                              <Button label="Record payment" size="compact" />,
+                            ]}
+                          />,
+                          <Stack
+                            gap="compact"
+                            items={[
+                              <Text variant="headingSm">No carrier</Text>,
+                              <Text as="p" variant="bodySm" tone="muted">
+                                Choose a carrier for the delivery date.
+                              </Text>,
+                              <Button label="Choose carrier" size="compact" />,
+                            ]}
+                          />,
+                        ]}
+                      />
+                    }
+                  />
+                }
+                asideLabel="Needs attention"
+                asideWhenStacked="before"
               />
             }
           />
@@ -1229,6 +1500,26 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'tabs-page-scroll',
+        name: 'Page scrolling tabs',
+        description:
+          'Unbounded page content follows the containing page scroll instead of trapping wheel input.',
+        render: () => (
+          <TabbedView
+            id="catalogue-page-views"
+            label="Page views"
+            scroll="page"
+            items={[{ id: 'settings', label: 'Settings', href: '#navigation-items', active: true }]}
+            body={
+              <p>
+                Use page scrolling for full-page configuration blocks; keep panel scrolling for bounded
+                modals.
+              </p>
+            }
+          />
+        ),
+      },
+      {
         id: 'progress',
         name: 'Progress',
         description: 'A four-pixel track communicates state without becoming another panel.',
@@ -1255,47 +1546,148 @@ export const componentGroups: readonly ComponentGroup[] = [
         id: 'list-chrome',
         name: 'List chrome',
         description: 'Search, filters, view switch, bulk state and paging for URL-driven collection screens.',
-        render: () => (
-          <ListChrome
-            search={{
-              id: 'customer-query',
-              action: '#list-chrome',
-              placeholder: 'Search customers',
-            }}
-            facets={[
-              { id: 'active', label: 'Active', href: '#list-chrome', active: true, count: 42 },
-              { id: 'draft', label: 'Draft', href: '#list-chrome', count: 6 },
-            ]}
-            views={[
-              { id: 'table', label: 'Table', href: '#list-chrome', active: true },
-              { id: 'cards', label: 'Cards', href: '#list-chrome' },
-            ]}
-            sort={{
-              id: 'customer-sort',
-              action: '#list-chrome',
-              choices: [
-                { value: 'updated-desc', label: 'Recently updated', selected: true },
-                { value: 'name-asc', label: 'Name A-Z' },
-              ],
-            }}
-            status="48 customers"
-            actions={<Button label="Create" variant="primary" size="compact" />}
-            bulk={{
-              selectedCount: 2,
-              summary: '2 customers selected',
-              clearHref: '#list-chrome',
-              actions: [{ id: 'archive', label: 'Archive', name: 'intent', value: 'archive' }],
-            }}
-            pager={{
-              summary: 'Showing 1-25 of 48',
-              nextHref: '#list-chrome',
-              pages: [
-                { label: '1', href: '#list-chrome', active: true },
-                { label: '2', href: '#list-chrome' },
-              ],
-            }}
-          />
-        ),
+        render: () =>
+          Stack({
+            items: [
+              Stack({
+                items: [
+                  <ListChrome
+                    search={{
+                      id: 'care-customer-query',
+                      action: '#list-chrome',
+                      placeholder: 'Search customers',
+                    }}
+                    filterMenus={[
+                      'Assigned team',
+                      'Care requirements',
+                      'Source',
+                      'Status',
+                      'Schedule',
+                      'Group',
+                    ].map((label, index) => (
+                      <Menu
+                        id={`care-customer-filter-${index}`}
+                        label={label}
+                        items={[{ id: 'all', label: 'All', href: '#list-chrome' }]}
+                      />
+                    ))}
+                    facets={[
+                      { id: 'active', label: 'Active', href: '#list-chrome', active: true, count: 42 },
+                      { id: 'draft', label: 'Draft', href: '#list-chrome', count: 6 },
+                    ]}
+                    views={[
+                      { id: 'table', label: 'Table', href: '#list-chrome', active: true },
+                      { id: 'cards', label: 'Cards', href: '#list-chrome' },
+                    ]}
+                    sort={{
+                      id: 'care-customer-sort',
+                      action: '#list-chrome',
+                      choices: [
+                        { value: 'updated-desc', label: 'Recently updated', selected: true },
+                        { value: 'name-asc', label: 'Name A-Z' },
+                      ],
+                    }}
+                    status="48 customers"
+                    actions={<Button label="Create" variant="primary" size="compact" />}
+                    bulk={{
+                      selectedCount: 2,
+                      summary: '2 customers selected',
+                      clearHref: '#list-chrome',
+                      actions: [{ id: 'archive', label: 'Archive', name: 'intent', value: 'archive' }],
+                    }}
+                    pager={{
+                      summary: 'Showing 1-25 of 48',
+                      nextHref: '#list-chrome',
+                      pages: [
+                        { label: '1', href: '#list-chrome', active: true },
+                        { label: '2', href: '#list-chrome' },
+                      ],
+                    }}
+                  />,
+                  <ListChrome
+                    bulkPresentation="replace"
+                    search={{
+                      id: 'selected-care-customer-query',
+                      action: '#list-chrome',
+                      value: 'Saved search',
+                    }}
+                    bulk={{
+                      selectedCount: 2,
+                      form: 'selected-care-customer-form',
+                      clearLabel: 'Clear selection',
+                      actions: [{ id: 'approve', label: 'Approve', name: 'intent', value: 'approve' }],
+                    }}
+                  />,
+                ],
+              }),
+              <ListChrome
+                filtersToggle={{ label: 'Filters' }}
+                filterMenus={
+                  <>
+                    <DateRangePicker
+                      id="customer-period"
+                      variant="filter"
+                      label="Reporting period"
+                      startLabel="From"
+                      endLabel="To"
+                      locale="en"
+                      start={{ id: 'customer-from', name: 'from', value: '2026-10-01' }}
+                      end={{ id: 'customer-to', name: 'to', value: '2026-10-31' }}
+                    />
+                    <Menu
+                      id="customer-account"
+                      label="Ledger account"
+                      selectionMode="single"
+                      items={[{ id: 'all', label: 'All accounts', checked: true, href: '#list-chrome' }]}
+                    />
+                    <Menu
+                      id="customer-partner"
+                      label="Partner"
+                      selectionMode="single"
+                      items={[{ id: 'all', label: 'All partners', checked: true, href: '#list-chrome' }]}
+                    />
+                  </>
+                }
+                search={{
+                  id: 'customer-query',
+                  action: '#list-chrome',
+                  placeholder: 'Search customers',
+                }}
+                facets={[
+                  { id: 'active', label: 'Active', href: '#list-chrome', active: true, count: 42 },
+                  { id: 'draft', label: 'Draft', href: '#list-chrome', count: 6 },
+                ]}
+                views={[
+                  { id: 'table', label: 'Table', href: '#list-chrome', active: true },
+                  { id: 'cards', label: 'Cards', href: '#list-chrome' },
+                ]}
+                sort={{
+                  id: 'customer-sort',
+                  action: '#list-chrome',
+                  choices: [
+                    { value: 'updated-desc', label: 'Recently updated', selected: true },
+                    { value: 'name-asc', label: 'Name A-Z' },
+                  ],
+                }}
+                status="48 customers"
+                actions={<Button label="Create" variant="primary" size="compact" />}
+                bulk={{
+                  selectedCount: 2,
+                  summary: '2 customers selected',
+                  clearHref: '#list-chrome',
+                  actions: [{ id: 'archive', label: 'Archive', name: 'intent', value: 'archive' }],
+                }}
+                pager={{
+                  summary: 'Showing 1-25 of 48',
+                  nextHref: '#list-chrome',
+                  pages: [
+                    { label: '1', href: '#list-chrome', active: true },
+                    { label: '2', href: '#list-chrome' },
+                  ],
+                }}
+              />,
+            ],
+          }),
       },
       {
         id: 'list-page',
@@ -1676,6 +2068,341 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'peer-section-dividers',
+        name: 'Peer groups with disclosed fields',
+        description:
+          'One divided Stack owns the hairlines between groups, including a Disclosure. Surface and flat presentation remove child frames while preserving the parent divider.',
+        render: () => (
+          <Surface
+            title="Call"
+            body={
+              <Stack
+                divided
+                items={[
+                  <Section title="Result" body="Reached the customer" />,
+                  <Disclosure
+                    summary="Additional information"
+                    body={<Field id="peer-note" name="note" label="Internal note" type="textarea" />}
+                  />,
+                  <Section title="Next contact" body="Tomorrow at 09:00" />,
+                ]}
+              />
+            }
+          />
+        ),
+      },
+      {
+        id: 'form-grid',
+        name: 'Form grid in sections',
+        description:
+          'A form split into sections lays each group out as a record form does: three peer fields per row once the group is 52rem wide, one column on a phone. Repeated groups carry an id so their fields say whose they are.',
+        render: () => (
+          <form action="#form-grid" method="post">
+            <Stack
+              divided
+              items={['Lead guest', 'Second guest'].map((title, index) => (
+                <Section
+                  id={`form-grid-guest-${index + 1}`}
+                  title={title}
+                  body={
+                    <FormGrid
+                      columns={3}
+                      items={[
+                        <Field
+                          id={`form-grid-name-${index}`}
+                          name={`guest-${index}-name`}
+                          label="Full name"
+                          required
+                        />,
+                        <Field
+                          id={`form-grid-birth-${index}`}
+                          name={`guest-${index}-birth`}
+                          label="Date of birth"
+                          type="date"
+                          required
+                        />,
+                        <Field
+                          id={`form-grid-document-${index}`}
+                          name={`guest-${index}-document`}
+                          label="Document"
+                          type="select"
+                          value="passport"
+                          options={[
+                            { value: 'passport', label: 'Passport' },
+                            { value: 'id', label: 'National ID' },
+                          ]}
+                        />,
+                        <Field
+                          id={`form-grid-note-${index}`}
+                          name={`guest-${index}-note`}
+                          label="Note"
+                          type="textarea"
+                          span="full"
+                        />,
+                      ]}
+                    />
+                  }
+                />
+              ))}
+            />
+          </form>
+        ),
+      },
+      {
+        id: 'csr-search-link',
+        name: 'CSR search workspace',
+        description:
+          'A hydrated shell links to a search workspace without a native dialog, template or noscript copy.',
+        render: () => (
+          <AppTopbar
+            search={{
+              mode: 'link',
+              action: '#search',
+              label: 'Search workspace',
+              placeholder: 'Search',
+              submitLabel: 'Search',
+            }}
+          />
+        ),
+      },
+      {
+        id: 'sidebar-wrapped-navigation',
+        name: 'Navigation in a sidebar island slot',
+        description: 'A single wrapper fills the sidebar; the navigation owns its internal scrolling.',
+        render: () => (
+          <AppShell
+            applications={exampleApplications}
+            mode="embedded"
+            sidebar={
+              <div>
+                <AppNavigation
+                  id="wrapped-nav"
+                  label="Navigation"
+                  groups={[
+                    {
+                      id: 'work',
+                      label: 'Work',
+                      items: [{ id: 'invoices', label: 'Invoices', href: '#invoices' }],
+                    },
+                  ]}
+                />
+              </div>
+            }
+            main={<Surface title="Invoices" body="The sidebar slot remains visible through its wrapper." />}
+          />
+        ),
+      },
+      {
+        id: 'metric-exact-long-value',
+        name: 'Long exact metric value',
+        description:
+          'Adaptive card tracks and the metric text column wrap exact amounts instead of clipping them.',
+        render: () => (
+          <CardGrid
+            minimum="wide"
+            items={[{ id: 'long', value: '9.007.199.254.740.993 ₫' }]}
+            id={(row) => row.id}
+            card={(row) => (
+              <Metric
+                label="Posted revenue with a long translated label"
+                value={row.value}
+                icon={<Icon name="info" />}
+              />
+            )}
+          />
+        ),
+      },
+      {
+        id: 'list-pending-read',
+        name: 'Retained results during a read',
+        description:
+          'The island owns request timing. ListPage announces busy state and dims retained results with the pending opacity token.',
+        render: () => (
+          <ListPage title="Invoices" busy dimmed body={<OrdersTable title="Retained results" />} />
+        ),
+      },
+      {
+        id: 'peek-client-close',
+        name: 'Client-owned Peek close',
+        description:
+          'The closeControl slot accepts a disposable client owner trigger. It remains a non-modal summary.',
+        render: () => (
+          <PeekLayout
+            mode="embedded"
+            peekId="client-peek"
+            main={<Surface title="Bank transactions" body="Pick a transaction to inspect it." />}
+            peek={
+              <Peek
+                id="client-peek"
+                title="FT2628100002"
+                body={
+                  <DescriptionList
+                    columns="auto"
+                    items={[{ id: 'amount', label: 'Amount', value: '5,400,000 VND' }]}
+                  />
+                }
+                record={{ label: 'Open reconciliation', href: '#record-page' }}
+                closeLabel="Close"
+                closeControl={<Button label="Client close" />}
+              />
+            }
+          />
+        ),
+      },
+      {
+        id: 'settings-directory',
+        name: 'SettingsDirectory',
+        description:
+          'Every configuration screen the viewer may open, grouped by module: its mark, its name and links. The search narrows links, modules and sections already on the page.',
+        render: () => (
+          <SettingsDirectory
+            id="specimen-settings"
+            label="Settings"
+            search={{
+              label: 'Search settings',
+              emptyTitle: 'No setting matches',
+              emptyMessage: 'Try another word or clear the search.',
+            }}
+            sections={[
+              {
+                id: 'business',
+                title: 'Sales and care',
+                modules: [
+                  {
+                    id: 'crm',
+                    label: 'CRM',
+                    icon: <Icon name="users" />,
+                    links: [
+                      { id: 'teams', label: 'Teams and assignment', href: '#teams', current: true },
+                      { id: 'process', label: 'Sales process', href: '#process' },
+                      { id: 'tags', label: 'Profile tags', href: '#tags' },
+                    ],
+                  },
+                  {
+                    id: 'care',
+                    label: 'Customer care',
+                    icon: <Icon name="message-circle" />,
+                    links: [
+                      { id: 'programs', label: 'Programs', href: '#programs' },
+                      { id: 'requests', label: 'Requests and complaints', href: '#requests' },
+                    ],
+                  },
+                  { id: 'hidden', label: 'Not permitted', icon: <Icon name="lock" />, links: [] },
+                ],
+              },
+              {
+                id: 'system',
+                title: 'Organisation and access',
+                modules: [
+                  {
+                    id: 'users',
+                    label: 'Users',
+                    icon: <Icon name="shield-check" />,
+                    links: [
+                      { id: 'users', label: 'Users', href: '#users' },
+                      { id: 'roles', label: 'Roles', href: '#roles' },
+                    ],
+                  },
+                ],
+              },
+            ]}
+          />
+        ),
+      },
+      {
+        id: 'peek',
+        name: 'Peek',
+        description:
+          'A non-modal summary beside a spatial view: picking another item replaces it. Shown embedded; docked, it stays in view and is a sheet on a phone.',
+        render: () => (
+          <PeekLayout
+            peekId="reservation-peek"
+            mode="embedded"
+            main={
+              <Surface
+                title="Room plan"
+                body={
+                  <Stack
+                    items={[
+                      <a href="#peek" aria-controls="reservation-peek">
+                        Room 101 · R-1041 · Sam Lee
+                      </a>,
+                      <a href="#peek" aria-controls="reservation-peek" aria-current="true">
+                        Room 102 · R-1042 · Alex Morgan
+                      </a>,
+                      <a href="#peek" aria-controls="reservation-peek">
+                        Room 104 · R-1043 · Jordan Diaz
+                      </a>,
+                    ]}
+                  />
+                }
+              />
+            }
+            peek={
+              <Peek
+                id="reservation-peek"
+                eyebrow="R-1042"
+                title="Alex Morgan"
+                status={[
+                  <Badge label="Due in" tone="info" />,
+                  <Badge label="Deposit paid" tone="positive" />,
+                ]}
+                previous={{ label: 'Previous arrival', href: '#peek' }}
+                next={{ label: 'Next arrival', href: null }}
+                closeLabel="Close"
+                closeHref="#peek"
+                body={
+                  <Stack
+                    items={[
+                      <DescriptionList
+                        label="Stay"
+                        columns={2}
+                        items={[
+                          { id: 'arrival', label: 'Arrival', value: <FormattedDate value="2026-09-04" /> },
+                          {
+                            id: 'departure',
+                            label: 'Departure',
+                            value: <FormattedDate value="2026-09-07" />,
+                          },
+                          { id: 'room', label: 'Room', value: '102 · Deluxe king' },
+                          { id: 'guests', label: 'Guests', value: '2 adults' },
+                        ]}
+                      />,
+                      <DescriptionList
+                        label="Balance"
+                        columns={2}
+                        items={[
+                          {
+                            id: 'total',
+                            label: 'Total',
+                            value: <FormattedMoney value={7200000} currency="VND" />,
+                          },
+                          {
+                            id: 'due',
+                            label: 'Balance due',
+                            value: <FormattedMoney value={4200000} currency="VND" />,
+                          },
+                        ]}
+                      />,
+                    ]}
+                  />
+                }
+                actions={
+                  <ActionGroup
+                    actions={[
+                      <Button label="Check in" variant="primary" />,
+                      <Button label="Move room" variant="secondary" />,
+                      <Button label="Take payment" variant="secondary" />,
+                    ]}
+                  />
+                }
+                record={{ label: 'Open reservation', href: '#record-page' }}
+              />
+            }
+          />
+        ),
+      },
+      {
         id: 'modal-sheet',
         name: 'Modal sheet',
         description: 'Shown embedded here; the production mode occupies the viewport.',
@@ -1706,6 +2433,34 @@ export const componentGroups: readonly ComponentGroup[] = [
           />
         ),
       },
+      {
+        id: 'workspace-modal',
+        name: 'Viewport-width modal workspace',
+        description:
+          'Explicit spatial dialog with several working columns; title/footer stay around the body.',
+        render: () => (
+          <ModalSheet
+            id="workspace-modal-example"
+            mode="embedded"
+            presentation="dialog"
+            size="workspace"
+            height="fixed"
+            title="Create order workspace"
+            closeHref="#workspace-modal"
+            closeLabel="Close workspace"
+            body={
+              <Grid
+                columns={3}
+                items={[
+                  <Section title="Products" body={<Text>Searchable product list</Text>} />,
+                  <Section title="Cart & payment" body={<Text>Quantities, fee and total</Text>} />,
+                  <Section title="Delivery" body={<Text>Recipient, carrier and parcel options</Text>} />,
+                ]}
+              />
+            }
+          />
+        ),
+      },
     ],
   },
   {
@@ -1726,6 +2481,7 @@ export const componentGroups: readonly ComponentGroup[] = [
                 open
                 items={[
                   { id: 'record-label', kind: 'label', label: 'Record' },
+                  { id: 'empty', kind: 'label', label: 'No matching actions', hidden: true },
                   { id: 'open', label: 'Open record', href: '#record-page' },
                   { id: 'watch', label: 'Watch changes', value: 'watch', checked: true, shortcut: 'W' },
                   { id: 'separator', kind: 'separator' },
@@ -1874,7 +2630,8 @@ export const componentGroups: readonly ComponentGroup[] = [
       {
         id: 'feedback-runtime',
         name: 'Transient feedback and loading',
-        description: 'Live-region toasts, compact progress and content skeletons share state rules.',
+        description:
+          'Live-region toasts (one reporting background work with progress), compact progress and content skeletons share state rules.',
         render: () => (
           <Stack
             items={[
@@ -1889,6 +2646,13 @@ export const componentGroups: readonly ComponentGroup[] = [
                     message: 'All changes are synchronized.',
                     tone: 'positive',
                   },
+                  {
+                    id: 'importing',
+                    title: 'Importing products',
+                    message: 'products-october.csv · Started by Linh',
+                    tone: 'info',
+                    progress: { value: 40, label: '180 of 450 rows' },
+                  },
                 ]}
               />,
             ]}
@@ -1902,6 +2666,45 @@ export const componentGroups: readonly ComponentGroup[] = [
           'Search, filter/group/favorite controls and applied chips share a component-owned 48rem maximum width and fill narrower containers. This hydrated island owns query state; mobile opens the same sections in a sheet. Try the applied facets and a long search phrase to check wrapping. The manager is omitted, so toggling a control updates its chip locally without a server round trip.',
         render: () =>
           createSearchFilterView({ id: 'demo-search-filter', config: searchFilterDemoConfig }).view(),
+      },
+      {
+        id: 'search-filter-expanded',
+        name: 'Expanded search filter',
+        description:
+          'Two-row search toolbar: visible labelled preset values, independent grouping/saved searches and an on-demand custom-rule editor. Applied preset/group state stays in its control; only custom rules and field searches use chips. Compact consumers remain unchanged.',
+        render: () =>
+          createSearchFilterView({
+            id: 'demo-search-filter-expanded',
+            config: {
+              ...searchFilterDemoConfig,
+              labels: { ...searchFilterDemoConfig.labels, customFilterToggle: 'Condition' },
+              presentation: 'expanded',
+              filters: searchFilterDemoConfig.filters.map((option) => ({
+                ...option,
+                groupLabel: option.group === 'status' ? 'Status' : 'Created on',
+              })),
+            },
+          }).view(),
+      },
+      {
+        id: 'search-filter-list-chrome',
+        name: 'Search filter in list chrome',
+        description:
+          'ListChrome query slot: the expanded search filter leads the row at its own width; the view switch and a saved-filter action end the row level with the search bar and move under it as one group where the row runs out.',
+        render: () => (
+          <ListChrome
+            query={createSearchFilterView({
+              id: 'demo-search-filter-chrome',
+              config: { ...searchFilterDemoConfig, presentation: 'expanded' },
+            }).view()}
+            viewsLabel="View"
+            views={[
+              { id: 'table', label: 'Table', href: '#search-filter-list-chrome', active: true },
+              { id: 'cards', label: 'Cards', href: '#search-filter-list-chrome' },
+            ]}
+            actions={<LinkButton label="Edit saved filter" href="#search-filter-list-chrome" />}
+          />
+        ),
       },
       {
         id: 'search-filter-presets',
@@ -1926,11 +2729,32 @@ export const componentGroups: readonly ComponentGroup[] = [
         id: 'ket-table',
         name: 'Ket table',
         description:
-          'Selectable table island with either manager RPCs or native URL navigation. Shown flat, grouped with preloaded rows, and URL-driven with an active sort. The last specimen delegates paging to its surrounding toolbar. Demo links target this catalogue section; production routes supply real sort, group and page URLs.',
+          'Selectable table island with either manager RPCs or native URL navigation. Shown flat, grouped with preloaded rows, URL-driven with an active sort, and with the row the reader came back to marked current. The last specimen delegates paging to its surrounding toolbar. Demo links target this catalogue section; production routes supply real sort, group and page URLs.',
         render: () => (
           <Stack
             items={[
               createKetTableView({ id: 'demo-ket-table', config: ketTableDemoConfig }).view(),
+              <KetTable
+                columns={[
+                  { key: 'work', label: 'Initial collection read', cell: (row: { id: string }) => row.id },
+                  { key: 'customer', label: 'Customer', cell: () => 'Customer' },
+                ]}
+                rows={[]}
+                id={(row: { id: string }) => row.id}
+                loading={{ rows: 3 }}
+                selection={{ formId: 'catalogue-loading-selection', fieldName: 'selected' }}
+                responsive="stack"
+                labels={ketTableDemoConfig.labels}
+                caption="Table-owned loading rows; selection stays disabled until the read answers"
+              />,
+              <KetTable
+                columns={[{ key: 'work', label: 'Retained result', cell: (row: { id: string }) => row.id }]}
+                rows={[{ id: 'Previous result' }]}
+                id={(row) => row.id}
+                busy
+                labels={ketTableDemoConfig.labels}
+                caption="Delayed refresh retains and dims the previous answer"
+              />,
               <Surface
                 title="Table inside a working surface"
                 body={createKetTableView({
@@ -1956,9 +2780,31 @@ export const componentGroups: readonly ComponentGroup[] = [
                 ]}
                 id={(row) => row.id}
                 rowHref={() => '#ket-table'}
-                caption="URL-driven server collection"
+                layout="fixed"
+                caption="Fixed columns · URL-driven server collection"
                 labels={ketTableDemoConfig.labels}
               />,
+              <KetTable
+                columns={[
+                  { key: 'id', label: 'Reservation', cell: (row: { id: string; guest: string }) => row.id },
+                  { key: 'guest', label: 'Guest', cell: (row: { id: string; guest: string }) => row.guest },
+                ]}
+                rows={[
+                  { id: 'R-1041', guest: 'Sam Lee' },
+                  { id: 'R-1042', guest: 'Alex Morgan' },
+                  { id: 'R-1043', guest: 'Jordan Park' },
+                ]}
+                id={(row) => row.id}
+                rowHref={(row) => `#ket-table-${row.id}`}
+                currentRow="R-1042"
+                caption="The row the reader came back to from its record page"
+                labels={ketTableDemoConfig.labels}
+              />,
+              <Code value={rowAnchorHref('/reservations?page=2', 'R-1042', { top: 336, left: 214 })} />,
+              <Text>
+                Native record links carry the measured row position and table scroll in returnTo. Back and the
+                record header restore that position; unmeasured links centre the row.
+              </Text>,
               createKetTableView({ id: 'demo-ket-table-grouped', config: ketTableGroupedDemoConfig }).view(),
               createKetTableView({
                 id: 'demo-ket-table-navigation',
@@ -2006,6 +2852,24 @@ export const componentGroups: readonly ComponentGroup[] = [
                   onCreate: () => {},
                 },
               ).view(),
+              Field({
+                id: 'demo-relation-validation',
+                name: 'partnerId',
+                label: 'Partner',
+                error: 'Choose an active partner.',
+                control: createRelationSelectView({
+                  id: 'demo-relation-validation-picker',
+                  config: {
+                    ...relationSelectDemoConfig,
+                    name: 'partnerId',
+                    value: null,
+                    triggerId: 'demo-relation-validation',
+                    invalid: true,
+                    describedBy: 'demo-relation-validation-error',
+                    ariaLabel: 'Partner',
+                  },
+                }).view(),
+              }),
             ]}
           />
         ),
@@ -2172,13 +3036,26 @@ export const componentGroups: readonly ComponentGroup[] = [
         render: () => (
           <Stack
             items={[
-              <ImageDropZone
+              <Field
+                id="catalogue-product-photo"
+                name="product-photo"
                 label="Product photo"
-                picker={
-                  <label data-ui="image-drop-picker">
-                    <input type="file" accept="image/*" aria-label="Choose product photo" />
-                    <span>Choose or drop photo</span>
-                  </label>
+                layout="inline"
+                control={
+                  <ImageDropZone
+                    label="Product photo"
+                    picker={
+                      <label data-ui="image-drop-picker">
+                        <input
+                          id="catalogue-product-photo"
+                          type="file"
+                          accept="image/*"
+                          aria-label="Choose product photo"
+                        />
+                        <span>Choose or drop photo</span>
+                      </label>
+                    }
+                  />
                 }
               />,
               <FileUpload id="invoice" name="invoice" label="Invoice" accept="application/pdf" />,
@@ -2423,6 +3300,86 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'column-chart',
+        name: 'Column chart',
+        description:
+          'A magnitude over ordered periods: one series, a stacked split with a legend, and a reference level.',
+        render: () => {
+          const days = [12.4, 13.1, 11.8, 14.6, 15.2, 9.8, 10.4, 14.9, 15.6, 16.1, 12.2, 13.7, 15.8, 16.4]
+          const money = (value: number): string => `${value.toFixed(1)}m ₫`
+          return (
+            <Stack
+              items={[
+                <ColumnChart
+                  label="Daily ad spend, 30 Sep to 13 Oct"
+                  points={days.map((value, index) => ({
+                    id: `d${index}`,
+                    label: index === 0 ? '30/09' : `${String(index).padStart(2, '0')}/10`,
+                    value,
+                  }))}
+                  value={(point) => money(point.value)}
+                  tick={(value) => `${Math.round(value)}m`}
+                  reference={{ value: 14, label: 'Daily budget 14m ₫' }}
+                  labelEvery={3}
+                />,
+                <ColumnChart
+                  label="Orders by channel per week"
+                  keys={[
+                    { id: 'web', label: 'Website', series: 1 },
+                    { id: 'chat', label: 'Chat', series: 2 },
+                    { id: 'phone', label: 'Phone', series: 3 },
+                  ]}
+                  points={[
+                    {
+                      id: 'w38',
+                      label: 'Week 38',
+                      value: 96,
+                      segments: [
+                        { series: 1, value: 52 },
+                        { series: 2, value: 31 },
+                        { series: 3, value: 13 },
+                      ],
+                    },
+                    {
+                      id: 'w39',
+                      label: 'Week 39',
+                      value: 112,
+                      segments: [
+                        { series: 1, value: 58 },
+                        { series: 2, value: 38 },
+                        { series: 3, value: 16 },
+                      ],
+                    },
+                    {
+                      id: 'w40',
+                      label: 'Week 40',
+                      value: 104,
+                      segments: [
+                        { series: 1, value: 50 },
+                        { series: 2, value: 36 },
+                        { series: 3, value: 18 },
+                      ],
+                    },
+                    {
+                      id: 'w41',
+                      label: 'Week 41',
+                      value: 131,
+                      segments: [
+                        { series: 1, value: 64 },
+                        { series: 2, value: 47 },
+                        { series: 3, value: 20 },
+                      ],
+                    },
+                  ]}
+                  value={(point) => `${point.value} orders`}
+                />,
+                <ColumnChart label="Empty" points={[]} value={() => ''} empty="No data in this period" />,
+              ]}
+            />
+          )
+        },
+      },
+      {
         id: 'data-matrix',
         name: 'Data matrix',
         description:
@@ -2570,6 +3527,37 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'record-facts-fill',
+        name: 'Record facts that fill the row',
+        description:
+          'columns="auto" fits 12rem columns to the list width, up to four, so lists of one width align.',
+        render: () => (
+          <Stack
+            divided
+            items={[
+              <DescriptionList
+                columns="auto"
+                items={[
+                  { id: 'arrival', label: 'Arrival', value: <FormattedDate value="2026-09-04" /> },
+                  { id: 'departure', label: 'Departure', value: <FormattedDate value="2026-09-06" /> },
+                  { id: 'nights', label: 'Nights', value: <FormattedNumber value={2} /> },
+                  { id: 'guests', label: 'Guests', value: '2 adults' },
+                  { id: 'rate', label: 'Rate plan', value: 'Flexible with breakfast' },
+                  { id: 'source', label: 'Source', value: 'Direct' },
+                ]}
+              />,
+              <DescriptionList
+                columns="auto"
+                items={[
+                  { id: 'property', label: 'Property', value: 'Harbour View Resort' },
+                  { id: 'room', label: 'Room', value: 'Not assigned' },
+                ]}
+              />,
+            ]}
+          />
+        ),
+      },
+      {
         id: 'record-composition',
         name: 'Record summary, actions and rail',
         description: 'One identity header and one neutral aside prevent nested-card drift.',
@@ -2605,6 +3593,39 @@ export const componentGroups: readonly ComponentGroup[] = [
                     body: <Person name="Ngọc Linh" detail="Sales operations" />,
                   },
                   { id: 'health', title: 'Health', body: <Status label="On track" tone="positive" /> },
+                ]}
+              />,
+            ]}
+          />
+        ),
+      },
+      {
+        id: 'stage-path',
+        name: 'Stage path',
+        description:
+          'Where one record stands in its process. Passed steps carry a check, the current one is filled, a closed outcome takes its tone; a narrow path folds to the current name.',
+        render: () => (
+          <Stack
+            items={[
+              <StagePath
+                label="Sales path"
+                completeLabel="completed"
+                steps={[
+                  { id: 'qualified', label: 'Qualified', state: 'complete', href: '#stage-path' },
+                  { id: 'consulting', label: 'Consulting', state: 'complete', href: '#stage-path' },
+                  { id: 'proposal', label: 'Proposal', state: 'current' },
+                  { id: 'negotiation', label: 'Negotiation', state: 'upcoming', href: '#stage-path' },
+                  { id: 'close', label: 'Close', state: 'upcoming', href: '#stage-path' },
+                ]}
+              />,
+              <StagePath
+                label="Closed sales path"
+                completeLabel="completed"
+                steps={[
+                  { id: 'qualified', label: 'Qualified', state: 'complete' },
+                  { id: 'proposal', label: 'Proposal', state: 'complete' },
+                  { id: 'negotiation', label: 'Negotiation', state: 'upcoming' },
+                  { id: 'lost', label: 'Lost', state: 'current', tone: 'danger' },
                 ]}
               />,
             ]}
@@ -2654,6 +3675,36 @@ export const componentGroups: readonly ComponentGroup[] = [
           <Grid
             columns={2}
             items={[
+              <Inline
+                items={[
+                  <Thumbnail alt="Product without a photo" size="small" />,
+                  <Thumbnail alt="Product without a photo" />,
+                  <Thumbnail
+                    alt="Sample product illustration"
+                    size="large"
+                    fit="contain"
+                    src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Crect width=%2264%22 height=%2264%22 fill=%22%23fff%22/%3E%3Ccircle cx=%2232%22 cy=%2237%22 r=%2220%22 fill=%22%23ec9a20%22/%3E%3Cpath d=%22M32 17Q33 5 46 9Q43 19 32 17%22 fill=%22%23387450%22/%3E%3C/svg%3E"
+                  />,
+                ]}
+              />,
+              <ContentCard
+                title="Orange juice 1L, cold pressed"
+                href="#catalogue-card"
+                media={<Thumbnail alt="" />}
+                mediaPlacement="start"
+                summary="OJ-1L · Drinks · Bottle"
+                meta={
+                  <Inline
+                    align="between"
+                    items={[
+                      <Text variant="headingLg" numeric>
+                        45,000 ₫
+                      </Text>,
+                      <Badge label="Active" tone="positive" size="small" />,
+                    ]}
+                  />
+                }
+              />,
               <Attachments
                 label="Order attachments"
                 items={[

@@ -15,8 +15,8 @@
     gap: var(--kv-stack-gap);
   }
 
-  /* A divider sits halfway: the gap above it and the same space below it. */
-  :where([data-kv-design-system]) [data-ui="stack"][data-pattern="stack"][data-divided="true"] > * + * {
+  /* Parent-owned dividers survive a child's surface/flat frame reset. */
+  [data-kv-design-system] [data-ui="stack"][data-pattern="stack"][data-divided="true"] > :not(:first-child) {
     padding-block-start: var(--kv-stack-gap);
     border-block-start: 1px solid var(--kv-panel-border);
   }
@@ -233,9 +233,18 @@
     text-transform: uppercase;
   }
 
+  /* A group heading takes the working-surface size (14/20/600) wherever it stands: on the
+     canvas, inside a titled Surface after its hairline, or flattened into a modal. The block
+     title and its groups share the size; the title's place at the top of the block and the
+     hairline before each group carry the tier. A Section nested inside another group is an
+     item heading and stays one step down (13/20/600). */
   :where([data-kv-design-system]) [data-ui="section-title"] {
     margin: 0;
     font-weight: var(--kv-weight-semibold);
+    font-size: var(--kv-text-md);
+    line-height: var(--kv-line-md);
+  }
+  :where([data-kv-design-system]) [data-ui="section"] [data-ui="section"] [data-ui="section-title"] {
     font-size: var(--kv-text-sm);
     line-height: var(--kv-line-sm);
   }
@@ -287,17 +296,61 @@
     background: var(--kv-surface-raised);
   }
 
+  /* An interactive card is one target: its title link covers the whole card, as a
+     table's row link covers its row. Any other control in the card stays on top. */
+  :where([data-kv-design-system]) [data-ui="content-card"][data-interactive="true"] {
+    position: relative;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="content-card"][data-interactive="true"]
+    [data-ui="card-title"]
+    a::after {
+    position: absolute;
+    inset: 0;
+    content: "";
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="content-card"][data-interactive="true"]
+    :is(a, button, summary, input, select, textarea, label):not([data-ui="card-title"] a) {
+    position: relative;
+    z-index: 1;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="content-card"][data-interactive="true"]
+    [data-ui="card-title"]
+    a:focus-visible {
+    outline: none;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="content-card"][data-interactive="true"]:has([data-ui="card-title"] a:focus-visible) {
+    outline: 2px solid var(--kv-focus-border);
+    outline-offset: 2px;
+  }
+
   :where([data-kv-design-system]) [data-ui="content-card"][data-selected="true"] {
     border-color: var(--kv-accent-border);
     background: var(--kv-accent-subtle);
   }
 
   :where([data-kv-design-system]) [data-ui="card-head"] {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     min-width: 0;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: start;
+    align-items: flex-start;
     gap: var(--kv-space-3);
+  }
+
+  :where([data-kv-design-system]) [data-ui="card-heading"] {
+    flex: 1 1 10rem;
+  }
+
+  :where([data-kv-design-system]) [data-ui="card-status"] {
+    flex: 0 1 auto;
+    max-inline-size: 100%;
   }
 
   :where([data-kv-design-system]) [data-ui="card-media"] {
@@ -314,7 +367,51 @@
     object-fit: cover;
   }
 
+  /* A catalogue card keeps its square picture beside all of its content: the picture
+     column is as tall as a title, a summary and a figure line, and the figure line sits
+     at the end of the content so the figures of a row of cards line up. */
+  :where([data-kv-design-system]) [data-ui="content-card"][data-media="start"] {
+    grid-template-columns: 6rem minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  :where([data-kv-design-system]) [data-ui="content-card"][data-media="start"] > [data-ui="card-media"] {
+    display: grid;
+    align-self: start;
+    margin: 0;
+    border-radius: var(--kv-radius-sm);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="content-card"][data-media="start"]
+    > [data-ui="card-media"]
+    > :is(img, video, [data-ui="thumbnail"]) {
+    inline-size: 100%;
+    block-size: auto;
+    aspect-ratio: 1;
+  }
+
+  :where([data-kv-design-system]) [data-ui="card-content"] {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--kv-space-2);
+  }
+
+  :where([data-kv-design-system]) [data-ui="card-content"] > [data-ui="card-meta"] {
+    align-self: stretch;
+    margin-top: auto;
+    color: var(--kv-text-main);
+  }
+
+  @media (max-width: 47.99rem) {
+    :where([data-kv-design-system]) [data-ui="content-card"][data-media="start"] {
+      grid-template-columns: 5rem minmax(0, 1fr);
+    }
+  }
+
   :where([data-kv-design-system]) [data-ui="card-leading"] {
+    flex: 0 0 2rem;
     display: grid;
     width: 2rem;
     height: 2rem;
@@ -322,6 +419,14 @@
     border-radius: var(--kv-radius-md);
     background: var(--kv-accent-subtle);
     color: var(--kv-accent);
+  }
+
+  /* A Thumbnail brings its own size and frame; the icon tile would squeeze it to 2rem. */
+  :where([data-kv-design-system]) [data-ui="card-leading"]:has(> [data-ui="thumbnail"]) {
+    flex-basis: auto;
+    width: auto;
+    height: auto;
+    background: none;
   }
 
   :where([data-kv-design-system]) :is([data-ui="card-heading"], [data-ui="card-status"]) {
@@ -469,6 +574,39 @@
     text-decoration: none;
   }
 
+  /* An interactive card is pressed anywhere, not only on its title: the title link covers the card
+     and any other control in it stays pressable above. */
+  :where([data-kv-design-system]) [data-ui="kanban-card"][data-interactive="true"] {
+    position: relative;
+  }
+
+  :where([data-kv-design-system]) [data-ui="kanban-card"][data-interactive="true"]:not([draggable="true"]) {
+    cursor: pointer;
+  }
+
+  :where([data-kv-design-system]) [data-ui="kanban-title"] a::after {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    content: "";
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="kanban-card"]
+    :is(a, button, summary, input, select, textarea):not([data-ui="kanban-title"] a) {
+    position: relative;
+    z-index: 1;
+  }
+
+  :where([data-kv-design-system]) [data-ui="kanban-card"]:has([data-ui="kanban-title"] a:focus-visible) {
+    outline: 2px solid var(--kv-color-focus);
+    outline-offset: -2px;
+  }
+
+  :where([data-kv-design-system]) [data-ui="kanban-title"] a:focus-visible {
+    outline: none;
+  }
+
   :where([data-kv-design-system]) [data-ui="kanban-meta"] {
     display: flex;
     min-width: 0;
@@ -507,7 +645,7 @@
   /* A metric with a glyph puts it in a tile on the left and lets the figure keep
      the rest of the row, so a grid of four stays scannable by position. */
   :where([data-kv-design-system]) [data-ui="metric"]:has(> [data-ui="metric-icon"]) {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
     column-gap: var(--kv-space-3);
   }
 
@@ -558,6 +696,7 @@
     font-weight: var(--kv-weight-semibold);
     letter-spacing: 0;
     text-transform: uppercase;
+    overflow-wrap: anywhere;
   }
 
   /* Drawn only for a metric that was given a tone. A grey bullet in front of
@@ -595,6 +734,7 @@
     font-weight: var(--kv-weight-bold);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
+    overflow-wrap: anywhere;
   }
 
   :where([data-kv-design-system]) [data-ui="metric-detail"] {
@@ -604,13 +744,36 @@
     line-height: var(--kv-line-sm);
   }
 
+  /* A change against an earlier period: signed words, an arrow and a tone that
+     says whether the direction is good. The arrow is decoration for the words. */
+  :where([data-kv-design-system]) [data-ui="metric-change"] {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    gap: var(--kv-space-1);
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    font-weight: var(--kv-weight-medium);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  :where([data-kv-design-system]) [data-ui="metric-change"][data-tone="positive"] {
+    color: var(--kv-color-positive);
+  }
+
+  :where([data-kv-design-system]) [data-ui="metric-change"][data-tone="danger"] {
+    color: var(--kv-badge-danger-text);
+  }
+
   @media (max-width: 47.9375rem) {
     :where([data-kv-design-system]) [data-ui="grid"] {
       grid-template-columns: 1fr;
     }
   }
 
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     :where([data-kv-design-system]) [data-ui="section-head"] {
       flex-direction: column;
     }

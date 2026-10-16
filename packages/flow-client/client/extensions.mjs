@@ -15,6 +15,9 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
  * @typedef {object} FlowExtensionInstance
  * @property {(key: string) => unknown} [view] Page for one of its routes.
  * @property {(key: string) => unknown} [modal] Body for one of its forms.
+ * @property {(key: string) => { body: unknown, footer?: unknown } | null} [modalRecord]
+ *   Pure body/footer composition for the shared dialog. Footer submits target an explicit native form ID.
+ * @property {(key: string) => string | null} [modalTitle] Authorized record identity for a modal heading.
  * @property {(key: string) => unknown} [topAction] Action in the shell header for its page.
  * @property {() => Record<string, string>} [urlParams] Current route state, merged before explicit navigation parameters.
  * @property {(report: any) => unknown} [sprintSummary] Extra summary for a closed sprint.
@@ -23,6 +26,8 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
  * @property {() => void} [reset] Company or workspace switched.
  * @property {(task: any) => unknown} [taskSection] Section in the task detail.
  * @property {(task: any) => unknown} [taskLinks] Related resources after the task's main content.
+ * @property {(data: any, detail: any) => any} [recordDetail] Fold this extension's records from a
+ *   `flow.issue.detail` value into the workspace data; a screen read may carry only summaries.
  * @property {() => void | Promise<void>} [sync] Refresh external data after navigation or bootstrap.
  * @property {() => void | Promise<void>} [afterRender] Attach external viewers after DOM updates.
  * @property {() => void} [dispose] Abort reads and release external resources.
@@ -34,7 +39,8 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
  * @property {(error: { code: string }, input: any) => { message?: string } | undefined} [mutationError]
  *   Claim a failed write; return a message to show, or `{}` when the extension already responded.
  * @property {(key: string, entity?: any) => unknown} [settingsSection] Section on a core settings
- *   page: `organization-settings`, or `member-edit` with the member being edited.
+ *   page: `organization-settings`, `workspace-settings` with the open workspace, or `member-edit`
+ *   with the member being edited.
  * @property {() => boolean} [ownsFeedback] True while the extension shows the toast in its own dialog.
  */
 /**
@@ -45,7 +51,6 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
  * @property {'personal' | 'workspace' | 'project'} [scope]
  * @property {'standard' | 'wide' | 'full'} [width]
  * @property {{ group: 'workspace' | 'company', after: string, icon: string, label?: string }} [tab]
- * @property {boolean} [footer] False hides the task count in the shell footer.
  * @property {boolean} [taskSearch] Include the core task search controls.
  * @property {boolean} [admin] Excludes guests from configuration routes.
  */
@@ -56,6 +61,8 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
  * @property {Record<string, { title: string, group?: string, back: string, size?: string }>} [forms] Modal routes.
  * @property {Record<string, string>} [errors] API error code → message key.
  * @property {(data: any) => { id: string, title: string, description: string, icon: string, route: string }[]} [commands]
+ * @property {() => Record<string,string>} [searchLabels] Localized labels for extension-owned search groups.
+ * @property {(data: any) => Record<string,unknown>} [shellData] Authorized navigation metadata only, never business records or core-field overrides.
  * @property {(ctx: any) => FlowExtensionInstance} create
  */
 
@@ -118,3 +125,5 @@ export function registerFlowExtension(extension) {
 
 export const flowExtensions = () => [...registered]
 export const extensionCommands = (data) => registered.flatMap((x) => x.commands?.(data) ?? [])
+export const extensionSearchLabels = () =>
+  Object.assign({}, ...registered.map((x) => x.searchLabels?.() ?? {}))

@@ -9,6 +9,8 @@ import { configurationFunctions } from './configuration.ts'
 import { modalContextFunctions } from './modal-context.ts'
 import { caseModalContextFunctions } from './case-modal-context.ts'
 import { previewFunctions } from './previews.ts'
+import { importFunctions } from './imports.ts'
+import { tagFunctions } from './tags.ts'
 
 const groups: Record<string, Record<string, FnSpec>> = {
   accessFunctions,
@@ -20,6 +22,8 @@ const groups: Record<string, Record<string, FnSpec>> = {
   modalContextFunctions,
   caseModalContextFunctions,
   previewFunctions,
+  importFunctions,
+  tagFunctions,
 }
 
 /** Merge the groups, refusing a key two groups both define. */

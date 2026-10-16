@@ -130,7 +130,7 @@ rendering from `screens.tsx` to `screens/shared.tsx`, then remove the old file.
 
 | ID | Status | Screen | Route(s) | Current renderer | Target | Chatter | Owner |
 |---|---|---|---|---|---|---|---|
-| PROD-01 | done | Product list | `/admin/product/templates` | `screens/list.tsx::productsScreen` | ListPage | no | — |
+| PROD-01 | done | Product list | `/admin/product/templates` | `screens/list.tsx::productsScreen` frame + `list/island.tsx` client island | ListPage | no | — |
 | PROD-02 | done | Save favorite filter | `/admin/product/templates/favorites/new` | `screens/favorite.tsx::favoriteScreen` | FormPage | no | Huygens |
 | PROD-03 | done | Product create | `/admin/product/templates/new` | `screens/create.tsx::newProductScreen` | FormPage | no | Kant |
 | PROD-04 | keep | Attributes and values | `/admin/product/attributes` | `screens/attributes.tsx::attributesScreen` | Specialized | no | Curie |

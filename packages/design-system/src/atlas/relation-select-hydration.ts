@@ -19,7 +19,7 @@
 // call. That is the honest limit of a self-contained document, not a bug; the demo
 // app pages that seed real options accept the same limit for consistency.
 
-import { domHost, hydrateIslands } from '@ketvietlab/ketjs-view'
+import { domHost, createIslandManager } from '@ketvietlab/ketjs-view'
 import type { IslandElement, IslandRegistry } from '@ketvietlab/ketjs-view'
 import { createRelationSelectView } from '../interactions/relation-select/index.tsx'
 
@@ -32,12 +32,22 @@ const registry: IslandRegistry = {
     createRelationSelectView(props as Parameters<typeof createRelationSelectView>[0]),
 }
 
+const manager = createIslandManager(domHost(), registry, { strict: false })
 const boot = (): void => {
   // `document` is duck-typed against IslandElement at runtime (the same way the
   // framework's own generated browser bootstrap treats it, in plain untyped JS);
   // the cast makes that explicit here since this file is real TypeScript.
-  hydrateIslands(domHost(), document as unknown as IslandElement, registry, { strict: false })
+  manager.hydrate(document as unknown as IslandElement)
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true })
 else boot()
+
+// Routed demos replace only these slots; static Atlas documents have no navigation events.
+document.addEventListener('ket:navigation-start', () => {
+  for (const slot of document.querySelectorAll(
+    '[data-ket-slot="demo.content"], [data-ket-slot="demo.overlay"]',
+  ))
+    manager.dispose(slot as unknown as IslandElement)
+})
+document.addEventListener('ket:navigation-complete', boot)

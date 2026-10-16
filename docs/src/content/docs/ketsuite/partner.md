@@ -102,6 +102,12 @@ KetSuite giữ hành vi nghiệp vụ cần thiết nhưng không sao chép nguy
 `name` được trim khi lưu. `vat`, `email`, `ref`, `phone` và `lang` là metadata,
 không được dùng làm định danh đăng nhập và không bị ép unique.
 
+`partner.listPartners` tìm theo tên, email và số điện thoại. Với số thuộc quốc gia
+mặc định, truy vấn kiểm tra cả dạng quốc tế và dạng trong nước có tiền tố trunk;
+vì vậy số nhập dạng `0…` hoặc `+84…` đều tìm được hồ sơ Việt Nam cũ và mới.
+Tìm kiếm không ghi lại hay chuẩn hoá dữ liệu đang lưu, vẫn áp dụng scope và bộ lọc
+khách đang hoạt động. Số quốc tế thuộc quốc gia khác giữ nguyên mã quốc gia.
+
 ### Address và default address
 
 Mỗi Address thuộc đúng một Partner và không được chuyển chủ sau khi tạo. Storage

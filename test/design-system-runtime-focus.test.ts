@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { attachDesignSystemInteractions } from '../packages/design-system/src/runtime/index.js'
 import { attachClientModalInteractions } from '../packages/design-system/src/runtime/client-modal.js'
+import { attachHelpDrawers } from '../packages/design-system/src/runtime/help.js'
 
 // These objects model focus ownership and native tabbability, not layout. Real
 // details/menu and modal keyboard checks also run in the catalogue browser harness.
@@ -29,6 +30,29 @@ class Element extends EventTarget {
       child.parentElement = this
       this.children.push(child)
     }
+  }
+  get parentNode(): Element | null {
+    return this.parentElement
+  }
+  get nextSibling(): Element | null {
+    const siblings = this.parentElement?.children ?? []
+    return siblings[siblings.indexOf(this) + 1] ?? null
+  }
+  insertBefore(child: Element, before: Element | null): void {
+    if (child.parentElement)
+      child.parentElement.children = child.parentElement.children.filter((node) => node !== child)
+    child.parentElement = this
+    const index = before ? this.children.indexOf(before) : -1
+    this.children.splice(index < 0 ? this.children.length : index, 0, child)
+  }
+  prepend(child: Element): void {
+    this.insertBefore(child, this.children[0] ?? null)
+  }
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value)
+  }
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
   }
   contains(node: Element | null): boolean {
     return !!node && (node === this || this.children.some((child) => child.contains(node)))
@@ -100,15 +124,31 @@ class Key extends Event {
   }
 }
 
-const browser = (run: (document: BrowserDocument, cleanup: (() => void)[]) => void): void => {
+const browser = (run: (document: BrowserDocument, cleanup: (() => void)[]) => void, mobile = false): void => {
   browserDocument = new BrowserDocument()
   const globals = globalThis as Record<string, unknown>
   const replacements = {
     document: browserDocument,
-    window: { matchMedia: () => Object.assign(new EventTarget(), { matches: false }) },
+    window: Object.assign(new EventTarget(), {
+      matchMedia: () => Object.assign(new EventTarget(), { matches: mobile }),
+    }),
     HTMLElement: Element,
     HTMLDetailsElement: class extends Element {},
     HTMLInputElement: class extends Element {},
+    HTMLButtonElement: class extends Element {},
+    HTMLDialogElement: class extends Element {
+      id = 'guide'
+      open = false
+      show(): void {
+        this.open = true
+      }
+      showModal(): void {
+        this.open = true
+      }
+      close(): void {
+        this.open = false
+      }
+    },
     Node: Element,
     Element,
     KeyboardEvent: Key,
@@ -188,6 +228,31 @@ test('route modal skips negative tab stops, disabled controls and inert or hidde
   })
 })
 
+test('route modal focuses the visible invalid field while preserving the modal Tab loop', () => {
+  browser((document, cleanup) => {
+    const root = new Element('main'),
+      modal = new Element('section')
+    const close = new Element('button'),
+      hidden = new Element('div'),
+      hiddenInvalid = new Element('input')
+    const disabledInvalid = new Element('input'),
+      invalid = new Element('input')
+    hidden.hidden = true
+    hiddenInvalid.attributes.set('aria-invalid', 'true')
+    hidden.append(hiddenInvalid)
+    disabledInvalid.disabled = true
+    disabledInvalid.attributes.set('aria-invalid', 'true')
+    invalid.attributes.set('aria-invalid', 'true')
+    modal.append(close, hidden, disabledInvalid, invalid)
+    root.append(modal)
+    root.queries.set('[data-ui="modal-layer"][data-route-modal="true"] [role="dialog"]', [modal])
+    cleanup.push(attachDesignSystemInteractions(root as unknown as HTMLElement))
+    assert.ok(document.activeElement === invalid, 'validation refusal focuses the available invalid field')
+    assert.equal(press(document, 'Tab').defaultPrevented, true)
+    assert.ok(document.activeElement === close, 'forward Tab wraps to the close action')
+  })
+})
+
 test('disposing a runtime without a modal preserves the current focus and another owner’s inert lock', () => {
   browser((document, cleanup) => {
     const shell = new Element('div'),
@@ -239,4 +304,249 @@ test('overlapping document and island runtimes advance a tree by exactly one row
     assert.equal(press(document, 'ArrowDown').defaultPrevented, true)
     assert.ok(document.activeElement === rows[1], 'one key press moves by one row')
   })
+})
+
+test('mobile shell keeps the same SSR app rail inside the drawer focus loop and restores it on cleanup', () => {
+  browser((document, cleanup) => {
+    const shell = new Element('div')
+    const rail = new Element('nav')
+    const firstApp = new Element('a')
+    rail.append(firstApp)
+    const navigation = Reflect.construct(globalThis.HTMLDetailsElement, ['details']) as Element & {
+      open: boolean
+    }
+    const trigger = new Element('summary')
+    const drawer = new Element('div')
+    const close = new Element('button')
+    navigation.open = false
+    navigation.append(trigger, drawer)
+    drawer.append(close)
+    shell.append(rail, navigation)
+    document.append(shell)
+    document.queries.set('[data-ui="app-shell"] > [data-ui="app-switcher"]', [rail])
+    document.queries.set('[data-ui="app-navigation"]', [navigation])
+    shell.queries.set('[data-ui="navigation-drawer"]', [drawer])
+    navigation.queries.set('[data-ui="navigation-trigger"]', [trigger])
+    navigation.queries.set('[data-ui="navigation-drawer"]', [drawer])
+    navigation.ancestors.set('[data-ui="app-shell"], [data-ui="shell"]', shell)
+    const dispose = attachDesignSystemInteractions(document as unknown as Document)
+    cleanup.push(dispose)
+    assert.equal(rail.parentElement, drawer)
+    assert.equal(drawer.children[0], rail)
+    navigation.open = true
+    close.focus()
+    const tab = press(document, 'Tab')
+    assert.equal(tab.defaultPrevented, true)
+    assert.equal(document.activeElement, firstApp)
+    navigation.open = false
+    dispose()
+    cleanup.pop()
+    assert.equal(rail.parentElement, shell)
+    assert.equal(shell.children[0], rail)
+  }, true)
+})
+
+test('screen help button emits a request hook without creating a guide drawer', () => {
+  browser((document, cleanup) => {
+    const help = new Element('button')
+    help.ancestors.set('[data-ui="app-switcher-help"], button[name="screen-help"]', help)
+    document.append(help)
+    const menu = Reflect.construct(globalThis.HTMLDetailsElement, ['details']) as Element & {
+      open: boolean
+    }
+    menu.open = true
+    document.append(menu)
+    document.queries.set('[data-ui="menu"][open]', [menu])
+    let requests = 0
+    help.addEventListener('ket:screen-help-request', (event) => {
+      assert.equal((event as CustomEvent).detail.trigger, help)
+      assert.equal(event.cancelable, true)
+      requests += 1
+    })
+    cleanup.push(attachDesignSystemInteractions(document as unknown as Document))
+    const click = new Event('click', { cancelable: true })
+    Object.defineProperty(click, 'target', { value: help })
+    document.dispatchEvent(click)
+    assert.equal(requests, 1)
+    assert.equal(menu.open, false)
+  })
+})
+
+test('screen help resolves the current guide after content-slot navigation, including an initially empty screen', () => {
+  browser((document, cleanup) => {
+    const trigger = new Element('button')
+    document.append(trigger)
+    cleanup.push(attachHelpDrawers(document as unknown as Document))
+    const guide = (id: string) => {
+      const drawer = Reflect.construct(globalThis.HTMLDialogElement, ['dialog']) as Element & {
+        id: string
+        open: boolean
+      }
+      drawer.id = id
+      const close = new Element('button')
+      drawer.append(close)
+      drawer.queries.set('[data-ui="help-close"]', [close])
+      document.append(drawer)
+      document.queries.set('[data-ui="help-drawer"]', [drawer])
+      return { drawer, close }
+    }
+    const request = () => {
+      const event = new Event('ket:screen-help-request', { cancelable: true })
+      Object.defineProperty(event, 'target', { value: trigger })
+      document.dispatchEvent(event)
+      assert.equal(event.defaultPrevented, true)
+    }
+    const first = guide('guide')
+    request()
+    assert.equal(first.drawer.open, true)
+    assert.equal(document.activeElement, first.close)
+    first.drawer.isConnected = false
+    const replacement = guide('guide')
+    request()
+    assert.equal(first.drawer.open, false)
+    assert.equal(replacement.drawer.open, true)
+    assert.equal(document.activeElement, replacement.close)
+    assert.equal(press(document, 'Escape').defaultPrevented, true)
+    assert.equal(replacement.drawer.open, false)
+    assert.equal(document.activeElement, trigger)
+    const next = guide('another-screen-guide')
+    request()
+    assert.equal(next.drawer.open, true)
+    assert.equal(trigger.getAttribute('aria-controls'), 'another-screen-guide')
+  })
+})
+
+test('record help resolves its own guide even when a background screen guide was previously bound', () => {
+  browser((document, cleanup) => {
+    const sheet = new Element('section')
+    const trigger = new Element('button')
+    const guides = ['background-guide', 'record-guide'].map((id) => {
+      const drawer = Reflect.construct(globalThis.HTMLDialogElement, ['dialog']) as Element & {
+        id: string
+        open: boolean
+      }
+      drawer.id = id
+      const close = new Element('button')
+      drawer.append(close)
+      drawer.queries.set('[data-ui="help-close"]', [close])
+      return drawer
+    })
+    document.append(guides[0]!, sheet)
+    sheet.append(trigger, guides[1]!)
+    trigger.ancestors.set('[data-ui="modal-sheet"], [data-ui="record-page"], [data-ui="peek"]', sheet)
+    trigger.setAttribute('aria-controls', 'background-guide')
+    document.queries.set('[data-ui="help-drawer"]', guides)
+    cleanup.push(attachHelpDrawers(document as unknown as Document))
+    const request = new Event('ket:screen-help-request', { cancelable: true })
+    Object.defineProperty(request, 'target', { value: trigger })
+    document.dispatchEvent(request)
+    assert.equal(guides[0]!.open, false)
+    assert.equal(guides[1]!.open, true)
+    press(document, 'Escape')
+    assert.equal(guides[1]!.open, false)
+    assert.equal(document.activeElement, trigger)
+  })
+})
+
+test('a record page without its own guide opens the screen guide rendered beside it', () => {
+  browser((document, cleanup) => {
+    const page = new Element('section')
+    const trigger = new Element('button')
+    const drawer = Reflect.construct(globalThis.HTMLDialogElement, ['dialog']) as Element & {
+      id: string
+      open: boolean
+    }
+    drawer.id = 'screen-guide'
+    const close = new Element('button')
+    drawer.append(close)
+    drawer.queries.set('[data-ui="help-close"]', [close])
+    document.append(page, drawer)
+    page.append(trigger)
+    trigger.ancestors.set('[data-ui="modal-sheet"], [data-ui="record-page"], [data-ui="peek"]', page)
+    trigger.setAttribute('aria-controls', 'screen-guide')
+    document.queries.set('[data-ui="help-drawer"]', [drawer])
+    cleanup.push(attachHelpDrawers(document as unknown as Document))
+    const request = new Event('ket:screen-help-request', { cancelable: true })
+    Object.defineProperty(request, 'target', { value: trigger })
+    document.dispatchEvent(request)
+    assert.equal(request.defaultPrevented, true)
+    assert.equal(drawer.open, true)
+    press(document, 'Escape')
+    assert.equal(drawer.open, false)
+    assert.equal(document.activeElement, trigger)
+  })
+})
+
+test('screen help closes when the reader presses outside it, not inside it or on its own trigger', () => {
+  browser((document, cleanup) => {
+    const trigger = new Element('button')
+    trigger.ancestors.set('[data-ui="app-switcher-help"], button[name="screen-help"]', trigger)
+    const card = new Element('a')
+    const drawer = Reflect.construct(globalThis.HTMLDialogElement, ['dialog']) as Element & { open: boolean }
+    const close = new Element('button')
+    const text = new Element('p')
+    drawer.append(close, text)
+    drawer.queries.set('[data-ui="help-close"]', [close])
+    document.append(trigger, card, drawer)
+    document.queries.set('[data-ui="help-drawer"]', [drawer])
+    cleanup.push(attachHelpDrawers(document as unknown as Document))
+    const open = () => {
+      const event = new Event('ket:screen-help-request', { cancelable: true })
+      Object.defineProperty(event, 'target', { value: trigger })
+      document.dispatchEvent(event)
+      assert.equal(drawer.open, true)
+    }
+    const pointer = (target: Element, button = 0) => {
+      const event = Object.assign(new Event('pointerdown'), { button })
+      Object.defineProperty(event, 'target', { value: target })
+      document.dispatchEvent(event)
+    }
+    open()
+    pointer(text)
+    pointer(drawer)
+    assert.equal(drawer.open, true, 'inside the guide')
+    pointer(trigger)
+    assert.equal(drawer.open, true, '? toggles the guide itself')
+    pointer(card, 2)
+    assert.equal(drawer.open, true, 'a secondary button is not a dismissal')
+    pointer(card)
+    assert.equal(drawer.open, false)
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false')
+    assert.notEqual(document.activeElement, trigger, 'the pointer owns focus after a dismissal')
+    open()
+    assert.equal(drawer.open, true, 'it opens again after an outside dismissal')
+  })
+})
+
+test('Escape dismisses a settings menu before its containing mobile navigation drawer', () => {
+  browser((document, cleanup) => {
+    const navigation = Reflect.construct(globalThis.HTMLDetailsElement, ['details']) as Element & {
+      open: boolean
+    }
+    const drawer = new Element('div')
+    const menu = Reflect.construct(globalThis.HTMLDetailsElement, ['details']) as Element & { open: boolean }
+    const trigger = new Element('summary')
+    navigation.open = false
+    menu.open = false
+    navigation.append(drawer)
+    drawer.append(menu)
+    menu.append(trigger)
+    document.append(navigation)
+    document.queries.set('[data-ui="app-navigation"]', [navigation])
+    navigation.queries.set('[data-ui="navigation-drawer"]', [drawer])
+    menu.queries.set('[data-ui="menu-trigger"]', [trigger])
+    cleanup.push(attachDesignSystemInteractions(document as unknown as Document))
+    navigation.open = true
+    menu.open = true
+    trigger.ancestors.set('[data-ui="menu"][open]', menu)
+    trigger.focus()
+    const escapeEvent = press(document, 'Escape')
+    assert.equal(escapeEvent.defaultPrevented, true)
+    assert.equal(menu.open, false)
+    assert.equal(navigation.open, true)
+    assert.equal(document.activeElement, trigger)
+    trigger.ancestors.delete('[data-ui="menu"][open]')
+    press(document, 'Escape')
+    assert.equal(navigation.open, false)
+  }, true)
 })

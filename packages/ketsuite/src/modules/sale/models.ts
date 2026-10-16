@@ -90,4 +90,29 @@ export const models: Record<string, ModelDef> = {
       timeline: { fields: ['companyId', 'occurredAt', 'id'] },
     },
   },
+  /**
+   * One sending of a quotation: the channel, the address and the words it went with, or no channel when it was
+   * only marked as sent. Every screen that sends a quotation goes through `sale.sendQuotation`, so whoever reads
+   * the order (CRM among them) reads its sendings here. Delivering it belongs to the caller.
+   */
+  QuotationSend: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      orderId: 'ref:sale.Order',
+      channel: 'text?',
+      recipient: 'text?',
+      message: 'text?',
+      /** The order's revision this sending produced. */
+      orderRevision: 'int',
+      actorUserId: 'text?',
+      /** The delivery the caller made of it, as the caller names it; null when nothing was delivered. */
+      deliveryRef: 'text?',
+      idempotencyKey: 'text?',
+      sentAt: 'datetime',
+    },
+    indexes: {
+      order: { fields: ['companyId', 'orderId', 'sentAt'] },
+    },
+  },
 }

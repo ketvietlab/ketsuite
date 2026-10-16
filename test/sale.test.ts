@@ -1044,3 +1044,65 @@ test('sale: the overview counts every order and adds up one currency', async () 
     await adapter.close()
   }
 })
+
+test('sale: a quotation goes out on a channel only under the one sending rule, and every sending is recorded', async (t) => {
+  const adapter = await boot()
+  t.after(() => adapter.close())
+  const code = (result: unknown) => ((result as Row).errors as Row[] | undefined)?.[0]?.code
+  await call(
+    'sale.createOrder',
+    { id: 'q1', partnerId: 'customer', warehouseId: 'wh', validityDate: '2099-12-31' },
+    adapter,
+  )
+  const send = async (args: Record<string, unknown>) =>
+    ((await call('sale.sendQuotation', { id: 'q1', ...args }, adapter)) as Row).value as Row
+  const email = { channel: 'email', recipient: 'buyer@example.com', message: 'Our quotation' }
+  assert.equal(code(await send(email)), 'sale.error.quotationEmpty')
+  await call(
+    'sale.addLine',
+    { id: 'q1:line', orderId: 'q1', productId: 'goods-1', productUomQty: '1', productUomId: 'unit' },
+    adapter,
+  )
+  assert.equal(code(await send({ ...email, channel: 'fax' })), 'sale.error.channelUnknown')
+  assert.equal(code(await send({ ...email, recipient: 'buyer' })), 'sale.error.recipientInvalid')
+  assert.equal(code(await send({ channel: 'zalo', recipient: '0123' })), 'sale.error.recipientInvalid')
+  assert.equal(code(await send({ ...email, message: 'x'.repeat(2001) })), 'sale.error.messageTooLong')
+  // Nobody is contacted who did not agree to it.
+  assert.equal(code(await send(email)), 'sale.error.consentRequired')
+  assert.equal((await adapter.all('SELECT * FROM sale_quotation_send')).length, 0)
+  await call(
+    'partner.savePartner',
+    { id: 'customer', kind: 'company', name: 'Customer', email: 'buyer@example.com', contactConsent: true },
+    adapter,
+  )
+  const [held] = await adapter.all('SELECT revision FROM sale_order WHERE id = ?', ['q1'])
+  const stale = (await send({ ...email, expectedRevision: Number(held?.revision ?? 0) + 5 })) as Row
+  assert.equal((stale.errors as Row[])[0]?.field, 'expectedRevision')
+
+  const sent = (await send({ ...email, idempotencyKey: 'send-1' })) as Row
+  assert.equal(sent.ok, true)
+  const [order] = await adapter.all('SELECT state, revision FROM sale_order WHERE id = ?', ['q1'])
+  assert.equal(order?.state, 'sent')
+  assert.equal(Number(order?.revision), sent.revision)
+  // The same key is the same sending: nothing changes and nothing is recorded twice.
+  const again = (await send({ ...email, idempotencyKey: 'send-1' })) as Row
+  assert.equal(again.sendId, sent.sendId)
+  assert.equal(again.revision, sent.revision)
+  // Without a channel the quotation is only marked sent, as before; that is recorded too.
+  assert.equal(((await send({})) as Row).ok, true)
+  const sendings = await adapter.all(
+    'SELECT channel, recipient, message, "orderRevision" FROM sale_quotation_send ORDER BY "orderRevision"',
+  )
+  assert.deepEqual(
+    sendings.map((row) => [row.channel, row.recipient, row.message]),
+    [
+      ['email', 'buyer@example.com', 'Our quotation'],
+      [null, null, null],
+    ],
+  )
+  assert.equal(Number(sendings[0]?.orderRevision), sent.revision)
+
+  // A quotation past its validity does not go out on a channel.
+  await adapter.run(`UPDATE sale_order SET "validityDate" = '2000-01-01' WHERE id = ?`, ['q1'])
+  assert.equal(code(await send(email)), 'sale.error.quotationExpired')
+})

@@ -23,6 +23,7 @@ import {
   reassignCase,
   saveCase,
   serializeCaseList,
+  stageValues,
   visibleCases,
 } from '../operations.ts'
 import { CASE_KINDS } from '../types.ts'
@@ -209,6 +210,7 @@ export const caseFunctions: Record<string, FnSpec> = {
       expectedClosing: 'date?',
       forecastCategory: 'text?',
       tagIds: 'json?',
+      contactConsent: 'bool?',
       expectedVersion: 'int?',
       idempotencyKey: 'text',
     },
@@ -224,6 +226,7 @@ export const caseFunctions: Record<string, FnSpec> = {
         name: String(args.name),
         idempotencyKey: String(args.idempotencyKey),
         tagIds: Array.isArray(args.tagIds) ? args.tagIds.map(String) : undefined,
+        contactConsent: typeof args.contactConsent === 'boolean' ? args.contactConsent : undefined,
       }),
   }),
 
@@ -327,6 +330,7 @@ export const caseFunctions: Record<string, FnSpec> = {
       expectedVersion: 'int',
       stageId: 'id?',
       expectedRevenue: 'decimal?',
+      probability: 'decimal?',
       expectedClosing: 'date?',
       idempotencyKey: 'text',
     },
@@ -370,6 +374,7 @@ export const caseFunctions: Record<string, FnSpec> = {
             ...closingValues(held, stage.terminalState, timestamp),
             stageId: stage.id,
             terminalState: stage.terminalState,
+            ...stageValues(held, stage, timestamp),
             convertedAt: timestamp,
             version: n(held.version) + 1,
             updatedAt: timestamp,
@@ -381,6 +386,7 @@ export const caseFunctions: Record<string, FnSpec> = {
         const salesValues = {
           sourceLeadId: args.id,
           ...(args.expectedRevenue === undefined ? {} : { expectedRevenue: String(args.expectedRevenue) }),
+          ...(args.probability === undefined ? {} : { probability: String(args.probability) }),
           ...(args.expectedClosing === undefined ? {} : { expectedClosing: args.expectedClosing }),
         }
         if (detail) await tx.db.update('crm.SalesDetail', { id: detail.id }, salesValues)
@@ -558,8 +564,10 @@ export const caseFunctions: Record<string, FnSpec> = {
     input: {
       id: 'id',
       expectedVersion: 'int',
-      lostReason: 'text',
+      // A free-text reason, or the id of one from the company's list (`lostReasonId`), which names its own.
+      lostReason: 'text?',
       lostReasonCode: 'text?',
+      lostReasonId: 'id?',
       closeReason: 'text?',
       idempotencyKey: 'text',
     },
@@ -570,6 +578,7 @@ export const caseFunctions: Record<string, FnSpec> = {
       ...AUTHORIZATION_READ_EFFECTS,
       'read:crm.Team',
       'read:crm.Stage',
+      'read:crm.LostReason',
       'read:crm.SalesDetail',
       'write:crm.SalesDetail',
       'write:crm.TimelineEntry',
@@ -583,8 +592,9 @@ export const caseFunctions: Record<string, FnSpec> = {
       moveToTerminal(ctx, {
         id: String(args.id),
         expectedVersion: Number(args.expectedVersion),
-        lostReason: String(args.lostReason),
+        lostReason: args.lostReason ? String(args.lostReason) : undefined,
         lostReasonCode: args.lostReasonCode ? String(args.lostReasonCode) : undefined,
+        lostReasonId: args.lostReasonId ? String(args.lostReasonId) : undefined,
         closeReason: args.closeReason ? String(args.closeReason) : undefined,
         idempotencyKey: String(args.idempotencyKey),
         terminal: 'lost',
@@ -606,6 +616,9 @@ export const caseFunctions: Record<string, FnSpec> = {
     output: { ok: 'bool', id: 'id?', errors: 'json?' },
     effects: [
       'read:crm.Case',
+      // Whether the writer may see the record is decided by their teams and grants.
+      ...AUTHORIZATION_READ_EFFECTS,
+      'read:crm.Team',
       'read:crm.Message',
       'write:crm.Message',
       'write:crm.TimelineEntry',

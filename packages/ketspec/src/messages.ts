@@ -5,6 +5,10 @@
 
 const en = {
   'spec.brand': 'Spec',
+  'spec.nav.apps': 'Applications',
+  'spec.nav.help': 'Screen help',
+  'spec.nav.settings': 'Settings',
+  'spec.nav.newTab': 'Open in a new tab',
   'spec.navigation.label': 'API reference',
   'spec.navigation.open': 'Open navigation',
   'spec.navigation.close': 'Close navigation',
@@ -198,6 +202,10 @@ export type MessageKey = keyof typeof en
 
 const vi: Record<MessageKey, string> = {
   'spec.brand': 'Spec',
+  'spec.nav.apps': 'Ứng dụng',
+  'spec.nav.help': 'Hướng dẫn màn hình',
+  'spec.nav.settings': 'Cài đặt',
+  'spec.nav.newTab': 'Mở trong tab mới',
   'spec.navigation.label': 'Tài liệu API',
   'spec.navigation.open': 'Mở điều hướng',
   'spec.navigation.close': 'Đóng điều hướng',

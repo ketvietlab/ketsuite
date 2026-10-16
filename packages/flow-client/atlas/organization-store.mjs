@@ -1,5 +1,7 @@
 import { atlasExtensions } from './extensions.mjs'
+import { commandResults } from '@ketvietlab/flow-client/command-search.mjs'
 import { expandRealisticFixtures } from './realistic-fixtures.mjs'
+import { fixturePhase, rebaseFixtureDates } from './fixture-clock.mjs'
 import { documentAccess } from '@ketvietlab/flow-client/document-access.mjs'
 import { captureProduct, recordProductChanges } from './product-audit.mjs'
 import {
@@ -32,12 +34,54 @@ const fail = (code, message, fields = {}) => ({
   value: { ok: false, errors: [{ code, message }], fields },
 })
 const ok = (value) => ({ ok: true, value })
+// Internal reads (search) index the authorized view before any route projection; a
+// symbol cannot arrive in a JSON request.
+const unprojected = Symbol('unprojected')
+const ACTIVITY = 6
+/** A screen reads what it shows. The record a route opens (`recordId`) keeps its body,
+ * discussion and history; every other task is a summary that `flow.issue.detail` fills in.
+ * A summary names only the assignees the reader cannot find in `members`.
+ * The Workspace overview keeps the latest activity of each Workspace. */
+function projectForRoute(result, args) {
+  const record = args.recordId,
+    members = new Set(result.members.map((m) => m.id))
+  result.tasks = result.tasks.map((t) => {
+    if (t.id === record) return t
+    const { description, descriptionDoc, assignees, ...summary } = t,
+      unlisted = assignees?.filter((u) => !members.has(u.id))
+    return { ...summary, ...(unlisted?.length ? { assignees: unlisted } : {}), summary: true }
+  })
+  result.comments = result.comments.filter((c) => c.taskId === record)
+  if (args.route !== 'workspace-overview') {
+    result.history = result.history.filter((h) => h.taskId === record)
+    return
+  }
+  const workspaceOf = new Map(result.projects.map((p) => [p.id, p.workspaceId])),
+    taskWorkspace = new Map(
+      result.tasks.filter((t) => !t.archived).map((t) => [t.id, workspaceOf.get(t.projectId)]),
+    ),
+    kept = new Map()
+  for (const h of [...result.history].sort((a, b) => b.time.localeCompare(a.time))) {
+    const workspace = taskWorkspace.get(h.taskId),
+      list = kept.get(workspace) ?? []
+    if (workspace === undefined || list.length === ACTIVITY) continue
+    list.push(h)
+    kept.set(workspace, list)
+  }
+  result.history = [...kept.values()].flat()
+}
+// Saving an existing task, moving, following or planning it changes that task alone. Creating
+// one (no `id`) may add subtasks and files, and other writes touch other records.
+const changesOneTask = (name, args) =>
+  args.id != null &&
+  ['flow.issue.save', 'flow.issue.move', 'flow.issue.follow', 'flow.issue.assignSprint'].includes(name)
 export function createOrganizationSession(
   scenario = 'baseline',
   route = 'my-work',
-  { profile = 'compact', extensions = [] } = {},
+  { profile = 'compact', extensions = [], today = '' } = {},
 ) {
   const hooks = atlasExtensions(extensions)
+  let searchFailed = false
   const blank = blankStages.includes(scenario),
     account = blank ? createAccount(scenario) : null
   const companies = blank
@@ -52,7 +96,7 @@ export function createOrganizationSession(
     const session = createFixtureSession(
         ['guest', 'revoked', 'member'].includes(scenario) || blank ? 'baseline' : scenario,
         route,
-        { extensions },
+        { extensions, dispatchItem: (name, args) => dispatch(name, args) },
       ),
       d = session.data
     d.company = company
@@ -230,7 +274,8 @@ export function createOrganizationSession(
     }
     seedOperations(d)
     hooks.notify('seedOrganization', d, scenario, { prefix, company })
-    if (profile === 'realistic' && !blank) expandRealisticFixtures(d, scenario, hooks)
+    if (profile === 'realistic' && !blank)
+      expandRealisticFixtures(d, scenario, hooks, { phase: fixturePhase(today) })
     hooks.notify('linkSeed', d)
     if (['today', 'today-success'].includes(scenario)) {
       const task = d.tasks.find((t) => t.id === prefix + 'KV-131'),
@@ -266,6 +311,22 @@ export function createOrganizationSession(
       const epic = d.epics.find((e) => e.projectId === t.projectId && e.title === t.epic)
       if (epic) t.epic = epic.id
     }
+    if (['board-demo', 'board-blocked', 'board-success'].includes(scenario)) {
+      const task = d.tasks.find((item) => item.id === prefix + 'KV-131')
+      const blocker = d.tasks.find((item) => item.id === prefix + 'KV-151')
+      task.status = 'todo'
+      task.blockedBy = [blocker.id]
+      blocker.status = 'progress'
+      if (scenario === 'board-success') {
+        const before = captureProduct(d)
+        task.status = 'progress'
+        task.version++
+        recordProductChanges(d, before)
+      }
+    }
+    // Fixtures are authored for one day; a live renderer moves them next to `today`.
+    // Seeds that run later (finishSeed) already compute from the real date.
+    if (today && !blank) rebaseFixtureDates(d, today, { skip: hooks.values('fixtureClockSkip') })
     hooks.notify('finishSeed', d, scenario, { profile, blank, prefix })
     if (blank) {
       clearOrganization(d)
@@ -276,11 +337,20 @@ export function createOrganizationSession(
   }
   function call(name, args = {}) {
     const d = sessions.get(args.companyId ?? 'demo')?.data,
-      before = d && name !== 'flow.workspace.bootstrap' ? captureProduct(d) : null
+      before =
+        d && !['flow.workspace.bootstrap', 'flow.issue.detail', 'flow.search'].includes(name)
+          ? captureProduct(d)
+          : null
     const result = dispatch(name, args)
     if (before && result.ok && result.value?.ok !== false) {
       hooks.notify('afterOrganizationCommand', d, before)
       recordProductChanges(d, before)
+      // A write that changed one task alone returns that task's detail read after it, so the
+      // client can patch the task instead of reading the whole screen before it continues.
+      if (changesOneTask(name, args)) {
+        const record = dispatch('flow.issue.detail', { companyId: args.companyId, id: args.id }).value
+        if (record?.ok !== false) return { ...result, value: { ...result.value, record } }
+      }
     }
     return result
   }
@@ -300,9 +370,45 @@ export function createOrganizationSession(
     if (scenario === 'revoked' || !user || user.status !== 'active')
       return fail('revoked', 'Quyền truy cập đã được thu hồi. Nội dung tổ chức không còn khả dụng.')
     if (scenario === 'forbidden') return fail('forbidden', 'Bạn không có quyền xem phạm vi này.')
+    if (name === 'flow.search') {
+      if (
+        scenario === 'search-error' &&
+        !searchFailed &&
+        typeof args.query === 'string' &&
+        args.query.trim()
+      ) {
+        searchFailed = true
+        return fail('unavailable', 'Tìm kiếm tạm thời gián đoạn. Thử lại để tiếp tục.')
+      }
+      if (typeof args.query !== 'string' || args.query.length > 200)
+        return fail('validation', 'Từ khóa tìm kiếm không hợp lệ.')
+      // The same tenant/project/document/extension authorization projection as
+      // bootstrap, evaluated on every read. Never index raw session.data.
+      const response = dispatch('flow.workspace.bootstrap', {
+        companyId: args.companyId,
+        route: 'my-work',
+        [unprojected]: true,
+      })
+      if (response.value?.ok === false) return response
+      const scoped = response.value
+      const groups = commandResults(scoped, args.query, {
+        recent: Array.isArray(args.recent) ? args.recent.slice(0, 8) : [],
+        extra: hooks.values('searchGroups', { data: scoped, args }),
+      })
+      let remaining = 60
+      return ok({
+        groups: groups
+          .map((g) => {
+            const items = g.items.slice(0, remaining)
+            remaining -= items.length
+            return { ...g, items: items.map(({ keywords, ...item }) => item) }
+          })
+          .filter((g) => g.items.length),
+      })
+    }
     const projects = d.projects.filter((p) => accessFor(d, p, d.user.id).role)
     const projectIds = new Set(projects.map((p) => p.id))
-    const memberTeams = d.teams.filter((t) => t.memberIds.includes(d.user.id)).map((t) => t.id)
+    const memberTeams = d.teams.filter((t) => !t.archived && t.memberIds.includes(d.user.id)).map((t) => t.id)
     const workspaces = d.workspaces.filter(
       (w) =>
         !w.archived &&
@@ -319,7 +425,11 @@ export function createOrganizationSession(
     )
     const targetTask = d.tasks.find((t) => t.id === (args.recordId ?? args.id ?? args.taskId))
     const targetPage = d.pages.find((p) => p.id === (args.recordId ?? args.id ?? args.entityId))
-    const requestedProject = targetTask?.projectId ?? targetPage?.projectId ?? args.projectId
+    const targetProjectRecord = ['sprints', 'epics'].includes(args.collection)
+      ? d[args.collection].find((record) => record.id === args.entityId)
+      : null
+    const requestedProject =
+      targetTask?.projectId ?? targetPage?.projectId ?? targetProjectRecord?.projectId ?? args.projectId
     if (requestedProject && !projectIds.has(requestedProject))
       return fail('forbidden', 'Dự án không tồn tại hoặc bạn chưa được cấp quyền.')
     if (targetPage && !documentAccess(d, targetPage).read)
@@ -365,6 +475,25 @@ export function createOrganizationSession(
       replay.set(key, result)
       return result
     }
+    if (name === 'flow.issue.detail') {
+      // Same project check as bootstrap (requestedProject above). The record is picked from the
+      // authorized view a screen read projects, so the two cannot disagree on access.
+      if (!targetTask) return fail('not_found', 'Công việc không tồn tại hoặc đã bị chuyển đi.')
+      const response = dispatch('flow.workspace.bootstrap', {
+        companyId: args.companyId,
+        route: 'issue',
+        recordId: targetTask.id,
+        [unprojected]: true,
+      })
+      if (response.value?.ok === false) return response
+      const view = response.value,
+        own = (x) => x.taskId === targetTask.id
+      const task = view.tasks.find((t) => t.id === targetTask.id)
+      if (!task) return fail('forbidden', 'Bạn không có quyền xem công việc này.')
+      const result = { task, comments: view.comments.filter(own), history: view.history.filter(own) }
+      hooks.notify('detail', { view, result, args })
+      return ok(result)
+    }
     if (name === 'flow.workspace.bootstrap') {
       if (
         user.role === 'guest' &&
@@ -405,7 +534,7 @@ export function createOrganizationSession(
         g.scope === 'project' ? projectIds.has(g.targetId) : workspaces.some((w) => w.id === g.targetId),
       )
       const taskIds = new Set(result.tasks.map((t) => t.id))
-      for (const collection of ['inbox', 'files', 'history'])
+      for (const collection of ['inbox', 'files', 'history', 'comments'])
         result[collection] = result[collection].filter(
           (x) => (!x.taskId || taskIds.has(x.taskId)) && (!x.recipientId || x.recipientId === d.user.id),
         )
@@ -414,11 +543,13 @@ export function createOrganizationSession(
         args.workspaceId &&
         !workspaces.some((w) => w.id === args.workspaceId) &&
         !d.workspaces.some((w) => w.id === args.workspaceId && w.archived) &&
-        !target
+        !target &&
+        !targetPage
       )
         return fail('forbidden', 'Bạn không có quyền vào Workspace này.')
       const workspaceId =
         target?.workspaceId ??
+        targetPage?.workspaceId ??
         (workspaces.some((w) => w.id === args.workspaceId) ? args.workspaceId : (workspaces[0]?.id ?? ''))
       result.context = { companyId: d.company.id, workspaceId, projectId: target?.id ?? null }
       result.capabilities = {
@@ -446,7 +577,10 @@ export function createOrganizationSession(
       )
       result.history = result.history.filter((h) => h.taskId && taskIds.has(h.taskId))
       hooks.notify('scope', { d, result, scenario, user, projectIds, taskIds, workspaces })
-
+      if (!args[unprojected]) {
+        projectForRoute(result, args)
+        hooks.notify('routeProjection', { result, args })
+      }
       return ok(result)
     }
     const extended = hooks.first('organizationCommand', {
@@ -509,11 +643,24 @@ export function createOrganizationSession(
         return fail('conflict', 'Quyền hoặc cấu trúc đã thay đổi. Tải lại và xem trước lần nữa.')
       let value = {}
       if (['workspace.save', 'team.save', 'company.save'].includes(action)) {
-        if (!String(args.title ?? '').trim()) return fail('validation', 'Vui lòng nhập tên.')
+        if (typeof args.title !== 'string' || !args.title.trim())
+          return fail('validation', 'Vui lòng nhập tên.', { title: 'Nhập tên có nội dung.' })
+        if (args.description !== undefined && typeof args.description !== 'string')
+          return fail('validation', 'Mô tả không hợp lệ.', { description: 'Nhập mô tả dạng văn bản.' })
+        if (
+          action === 'workspace.save' &&
+          args.access !== undefined &&
+          !['private', 'internal'].includes(args.access)
+        )
+          return fail('validation', 'Phạm vi truy cập không hợp lệ.', {
+            access: 'Chọn nội bộ hoặc riêng tư.',
+          })
         if (action === 'company.save') d.company.name = args.title.trim()
         else {
           const collection = action.startsWith('team') ? 'teams' : 'workspaces'
           let entity = d[collection].find((x) => x.id === args.id)
+          if (args.id != null && (!entity || entity.archived))
+            return fail('notFound', 'Hồ sơ không còn khả dụng. Quay lại danh sách để chọn hồ sơ hiện có.')
           if (!entity) {
             entity = {
               id: collection + '-' + crypto.randomUUID(),
@@ -526,8 +673,8 @@ export function createOrganizationSession(
           }
           Object.assign(entity, {
             title: args.title.trim(),
-            description: args.description ?? '',
-            access: args.access ?? 'private',
+            description: args.description ?? entity.description ?? '',
+            access: args.access ?? entity.access ?? 'private',
           })
           value = { id: entity.id }
         }
@@ -571,11 +718,19 @@ export function createOrganizationSession(
           return fail('validation', 'Chủ sở hữu được bảo vệ; cần chuyển quyền sở hữu trước.')
         if (!['admin', 'member', 'guest'].includes(args.role))
           return fail('validation', 'Vai trò không hợp lệ.')
-        Object.assign(m, { role: args.role, status: args.revoke ? 'revoked' : 'active' })
+        if (args.revoke !== undefined && typeof args.revoke !== 'boolean')
+          return fail('validation', 'Thao tác truy cập thành viên không hợp lệ.')
+        Object.assign(m, {
+          role: args.role,
+          ...(args.revoke !== undefined ? { status: args.revoke ? 'revoked' : 'active' } : {}),
+        })
       } else if (action === 'team.member') {
         const t = d.teams.find((t) => t.id === args.id),
-          m = d.members.find((m) => m.id === args.memberId && m.role !== 'guest' && m.status === 'active')
-        if (!t || !m) return fail('validation', 'Chọn thành viên nội bộ đang hoạt động.')
+          m = d.members.find((m) => m.id === args.memberId)
+        if (args.remove !== undefined && typeof args.remove !== 'boolean')
+          return fail('validation', 'Thao tác thành viên Team không hợp lệ.')
+        if (!t || t.archived || !m || (!args.remove && (m.role === 'guest' || m.status !== 'active')))
+          return fail('validation', 'Chọn Team hiện có và thành viên nội bộ đang hoạt động để thêm.')
         t.memberIds = args.remove
           ? t.memberIds.filter((x) => x !== m.id)
           : [...new Set([...t.memberIds, m.id])]
@@ -590,12 +745,13 @@ export function createOrganizationSession(
           (x) => x.id === args.targetId,
         )
         const ids = [...new Set(args.subjectIds ?? [args.subjectId])]
-        if (!target || !ids.length || ids.length > 100)
+        if (!target || target.archived || !ids.length || ids.length > 100)
           return fail('validation', 'Chọn người hoặc Team để cấp quyền.')
         for (const id of ids) {
           const subject = (args.subjectType === 'team' ? d.teams : d.members).find((x) => x.id === id)
           if (
             !subject ||
+            subject.archived ||
             subject.status === 'revoked' ||
             (subject.role === 'guest' && args.scope !== 'project')
           )
@@ -694,7 +850,7 @@ export function createOrganizationSession(
     )
       return fail('forbidden', 'Không có quyền vào nhóm đích.')
     if (
-      ['flow.issue.bulk', 'flow.issue.reorder'].includes(name) &&
+      name === 'flow.issue.reorder' &&
       (args.ids ?? []).some((id) => {
         const task = d.tasks.find((t) => t.id === id),
           project = d.projects.find((p) => p.id === task?.projectId)

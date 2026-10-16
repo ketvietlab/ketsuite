@@ -1,3 +1,4 @@
+import { ListPage, RecordPage, WorkspacePage } from '../page-regions.tsx'
 import {
   ActionGroup,
   Button,
@@ -8,11 +9,9 @@ import {
   Grid,
   Inline,
   LinkButton,
-  ListPage,
   Menu,
   Notice,
   NumberField,
-  RecordPage,
   SearchBar,
   Select,
   Stack,
@@ -24,7 +23,6 @@ import {
   TextField,
   TreeGrid,
   Section,
-  WorkspacePage,
 } from '@ketvietlab/design-system'
 import type { TreeGridRow } from '@ketvietlab/design-system'
 import { CommandButton, commandValue, icon } from '../ui.tsx'

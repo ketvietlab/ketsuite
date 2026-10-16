@@ -1,5 +1,6 @@
 import { lineEditFunctions } from './functions/line-edit.ts'
 import { defineModule } from '@ketvietlab/ketjs'
+import { productSalesFunctions } from './product-sales.ts'
 import { functions } from './functions.ts'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
@@ -19,7 +20,7 @@ export default defineModule({
     'account.MoveLine': { saleLineId: 'ref:sale.OrderLine?' },
   },
   relations,
-  functions: { ...functions, ...reportFunctions, ...lineEditFunctions },
+  functions: { ...functions, ...reportFunctions, ...lineEditFunctions, ...productSalesFunctions },
   reports,
   messages: {
     vi: {
@@ -30,6 +31,12 @@ export default defineModule({
       'error.pricePositive': 'Đơn giá không được âm.',
       'error.discountRange': 'Chiết khấu phải từ 0 đến 100.',
       'error.quoteFailed': 'Không tính được tiền thuế của đơn.',
+      'error.channelUnknown': 'Chọn kênh gửi: email hoặc Zalo.',
+      'error.quotationEmpty': 'Báo giá cần ít nhất một dòng sản phẩm trước khi gửi.',
+      'error.quotationExpired': 'Báo giá đã hết hạn. Sửa hạn và gửi lại.',
+      'error.recipientInvalid': 'Người nhận không đúng: cần email, hoặc số điện thoại 8–15 chữ số cho Zalo.',
+      'error.messageTooLong': 'Lời nhắn tối đa 2.000 ký tự.',
+      'error.consentRequired': 'Khách chưa đồng ý nhận liên hệ; không gửi báo giá qua kênh này.',
       'app.title': 'Bán hàng',
       'app.summary': 'Báo giá, đơn bán, giao hàng và hoá đơn khách hàng.',
       'app.category': 'Bán hàng',
@@ -61,6 +68,13 @@ export default defineModule({
       'error.pricePositive': 'Unit price cannot be negative.',
       'error.discountRange': 'Discount must be between 0 and 100.',
       'error.quoteFailed': 'Could not calculate order taxes.',
+      'error.channelUnknown': 'Choose a channel: email or Zalo.',
+      'error.quotationEmpty': 'A quotation needs at least one product line before it is sent.',
+      'error.quotationExpired': 'The quotation has expired. Change its validity and send it again.',
+      'error.recipientInvalid': 'Enter an email address, or a phone number of 8 to 15 digits for Zalo.',
+      'error.messageTooLong': 'The message can be up to 2,000 characters.',
+      'error.consentRequired':
+        'The customer has not agreed to be contacted; the quotation is not sent on this channel.',
       'app.title': 'Sales',
       'app.summary': 'Quotations, sales orders, deliveries, and customer invoices.',
       'app.category': 'Sales',
@@ -87,3 +101,4 @@ export default defineModule({
   },
 })
 export { SALE_STATES, SALE_INVOICE_STATUSES, INVOICE_POLICIES } from './functions.ts'
+export { QUOTATION_CHANNELS, recipientFits, sendQuotationTo } from './functions/quotation-send.ts'

@@ -7,6 +7,31 @@ import { address } from '@ketvietlab/ketsuite'
 
 const modules = [address, partner, company, user, oauth]
 
+test('brokered providers use the broker callback and cannot auto-provision an operator', async () => {
+  const h = await boot()
+  try {
+    const values = {
+      id: 'broker',
+      code: 'broker',
+      name: 'Broker',
+      protocol: 'oidc-broker',
+      issuer: 'https://identity.example.test',
+      clientId: 'broker-client',
+      clientAuthMethod: 'none',
+      redirectUri: 'https://login.example.test/api/auth/callback',
+      autoProvision: false,
+    }
+    assert.equal((await h.call('oauth.saveProvider', values)).ok, true)
+    assert.equal((await h.call('oauth.saveProvider', { ...values, autoProvision: true })).ok, false)
+    assert.equal(
+      (await h.call('oauth.saveProvider', { ...values, redirectUri: 'https://login.example.test/other' })).ok,
+      false,
+    )
+  } finally {
+    await h.adapter.close()
+  }
+})
+
 const boot = async () => {
   const manifest = compose(modules)
   const adapter = sqliteAdapter()

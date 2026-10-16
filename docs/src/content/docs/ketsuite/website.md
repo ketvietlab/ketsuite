@@ -5,6 +5,50 @@ description: KetSuite Website modules, the site and publication model, and the p
 
 # Website
 
+## Studio frame and data regions
+
+The native Studio at `/website` serves its shell, navigation, topbar, page pattern
+and identity in the initial HTML. `website_backend/studio/screens/studio.tsx`
+obtains the frame through the same request-scoped transport used by the Studio API.
+It preserves the viewer's company/site scope and server function grants. The browser
+hydrates `website.region` slots over one shared store; it does not mount a second shell.
+
+KetSuite declares `@ketvietlab/website-client` as a runtime dependency for this
+browser-safe SSR frame contract. The dependency audit permits its public root
+entry; private implementation paths and undeclared external packages remain
+forbidden. Browser mounting remains owned by the disposable client runtime.
+
+Changing route, record or site obtains a fresh server frame and disposes old region
+controllers. Search/filter changes re-read data while preserving the frame, draft
+inputs and focus. Stale navigation, reads, identity refreshes and uploads are aborted.
+Saved record titles refresh from server identity markup. The legacy catalogue
+template address redirects to the standard Builder. Failed or denied reads keep a
+server identity and a recoverable data region, without exposing unauthorized records.
+
+All page identities use the public DS 20/24/600 title role on desktop and mobile.
+The existing Builder adapter retains only its editor geometry; it no longer replaces
+title typography or page inset. Narrow headers place metadata, title, states and actions
+in separate rows so long catalog metadata cannot hide the title.
+Native bundled page starters are read-only module resources, not editable theme records;
+their editors expose no save/archive command. Site appearance likewise exposes no archive
+command. Product content reads supply the selected `siteId` to the catalog source adapter.
+
+The appearance form and Builder's shared theme panel use a compact public
+`ImageDropZone` for the site logo. Choose/drop one PNG, JPEG, WebP or AVIF image up
+to 5 MB. `/website/images/{siteId}/logo?site={siteId}` stages a native Site-owned
+image; saving the style claims the reference under revision CAS. A failed upload
+keeps the previous logo, pending uploads block saving, and removal changes only the
+draft. Abandoned uploads retain the native private-lease cleanup policy.
+
+Each route supplies product-authored screen Help, rendered through public
+`HelpDrawer` and `MarkdownContent`. The native dialog owns focus and Escape;
+frame disposal closes it and detaches its listeners. Escape closes Help without dismissing
+an underlying route modal. Vietnamese and English help
+recipes are supplied; the existing Studio UI remains Vietnamese.
+
+The production commerce migration and per-route evidence are tracked in
+[Website Studio hardening](/handoffs/website-studio-hardening/).
+
 ## Administration collections
 
 Website administration lists place Create beside the title, followed by URL-backed filters,

@@ -45,9 +45,31 @@
 
   :where([data-kv-design-system])
     [data-ui="field"]
-    > :is([data-ui="field-control"], [data-ui="field-options"], [data-ui="field-input"]) {
+    > :is(
+      [data-ui="field-control"],
+      [data-ui="field-options"],
+      [data-ui="field-input"],
+      [data-ui="field-row"]
+    ) {
     grid-column: 2;
     grid-row: 1;
+  }
+
+  /* A short entry with its command (`action`): the entry stays compact and the command follows it at
+     the action gap, so it never drifts to the far edge of a wide form. */
+  :where([data-kv-design-system]) [data-ui="field-row"] {
+    display: flex;
+    align-items: center;
+    gap: var(--kv-space-2);
+    min-width: 0;
+  }
+  :where([data-kv-design-system]) [data-ui="field-row"] > :first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-inline-size: 20rem;
+  }
+  :where([data-kv-design-system]) [data-ui="field-row"] > :not(:first-child) {
+    flex: none;
   }
 
   :where([data-kv-design-system]) [data-ui="field"] > :is([data-ui="field-help"], [data-ui="field-error"]) {
@@ -284,6 +306,23 @@
       padding-top: 0;
     }
   }
+
+  /* A half-row field is as narrow as its column, not as the grid that holds it. Once a two-column
+     grid of fields is narrower than two 28rem columns and the layout gap, every item takes a whole
+     row instead: each field keeps the grid's width and its label stays beside the control, and only
+     a grid narrower than 28rem stacks the labels. A date picker is the grid item for its field, so
+     it takes its own row too. A grid of anything else keeps its columns. */
+  @container (max-width: 56.75rem) {
+    :where([data-kv-design-system])
+      :is(
+        [data-ui="grid"][data-columns="2"]:has(> :is([data-ui="field"], [data-ui="date-picker"])),
+        [data-ui="form-grid"]:not([data-columns="3"])
+      )
+      > * {
+      grid-column: 1 / -1;
+    }
+  }
+
   :where([data-kv-design-system]) [data-ui="field-control"][data-appearance="embedded"] {
     min-height: var(--kv-control-height);
     border: 0;
@@ -347,6 +386,20 @@
     border-radius: 0;
     padding-inline: 0;
     box-shadow: none;
+    background: transparent;
+  }
+  /* The frame is the control: hovering the entry or its unit shades the whole frame, and the
+     entry keeps clear of the shade its own hover would paint inside the padding. */
+  :where([data-kv-design-system]) [data-ui="field-input"]:hover:not(:focus-within, [data-disabled="true"]) {
+    background: var(--kv-input-bg-hover);
+  }
+  :where([data-kv-design-system])
+    [data-ui="field-input"]:hover:not(:focus-within, [data-disabled="true"], [data-invalid="true"]) {
+    --kv-field-stroke: var(--kv-input-border-hover);
+  }
+  :where([data-kv-design-system])
+    [data-ui="field-input"]
+    > [data-ui="field-control"]:hover:not(:focus-visible, :disabled) {
     background: transparent;
   }
   :where([data-kv-design-system]) [data-ui="field-input"]:focus-within {
@@ -413,6 +466,46 @@
     grid-column: 1;
   }
   :where([data-kv-design-system]) [data-ui="field"][data-label-hidden="true"] > [data-ui="field-input"] {
+    grid-row: 1;
+  }
+
+  /* Enhanced fields explicitly own one label/control row, including narrow containers. */
+  :where([data-kv-design-system])
+  [data-ui="field"][data-layout="inline"]:not(
+    [data-kind="switch"],
+    [data-kind="checkbox"],
+    [data-kind="group"]
+  ) {
+    grid-template-columns: minmax(0, min(35%, 9rem)) minmax(0, 1fr);
+    align-items: start;
+  }
+  :where([data-kv-design-system])
+    [data-ui="field"][data-layout="inline"]:not(
+      [data-kind="switch"],
+      [data-kind="checkbox"],
+      [data-kind="group"]
+    )
+    > [data-ui="field-label"] {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  :where([data-kv-design-system])
+    [data-ui="field"][data-layout="inline"]:not(
+      [data-kind="switch"],
+      [data-kind="checkbox"],
+      [data-kind="group"]
+    )
+    > :not([data-ui="field-label"]) {
+    grid-column: 2;
+    grid-row: auto;
+  }
+  :where([data-kv-design-system])
+    [data-ui="field"][data-layout="inline"]:not(
+      [data-kind="switch"],
+      [data-kind="checkbox"],
+      [data-kind="group"]
+    )
+    > :not([data-ui="field-label"], [data-ui="field-help"], [data-ui="field-error"]) {
     grid-row: 1;
   }
 }

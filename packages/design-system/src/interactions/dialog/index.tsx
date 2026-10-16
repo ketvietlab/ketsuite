@@ -13,7 +13,7 @@ export type DialogProps = {
   closeLabel: string
   description?: string
   actions?: JSXChild
-  mode?: 'overlay' | 'embedded'
+  mode?: 'overlay' | 'embedded' | 'client'
   /** `small` for a short confirmation, `large` for a review that needs room. */
   size?: 'small' | 'default' | 'large'
   unsavedPrompt?: string
@@ -61,7 +61,13 @@ export const ConfirmDialog = (props: ConfirmDialogProps): TemplateResult =>
         <ActionGroup
           label={props.title}
           actions={[
-            <LinkButton label={props.closeLabel} href={props.closeHref} />,
+            props.mode === 'client' ? (
+              <span data-client-modal-close>
+                <Button label={props.closeLabel} />
+              </span>
+            ) : (
+              <LinkButton label={props.closeLabel} href={props.closeHref} />
+            ),
             <Button
               label={props.confirmLabel}
               variant={props.confirmVariant ?? 'destructive'}

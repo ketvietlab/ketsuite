@@ -1,6 +1,6 @@
+import { RecordPage } from '../page-regions.tsx'
 import { cancelSchedule, EntrySchedule, publishEntry, scheduleTime } from './entry-publishing.tsx'
 import {
-  RecordPage,
   Surface,
   Section,
   Stack,

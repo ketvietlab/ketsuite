@@ -22,7 +22,6 @@ type Context = {
     categories: Row[]
     uoms: Row[]
     stockEnabled: boolean
-    taxEnabled: boolean
     permissions: Record<string, boolean>
     lang: string
   }
@@ -161,6 +160,11 @@ test('product modal context: an existing template carries its attributes-and-var
     'blue',
     'red',
   ])
+  // The page lists variants in the order of the line's values, not of their ids.
+  assert.deepEqual(
+    ((context as Row).variants as Row[]).map((variant) => variant.label),
+    ((setup.lines as Row[])[0]!.values as Row[]).map((value) => value.name),
+  )
   // Nothing in this deployment fills template.recordTabs.
   assert.deepEqual((context as Row).extensionTabs, [])
   // The modal's text travels with its data, so the view never shows a message key.
@@ -197,6 +201,57 @@ test('product modal context: a reader without save rights still opens the record
   assert.equal(result.data.permissions.createAttribute, false)
   assert.equal(result.data.permissions.archive, false)
   assert.equal(result.data.permissions.delete, false)
+})
+
+test('product modal context: images and the conversation reach only who may read them', async (t) => {
+  const { run } = await boot(t)
+  await run('product.saveTemplate', { id: 'tpl', name: 'Áo thun', type: 'goods', uomId: 'unit' })
+  await run('storage.createAttachment', {
+    id: 'front',
+    name: 'Mặt trước',
+    resModel: 'product.Template',
+    resId: 'tpl',
+    resField: 'media',
+    kind: 'url',
+    url: 'https://cdn.example/front.png',
+    mimetype: 'image/png',
+    size: 0,
+    public: false,
+    createdAt: new Date().toISOString(),
+  })
+  await run('product_media.attachMedia', { id: 'm:front', attachmentId: 'front', templateId: 'tpl' })
+  await run('user.saveRole', { id: 'catalog-pictures', name: 'Catalog pictures' })
+  for (const fnKey of ['product.getTemplate', 'product_media.getMediaAttachment'])
+    await run('user.grantFunction', { id: `catalog-pictures:${fnKey}`, roleId: 'catalog-pictures', fnKey })
+  for (const [user, role] of [
+    ['reader', 'catalog-reader'],
+    ['pictures', 'catalog-pictures'],
+  ] as const) {
+    await run('user.createUser', { id: user, login: user, name: user }, null)
+    await run('user.grantCompany', { id: `${user}:acme`, userId: user, companyId: 'acme' })
+    await run('user.assignRole', { id: `${user}:${role}`, userId: user, roleId: role })
+  }
+  const seen = async (actor: string) => {
+    const data = (await run<Context>('product.templateModalContext', { id: 'tpl' }, actor))!
+      .data as unknown as {
+      images: Array<{ attachmentId: string }>
+      collaboration: Array<{ island: string }>
+      permissions: Record<string, boolean>
+    }
+    return {
+      images: data.images.map((image) => image.attachmentId),
+      viewImages: data.permissions.viewImages,
+      collaboration: data.collaboration.map((entry) => entry.island).sort(),
+    }
+  }
+  // Without the image read the page is sent no images at all, so it cannot show a broken one.
+  assert.deepEqual(await seen('reader'), { images: [], viewImages: false, collaboration: [] })
+  assert.deepEqual(await seen('pictures'), { images: ['front'], viewImages: true, collaboration: [] })
+  assert.deepEqual(await seen('root'), {
+    images: ['front'],
+    viewImages: true,
+    collaboration: ['activity.record', 'mail.chatter'],
+  })
 })
 
 type SaveResult = {
@@ -403,4 +458,82 @@ test('product modal context: a module filling template.recordTabs adds a tab lab
     { id: 'unlabelled', label: 'unlabelled', island: 'unlabelled.panel' },
   ])
   assert.equal(recordTabsFor({ manifest }, 'en')[0]?.label, 'Usage cycle')
+})
+
+type Packaging = { id: string; name: string; quantity: number; active: boolean; barcode: string | null }
+type PackagingContext = {
+  data: {
+    record: Row
+    packagings: Packaging[]
+    packagingChoices: Array<{ value: string; label: string }>
+    permissions: Record<string, boolean>
+    variants: Array<{ id: string; packagingBarcodes: Record<string, string> }>
+  }
+}
+
+test('product page: packagings are the units linked to the product, with their barcodes, and leave with them', async (t) => {
+  const { run } = await boot(t)
+  await run('uom.saveUnit', { id: 'box', name: 'Hộp 6', relativeFactor: '6', relativeUomId: 'unit' })
+  await run('uom.saveUnit', { id: 'carton', name: 'Thùng 24', relativeFactor: '4', relativeUomId: 'box' })
+  await run('uom.saveUnit', { id: 'kg', name: 'kg', relativeFactor: '1' })
+  await run('product.saveTemplate', {
+    id: 'tpl',
+    name: 'Nước suối',
+    type: 'goods',
+    uomId: 'unit',
+    listPrice: '10000',
+    barcode: '8930000000017',
+  })
+  const read = () => run<PackagingContext>('product.templateModalContext', { id: 'tpl' })
+  let c = await read()
+  const variant = String(c.data.record.defaultVariantId)
+  assert.deepEqual(c.data.packagings, [], 'a unit of the tree is not a packaging until it is linked')
+  assert.deepEqual(
+    c.data.packagingChoices,
+    [
+      { value: 'box', label: 'Hộp 6 · 6 Cái' },
+      { value: 'carton', label: 'Thùng 24 · 24 Cái' },
+    ],
+    'the choices count the product’s unit; another tree is not offered',
+  )
+  for (const name of ['addPackaging', 'removePackaging', 'packagingBarcodes'])
+    assert.equal(c.data.permissions[name], true, name)
+
+  assert.equal((await run<Row>('product.addTemplateUom', { templateId: 'tpl', uomId: 'box' })).ok, true)
+  c = await read()
+  assert.deepEqual(c.data.packagings, [
+    { id: 'box', name: 'Hộp 6', quantity: 6, active: true, barcode: null },
+  ])
+  assert.deepEqual(
+    c.data.packagingChoices.map((row) => row.value),
+    ['carton'],
+  )
+
+  const barcodes = (entries: Array<{ uomId: string; barcode: string | null }>) =>
+    run<Row>('product.setPackagingBarcodes', { productId: variant, barcodes: entries })
+  const refused = (result: Row) => (result.errors as Array<{ field: string; code: string }>)[0]
+  assert.deepEqual(refused(await barcodes([{ uomId: 'box', barcode: '8930000000017' }])), {
+    field: 'barcodes.0.barcode',
+    code: 'product.error.packaging.barcodeTaken',
+    message: 'barcode đã được dùng',
+  })
+  assert.equal(
+    refused(await barcodes([{ uomId: 'carton', barcode: '8930000000031' }])).code,
+    'product.error.packaging.notLinked',
+  )
+  assert.equal((await barcodes([{ uomId: 'box', barcode: '8930000000024' }])).ok, true)
+  c = await read()
+  assert.equal(c.data.packagings[0]!.barcode, '8930000000024')
+  assert.deepEqual(c.data.variants, [], 'a product without variants keeps the barcode on its packaging row')
+
+  assert.equal((await run<Row>('product.removeTemplateUom', { templateId: 'tpl', uomId: 'box' })).ok, true)
+  c = await read()
+  assert.deepEqual(c.data.packagings, [])
+  assert.equal(
+    refused(await run<Row>('product.removeTemplateUom', { templateId: 'tpl', uomId: 'box' })).code,
+    'product.error.packaging.notLinked',
+  )
+  await run('product.addTemplateUom', { templateId: 'tpl', uomId: 'box' })
+  c = await read()
+  assert.equal(c.data.packagings[0]!.barcode, null, 'its barcode left with the packaging')
 })

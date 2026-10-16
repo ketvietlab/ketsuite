@@ -3,6 +3,9 @@ import { functions } from './functions.ts'
 import { islands } from './islands.ts'
 import { routes } from './routes.ts'
 import { menus } from './menus.ts'
+import { workspaceMessages } from './workspace-messages.ts'
+import { listMessages } from './list/messages.ts'
+import { unitMessages } from './units/messages.ts'
 
 /**
  * The catalogue, in the admin — kept out of `product`.
@@ -61,12 +64,13 @@ export default defineModule({
     },
     'template.media': { props: { templateId: 'id' } },
     'variant.media': { props: { productId: 'id' } },
+    // `may` answers the functions a fill names in its condition (ui/fill-needs.ts).
     'template.collaboration': {
-      props: { resModel: 'text', resId: 'id', lang: 'text' },
+      props: { resModel: 'text', resId: 'id', lang: 'text', may: 'json?' },
       multiple: true,
     },
     'variant.collaboration': {
-      props: { resModel: 'text', resId: 'id', lang: 'text' },
+      props: { resModel: 'text', resId: 'id', lang: 'text', may: 'json?' },
       multiple: true,
     },
     'template.editor': { props: { identity: 'text', templateId: 'id', lang: 'text?' } },
@@ -78,19 +82,22 @@ export default defineModule({
   },
   messages: {
     vi: {
+      ...workspaceMessages.vi,
+      ...listMessages.vi,
+      ...unitMessages.vi,
       'app.title': 'Sản phẩm trong quản trị',
       'app.summary': 'Màn hình danh mục sản phẩm và lối vào từ thanh điều hướng.',
       'app.category': 'Hệ thống',
       'menu.app': 'Sản phẩm',
       'menu.catalogue': 'Danh mục',
-      'menu.templates': 'Mẫu sản phẩm',
+      'menu.templates': 'Sản phẩm',
       'menu.attributes': 'Thuộc tính',
-      'chrome.search': 'Tìm sản phẩm…',
+      'chrome.search': 'Tìm mã, tên sản phẩm…',
       'search.label': 'Tìm và lọc sản phẩm',
       'table.sortAscending': 'Sắp xếp tăng dần',
       'table.sortDescending': 'Sắp xếp giảm dần',
       openCatalogue: 'Mở danh mục',
-      'screen.title': 'Danh mục sản phẩm',
+      'screen.title': 'Sản phẩm',
       'screen.results': '{count} sản phẩm',
       'screen.empty.message': 'Chưa có sản phẩm nào.',
       'screen.empty.hint': 'Tạo mẫu sản phẩm đầu tiên để bắt đầu.',
@@ -202,7 +209,6 @@ export default defineModule({
       'field.barcode': 'Mã vạch',
       'field.variantIdentityHint':
         'Sản phẩm đã có biến thể. Hãy đặt mã riêng trên từng biến thể; giá trị này chỉ thuộc biến thể mặc định.',
-      'field.taxRate': 'Thuế suất',
       'field.brand': 'Thương hiệu',
       'field.origin': 'Xuất xứ',
       'field.archiveReason': 'Lý do lưu trữ',
@@ -368,6 +374,8 @@ export default defineModule({
       'variantEditor.variantsEmpty': 'Chưa có biến thể',
       'variantEditor.variantsEmptyHint': 'Mọi tổ hợp đã có biến thể. Có thể thêm biến thể thủ công.',
       'variantEditor.variantsNeedAttributes': 'Thêm thuộc tính có giá trị ở trên để tạo biến thể.',
+      'variantEditor.noExtraVariants': 'Không có biến thể bổ sung',
+      'variantEditor.noExtraVariantsHint': 'Sản phẩm giữ SKU gốc; thuộc tính mô tả không tạo thêm SKU.',
       'variantEditor.generate': 'Tạo {count} biến thể',
       'variantEditor.missingMore': 'và {count} tổ hợp khác',
       'variantEditor.defaultVariant': 'Biến thể mặc định',
@@ -400,6 +408,9 @@ export default defineModule({
       'variantEditor.reset': 'Huỷ thay đổi',
       'variantEditor.save': 'Lưu thuộc tính & biến thể',
       'variantEditor.saved': 'Đã lưu: tạo {created}, lưu trữ {archived}.',
+      'variantEditor.combinationLimitTitle': 'Quá nhiều tổ hợp để tạo hàng loạt',
+      'variantEditor.combinationLimitHint':
+        'Tối đa 256 tổ hợp trong một lượt. Giảm giá trị đã chọn hoặc thêm từng biến thể cần bán; các tổ hợp còn lại chưa phải SKU.',
       'variantEditor.saveFailed': 'Chưa lưu được',
       'variantEditor.readOnly': 'Bạn chỉ có quyền xem thuộc tính và biến thể.',
       'displayType.radio': 'Nút chọn',
@@ -411,19 +422,22 @@ export default defineModule({
       'createVariant.no_variant': 'Không tạo biến thể',
     },
     en: {
+      ...workspaceMessages.en,
+      ...listMessages.en,
+      ...unitMessages.en,
       'app.title': 'Products in admin',
       'app.summary': 'The catalogue screen, and the way into it.',
       'app.category': 'System',
       'menu.app': 'Products',
       'menu.catalogue': 'Catalogue',
-      'menu.templates': 'Templates',
+      'menu.templates': 'Products',
       'menu.attributes': 'Attributes',
-      'chrome.search': 'Search products…',
+      'chrome.search': 'Search code or product name…',
       'search.label': 'Search and filter products',
       'table.sortAscending': 'Sorted ascending',
       'table.sortDescending': 'Sorted descending',
       openCatalogue: 'Open catalogue',
-      'screen.title': 'Product catalogue',
+      'screen.title': 'Products',
       'screen.results': { one: '{count} product', other: '{count} products' },
       'screen.empty.message': 'No products yet.',
       'screen.empty.hint': 'Create the first template to begin.',
@@ -535,7 +549,6 @@ export default defineModule({
       'field.barcode': 'Barcode',
       'field.variantIdentityHint':
         'This product has variants. Set identifiers on each variant; this value belongs only to the default variant.',
-      'field.taxRate': 'Tax rate',
       'field.brand': 'Brand',
       'field.origin': 'Origin',
       'field.archiveReason': 'Archive reason',
@@ -701,6 +714,9 @@ export default defineModule({
       'variantEditor.variantsEmpty': 'No variants yet',
       'variantEditor.variantsEmptyHint': 'Every combination has a variant. You can still add one by hand.',
       'variantEditor.variantsNeedAttributes': 'Add an attribute with values above to create variants.',
+      'variantEditor.noExtraVariants': 'No additional variants',
+      'variantEditor.noExtraVariantsHint':
+        'The product keeps its own SKU; informational attributes do not create extra SKUs.',
       'variantEditor.generate': 'Create {count} variants',
       'variantEditor.missingMore': 'and {count} more',
       'variantEditor.defaultVariant': 'Default variant',
@@ -726,13 +742,16 @@ export default defineModule({
       'variantEditor.weight': 'Weight',
       'variantEditor.volume': 'Volume',
       'variantEditor.listPrice': 'Sales price',
-      'variantEditor.summaryCreate': 'Will create {count} new variants',
+      'variantEditor.summaryCreate': 'New variants to create: {count}',
       'variantEditor.summaryArchive': 'Will archive {count} variants',
       'variantEditor.summaryChanged': 'Unsaved changes.',
       'variantEditor.summaryDuplicate': 'Some variants share a combination — fix them before saving.',
       'variantEditor.reset': 'Discard changes',
       'variantEditor.save': 'Save attributes & variants',
       'variantEditor.saved': 'Saved: {created} created, {archived} archived.',
+      'variantEditor.combinationLimitTitle': 'Too many combinations to generate together',
+      'variantEditor.combinationLimitHint':
+        'Generate up to 256 combinations at once. Reduce selected values or add the variants you sell individually; other combinations are not SKUs.',
       'variantEditor.saveFailed': 'Could not save',
       'variantEditor.readOnly': 'You may only view attributes and variants.',
       'displayType.radio': 'Radio buttons',
@@ -751,11 +770,11 @@ export default defineModule({
     // A template opens on its own page (`/admin/product/templates/{id}`), rendered
     // client side by the KetSuite record runtime in its page presentation.
     'product_backend:template.page': `{% island "product.template-page" %}`,
-    // Attributes still open in a client-side record modal: a closed host on every
-    // admin page, opened by a link naming `product.attribute`.
-    'backend:runtime': `{% island "product.attribute-modal" %}`,
+    // Attributes and units of measure open in client-side record modals: closed hosts
+    // on every admin page, opened by a link naming `product.attribute` or `product.uom`.
+    'backend:runtime': `{% island "product.attribute-modal" %}{% island "product.uom-modal" %}`,
   },
 })
 
 export { productsScreen, productDetailScreen } from './screens/index.ts'
-export type { TemplateRow } from './screens/index.ts'
+export type { ProductListRow } from './list/read.ts'

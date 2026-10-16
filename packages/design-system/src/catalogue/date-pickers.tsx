@@ -6,6 +6,7 @@ import {
   resolveDatePreset,
 } from '../forms/date-presets/index.tsx'
 import { DatePicker, DateRangePicker, DateTimePicker } from '../forms/date-time/index.tsx'
+import { Field } from '../primitives/field/index.tsx'
 import { Disclosure, Stack } from '../layouts/index.tsx'
 
 /** Fixed civil today makes catalogue and browser checks reproducible. */
@@ -13,6 +14,14 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
   <Stack
     gap="loose"
     items={[
+      Field({
+        id: 'catalogue-record-date-en',
+        name: 'recordDate',
+        label: 'Record date · English host',
+        type: 'date',
+        value: '2026-10-04',
+        locale: 'en',
+      }),
       <Disclosure
         summary="Khoảng ngày cố định · 04/10/2026"
         body={

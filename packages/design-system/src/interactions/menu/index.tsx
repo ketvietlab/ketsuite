@@ -38,7 +38,7 @@ export type MenuItem = {
   viewport?: 'phone' | 'wide'
 }
 
-export type MenuLabel = { id: string; kind: 'label'; label: string }
+export type MenuLabel = { id: string; kind: 'label'; label: string; hidden?: boolean }
 export type MenuSeparator = { id: string; kind: 'separator' }
 /**
  * A named set of related commands — what a guest in the house needs, what the
@@ -87,8 +87,9 @@ export type MenuProps = {
    * trigger near the bottom of a container that clips overflow — a fixed
    * modal footer, say — where the panel would otherwise render past the
    * container's edge and be cut off rather than merely overlapping content.
+   * `right` opens beside a rail trigger, aligned to its bottom edge.
    */
-  placement?: 'top' | 'bottom'
+  placement?: 'top' | 'bottom' | 'right'
 }
 
 /** One command: a link, a submit button or a disabled entry, as a menu item. */
@@ -215,7 +216,12 @@ export const Menu = (props: MenuProps): TemplateResult => (
           if (item.kind === 'separator') return <hr data-ui="menu-separator" />
           if (item.kind === 'label')
             return (
-              <span data-ui="menu-label" role="presentation">
+              <span
+                data-ui="menu-label"
+                id={`${props.id}-${item.id}-label`}
+                role="presentation"
+                hidden={item.hidden === true ? true : undefined}
+              >
                 {item.label}
               </span>
             )

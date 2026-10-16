@@ -55,7 +55,6 @@ export const productDetailScreen = (
     origin?: string | null
     defaultCode?: string | null
     barcode?: string | null
-    taxId?: string | null
     saleOk?: boolean
     purchaseOk?: boolean
     active?: boolean
@@ -69,8 +68,6 @@ export const productDetailScreen = (
     uoms: FormOption[]
     categories: FormOption[]
     brands: FormOption[]
-    taxes: FormOption[]
-    taxEnabled?: boolean
     variantAttributes: FormOption[]
     variants: Array<{
       id: string
@@ -282,17 +279,6 @@ export const productDetailScreen = (
           options: [{ value: '', label: '—' }, ...management.brands],
           ...(management.controls?.brand ? { control: management.controls.brand } : {}),
         },
-        ...(management.taxEnabled
-          ? [
-              {
-                name: 'taxId',
-                label: _('product_backend.field.taxRate'),
-                type: 'select' as const,
-                value: row.taxId,
-                options: [{ value: '', label: '—' }, ...management.taxes],
-              },
-            ]
-          : []),
         {
           name: 'origin',
           label: _('product_backend.field.origin'),

@@ -92,6 +92,26 @@ export const createProductMediaFunctions = (
       },
     }),
 
+    /**
+     * The stored file behind one product image, for the route that serves its bytes.
+     *
+     * Storage's own download asks for `storage.getAttachment`, which reads any file
+     * of the company. Whoever may see a product's images needs only those, so this
+     * answers an attachment only while an image of some product links it.
+     */
+    getMediaAttachment: defineFn({
+      input: { attachmentId: 'id' },
+      output: { attachment: 'json?' },
+      effects: ['read:product_media.Media', 'read:storage.Attachment'],
+      handler: async (ctx, args) => {
+        const M = ctx.table('product_media.Media')
+        const linked = await ctx.db.one(from(M).where(eq(M.attachmentId, args.attachmentId)).limit(1))
+        if (!linked) return { attachment: null }
+        const A = ctx.table('storage.Attachment')
+        return { attachment: await ctx.db.one(from(A).where(eq(A.id, args.attachmentId))) }
+      },
+    }),
+
     /** All images for a bounded set of variants, used by the template media tab. */
     listMediaByProducts: defineFn({
       input: { productIds: 'json?' },

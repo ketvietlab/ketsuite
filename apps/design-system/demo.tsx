@@ -1,15 +1,17 @@
-import { document, page, text, withHeaders } from '@ketvietlab/ketjs'
-import { html, renderIsland, trustedMarkup } from '@ketvietlab/ketjs-view'
+import { document, navigablePage, text, withHeaders } from '@ketvietlab/ketjs'
+import { demoHelp } from './help.tsx'
+import { html, renderIsland, renderToString, trustedMarkup } from '@ketvietlab/ketjs-view'
 import type { JSXChild } from '@ketvietlab/ketjs-view'
 import type { RouteResult } from '@ketvietlab/ketjs'
+import { placeholderApplications } from '@ketvietlab/ketsuite/ui'
 import { icon } from '@ketvietlab/ketsuite/ui'
 import {
   ActionGroup,
   AppNavigation,
   AppShell,
+  AppTopbar,
   Avatar,
   Badge,
-  Breadcrumbs,
   BulkActions,
   Button,
   ContentCard,
@@ -23,7 +25,10 @@ import {
   ListChrome,
   ListPage,
   Metric,
+  Menu,
   ModalSheet,
+  NavigationToggle,
+  NavList,
   Notice,
   Pipeline,
   Progress,
@@ -34,9 +39,10 @@ import {
   Surface,
   Tabs,
   Tag,
+  Text,
   WorkspacePage,
 } from '@ketvietlab/design-system'
-import type { BreadcrumbItem, FieldProps, NavigationItemData, Tone } from '@ketvietlab/design-system'
+import type { FieldProps, NavigationItemData, Tone } from '@ketvietlab/design-system'
 import type { IncomingMessage } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { customerName, customers } from './demo-backend.ts'
@@ -259,6 +265,54 @@ const total = (order: Order) => productOf(order).price * order.quantity
 const money = (value: number) => `${new Intl.NumberFormat('vi-VN').format(value)} ₫`
 const redirect = (href: string) => withHeaders(text('', { status: 303 }), { location: href })
 
+const shellMessages = {
+  vi: {
+    organisation: 'An Việt Trading',
+    branch: 'Chi nhánh Thảo Điền',
+    search: 'Tìm kiếm toàn cục',
+    searchTrigger: 'Tìm kiếm',
+    searchPlaceholder: 'Tìm phân hệ, đơn hàng, khách hàng…',
+    searchSubmit: 'Tìm kiếm',
+    close: 'Đóng',
+    account: 'Tài khoản Ngọc Linh',
+    role: 'Quản lý bán hàng',
+    settings: 'Thiết lập',
+    light: 'Giao diện sáng',
+    dark: 'Giao diện tối',
+    openNavigation: 'Mở điều hướng',
+    results: 'Kết quả tìm kiếm',
+    navigation: 'Điều hướng',
+    orders: 'Đơn hàng',
+    enterQuery: 'Bạn muốn tìm gì?',
+    noResults: 'Không tìm thấy kết quả',
+    back: 'Về tổng quan',
+  },
+  en: {
+    organisation: 'An Việt Trading',
+    branch: 'Thao Dien branch',
+    search: 'Global search',
+    searchTrigger: 'Search',
+    searchPlaceholder: 'Find modules, orders, customers…',
+    searchSubmit: 'Search',
+    close: 'Close',
+    account: 'Ngoc Linh account',
+    role: 'Sales manager',
+    settings: 'Settings',
+    light: 'Light appearance',
+    dark: 'Dark appearance',
+    openNavigation: 'Open navigation',
+    results: 'Search results',
+    navigation: 'Navigation',
+    orders: 'Orders',
+    enterQuery: 'What are you looking for?',
+    noResults: 'No results found',
+    back: 'Back to overview',
+  },
+} as const
+
+const searchText = (value: string) =>
+  value.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('vi').replaceAll('đ', 'd')
+
 type DemoBasePath = '/demo' | '/demo2'
 type DemoRouteOptions<Base extends DemoBasePath> = {
   basePath?: Base
@@ -266,9 +320,11 @@ type DemoRouteOptions<Base extends DemoBasePath> = {
 }
 
 type DemoRoutes<Base extends DemoBasePath> = {
-  [Path in Base]: (url: URL) => RouteResult
+  [Path in Base]: (url: URL, req?: Pick<IncomingMessage, 'headers'>) => RouteResult
 } & {
   [Path in `${Base}/styles.css` | `${Base}/client.js` | `${Base}/export`]: (url?: URL) => RouteResult
+} & {
+  [Path in `${Base}/search/light` | `${Base}/search/dark`]: (url: URL) => RouteResult
 } & {
   [Path in `${Base}/action`]: (url: URL, request: IncomingMessage) => Promise<RouteResult>
 }
@@ -281,14 +337,23 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
   const orders = seed()
   let nextId = 1043
 
-  const render = (url: URL, formErrors: Record<string, string> = {}, submitted?: URLSearchParams) => {
+  const render = (
+    url: URL,
+    formErrors: Record<string, string> = {},
+    submitted?: URLSearchParams,
+    req: Pick<IncomingMessage, 'headers'> = { headers: {} },
+  ) => {
     const q = url.searchParams
     const theme = q.get('theme') === 'dark' ? 'dark' : 'light'
+    const locale = q.get('lang') === 'en' ? 'en' : 'vi'
+    const copy = shellMessages[locale]
+    const globalSearch = contextMode === 'submenu' && q.get('search') === 'global'
+    const globalQuery = globalSearch ? (q.get('q') ?? '').slice(0, 200).trim() : ''
     const view = ['orders', 'record', 'board'].includes(q.get('view') ?? '') ? q.get('view')! : 'overview'
     const selected = orders.find((order) => order.id === q.get('id')) ?? orders[0]
     const tab = ['activity', 'documents'].includes(q.get('tab') ?? '') ? q.get('tab')! : 'details'
     const href = (values: Record<string, string> = {}) =>
-      `${basePath}?${new URLSearchParams({ theme, ...values })}`
+      `${basePath}?${new URLSearchParams({ theme, ...(locale === 'en' ? { lang: locale } : {}), ...(q.has('app') ? { app: q.get('app')! } : {}), ...values })}`
     const current = Object.fromEntries(q)
     const here = href(current)
     const returnTo = href({ ...current, modal: '' })
@@ -322,7 +387,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
     const moduleValues = moduleValuesFor(activeModule)
     const moduleMenuItems = (module: DemoModule): readonly NavigationItemData[] => {
       const values = moduleValuesFor(module)
-      const moduleActive = activeModule.id === module.id
+      const moduleActive = !globalSearch && activeModule.id === module.id
       const primary = module.sections.slice(0, 4).map((label, index): NavigationItemData => {
         if (module.id === 'overview') {
           const target = overviewTargets[index]
@@ -375,59 +440,8 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
         },
       ]
     }
-    const nestedChildIndex = Math.max(0, Math.min(2, Number(q.get('child')) || 0))
-    const moduleHref = href(moduleValues)
-    const breadcrumbItems: BreadcrumbItem[] = [
-      { id: 'workspace', label: 'An Việt', href: href() },
-      { id: 'module', label: activeModule.label, href: moduleHref },
-    ]
-    if (view === 'record') {
-      breadcrumbItems.push(
-        { id: 'orders', label: 'Đơn hàng', href: href({ view: 'orders' }) },
-        { id: 'record', label: selected.id, href: undefined },
-      )
-    } else if (
-      q.has('child') ||
-      ((activeModule.id === 'sales' || activeModule.id === 'delivery') && status === 'done')
-    ) {
-      breadcrumbItems.push(
-        { id: 'section', label: activeModule.sections[4], href: undefined },
-        {
-          id: 'child',
-          label:
-            (activeModule.id === 'sales' || activeModule.id === 'delivery') && status === 'done'
-              ? activeModule.children[0]
-              : activeModule.children[nestedChildIndex],
-          href: undefined,
-        },
-      )
-    } else {
-      const sectionIndex =
-        activeModule.id === 'overview'
-          ? Math.max(
-              0,
-              Math.min(3, overviewTargets.indexOf(overviewFocus as (typeof overviewTargets)[number])),
-            )
-          : activeModule.id === 'sales' || activeModule.id === 'delivery'
-            ? status === null
-              ? 0
-              : Math.min(3, stages.indexOf(status) + 1)
-            : selectedSection
-      breadcrumbItems.push({
-        id: 'section',
-        label: activeModule.sections[sectionIndex],
-        href: undefined,
-      })
-    }
     const context =
-      contextMode === 'submenu' ? (
-        <Breadcrumbs
-          label="Vị trí hiện tại"
-          items={breadcrumbItems}
-          maxItems={3}
-          overflowLabel="Hiện các cấp trung gian"
-        />
-      ) : (
+      contextMode === 'submenu' ? undefined : (
         <Inline
           items={[
             'An Việt Trading',
@@ -533,6 +547,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
               options: customerOptions,
               manager: {
                 listFunction: 'demo.listCustomers',
+                searchInDropdown: true,
                 saveFunction: 'demo.createCustomer',
                 fields: [{ name: 'name', label: 'Tên khách hàng', required: true }],
               },
@@ -1309,114 +1324,307 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
           }
         />
       )
-    return page({
+    if (globalSearch) {
+      const term = searchText(globalQuery)
+      const destinations: { label: string; href: string; leading: JSXChild }[] = []
+      const addItems = (items: readonly NavigationItemData[], prefix: string, leading: JSXChild) => {
+        for (const item of items) {
+          const label = `${prefix} / ${item.label}`
+          if (item.children) addItems(item.children, label, leading)
+          else destinations.push({ label, href: item.href, leading })
+        }
+      }
+      for (const module of demoModules) {
+        const leading = icon(module.icon)
+        destinations.push({ label: module.label, href: href(moduleValuesFor(module)), leading })
+        addItems(moduleMenuItems(module), module.label, leading)
+      }
+      const links = [
+        ...new Map(
+          destinations
+            .filter((item) => searchText(item.label).includes(term))
+            .map((item) => [item.href, item]),
+        ).values(),
+      ]
+      const matchingOrders = orders.filter((order) =>
+        searchText(`${order.id} ${customerName(order.customer)} ${productOf(order).name}`).includes(term),
+      )
+      main = (
+        <WorkspacePage
+          title={copy.results}
+          variant="operational"
+          meta={globalQuery ? <Text breakWord>{globalQuery}</Text> : undefined}
+          actions={<LinkButton label={copy.back} href={href()} variant="tertiary" />}
+          body={
+            !globalQuery ? (
+              <EmptyState title={copy.enterQuery} message={copy.searchPlaceholder} />
+            ) : links.length === 0 && matchingOrders.length === 0 ? (
+              <EmptyState title={copy.noResults} message={globalQuery} />
+            ) : (
+              <Stack
+                items={[
+                  links.length ? (
+                    <Surface
+                      title={copy.navigation}
+                      body={<NavList label={copy.navigation} items={links} />}
+                    />
+                  ) : null,
+                  matchingOrders.length ? table(matchingOrders, false, copy.orders) : null,
+                ]}
+              />
+            )
+          }
+        />
+      )
+    }
+    const activeHrefs: string[] = []
+    const collectActive = (items: readonly NavigationItemData[]) => {
+      for (const item of items) {
+        if (item.children) collectActive(item.children)
+        else if (item.active) activeHrefs.push(item.href)
+      }
+    }
+    for (const module of demoModules) collectActive(moduleMenuItems(module))
+    const state = (
+      <span
+        hidden
+        data-demo-navigation-state={JSON.stringify({
+          activeHrefs,
+          theme,
+          locale,
+          globalQuery,
+          themeLabel: theme === 'light' ? copy.dark : copy.light,
+          themeIcon: renderToString(html`${icon(theme === 'light' ? 'moon' : 'sun')}`),
+          themeHref: href({ ...current, theme: theme === 'light' ? 'dark' : 'light' }),
+        })}
+      />
+    )
+    const contentWithHelp = (
+      <>
+        {main}
+        {demoHelp(
+          locale === 'en' && activeModule.id === 'overview' ? 'Sales overview' : activeModule.label,
+          locale,
+        )}
+      </>
+    )
+    return navigablePage(req, {
+      title: 'An Việt · Bán hàng',
+      slots: {
+        'demo.content': () => html`${contentWithHelp}`,
+        'demo.overlay': () => html`${overlay}`,
+        'demo.navigation-state': () => state,
+      },
       status: Object.keys(formErrors).length ? 422 : 200,
-      body: document({
-        lang: 'vi',
-        title: 'An Việt · Bán hàng',
-        head: html`<link rel="stylesheet" href="/design-system/styles.css"><link rel="stylesheet" href=${`${basePath}/styles.css`}><script type="module" src="/design-system/runtime/auto.js"></script><script src="/design-system/atlas/island-runtime.mjs"></script><script type="module" src=${`${basePath}/client.js`}></script>`,
-        body: (
-          <div data-kv-design-system data-theme={theme} data-presentation="grouped" data-demo-app>
-            <AppShell
-              sidebar={
-                <AppNavigation
-                  id={contextMode === 'submenu' ? 'enterprise-navigation' : 'sales-navigation'}
-                  label="Điều hướng ứng dụng"
-                  menuLabel="Mở điều hướng"
-                  closeLabel="Đóng điều hướng"
-                  identity="An Việt"
-                  context={
-                    contextMode === 'submenu' ? '18 phân hệ · Thảo Điền' : 'Sales workspace · Thảo Điền'
-                  }
-                  groups={
-                    contextMode === 'submenu'
-                      ? demoModuleGroups.map((group) => ({
-                          ...group,
-                          items: demoModules
-                            .filter((module) => module.group === group.id)
-                            .map((module) => ({
-                              id: module.id,
-                              label: module.label,
-                              expanded: activeModule.id === module.id,
-                              leading: icon(module.icon),
-                              children: moduleMenuItems(module),
-                            })),
-                        }))
-                      : [
-                          {
-                            id: 'workspace',
-                            label: 'Không gian làm việc',
-                            items: [
-                              {
-                                id: 'overview',
-                                label: 'Tổng quan',
-                                href: href(),
-                                active: view === 'overview',
-                                leading: icon('layout-dashboard'),
-                              },
-                              {
-                                id: 'orders',
-                                label: 'Đơn hàng',
-                                href: href({ view: 'orders' }),
-                                active: view === 'orders' || view === 'record',
-                                leading: icon('shopping-cart'),
-                                count: orders.length,
-                              },
-                              {
-                                id: 'delivery-board',
-                                label: 'Bảng giao hàng',
-                                href: href({ view: 'board' }),
-                                active: view === 'board',
-                                leading: icon('layout-grid'),
-                              },
-                            ],
-                          },
-                          {
-                            id: 'reference',
-                            label: 'Tham khảo',
-                            items: [
-                              {
-                                id: 'design-system',
-                                label: 'Design system',
-                                href: '/',
-                                leading: icon('package'),
-                              },
-                            ],
-                          },
-                        ]
-                  }
-                  footer={
-                    <div class="demo-navigation-footer">
-                      <LinkButton
-                        label={theme === 'light' ? 'Giao diện tối' : 'Giao diện sáng'}
-                        href={href({ ...current, theme: theme === 'light' ? 'dark' : 'light' })}
-                        variant="tertiary"
-                        leading={icon(theme === 'light' ? 'moon' : 'sun')}
-                      />
-                      <Inline
-                        items={[
-                          <Avatar name="Ngọc Linh" size="small" />,
-                          <div>
-                            <strong>Ngọc Linh</strong>
-                            <div class="demo-muted">Quản lý bán hàng</div>
-                          </div>,
-                        ]}
+      document: () =>
+        document({
+          lang: contextMode === 'submenu' ? locale : 'vi',
+          title: 'An Việt · Bán hàng',
+          head: html`<link rel="stylesheet" href="/design-system/styles.css"><link rel="stylesheet" href=${`${basePath}/styles.css`}><script src="/design-system/atlas/island-runtime.mjs"></script><script type="module" src=${`${basePath}/client.js`}></script>`,
+          body: (
+            <div data-kv-design-system data-theme={theme} data-presentation="grouped" data-demo-app>
+              <AppShell
+                applications={{
+                  ...placeholderApplications(q.get('app') ?? 'sales', locale),
+                  brand: { label: 'KetSuite', href: href(), image: '/demo2/brand/logo-dark.png' },
+                  navigation: {
+                    controls: `${contextMode === 'submenu' ? 'enterprise-navigation' : 'sales-navigation'}-drawer`,
+                    label: locale === 'en' ? 'Expand menu' : 'Mở menu',
+                  },
+                  items: placeholderApplications('sales', locale).items.map((item) => ({
+                    ...item,
+                    href: href({ app: item.id }),
+                  })),
+                }}
+                location={
+                  contextMode === 'submenu' ? (
+                    <div data-ket-slot="backend.global-topbar">
+                      <AppTopbar
+                        location={
+                          <Inline
+                            items={[
+                              <Text fontWeight="medium">{copy.organisation}</Text>,
+                              <Text tone="muted" variant="bodySm">
+                                {copy.branch}
+                              </Text>,
+                            ]}
+                          />
+                        }
+                        navigation={
+                          <NavigationToggle
+                            controls="enterprise-navigation-drawer"
+                            label={copy.openNavigation}
+                          />
+                        }
+                        search={{
+                          id: 'demo2-global-search',
+                          action: `${basePath}/search/${theme}`,
+                          label: copy.search,
+                          triggerLabel: copy.searchTrigger,
+                          closeLabel: copy.close,
+                          placeholder: copy.searchPlaceholder,
+                          submitLabel: copy.searchSubmit,
+                          query: globalQuery,
+                          locale,
+                        }}
+                        tools={
+                          <Inline
+                            wrap={false}
+                            items={[
+                              <span data-demo-theme-toggle>
+                                <LinkButton
+                                  label={theme === 'light' ? copy.dark : copy.light}
+                                  href={href({ ...current, theme: theme === 'light' ? 'dark' : 'light' })}
+                                  variant="tertiary"
+                                  iconOnly
+                                  leading={icon(theme === 'light' ? 'moon' : 'sun')}
+                                />
+                              </span>,
+                              <Menu
+                                id="demo2-account"
+                                label={copy.account}
+                                trigger={<Avatar name="Ngọc Linh" size="small" />}
+                                align="end"
+                                items={[
+                                  { id: 'name', kind: 'label', label: 'Ngọc Linh' },
+                                  { id: 'role', kind: 'label', label: copy.role },
+                                  { id: 'divider', kind: 'separator' },
+                                  {
+                                    id: 'settings',
+                                    label: copy.settings,
+                                    href: href({ module: 'settings' }),
+                                    leading: icon('settings'),
+                                  },
+                                ]}
+                              />,
+                            ]}
+                          />
+                        }
                       />
                     </div>
-                  }
-                />
-              }
-              main={main}
-            />
-            {overlay}
-          </div>
-        ),
-      }),
+                  ) : undefined
+                }
+                sidebar={
+                  <AppNavigation
+                    id={contextMode === 'submenu' ? 'enterprise-navigation' : 'sales-navigation'}
+                    label="Điều hướng ứng dụng"
+                    menuLabel="Mở điều hướng"
+                    closeLabel="Đóng điều hướng"
+                    externalTrigger={contextMode === 'submenu'}
+                    identity={locale === 'en' ? 'Sales' : 'Kinh doanh'}
+                    tools={{
+                      searchLabel: locale === 'en' ? 'Search menu' : 'Tìm kiếm menu',
+                      searchPlaceholder: locale === 'en' ? 'Find a function…' : 'Tìm chức năng…',
+                      emptyLabel: locale === 'en' ? 'No matching function.' : 'Không tìm thấy chức năng.',
+                      collapseLabel: locale === 'en' ? 'Collapse menu' : 'Thu gọn menu',
+                    }}
+                    context={contextMode === 'submenu' ? undefined : 'Sales workspace · Thảo Điền'}
+                    groups={
+                      contextMode === 'submenu'
+                        ? demoModuleGroups.map((group) => ({
+                            ...group,
+                            items: demoModules
+                              .filter((module) => module.group === group.id)
+                              .map((module) => ({
+                                id: module.id,
+                                label: module.label,
+                                expanded: activeModule.id === module.id,
+                                leading: icon(module.icon),
+                                children: moduleMenuItems(module),
+                              })),
+                          }))
+                        : [
+                            {
+                              id: 'workspace',
+                              label: 'Không gian làm việc',
+                              items: [
+                                {
+                                  id: 'overview',
+                                  label: 'Tổng quan',
+                                  href: href(),
+                                  active: view === 'overview',
+                                  leading: icon('layout-dashboard'),
+                                },
+                                {
+                                  id: 'orders',
+                                  label: 'Đơn hàng',
+                                  href: href({ view: 'orders' }),
+                                  active: view === 'orders' || view === 'record',
+                                  leading: icon('shopping-cart'),
+                                  count: orders.length,
+                                },
+                                {
+                                  id: 'delivery-board',
+                                  label: 'Bảng giao hàng',
+                                  href: href({ view: 'board' }),
+                                  active: view === 'board',
+                                  leading: icon('layout-grid'),
+                                },
+                              ],
+                            },
+                            {
+                              id: 'reference',
+                              label: 'Tham khảo',
+                              items: [
+                                {
+                                  id: 'design-system',
+                                  label: 'Design system',
+                                  href: '/',
+                                  leading: icon('package'),
+                                },
+                              ],
+                            },
+                          ]
+                    }
+                    footer={
+                      contextMode === 'submenu' ? undefined : (
+                        <div class="demo-navigation-footer">
+                          <LinkButton
+                            label={theme === 'light' ? 'Giao diện tối' : 'Giao diện sáng'}
+                            href={href({ ...current, theme: theme === 'light' ? 'dark' : 'light' })}
+                            variant="tertiary"
+                            leading={icon(theme === 'light' ? 'moon' : 'sun')}
+                          />
+                          <Inline
+                            items={[
+                              <Avatar name="Ngọc Linh" size="small" />,
+                              <div>
+                                <strong>Ngọc Linh</strong>
+                                <div class="demo-muted">Quản lý bán hàng</div>
+                              </div>,
+                            ]}
+                          />
+                        </div>
+                      )
+                    }
+                  />
+                }
+                main={<div data-ket-slot="demo.content">{contentWithHelp}</div>}
+              />
+              <div data-ket-slot="demo.overlay">{overlay}</div>
+              <div data-ket-slot="demo.navigation-state">{state}</div>
+            </div>
+          ),
+        }),
     })
   }
 
   return {
-    [basePath]: (url: URL) => render(url),
+    [basePath]: (url: URL, req?: Pick<IncomingMessage, 'headers'>) => render(url, {}, undefined, req),
+    ...Object.fromEntries(
+      (['light', 'dark'] as const).map((theme) => [
+        `${basePath}/search/${theme}`,
+        (url: URL) =>
+          redirect(
+            `${basePath}?${new URLSearchParams({
+              theme,
+              search: 'global',
+              q: (url.searchParams.get('q') ?? '').slice(0, 200),
+              ...(url.searchParams.get('lang') === 'en' ? { lang: 'en' } : {}),
+            })}`,
+          ),
+      ]),
+    ),
     [`${basePath}/styles.css`]: () => text(demoStyles, { type: 'text/css' }),
     [`${basePath}/client.js`]: () =>
       text(readFileSync(new URL('./demo-client.js', import.meta.url), 'utf8'), { type: 'text/javascript' }),
@@ -1486,7 +1694,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
             target.searchParams.set('view', 'record')
             target.searchParams.set('id', order!.id)
           }
-          return render(target, errors, data)
+          return render(target, errors, data, req)
         }
         const saved: Order = {
           id: order?.id ?? `SO-${nextId++}`,

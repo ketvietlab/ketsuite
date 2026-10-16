@@ -4,6 +4,28 @@
  * The visitor theme lives in `theme/` and is not Studio UI.
  */
 @layer ket.app {
+  /* A site logo is a compact mark; ImageDropZone owns its preview and control geometry. */
+  .website-theme-logo {
+    inline-size: 100%;
+    max-inline-size: 10rem;
+    min-inline-size: 0;
+  }
+  /* An island is a lifecycle boundary, not an extra layout box inside a public pattern slot. */
+  .website-region {
+    display: contents;
+  }
+  .website-theme-moon {
+    display: contents;
+  }
+  .website-theme-sun {
+    display: none;
+  }
+  :root[data-theme="dark"] .website-theme-moon {
+    display: none;
+  }
+  :root[data-theme="dark"] .website-theme-sun {
+    display: contents;
+  }
   /*
    * A `frame: 'workspace'` route renders without AppShell, so nothing paints the page below short
    * content. Fill the window with the page background the shell gives `app-main`.
@@ -11,10 +33,6 @@
   .website-workspace {
     min-height: 100dvh;
     background: var(--kv-page-bg);
-  }
-
-  .website-workspace:has(.website-builder-workspace) {
-    --kv-page-padding-x: var(--kv-space-2);
   }
 
   /* Builder: structure · canvas · inspector, filling the workspace canvas. */

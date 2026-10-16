@@ -111,6 +111,24 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
     assert.equal((await fetch(base + '/flow/' + route)).status, 404, route)
   const page = await (await fetch(base + '/flow/my-work')).text()
   assert.doesNotMatch(page, /flow-pro|ketatlas/)
+  // Transport: compressed bodies, and a document loads only its own language catalog.
+  const viPage = await fetch(base + '/flow/my-work?lang=vi', { headers: { 'accept-encoding': 'br' } })
+  assert.equal(viPage.headers.get('content-encoding'), 'br')
+  assert.match(viPage.headers.get('vary'), /Accept-Encoding/)
+  const viImports = JSON.parse((await viPage.text()).match(/<script type="importmap">([^<]+)</)[1]).imports
+  for (const spec of [
+    '/flow-ui/messages.mjs',
+    '/flow-client/messages.mjs',
+    '@ketvietlab/flow-client/messages.mjs',
+  ])
+    assert.equal(viImports[spec], spec.replace('@ketvietlab', '') + '?locale=vi', spec)
+  const plain = await fetch(base + '/flow-client/messages.mjs?locale=vi', {
+    headers: { 'accept-encoding': 'identity' },
+  })
+  assert.equal(plain.headers.get('content-encoding'), null)
+  const catalog = await import('data:text/javascript,' + encodeURIComponent(await plain.text()))
+  assert.deepEqual(Object.keys(catalog.flowClientMessages), ['vi'])
+  assert.equal(catalog.flowClientMessages.vi['ui.change.history'], 'Lịch sử thay đổi')
   for (const path of ['/flow-pro-client/index.mjs', '/flow-pro-ui/styles.css', '/atlas/store.mjs'])
     assert.equal((await fetch(base + path)).status, 404)
   const session = JSON.parse(page.match(/id="flow-environment">(.*?)<\/script>/)[1]).session
