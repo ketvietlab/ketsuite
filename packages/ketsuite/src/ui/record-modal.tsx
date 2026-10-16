@@ -195,6 +195,8 @@ export const recordPageFrame = (o: {
   actions?: JSXChild
   aside?: JSXChild
   asideLabel?: string
+  /** `before` (default) leads with the rail in reading and keyboard order; `after` follows the record. */
+  asideWhenStacked?: 'before' | 'after'
   body: JSXChild
 }): TemplateResult => (
   <div data-record-layer="page">
@@ -208,7 +210,7 @@ export const recordPageFrame = (o: {
       actions: o.actions,
       aside: o.aside,
       asideLabel: o.asideLabel,
-      asideWhenStacked: 'before',
+      asideWhenStacked: o.asideWhenStacked ?? 'before',
       body: o.body,
     })}
   </div>

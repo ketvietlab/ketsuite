@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /** @typedef {{ name: string, imported: string, kind: 'runtime' | 'type', source: string }} ExportEntry */
 /** @typedef {{ owner: string, maturity?: string, decision: string, target?: string, wave?: number, gapTask: string }} ModulePolicy */
@@ -14,7 +14,6 @@ const compatibilityRoot = join(root, 'packages/ketsuite/src/ui')
 const policyPath = join(designRoot, 'src/catalogue/inventory-policy.json')
 const outputPath = join(designRoot, 'src/catalogue/inventory.generated.ts')
 const jsonOutputPath = join(designRoot, 'src/catalogue/inventory.generated.json')
-const check = process.argv.includes('--check')
 
 // Include tracked files and non-ignored new source files. Source archives have no
 // Git metadata, so they retain the deterministic directory-walk fallback.
@@ -92,215 +91,257 @@ const parseExports = (source) => {
   return entries.sort((a, b) => lexical(a.name, b.name) || lexical(a.kind, b.kind))
 }
 
-/** @type {InventoryPolicy} */
-const policy = JSON.parse(read(policyPath))
-const catalogueFiles = walk(join(designRoot, 'src/catalogue'), ['.ts', '.tsx']).filter(
-  (path) => !path.endsWith('inventory.generated.ts'),
-)
-const testFiles = walk(join(root, 'test'), ['.test.ts', '.test.tsx'])
-const consumerFiles = walk(join(root, 'packages/ketsuite/src/modules'), ['.ts', '.tsx'])
-const publicExports = parseExports(read(join(designRoot, 'src/index.ts')))
-const registeredNames = new Set(
-  [...read(join(designRoot, 'src/catalogue/registry.ts')).matchAll(/entry\(\s*'([^']+)'/gu)].map(
-    (match) => match[1],
-  ),
-)
-const registryCoverageFiles = testFiles.filter((path) => {
-  const source = read(path)
-  return (
-    source.includes('catalogue renders every registered specimen') &&
-    source.includes('componentRegistry') &&
-    source.includes('mode="all"')
+/**
+ * The inventory is derived from source on every build and is not committed: it
+ * counts test files, consumers and CSS lines, so nearly every change to the
+ * design system or a module rewrote it, and two branches always conflicted on
+ * it. What a person decides lives in `inventory-policy.json`; a source module
+ * without a policy entry still fails here, at build and in the commit hook.
+ */
+export function collectDesignSystemInventory() {
+  /** @type {InventoryPolicy} */
+  const policy = JSON.parse(read(policyPath))
+  const catalogueFiles = walk(join(designRoot, 'src/catalogue'), ['.ts', '.tsx']).filter(
+    (path) => !path.endsWith('inventory.generated.ts'),
   )
-})
-const compatibilityExports = parseExports(read(join(compatibilityRoot, 'index.ts'))).filter((entry) =>
-  entry.source.startsWith('./'),
-)
+  const testFiles = walk(join(root, 'test'), ['.test.ts', '.test.tsx'])
+  const consumerFiles = walk(join(root, 'packages/ketsuite/src/modules'), ['.ts', '.tsx'])
+  const publicExports = parseExports(read(join(designRoot, 'src/index.ts')))
+  const registeredNames = new Set(
+    [...read(join(designRoot, 'src/catalogue/registry.ts')).matchAll(/entry\(\s*'([^']+)'/gu)].map(
+      (match) => match[1],
+    ),
+  )
+  const registryCoverageFiles = testFiles.filter((path) => {
+    const source = read(path)
+    return (
+      source.includes('catalogue renders every registered specimen') &&
+      source.includes('componentRegistry') &&
+      source.includes('mode="all"')
+    )
+  })
+  const compatibilityExports = parseExports(read(join(compatibilityRoot, 'index.ts'))).filter((entry) =>
+    entry.source.startsWith('./'),
+  )
 
-/** @param {Record<string, ModulePolicy>} policies @param {string} source */
-const sourcePolicy = (policies, source) =>
-  policies[source] ?? policies[`${source}.ts`] ?? policies[`${source}.tsx`]
-/** @param {string[]} files @param {string} name @param {string} base */
-const references = (files, name, base = root) =>
-  files
-    .filter((path) => contains(read(path), name))
-    .map((path) => slash(relative(base, path)))
-    .sort()
+  /** @param {Record<string, ModulePolicy>} policies @param {string} source */
+  const sourcePolicy = (policies, source) =>
+    policies[source] ?? policies[`${source}.ts`] ?? policies[`${source}.tsx`]
+  /** @param {string[]} files @param {string} name @param {string} base */
+  const references = (files, name, base = root) =>
+    files
+      .filter((path) => contains(read(path), name))
+      .map((path) => slash(relative(base, path)))
+      .sort()
 
-const publicRows = publicExports.map((entry) => {
-  const held = sourcePolicy(policy.publicModules, entry.source)
-  if (!held) throw new Error(`Missing public inventory policy for ${entry.source} (${entry.name}).`)
-  const specimens = entry.kind === 'runtime' ? references(catalogueFiles, entry.name) : []
-  const tests = unique([
-    ...references(testFiles, entry.name),
-    ...(entry.kind === 'runtime' && registeredNames.has(entry.name)
-      ? registryCoverageFiles.map((path) => slash(relative(root, path)))
-      : []),
-  ])
-  return {
-    scope: 'public',
-    ...entry,
-    owner: held.owner,
-    maturity: held.maturity,
-    decision: held.decision,
-    target: '@ketvietlab/design-system',
-    wave: held.wave ?? 0,
-    consumers: 0,
-    specimen: entry.kind === 'type' ? 'not-applicable' : specimens.length ? 'present' : 'gap',
-    specimenFiles: specimens,
-    tests: tests.length ? 'present' : 'gap',
-    testFiles: tests,
-    gapTask: held.gapTask,
-  }
-})
-
-const importsByFile = consumerFiles.map((path) => {
-  /** @type {string[]} */
-  const names = []
-  const source = read(path)
-  for (const match of source.matchAll(
-    /import\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+['"][^'"]*\/ui\/index\.(?:ts|js)['"]/gu,
-  )) {
-    for (const token of match[1].split(',')) {
-      const clean = token.replace(/^type\s+/u, '').trim()
-      if (clean) names.push(clean.split(/\s+as\s+/u)[0])
+  const publicRows = publicExports.map((entry) => {
+    const held = sourcePolicy(policy.publicModules, entry.source)
+    if (!held) throw new Error(`Missing public inventory policy for ${entry.source} (${entry.name}).`)
+    const specimens = entry.kind === 'runtime' ? references(catalogueFiles, entry.name) : []
+    const tests = unique([
+      ...references(testFiles, entry.name),
+      ...(entry.kind === 'runtime' && registeredNames.has(entry.name)
+        ? registryCoverageFiles.map((path) => slash(relative(root, path)))
+        : []),
+    ])
+    return {
+      scope: 'public',
+      ...entry,
+      owner: held.owner,
+      maturity: held.maturity,
+      decision: held.decision,
+      target: '@ketvietlab/design-system',
+      wave: held.wave ?? 0,
+      consumers: 0,
+      specimen: entry.kind === 'type' ? 'not-applicable' : specimens.length ? 'present' : 'gap',
+      specimenFiles: specimens,
+      tests: tests.length ? 'present' : 'gap',
+      testFiles: tests,
+      gapTask: held.gapTask,
     }
+  })
+
+  const importsByFile = consumerFiles.map((path) => {
+    /** @type {string[]} */
+    const names = []
+    const source = read(path)
+    for (const match of source.matchAll(
+      /import\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+['"][^'"]*\/ui\/index\.(?:ts|js)['"]/gu,
+    )) {
+      for (const token of match[1].split(',')) {
+        const clean = token.replace(/^type\s+/u, '').trim()
+        if (clean) names.push(clean.split(/\s+as\s+/u)[0])
+      }
+    }
+    return { file: slash(relative(root, path)), names: unique(names) }
+  })
+  /** @type {Map<string, string[]>} */
+  const compatibilityNamesBySource = new Map()
+  for (const entry of compatibilityExports) {
+    const names = compatibilityNamesBySource.get(entry.source) ?? []
+    names.push(entry.name)
+    compatibilityNamesBySource.set(entry.source, names)
   }
-  return { file: slash(relative(root, path)), names: unique(names) }
-})
-/** @type {Map<string, string[]>} */
-const compatibilityNamesBySource = new Map()
-for (const entry of compatibilityExports) {
-  const names = compatibilityNamesBySource.get(entry.source) ?? []
-  names.push(entry.name)
-  compatibilityNamesBySource.set(entry.source, names)
+  const compatibilityRows = compatibilityExports.map((entry) => {
+    const held = sourcePolicy(policy.compatibilityModules, entry.source)
+    if (!held) throw new Error(`Missing compatibility inventory policy for ${entry.source} (${entry.name}).`)
+    const moduleNames = compatibilityNamesBySource.get(entry.source) ?? []
+    const moduleConsumers = importsByFile.filter((consumer) =>
+      consumer.names.some((name) => moduleNames.includes(name)),
+    )
+    return {
+      scope: 'compatibility',
+      ...entry,
+      owner: held.owner,
+      maturity: 'compatibility',
+      decision: held.decision,
+      target: held.target,
+      wave: held.wave,
+      consumers: moduleConsumers.length,
+      specimen: 'not-applicable',
+      specimenFiles: [],
+      tests: references(testFiles, entry.name).length ? 'present' : 'gap',
+      testFiles: references(testFiles, entry.name),
+      gapTask: held.gapTask,
+    }
+  })
+
+  const plannedRows = policy.plannedComponents
+    .map((entry) => ({
+      scope: 'planned',
+      name: entry.name,
+      imported: entry.name,
+      kind: 'runtime',
+      source: `planned/${entry.name}.tsx`,
+      owner: entry.owner,
+      maturity: 'planned',
+      decision: 'build',
+      target: '@ketvietlab/design-system',
+      wave: entry.wave,
+      consumers: 0,
+      specimen: 'gap',
+      specimenFiles: [],
+      tests: 'gap',
+      testFiles: [],
+      gapTask: entry.gapTask,
+    }))
+    .sort((a, b) => a.wave - b.wave || lexical(a.name, b.name))
+
+  const cssFiles = [
+    ...walk(join(designRoot, 'src'), ['.css']).map((path) => ({ layer: 'public', path })),
+    ...walk(join(root, 'packages/ketsuite/src/modules/backend/design'), ['.css']).map((path) => ({
+      layer: 'compatibility',
+      path,
+    })),
+  ].map(({ layer, path }) => {
+    const source = read(path)
+    return {
+      layer,
+      file: slash(relative(root, path)),
+      lines: lineCount(source),
+      hooks: unique([...source.matchAll(/data-ui(?:[~|^$*]?=)["']([^"']+)["']/gu)].map((match) => match[1])),
+    }
+  })
+
+  const packageJson = JSON.parse(read(join(designRoot, 'package.json')))
+  const rows = [...publicRows, ...compatibilityRows, ...plannedRows]
+  const publicGapRows = publicRows.filter((row) => row.specimen === 'gap' || row.tests === 'gap')
+  const payload = {
+    schemaVersion: 'ketjs.design-system-inventory.v1',
+    version: packageJson.version,
+    generatedFrom: [
+      'packages/design-system/src/index.ts',
+      'packages/design-system/src/catalogue/inventory-policy.json',
+      'packages/ketsuite/src/ui/index.ts',
+    ],
+    summary: {
+      publicExports: publicRows.length,
+      runtimeExports: publicRows.filter((row) => row.kind === 'runtime').length,
+      registeredComponents: registeredNames.size,
+      compatibilityExports: compatibilityRows.length,
+      compatibilityModules: new Set(compatibilityRows.map((row) => row.source)).size,
+      plannedComponents: plannedRows.length,
+      publicGaps: publicGapRows.length,
+      runtimeGaps: publicGapRows.filter((row) => row.kind === 'runtime').length,
+      typeGaps: publicGapRows.filter((row) => row.kind === 'type').length,
+      cssFiles: cssFiles.length,
+      cssLines: cssFiles.reduce((total, file) => total + file.lines, 0),
+    },
+    rows,
+    cssFiles,
+  }
+
+  return payload
 }
-const compatibilityRows = compatibilityExports.map((entry) => {
-  const held = sourcePolicy(policy.compatibilityModules, entry.source)
-  if (!held) throw new Error(`Missing compatibility inventory policy for ${entry.source} (${entry.name}).`)
-  const moduleNames = compatibilityNamesBySource.get(entry.source) ?? []
-  const moduleConsumers = importsByFile.filter((consumer) =>
-    consumer.names.some((name) => moduleNames.includes(name)),
-  )
-  return {
-    scope: 'compatibility',
-    ...entry,
-    owner: held.owner,
-    maturity: 'compatibility',
-    decision: held.decision,
-    target: held.target,
-    wave: held.wave,
-    consumers: moduleConsumers.length,
-    specimen: 'not-applicable',
-    specimenFiles: [],
-    tests: references(testFiles, entry.name).length ? 'present' : 'gap',
-    testFiles: references(testFiles, entry.name),
-    gapTask: held.gapTask,
-  }
-})
 
-const plannedRows = policy.plannedComponents
-  .map((entry) => ({
-    scope: 'planned',
-    name: entry.name,
-    imported: entry.name,
-    kind: 'runtime',
-    source: `planned/${entry.name}.tsx`,
-    owner: entry.owner,
-    maturity: 'planned',
-    decision: 'build',
-    target: '@ketvietlab/design-system',
-    wave: entry.wave,
-    consumers: 0,
-    specimen: 'gap',
-    specimenFiles: [],
-    tests: 'gap',
-    testFiles: [],
-    gapTask: entry.gapTask,
-  }))
-  .sort((a, b) => a.wave - b.wave || lexical(a.name, b.name))
+const typeDeclarations = `export type DesignSystemInventoryRow = {
+  scope: 'public' | 'compatibility' | 'planned'
+  name: string
+  imported: string
+  kind: 'runtime' | 'type'
+  source: string
+  owner: string
+  maturity: 'stable' | 'deprecated' | 'compatibility' | 'planned'
+  decision: 'keep' | 'refactor' | 'promote' | 'build' | 'recipe' | 'domain' | 'defer'
+  target: string
+  wave: number
+  consumers: number
+  specimen: 'present' | 'gap' | 'not-applicable'
+  specimenFiles: string[]
+  tests: 'present' | 'gap'
+  testFiles: string[]
+  gapTask: string
+}
 
-const cssFiles = [
-  ...walk(join(designRoot, 'src'), ['.css']).map((path) => ({ layer: 'public', path })),
-  ...walk(join(root, 'packages/ketsuite/src/modules/backend/design'), ['.css']).map((path) => ({
-    layer: 'compatibility',
-    path,
-  })),
-].map(({ layer, path }) => {
-  const source = read(path)
-  return {
-    layer,
-    file: slash(relative(root, path)),
-    lines: lineCount(source),
-    hooks: unique([...source.matchAll(/data-ui(?:[~|^$*]?=)["']([^"']+)["']/gu)].map((match) => match[1])),
-  }
-})
-
-const packageJson = JSON.parse(read(join(designRoot, 'package.json')))
-const rows = [...publicRows, ...compatibilityRows, ...plannedRows]
-const publicGapRows = publicRows.filter((row) => row.specimen === 'gap' || row.tests === 'gap')
-const payload = {
-  schemaVersion: 'ketjs.design-system-inventory.v1',
-  version: packageJson.version,
-  generatedFrom: [
-    'packages/design-system/src/index.ts',
-    'packages/design-system/src/catalogue/inventory-policy.json',
-    'packages/ketsuite/src/ui/index.ts',
-  ],
+export type DesignSystemInventory = {
+  schemaVersion: string
+  version: string
+  generatedFrom: string[]
   summary: {
-    publicExports: publicRows.length,
-    runtimeExports: publicRows.filter((row) => row.kind === 'runtime').length,
-    registeredComponents: registeredNames.size,
-    compatibilityExports: compatibilityRows.length,
-    compatibilityModules: new Set(compatibilityRows.map((row) => row.source)).size,
-    plannedComponents: plannedRows.length,
-    publicGaps: publicGapRows.length,
-    runtimeGaps: publicGapRows.filter((row) => row.kind === 'runtime').length,
-    typeGaps: publicGapRows.filter((row) => row.kind === 'type').length,
-    cssFiles: cssFiles.length,
-    cssLines: cssFiles.reduce((total, file) => total + file.lines, 0),
-  },
-  rows,
-  cssFiles,
+    publicExports: number
+    runtimeExports: number
+    registeredComponents: number
+    compatibilityExports: number
+    compatibilityModules: number
+    plannedComponents: number
+    publicGaps: number
+    runtimeGaps: number
+    typeGaps: number
+    cssFiles: number
+    cssLines: number
+  }
+  rows: DesignSystemInventoryRow[]
+  cssFiles: Array<{ layer: 'public' | 'compatibility'; file: string; lines: number; hooks: string[] }>
+}
+`
+
+/** @param {string} path @param {string} content */
+const writeIfChanged = (path, content) => {
+  if (existsSync(path) && read(path) === content) return
+  writeFileSync(path, content)
 }
 
-const serialized = JSON.stringify(payload)
-const jsonOutput = execFileSync(
-  join(root, 'node_modules/.bin/biome'),
-  ['format', '--stdin-file-path', jsonOutputPath],
-  {
-    input: `${JSON.stringify(payload, null, 2)}\n`,
-    encoding: 'utf8',
-  },
-)
-const unformattedOutput = `// Generated by tools/design-system-inventory.mjs. Do not edit.\n\nexport type DesignSystemInventoryRow = {\n  scope: 'public' | 'compatibility' | 'planned'\n  name: string\n  imported: string\n  kind: 'runtime' | 'type'\n  source: string\n  owner: string\n  maturity: 'stable' | 'deprecated' | 'compatibility' | 'planned'\n  decision: 'keep' | 'refactor' | 'promote' | 'build' | 'recipe' | 'domain' | 'defer'\n  target: string\n  wave: number\n  consumers: number\n  specimen: 'present' | 'gap' | 'not-applicable'\n  specimenFiles: string[]\n  tests: 'present' | 'gap'\n  testFiles: string[]\n  gapTask: string\n}\n\nexport type DesignSystemInventory = {\n  schemaVersion: string\n  version: string\n  generatedFrom: string[]\n  summary: {\n    publicExports: number\n    runtimeExports: number\n    compatibilityExports: number\n    compatibilityModules: number\n    plannedComponents: number\n    publicGaps: number\n    cssFiles: number\n    cssLines: number\n  }\n  rows: DesignSystemInventoryRow[]\n  cssFiles: Array<{ layer: 'public' | 'compatibility'; file: string; lines: number; hooks: string[] }>\n}\n\nexport const designSystemInventory: DesignSystemInventory = JSON.parse(\n  ${JSON.stringify(serialized)},\n)\n`
-const typedOutput = unformattedOutput
-  .replace(
-    '    runtimeExports: number\\n    compatibilityExports: number',
-    '    runtimeExports: number\\n    registeredComponents: number\\n    compatibilityExports: number',
+/** Writes the inventory the catalogue, the package export and the release audit read. */
+export function writeDesignSystemInventory() {
+  const payload = collectDesignSystemInventory()
+  writeIfChanged(jsonOutputPath, `${JSON.stringify(payload, null, 2)}\n`)
+  writeIfChanged(
+    outputPath,
+    `// Generated by tools/design-system-inventory.mjs on every build. Not committed; do not edit.\n\n${typeDeclarations}\nexport const designSystemInventory: DesignSystemInventory = JSON.parse(${JSON.stringify(JSON.stringify(payload))})\n`,
   )
-  .replace(
-    '    publicGaps: number\\n    cssFiles: number',
-    '    publicGaps: number\\n    runtimeGaps: number\\n    typeGaps: number\\n    cssFiles: number',
-  )
-const output = execFileSync(
-  join(root, 'node_modules/.bin/biome'),
-  ['format', '--stdin-file-path', outputPath],
-  {
-    input: typedOutput,
-    encoding: 'utf8',
-  },
-)
-if (check) {
-  if (read(outputPath) !== output)
-    throw new Error('Design-system inventory is stale; run npm run design:inventory.')
-  if (read(jsonOutputPath) !== jsonOutput)
-    throw new Error('Design-system JSON inventory is stale; run npm run design:inventory.')
-  process.stdout.write('Design-system inventory is current.\n')
-} else {
-  writeFileSync(outputPath, output)
-  writeFileSync(jsonOutputPath, jsonOutput)
-  process.stdout.write(
-    `Wrote ${slash(relative(root, outputPath))} and ${slash(relative(root, jsonOutputPath))}.\n`,
-  )
+  return payload
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes('--check')) {
+    const payload = collectDesignSystemInventory()
+    process.stdout.write(
+      `Design-system inventory policy covers all ${payload.rows.length} exports and planned components.\n`,
+    )
+  } else {
+    writeDesignSystemInventory()
+    process.stdout.write(
+      `Wrote ${slash(relative(root, outputPath))} and ${slash(relative(root, jsonOutputPath))} (not committed).\n`,
+    )
+  }
 }

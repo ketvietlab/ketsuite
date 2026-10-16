@@ -35,6 +35,11 @@ import {
   resolveRecordModalLabel,
   recordLayerOwnsKey,
   recordFormOwnedByHost,
+  RECORD_ASK_CONFIRM,
+  RECORD_ISLAND_HOST,
+  recordDiscardAccepted,
+  recordReadDenied,
+  recordSubmitterLabel,
 } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 
 import { httpServerSource } from './helpers/ketjs-internals.ts'
@@ -47,6 +52,41 @@ test('record form ownership defers nested island submissions and keeps its own f
   assert.equal(recordFormOwnedByHost({ closest: () => host }, host), true)
   assert.equal(recordFormOwnedByHost({ closest: () => child }, host), false)
   assert.equal(recordFormOwnedByHost({ closest: () => null }, host), false)
+  // A page may host its island on a `div` that names it as well as on `ket-island`.
+  const asked: string[] = []
+  recordFormOwnedByHost(
+    {
+      closest: (selector: string) => {
+        asked.push(selector)
+        return host
+      },
+    },
+    host,
+  )
+  assert.deepEqual(asked, [RECORD_ISLAND_HOST])
+  assert.equal(RECORD_ISLAND_HOST, 'ket-island, div[data-ket-island]')
+  assert.match(runtime, /const selector = RECORD_ISLAND_HOST/u)
+})
+
+test('record modal: a refused read is titled as refused, with nothing to retry', () => {
+  assert.equal(recordReadDenied(403), true)
+  for (const status of [undefined, 401, 404, 409, 500, 503]) assert.equal(recordReadDenied(status), false)
+  assert.match(runtime, /failureStatus\.set\(result\.ok \? undefined : result\.status\)/u)
+  // Without the server's own words, a refusal says to ask for access rather than that reading failed.
+  assert.match(
+    runtime,
+    /result\.message \?\? \(denied \? 'recordModal\.denied' : 'recordModal\.loadFailed'\)/u,
+  )
+  const bodyAt = runtime.indexOf("if (status() === 'error' && recordReadDenied(failureStatus()))")
+  const denied = runtime.slice(bodyAt, runtime.indexOf("if (status() === 'error')\n", bodyAt))
+  assert.ok(bodyAt > 0 && denied.length > 0, 'the denied branch precedes the retryable one')
+  assert.match(denied, /title: t\('recordModal\.deniedTitle'\)/u)
+  assert.match(denied, /tone: 'warning'/u)
+  assert.doesNotMatch(denied, /Button|retry/iu, 'a refusal offers no retry')
+  // Every title a failed read shows (modal, client page, route page) follows the same rule.
+  assert.equal(runtime.match(/failureTitle\(\)/gu)?.length, 3)
+  assert.doesNotMatch(runtime, /\? t\('recordModal\.loadFailed'\)/u)
+  assert.ok(RECORD_MODAL_LABELS['recordModal.deniedTitle'] && RECORD_MODAL_LABELS['recordModal.denied'])
 })
 
 test('record keyboard ownership defers Escape and Tab to an open native dialog or an already handled event', () => {
@@ -284,7 +324,7 @@ test('record modal: the runtime owns focus, escape, inertness, drafts and collec
   // the render that disables the form.
   assert.match(runtime, /keepDrafts\(currentLayer, scope\)[\s\S]*?setRunning\(true\)/u)
   assert.match(runtime, /kept\.checks\[key\] = control\.checked/u)
-  assert.match(runtime, /if \(!mayDiscard\(topLayer\(\)\)\) return/u)
+  assert.match(runtime, /if \(!\(await mayDiscard\(topLayer\(\)\)\) \|\| dialog\(\) !== opened\) return/u)
   assert.match(runtime, /record\.inert = currentLayers\.length > 1/u)
   assert.match(runtime, /dialogReturnFocus/u)
   assert.match(runtime, /keepAllDrafts\(\)[\s\S]*?viewState\.set/u)
@@ -408,7 +448,7 @@ test('record modal: the loading state never shows a label key', () => {
 test('record modal: read failures replace the loading title and keep retry available', () => {
   assert.match(
     runtime,
-    /title:\s*context\s*\? definition\.title\(context\)\s*: t\(status\(\) === 'error' \? 'recordModal.loadFailed' : 'recordModal.loading'\)/u,
+    /title:\s*context\s*\? definition\.title\(context\)\s*: status\(\) === 'error'\s*\? failureTitle\(\)\s*: t\('recordModal\.loading'\)/u,
   )
   const errorBody = runtime.slice(
     runtime.indexOf("if (status() === 'error')"),
@@ -539,11 +579,139 @@ test('record modal: a multi-step command stops at the first failing call and ski
   assert.match(runtime, /if \(!result\.ok\) break/u)
 })
 
-test('record modal: a command may ask before it runs, and a decline leaves the record untouched', () => {
+test('record modal: a command may ask before it runs, in the shared dialog, and a decline leaves the record untouched', () => {
   const runAt = runtime.indexOf('const run = async')
   const run = runtime.slice(runAt, runtime.indexOf('setRunning(true)', runAt))
-  assert.match(run, /if \(command\.confirm\)/u)
-  assert.match(run, /if \(message && !globalThis\.confirm\(message\)\) return/u)
+  assert.match(run, /const question = command\.confirm\?\.\(context\)/u)
+  assert.match(run, /const label = recordSubmitterLabel\(submitter\) \?\? t\('recordModal\.confirm'\)/u)
+  assert.match(run, /cancelLabel: t\('recordModal\.back'\)/u)
+  // The answer arrives later: the record must still be the one asked about, with nothing running.
+  assert.match(run, /if \(!accepted \|\| open\(\) !== current \|\| running\(\)\) return/u)
+  assert.doesNotMatch(runtime, /globalThis\.confirm/u, 'the runtime never opens the browser confirm')
+  // The question names the act by the button that asked.
+  assert.equal(recordSubmitterLabel({ getAttribute: () => 'Huỷ đơn' } as unknown as Element), 'Huỷ đơn')
+  assert.equal(
+    recordSubmitterLabel({
+      getAttribute: () => null,
+      querySelector: () => ({ textContent: ' Nhận hàng ' }),
+    } as unknown as Element),
+    'Nhận hàng',
+  )
+  assert.equal(recordSubmitterLabel(null), null)
+})
+
+test('record modal: the runtime asks in a ConfirmDialog, focused on keeping, and answers once', async () => {
+  const { transform } = await import('esbuild')
+  const source = runtime.slice(runtime.indexOf('const ask = ('), runtime.indexOf('const afterRender = ('))
+  const { code } = await transform(source, { loader: 'ts', target: 'es2022' })
+  class Element {
+    inert = false
+    focused = 0
+    isConnected = true
+    focus() {
+      this.focused++
+    }
+  }
+  const store = <T,>(initial: T) => {
+    let value = initial
+    return Object.assign(() => value, { set: (next: T) => (value = next) })
+  }
+  const asking = store<null | { title: string; confirmLabel: string; settle: (yes: boolean) => void }>(null)
+  const layer = Object.assign(new Element(), { querySelectorAll: () => [] })
+  const keep = new Element()
+  const trigger = new Element()
+  const queried: string[] = []
+  const root = {
+    querySelector: (selector: string) => {
+      queried.push(selector)
+      return keep
+    },
+  }
+  const dirty = {
+    values: { name: 'Edited' },
+    initialValues: { name: 'Original' },
+    checks: {},
+    initialChecks: {},
+  }
+  const drafts = store(dirty)
+  // An answer that is already known, or `pending` when the runtime would wait for one.
+  const settled = (answer: Promise<boolean>) => Promise.race([answer, Promise.resolve('pending')])
+  const { ask, mayDiscard } = new Function(
+    'HTMLElement',
+    'HTMLInputElement',
+    'document',
+    'requestAnimationFrame',
+    'asking',
+    'layers',
+    'page',
+    'releaseInert',
+    'root',
+    'inertOutside',
+    'ASK_LAYER',
+    'keepDrafts',
+    'dialog',
+    'topLayer',
+    'dialogDrafts',
+    'recordDrafts',
+    'recordDiscardAccepted',
+    'definition',
+    't',
+    `${code}; return { ask, mayDiscard }`,
+  )(
+    Element,
+    Element,
+    { activeElement: trigger },
+    (callback: () => void) => callback(),
+    asking,
+    () => [layer],
+    null,
+    null,
+    root,
+    () => () => undefined,
+    '[data-record-ask]',
+    () => undefined,
+    () => null,
+    () => layer,
+    drafts,
+    drafts,
+    recordDiscardAccepted,
+    { dialogs: {} },
+    (key: string) => key,
+  )
+  // A dirty draft asks; the question is the shared one and the safe answer has focus.
+  const declined = mayDiscard(layer)
+  const question = asking()!
+  assert.equal(question.title, 'recordModal.unsaved')
+  assert.equal(question.confirmLabel, 'recordModal.discard')
+  assert.equal(layer.inert, true, 'the record under the question is out of reach')
+  assert.deepEqual(queried, ['[data-record-ask] [data-client-modal-close] button'])
+  assert.equal(keep.focused, 1)
+  // A second question while one is open is declined rather than stacked.
+  assert.equal(await settled(ask({ title: 'Other' })), false)
+  question.settle(false)
+  question.settle(true)
+  assert.equal(await declined, false, 'only the first answer counts')
+  assert.equal(asking(), null)
+  assert.equal(layer.inert, false, 'the record is back in reach')
+  assert.equal(trigger.focused, 1, 'declining returns focus to where the question was asked')
+  const accepted = mayDiscard(layer)
+  // A stale answer to an earlier question never dismisses the one on screen.
+  question.settle(true)
+  assert.notEqual(asking(), null, 'the open question stays until it is answered')
+  asking()!.settle(true)
+  assert.equal(await accepted, true)
+  assert.equal(trigger.focused, 1, 'accepting leaves focus to what happens next')
+  // Nothing typed: nothing to ask.
+  drafts.set({ ...dirty, values: { name: 'Original' } })
+  assert.equal(await settled(mayDiscard(layer)), true)
+  assert.equal(asking(), null)
+  // The question's layer is a modal layer for keys, never a record layer.
+  assert.match(runtime, /\.filter\(\(layer\) => !layer\.closest\(ASK_LAYER\)\)/u)
+  assert.match(runtime, /if \(question\) question\.settle\(false\)\s*else void close\(\)/u)
+  assert.match(runtime, /button\[value="\$\{RECORD_ASK_CONFIRM\}"\]/u)
+  assert.match(runtime, /question\.settle\(Boolean\(confirmed\)\)/u)
+  assert.equal(runtime.match(/\{askLayer\(\)\}/gu)?.length, runtime.match(/\{dialogLayer\(\)\}/gu)?.length)
+  assert.equal(RECORD_ASK_CONFIRM, 'record-ask-confirm')
 })
 
 test('record modal: a record wears its state beside the title, inside the head', () => {
@@ -899,6 +1067,14 @@ test('record page: supporting facts stay in an accessible rail before stacked wo
   assert.match(markup, /data-aside-stacked="before"/u)
   assert.match(markup, /Work history/u)
   assert.match(markup, /Customer and SLA/u)
+  // Reference facts may follow the record instead; the definition chooses, both page kinds honour it.
+  const after = renderToString(
+    recordPageFrame({ title: 'Invoice', body: 'Lines', aside: 'Totals', asideWhenStacked: 'after' }),
+  )
+  assert.doesNotMatch(after, /data-aside-stacked/u)
+  assert.ok(after.indexOf('Lines') < after.indexOf('Totals'), 'the rail follows the record')
+  assert.match(runtime, /asideWhenStacked: definition\.pageAsideWhenStacked \?\? 'before'/u)
+  assert.match(runtime, /asideWhenStacked: definition\.pageAsideWhenStacked,/u)
 })
 
 test('record page: the record runtime renders a page that leaves for its collection and owns no history', () => {
@@ -907,7 +1083,7 @@ test('record page: the record runtime renders a page that leaves for its collect
   assert.match(runtime, /: page\s*\? `\[data-ui="record-page"\], \$\{MODAL_LAYER\}`\s*: MODAL_LAYER/u)
   assert.match(runtime, /if \(page\) return pageView\(page\)/u)
   // Closing a page (Close, a delete that closes) leaves through the shell's link handling.
-  const hide = runtime.slice(runtime.indexOf('const hide = ('), runtime.indexOf('const close = ('))
+  const hide = runtime.slice(runtime.indexOf('const hide = ('), runtime.indexOf('const close = async ('))
   assert.match(hide, /if \(page && how !== 'none'\) \{\s*leave\(\)\s*return/u)
   // Nothing outside the page turns inert and focus is not forced into it.
   const show = runtime.slice(runtime.indexOf('const show = ('), runtime.indexOf('const hide = ('))
@@ -996,7 +1172,10 @@ test('record page: the runtime keeps a page a page — no history, no fence, no 
   )
   // Closing a dialog leaves the address alone; the page itself never closes.
   assert.match(runtime, /if \(current && !serverPage\)\s*history\.replaceState/u)
-  assert.match(runtime, /if \(serverPage\) return\s*if \(!mayDiscard\(recordLayer\(\)\)\) return/u)
+  assert.match(
+    runtime,
+    /if \(serverPage\) return\s*const current = open\(\)\s*if \(!\(await mayDiscard\(recordLayer\(\)\)\) \|\| open\(\) !== current\) return/u,
+  )
   // What would close the modal closes the dialog and reads the record again in place.
   assert.match(runtime, /serverPage &&[\s\S]{0,200}declared === 'close'[\s\S]{0,200}\? \{ dialog: null \}/u)
 })
@@ -1050,30 +1229,48 @@ test('record page: both client-read and route-context factories adopt their serv
   }
 })
 
-test('record page: Back guards client-read drafts and returns; route-context profiles stay open', () => {
-  const close = runtime.slice(runtime.indexOf('const close = ('), runtime.indexOf('const run = async'))
+test('record page: Back guards client-read drafts and returns; route-context profiles stay open', async () => {
+  const close = runtime.slice(runtime.indexOf('const close = async ('), runtime.indexOf('const run = async'))
   const tail = close.slice(close.indexOf('// Route-context pages'), close.lastIndexOf('}'))
-  const run = new Function('serverPage', 'mayDiscard', 'recordLayer', 'hide', tail)
+  const AsyncFunction = (async () => undefined).constructor as FunctionConstructor
+  const run = new AsyncFunction('serverPage', 'mayDiscard', 'recordLayer', 'hide', 'open', tail)
   const calls: string[] = []
   const layer = {}
+  const current = { id: 'r-1' }
+  let opened: unknown = current
   const invoke = (serverPage: boolean, discard: boolean) =>
     run(
       serverPage,
-      (current: unknown) => {
-        assert.equal(current, layer)
+      async (value: unknown) => {
+        assert.equal(value, layer)
         calls.push('guard')
         return discard
       },
       () => layer,
       (how: string) => calls.push(how),
+      () => opened,
     )
-  invoke(false, true)
+  await invoke(false, true)
   assert.deepEqual(calls, ['guard', 'history'])
   calls.length = 0
-  invoke(false, false)
+  await invoke(false, false)
   assert.deepEqual(calls, ['guard'], 'canceling discard keeps the client-read page')
   calls.length = 0
-  invoke(true, true)
+  // A record that changed while the question was open is not the one to close.
+  const later = run(
+    false,
+    async () => {
+      opened = { id: 'r-2' }
+      return true
+    },
+    () => layer,
+    (how: string) => calls.push(how),
+    () => opened,
+  )
+  await later
+  assert.deepEqual(calls, [], 'the answer applies only to the record it was asked about')
+  opened = current
+  await invoke(true, true)
   assert.deepEqual(calls, [], 'a route-context profile has no close action')
   assert.match(runtime, /\(!serverPage \|\| inModal\.matches\('\[data-ui="modal-layer"\]'\)\)/u)
 })

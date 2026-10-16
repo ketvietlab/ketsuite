@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readdirSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { compose } from '@ketvietlab/ketjs'
 import { ketsuitePermissionModuleNames, ketsuitePermissionModules } from '@ketvietlab/ketsuite'
@@ -264,4 +265,27 @@ test('public catalogue exposes least-privilege Hospitality job bundles without r
     ),
     false,
   )
+})
+
+test('each public module declares its permissions in a file of its own', () => {
+  // Parallel branches stop conflicting only while every module's entries stay in
+  // `permission-catalogue/<module>.ts` and the assembler just imports and lists them.
+  const directory = 'packages/ketsuite/src/permission-catalogue'
+  const files = readdirSync(directory)
+    .filter((file) => file.endsWith('.ts') && file !== 'source.ts' && file !== 'capability-labels.ts')
+    .map((file) => file.slice(0, -'.ts'.length))
+  assert.deepEqual(
+    [...ketsuitePermissionModuleNames].sort(),
+    files.sort(),
+    'every module file is assembled and every assembled module has its file',
+  )
+  const assembler = readFileSync('packages/ketsuite/src/permission-catalogue.ts', 'utf8')
+  for (const [, alias, file] of assembler.matchAll(
+    /import \{ permissions as (\w+) \} from '\.\/permission-catalogue\/([\w-]+)\.ts'/g,
+  ))
+    assert.equal(alias, file, `permission-catalogue/${file}.ts is assembled under its own module name`)
+  const sources = assembler.match(/\nconst sources = \{\n([\s\S]*?)\n\} satisfies/)?.[1]
+  assert.ok(sources, 'permission-catalogue.ts assembles one `sources` object')
+  for (const line of sources.split('\n'))
+    assert.match(line, /^ {2}\w+,$/, `declare "${line.trim()}" in permission-catalogue/<module>.ts`)
 })
