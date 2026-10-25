@@ -1,3 +1,5 @@
+import { roomFixtureCall } from './helpers/hospitality-room-fixture.ts'
+import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -15,22 +17,119 @@ import { address } from '@ketvietlab/ketsuite'
 import backend from '@ketvietlab/ketsuite/backend'
 
 const modules = [address, partner, company, storage, backend, uom, product, hospitalityCore]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const ACME = { company: 'acme', branches: null }
 const GLOBEX = { company: 'globex', branches: null }
 
-const call = (name: string, args: Record<string, unknown>, adapter: Adapter, scope = ACME) =>
-  callFn(name, args, { adapter, manifest, scope })
+const imageReceipts = new WeakMap<Adapter, Map<string, Record<string, unknown>>>()
+const call = async (name: string, args: Record<string, unknown>, adapter: Adapter, scope = ACME) => {
+  if (name === 'hospitality_core.archiveBuilding' || name === 'hospitality_core.archiveFloor') {
+    const table = name.endsWith('Building') ? 'hospitality_core_building' : 'hospitality_core_floor'
+    const row = (
+      await adapter.all(`SELECT * FROM ${table} WHERE id = ? AND "companyId" = ?`, [args.id, scope.company])
+    )[0]
+    const parent = (
+      await adapter.all('SELECT version FROM hospitality_core_property WHERE id = ? AND "companyId" = ?', [
+        row?.propertyId ?? args.propertyId ?? 'missing-property',
+        scope.company,
+      ])
+    )[0]
+    args = {
+      propertyId: row?.propertyId ?? args.propertyId ?? 'missing-property',
+      expectedVersion: Number(row?.version ?? 0),
+      expectedPropertyVersion: Number(parent?.version ?? 0),
+      requestKey: randomUUID(),
+      ...args,
+    }
+  }
+  if (
+    /hospitality_core\.(attachContentImage|updateContentImage|setPrimaryContentImage|reorderContentImages|removeContentImage)$/.test(
+      name,
+    )
+  ) {
+    const key = JSON.stringify([name, scope, args]),
+      receipts = imageReceipts.get(adapter) ?? new Map<string, Record<string, unknown>>()
+    imageReceipts.set(adapter, receipts)
+    let input = receipts.get(key)
+    if (!input) {
+      const image = args.id
+        ? (
+            await adapter.all(
+              'SELECT * FROM hospitality_core_content_image WHERE id = ? AND "companyId" = ?',
+              [args.id, scope.company],
+            )
+          )[0]
+        : null
+      const roomTypeId = args.roomTypeId ?? image?.roomTypeId
+      const roomType = roomTypeId
+        ? (await adapter.all('SELECT * FROM hospitality_core_room_type WHERE id = ?', [roomTypeId]))[0]
+        : null
+      const propertyId = args.propertyId ?? image?.propertyId ?? roomType?.propertyId
+      const property = (
+        await adapter.all('SELECT version FROM hospitality_core_property WHERE id = ? AND "companyId" = ?', [
+          propertyId,
+          scope.company,
+        ])
+      )[0]
+      input = {
+        ...args,
+        expectedPropertyVersion: Number(property?.version ?? 0),
+        requestKey: `synthetic-image-${receipts.size}-${scope.company}`,
+      }
+      receipts.set(key, input)
+    }
+    args = input
+  }
+  if (
+    name === 'storage.createAttachment' &&
+    ['catalog-image', 'exterior', 'lobby', 'wrong-target'].includes(String(args.id))
+  ) {
+    args = {
+      ...args,
+      kind: 'stored',
+      storeKey: `blobs/${scope.company}/aa/${'a'.repeat(64)}`,
+      checksum: 'a'.repeat(64),
+    }
+    delete args.url
+    const attached = await callFn(name, args, { adapter, manifest, scope })
+    await callFn(
+      'hospitality_core.recordContentImageEvidence',
+      { attachmentId: args.id, checksum: args.checksum, mimetype: args.mimetype, width: 1024, height: 1200 },
+      { adapter, manifest, scope },
+    )
+    return attached
+  }
+  return roomFixtureCall(name, args, { adapter, manifest, scope })
+}
 
 async function boot(): Promise<Adapter> {
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
   registerFunctions(modules)
+  // Catalogue fixtures require the company and its central branch.
+  await call(
+    'partner.savePartner',
+    { id: 'acme-company', kind: 'company', name: 'Synthetic Company' },
+    adapter,
+  )
+  await call('company.saveCompany', { id: 'acme', partnerId: 'acme-company', currency: 'VND' }, adapter)
   return adapter
 }
 
 async function property(adapter: Adapter, id = 'hotel', scope = ACME) {
+  await call(
+    'partner.savePartner',
+    { id: `${scope.company}-company`, kind: 'company', name: 'Synthetic Company' },
+    adapter,
+    scope,
+  )
+  await call(
+    'company.saveCompany',
+    { id: scope.company, partnerId: `${scope.company}-company`, currency: 'VND' },
+    adapter,
+    scope,
+  )
   return call(
     'hospitality_core.saveProperty',
     {
@@ -396,6 +495,15 @@ test('hospitality core: room type settings are validated, preloaded and cannot m
       { id: 'flex', code: 'FLEX', name: 'Flexible', type: 'flexible' },
       adapter,
     )
+    const fractional = await call(
+      'hospitality_core.saveRoomType',
+      { id: 'deluxe', propertyId: 'hotel', code: 'DLX', name: 'Deluxe river room', baseRate: '1850000.50' },
+      adapter,
+    )
+    assert.equal((fractional.value as Row).ok, false)
+    assert.ok(
+      ((fractional.value as Row).errors as Row[]).some((error) => error.code === 'room_type_whole_rate'),
+    )
     const saved = await call(
       'hospitality_core.saveRoomType',
       {
@@ -412,7 +520,7 @@ test('hospitality core: room type settings are validated, preloaded and cannot m
         sizeSqm: '31.5',
         viewType: 'river',
         sharedBathroom: false,
-        baseRate: '1850000.50',
+        baseRate: '1850000',
         color: '#0f766e',
         cancellationPolicyId: 'flex',
         published: true,
@@ -632,7 +740,7 @@ test('hospitality core: room configuration preserves workflow-owned status and p
     )
     await call(
       'hospitality_core.saveRoomType',
-      { id: 'deluxe', propertyId: 'hotel', code: 'DLX', name: 'Deluxe', defaultCapacity: 2 },
+      { id: 'deluxe', propertyId: 'hotel', code: 'DLX', name: 'Deluxe', defaultCapacity: 2, maxAdults: 4 },
       adapter,
     )
     const created = await call(
@@ -645,11 +753,10 @@ test('hospitality core: room configuration preserves workflow-owned status and p
         code: '101',
         name: 'Room 101',
         capacity: 3,
-        status: 'available',
       },
       adapter,
     )
-    assert.equal((created.value as Row).ok, true)
+    assert.equal((created.value as Row).ok, true, JSON.stringify(created.value))
 
     await call('hospitality_core.setRoomStatus', { id: '101', status: 'dirty' }, adapter)
     const bypass = await call(
@@ -873,11 +980,28 @@ test('hospitality core: room configuration preserves workflow-owned status and p
       true,
     )
 
+    // The accepted room catalogue blocks an ongoing stay, not a cleaning state
+    // by itself. A retired dirty room must still need cleaning when restored.
+    await adapter.run('UPDATE hospitality_core_room SET status = ? WHERE id = ?', ['occupied', '101'])
     const blockedStatusRoom = (
       await call('hospitality_core.archiveRoom', { id: '101', active: false }, adapter)
     ).value as Row
     assert.equal(blockedStatusRoom.ok, false)
     assert.equal((blockedStatusRoom.errors as Row[])[0]?.code, 'room_archive_status')
+    assert.equal(((await call('hospitality_core.getRoom', { id: '101' }, adapter)).value as Row).active, true)
+    await adapter.run('UPDATE hospitality_core_room SET status = ? WHERE id = ?', ['dirty', '101'])
+    assert.equal(
+      ((await call('hospitality_core.archiveRoom', { id: '101', active: false }, adapter)).value as Row).ok,
+      true,
+    )
+    assert.equal(
+      ((await call('hospitality_core.archiveRoom', { id: '101', active: true }, adapter)).value as Row).ok,
+      true,
+    )
+    assert.equal(
+      ((await call('hospitality_core.getRoom', { id: '101' }, adapter)).value as Row).status,
+      'dirty',
+    )
   } finally {
     await adapter.close()
   }
@@ -998,19 +1122,12 @@ test('hospitality content: media lifecycle is ordered, scoped and emits a durabl
       },
       adapter,
     )
-    await assert.rejects(
-      call(
-        'hospitality_core.attachContentImage',
-        {
-          id: 'wrong-target',
-          attachmentId: 'wrong-target',
-          propertyId: 'hotel',
-          category: 'room',
-        },
-        adapter,
-      ),
-      (error: unknown) => (error as { code?: string }).code === 'E_HOSPITALITY_CONTENT_INVALID',
+    const refused = await call(
+      'hospitality_core.attachContentImage',
+      { id: 'wrong-target', attachmentId: 'wrong-target', propertyId: 'hotel', category: 'room' },
+      adapter,
     )
+    assert.equal((refused.value as Row).ok, false)
     assert.equal(
       (
         await adapter.all('SELECT COUNT(*) AS n FROM hospitality_core_content_image WHERE id = ?', [
@@ -1074,6 +1191,15 @@ test('hospitality content: media lifecycle is ordered, scoped and emits a durabl
       true,
     )
 
+    assert.equal(
+      ((await call('hospitality_core.removeContentImage', { id: 'lobby' }, adapter)).value as Row).ok,
+      false,
+      'primary image cannot be removed',
+    )
+    await call('hospitality_core.setPrimaryContentImage', { id: 'exterior' }, adapter)
+    imageReceipts
+      .get(adapter)
+      ?.delete(JSON.stringify(['hospitality_core.removeContentImage', ACME, { id: 'lobby' }]))
     await call('hospitality_core.removeContentImage', { id: 'lobby' }, adapter)
     images = (await call('hospitality_core.listContentImages', { propertyId: 'hotel' }, adapter))
       .value as Row[]
@@ -1104,7 +1230,21 @@ test('hospitality content: media lifecycle is ordered, scoped and emits a durabl
 test('hospitality inventory: default rate plans price bookings and remain unique per rate type', async () => {
   const adapter = await boot()
   try {
-    await property(adapter)
+    await call(
+      'partner.savePartner',
+      { id: 'inventory-company', name: 'Inventory fixture company', kind: 'company' },
+      adapter,
+    )
+    await call(
+      'company.saveCompany',
+      { id: 'acme', partnerId: 'inventory-company', currency: 'VND' },
+      adapter,
+    )
+    const createdProperty = await property(adapter)
+    assert.equal((createdProperty.value as Row).ok, true, JSON.stringify(createdProperty.value))
+    // These pricing/capacity cases start with an already configured property.
+    await adapter.run('UPDATE hospitality_core_property SET lifecycle = ? WHERE id = ?', ['active', 'hotel'])
+    const day = (offset: number) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10)
     await call(
       'hospitality_core.saveRoomType',
       { id: 'deluxe', propertyId: 'hotel', code: 'DLX', name: 'Deluxe', baseRate: '100' },
@@ -1165,8 +1305,8 @@ test('hospitality inventory: default rate plans price bookings and remain unique
         propertyId: 'hotel',
         roomTypeId: 'deluxe',
         partnerId: 'guest',
-        checkIn: '2026-09-01T07:00:00.000Z',
-        checkOut: '2026-09-02T05:00:00.000Z',
+        checkIn: `${day(1)}T07:00:00.000Z`,
+        checkOut: `${day(2)}T05:00:00.000Z`,
       },
       adapter,
     )
@@ -1179,8 +1319,8 @@ test('hospitality inventory: default rate plans price bookings and remain unique
         propertyId: 'hotel',
         roomTypeId: 'deluxe',
         partnerId: 'guest',
-        checkIn: '2026-09-01T07:00:00.000Z',
-        checkOut: '2026-09-03T05:00:00.000Z',
+        checkIn: `${day(1)}T07:00:00.000Z`,
+        checkOut: `${day(3)}T05:00:00.000Z`,
       },
       adapter,
     )
@@ -1197,7 +1337,21 @@ test('hospitality inventory: default rate plans price bookings and remain unique
 test('hospitality inventory: room-night capacity is atomic and cancellation releases it', async () => {
   const adapter = await boot()
   try {
-    await property(adapter)
+    await call(
+      'partner.savePartner',
+      { id: 'inventory-company', name: 'Inventory fixture company', kind: 'company' },
+      adapter,
+    )
+    await call(
+      'company.saveCompany',
+      { id: 'acme', partnerId: 'inventory-company', currency: 'VND' },
+      adapter,
+    )
+    const createdProperty = await property(adapter)
+    assert.equal((createdProperty.value as Row).ok, true, JSON.stringify(createdProperty.value))
+    // These pricing/capacity cases start with an already configured property.
+    await adapter.run('UPDATE hospitality_core_property SET lifecycle = ? WHERE id = ?', ['active', 'hotel'])
+    const day = (offset: number) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10)
     await call(
       'hospitality_core.saveRoomType',
       { id: 'standard', propertyId: 'hotel', code: 'STD', name: 'Standard', baseRate: '100' },
@@ -1214,8 +1368,8 @@ test('hospitality inventory: room-night capacity is atomic and cancellation rele
       {
         propertyId: 'hotel',
         roomTypeId: 'standard',
-        from: '2026-10-01',
-        to: '2026-10-02',
+        from: day(1),
+        to: day(2),
         total: 1,
       },
       adapter,
@@ -1235,8 +1389,8 @@ test('hospitality inventory: room-night capacity is atomic and cancellation rele
         },
         adapter,
       )
-    assert.equal(((await reserve('first', '2026-10-01', '2026-10-02')).value as Row).ok, true)
-    const full = await reserve('second', '2026-10-01', '2026-10-02')
+    assert.equal(((await reserve('first', day(1), day(2))).value as Row).ok, true)
+    const full = await reserve('second', day(1), day(2))
     assert.equal((full.value as Row).ok, false)
     assert.equal(((full.value as Row).errors as Row[])[0]?.code, 'no_availability')
     const changesAfterRejectedBooking = (
@@ -1256,8 +1410,8 @@ test('hospitality inventory: room-night capacity is atomic and cancellation rele
       {
         propertyId: 'hotel',
         roomTypeId: 'standard',
-        from: '2026-10-01',
-        to: '2026-10-01',
+        from: day(1),
+        to: day(1),
         total: 0,
       },
       adapter,
@@ -1271,19 +1425,19 @@ test('hospitality inventory: room-night capacity is atomic and cancellation rele
       'rejected allotment changes do not emit a signal',
     )
     await call('hospitality_core.cancelReservation', { id: 'first' }, adapter)
-    assert.equal(((await reserve('second', '2026-10-01', '2026-10-02')).value as Row).ok, true)
+    assert.equal(((await reserve('second', day(1), day(2))).value as Row).ok, true)
     const calendar = (
       await call(
         'hospitality_core.listInventory',
-        { propertyId: 'hotel', roomTypeId: 'standard', from: '2026-10-01', to: '2026-10-02' },
+        { propertyId: 'hotel', roomTypeId: 'standard', from: day(1), to: day(2) },
         adapter,
       )
     ).value as Row[]
     assert.deepEqual(
       calendar.map((row) => ({ date: row.date, sold: row.sold, available: row.available })),
       [
-        { date: '2026-10-01', sold: 1, available: 0 },
-        { date: '2026-10-02', sold: 0, available: 1 },
+        { date: day(1), sold: 1, available: 0 },
+        { date: day(2), sold: 0, available: 1 },
       ],
     )
     const changes = (await call('hospitality_core.listInventoryChanges', { propertyId: 'hotel' }, adapter))
@@ -1313,10 +1467,13 @@ test('hospitality inventory: room-night capacity is atomic and cancellation rele
   }
 })
 
-test('hospitality reservations: front desk amends a direct booking atomically', async () => {
+test('hospitality reservations: front desk amends a direct booking atomically', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-01T00:00:00Z') })
   const adapter = await boot()
   try {
     await property(adapter)
+    // This workflow starts with an already-open property; activation is covered separately.
+    await adapter.run("UPDATE hospitality_core_property SET lifecycle = 'active' WHERE id = ?", ['hotel'])
     for (const [id, code, rate] of [
       ['standard', 'STD', '100'],
       ['deluxe', 'DLX', '200'],
@@ -1505,10 +1662,13 @@ test('hospitality reservations: front desk amends a direct booking atomically', 
   }
 })
 
-test('hospitality stays: front desk adjusts an in-house departure atomically', async () => {
+test('hospitality stays: front desk adjusts an in-house departure atomically', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-01T00:00:00Z') })
   const adapter = await boot()
   try {
     await property(adapter)
+    // This workflow starts with an already-open property; activation is covered separately.
+    await adapter.run("UPDATE hospitality_core_property SET lifecycle = 'active' WHERE id = ?", ['hotel'])
     await call(
       'hospitality_core.saveRoomType',
       { id: 'standard', propertyId: 'hotel', code: 'STD', name: 'Standard', baseRate: '100' },
@@ -1519,6 +1679,10 @@ test('hospitality stays: front desk adjusts an in-house departure atomically', a
       { id: '101', propertyId: 'hotel', roomTypeId: 'standard', code: '101', name: '101' },
       adapter,
     )
+    // Arrival fixtures start with inspected rooms; cleaning has its own workflow tests.
+    await adapter.run('UPDATE hospitality_core_room SET status = \'available\' WHERE "propertyId" = ?', [
+      'hotel',
+    ])
     await call('partner.savePartner', { id: 'guest', kind: 'person', name: 'Guest' }, adapter)
     const created = await call(
       'hospitality_core.createReservation',
@@ -1536,7 +1700,21 @@ test('hospitality stays: front desk adjusts an in-house departure atomically', a
     assert.equal((created.value as Row).ok, true)
     const checkedIn = await call(
       'hospitality_core.checkIn',
-      { stayId: 'in-house:stay', roomId: '101', at: '2026-10-01T07:00:00.000Z' },
+      {
+        guests: [
+          {
+            fullName: 'Synthetic guest',
+            type: 'passport',
+            number: 'TEST1234',
+            birth: '1990-01-01',
+            gender: 'female',
+            nationality: 'VN',
+          },
+        ],
+        stayId: 'in-house:stay',
+        roomId: '101',
+        at: '2026-10-01T07:00:00.000Z',
+      },
       adapter,
     )
     assert.equal((checkedIn.value as Row).ok, true)
@@ -1688,10 +1866,13 @@ test('hospitality stays: front desk adjusts an in-house departure atomically', a
   }
 })
 
-test('hospitality stays: early check-out releases only future inventory and retains charges', async () => {
+test('hospitality stays: early departure requires adjustment and retains unrelated charges', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-01T00:00:00Z') })
   const adapter = await boot()
   try {
     await property(adapter)
+    // This workflow starts with an already-open property; activation is covered separately.
+    await adapter.run("UPDATE hospitality_core_property SET lifecycle = 'active' WHERE id = ?", ['hotel'])
     await call(
       'hospitality_core.saveRoomType',
       { id: 'standard', propertyId: 'hotel', code: 'STD', name: 'Standard', baseRate: '100' },
@@ -1702,6 +1883,10 @@ test('hospitality stays: early check-out releases only future inventory and reta
       { id: '101', propertyId: 'hotel', roomTypeId: 'standard', code: '101', name: '101' },
       adapter,
     )
+    // Arrival fixtures start with inspected rooms; cleaning has its own workflow tests.
+    await adapter.run('UPDATE hospitality_core_room SET status = \'available\' WHERE "propertyId" = ?', [
+      'hotel',
+    ])
     await call('partner.savePartner', { id: 'guest', kind: 'person', name: 'Guest' }, adapter)
     const created = await call(
       'hospitality_core.createReservation',
@@ -1719,13 +1904,75 @@ test('hospitality stays: early check-out releases only future inventory and reta
     assert.equal((created.value as Row).ok, true)
     await call(
       'hospitality_core.checkIn',
-      { stayId: 'early-departure:stay', roomId: '101', at: '2026-10-01T07:00:00.000Z' },
+      {
+        guests: [
+          {
+            fullName: 'Synthetic guest',
+            type: 'passport',
+            number: 'TEST1234',
+            birth: '1990-01-01',
+            gender: 'female',
+            nationality: 'VN',
+          },
+        ],
+        stayId: 'early-departure:stay',
+        roomId: '101',
+        at: '2026-10-01T07:00:00.000Z',
+      },
       adapter,
     )
 
+    await call(
+      'hospitality_core.addCharge',
+      {
+        id: 'breakfast',
+        folioId: 'early-departure:folio',
+        stayId: 'early-departure:stay',
+        description: 'Breakfast',
+        type: 'service',
+        quantity: '1',
+        unitPrice: '25',
+      },
+      adapter,
+    )
+    const before = await adapter.all(
+      'SELECT date, sold FROM hospitality_core_availability_ledger ORDER BY date',
+    )
+    const premature = (
+      await call(
+        'hospitality_core.checkOut',
+        { handover: ['keys', 'charges'], stayId: 'early-departure:stay', at: '2026-10-02T05:00:00.000Z' },
+        adapter,
+      )
+    ).value as Row
+    assert.equal(premature.ok, false)
+    assert.ok((premature.errors as Row[]).some((error) => error.code === 'departure_day_required'))
+    assert.deepEqual(
+      await adapter.all('SELECT date, sold FROM hospitality_core_availability_ledger ORDER BY date'),
+      before,
+    )
+    assert.equal(
+      Number(
+        ((await call('hospitality_core.getFolio', { id: 'early-departure:folio' }, adapter)).value as Row)
+          .amountTotal,
+      ),
+      425,
+    )
+    const adjusted = (
+      await call(
+        'hospitality_core.adjustStayDeparture',
+        {
+          stayId: 'early-departure:stay',
+          checkOut: '2026-10-02T05:00:00.000Z',
+          at: '2026-10-02T04:00:00.000Z',
+        },
+        adapter,
+      )
+    ).value as Row
+    assert.equal(adjusted.ok, true, JSON.stringify(adjusted))
     const checkedOut = await call(
       'hospitality_core.checkOut',
-      { stayId: 'early-departure:stay', at: '2026-10-02T05:00:00.000Z' },
+      { handover: ['keys', 'charges'], stayId: 'early-departure:stay', at: '2026-10-02T05:00:00.000Z' },
       adapter,
     )
     assert.deepEqual(checkedOut.value, {
@@ -1733,7 +1980,7 @@ test('hospitality stays: early check-out releases only future inventory and reta
       id: 'early-departure:stay',
       roomId: '101',
       state: 'checked_out',
-      inventoryReleased: 3,
+      inventoryReleased: 0,
       errors: [],
     })
     const reservation = (await call('hospitality_core.getReservation', { id: 'early-departure' }, adapter))
@@ -1753,11 +2000,11 @@ test('hospitality stays: early check-out releases only future inventory and reta
       },
       {
         reservationState: 'checked_out',
-        scheduledCheckOut: '2026-10-05T05:00:00.000Z',
+        scheduledCheckOut: '2026-10-02T05:00:00.000Z',
         stayState: 'checked_out',
         actualCheckOut: '2026-10-02T05:00:00.000Z',
         folioState: 'closed',
-        folioTotal: 400,
+        folioTotal: 125,
       },
     )
     assert.deepEqual(
@@ -1786,7 +2033,7 @@ test('hospitality stays: early check-out releases only future inventory and reta
 
     const retried = await call(
       'hospitality_core.checkOut',
-      { stayId: 'early-departure:stay', at: '2026-10-02T05:01:00.000Z' },
+      { handover: ['keys', 'charges'], stayId: 'early-departure:stay', at: '2026-10-02T05:01:00.000Z' },
       adapter,
     )
     assert.equal((retried.value as Row).ok, true)
@@ -1806,10 +2053,13 @@ test('hospitality stays: early check-out releases only future inventory and reta
   }
 })
 
-test('hospitality reservations: no-show gives the nights back and charges what the policy says', async () => {
+test('hospitality reservations: no-show gives the nights back and charges what the policy says', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-01T00:00:00Z') })
   const adapter = await boot()
   try {
     await property(adapter)
+    // This workflow starts with an already-open property; activation is covered separately.
+    await adapter.run("UPDATE hospitality_core_property SET lifecycle = 'active' WHERE id = ?", ['hotel'])
     await call(
       'hospitality_core.saveRoomType',
       { id: 'standard', propertyId: 'hotel', code: 'STD', name: 'Standard', baseRate: '125' },
@@ -1928,6 +2178,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
   const adapter = await boot()
   try {
     await property(adapter)
+    // This workflow starts with an already-open property; activation is covered separately.
+    await adapter.run("UPDATE hospitality_core_property SET lifecycle = 'active' WHERE id = ?", ['hotel'])
     await call(
       'hospitality_core.saveRoomType',
       { id: 'suite', propertyId: 'hotel', code: 'STE', name: 'Suite', baseRate: '500' },
@@ -2059,10 +2311,13 @@ test('hospitality core: Vietnamese and English cover every UI and validation key
   assert.equal(en('hospitality_core.value.hours', { count: 24 }), '24 hours')
 })
 
-test('hospitality rooms: a room kept for an arriving guest is theirs, and is let go with them', async () => {
+test('hospitality rooms: a room kept for an arriving guest is theirs, and is let go with them', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-01T00:00:00Z') })
   const adapter = await boot()
   try {
     await property(adapter)
+    // This workflow starts with an already-open property; activation is covered separately.
+    await adapter.run("UPDATE hospitality_core_property SET lifecycle = 'active' WHERE id = ?", ['hotel'])
     await call(
       'hospitality_core.saveRoomType',
       { id: 'standard', propertyId: 'hotel', code: 'STD', name: 'Standard', baseRate: '100' },
@@ -2074,6 +2329,10 @@ test('hospitality rooms: a room kept for an arriving guest is theirs, and is let
         { id: code, propertyId: 'hotel', roomTypeId: 'standard', code, name: code },
         adapter,
       )
+    // Arrival fixtures start with inspected rooms; cleaning has its own workflow tests.
+    await adapter.run('UPDATE hospitality_core_room SET status = \'available\' WHERE "propertyId" = ?', [
+      'hotel',
+    ])
     await call('partner.savePartner', { id: 'guest', kind: 'person', name: 'Guest' }, adapter)
     await call('partner.savePartner', { id: 'other', kind: 'person', name: 'Other' }, adapter)
     const book = (id: string, partnerId: string, from: string, to: string) =>
@@ -2143,7 +2402,20 @@ test('hospitality rooms: a room kept for an arriving guest is theirs, and is let
     const arrived = (
       await call(
         'hospitality_core.checkIn',
-        { stayId: 'first:stay', at: '2026-11-01T08:00:00.000Z' },
+        {
+          guests: [
+            {
+              fullName: 'Synthetic guest',
+              type: 'passport',
+              number: 'TEST1234',
+              birth: '1990-01-01',
+              gender: 'female',
+              nationality: 'VN',
+            },
+          ],
+          stayId: 'first:stay',
+          at: '2026-11-01T08:00:00.000Z',
+        },
         adapter,
       )
     ).value as Row

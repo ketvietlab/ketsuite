@@ -191,13 +191,16 @@ test('partner-e2e: directory, defaults, roles and accounting bridge cross real H
     partnerList.indexOf('data-ui="list-page-body"'),
   )
   assert.doesNotMatch(partnerControls, /data-ui="bulk-form"/)
-  for (const hiddenMenu of ['/admin/activities', '/admin/inbox', '/admin/outbox', '/admin/inbound-email']) {
-    assert.doesNotMatch(
-      partnerList,
-      new RegExp(`data-ui="navigation-item"[^>]+href="${hiddenMenu}"`),
-      `${hiddenMenu} is opened outside the sidebar app list`,
-    )
-  }
+  // Notifications is a sidebar app of its own: what reached me, what I have to do,
+  // then what went out. Inbound mail is configuration and stays out of the list.
+  const notifications = ['/admin/inbox', '/admin/activities', '/admin/outbox'].map((path) =>
+    partnerList.search(new RegExp(`data-ui="navigation-item"[^>]+href="${path}"`)),
+  )
+  assert.ok(
+    notifications.every((at, index) => at > 0 && (index === 0 || at > notifications[index - 1]!)),
+    JSON.stringify(notifications),
+  )
+  assert.doesNotMatch(partnerList, /data-ui="navigation-item"[^>]+href="\/admin\/inbound-email"/)
 
   const partnerForm = await (await e2e.client.get('/admin/partner/partners/customer?lang=vi')).text()
   assert.match(partnerForm, /id="partner-identity-form"/)

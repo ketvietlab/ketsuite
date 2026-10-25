@@ -20,7 +20,7 @@ deployment, deleting documents, or rewriting unrelated screens.
 
 The outcome is an operational interface whose component choice determines its
 typography, spacing, surface/border level and responsive behavior. Keep Két colours,
-Inter and Lucide. Desktop is dense. Read [the visual contract](references/visual-contract.md)
+KÉT Sans (Inter fills in missing characters) and Lucide. Desktop is dense. Read [the visual contract](references/visual-contract.md)
 for every UI task. Read [KetSuite composition](references/ketsuite.md) for Suite screens,
 and [Flow compatibility](references/flow.md) only when touching Flow.
 When touching shell, navigation, app switching or screen help, read the
@@ -42,8 +42,8 @@ When touching shell, navigation, app switching or screen help, read the
    A working region on the canvas uses Surface; a group inside it
    uses Section. An independently actionable object uses ContentCard/KanbanCard.
    Asking before a hard-to-undo action (delete, archive, remove, discard, reset)
-   uses ConfirmDialog: a small centred dialog on every viewport, never a side sheet
-   or drawer. Side sheets are for record and picker content, not for a question.
+   uses ConfirmDialog: a small centred dialog on desktop and a fullscreen modal
+   below 768px. Side sheets are for record and picker content, not for a question.
 3. A component owns DOM, data-ui hooks, labels and associations, state attributes,
    inside spacing, type and responsive behavior. A parent layout owns gaps between
    siblings. Product modules supply translated content, data, permissions, URLs and

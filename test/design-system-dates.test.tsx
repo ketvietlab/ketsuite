@@ -163,6 +163,20 @@ test('DateRangePicker exposes seven Vietnamese presets without extra submitted v
   assert.match(custom, /data-date-week-start="0"/)
 })
 
+test('DatePicker localizes Japanese commands and declares controlled civil dates', () => {
+  const output = render(
+    <DatePicker id="release" name="release" label="公開日" locale="ja" value="2026-10-11" />,
+  )
+  assert.match(output, /data-date-locale="ja"/)
+  assert.match(output, /data-date-value="2026-10-11"/)
+  assert.match(output, /今日/)
+  assert.match(output, /カレンダーを閉じる/)
+  assert.match(output, /公開日/)
+  const field = render(<Field id="release-field" name="release" label="公開日" type="date" locale="ja" />)
+  assert.match(field, /data-date-locale="ja"/)
+  assert.match(field, /カレンダーを閉じる/)
+})
+
 test('calendar hooks, runtime ownership and catalogue examples stay in the public contract', () => {
   const css = readFileSync('packages/design-system/src/forms/date-time/styles.css', 'utf8')
   for (const hook of HOOKS) assert.ok(css.includes(`[data-ui="${hook}"]`), hook)
@@ -240,6 +254,24 @@ test('record date fields dispatch to the shared picker; datetime keeps one nativ
   assert.match(html, /type="date" name="" value="2026-10-04"[^>]*disabled/)
   assert.match(html, /type="time" name="" value="09:00"[^>]*disabled/)
   assert.match(render(<Field id="day" name="day" label="Ngày" type="date" />), /data-date-mode="single"/)
+})
+
+test('a record date field uses its resolved screen locale for both date and datetime calendars', () => {
+  for (const type of ['date', 'datetime-local'] as const) {
+    const html = render(
+      <Field
+        id={`english-${type}`}
+        name="due"
+        label="Due by"
+        type={type}
+        locale="en"
+        value={type === 'date' ? '2026-10-13' : '2026-10-13T09:00'}
+      />,
+    )
+    assert.match(html, /data-date-locale="en"/)
+    assert.match(html, /Choose date/)
+    assert.doesNotMatch(html, /Chọn ngày/)
+  }
 })
 
 // A compound control spans a form row, while its children own their internal grid.

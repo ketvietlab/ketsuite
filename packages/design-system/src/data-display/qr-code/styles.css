@@ -1,0 +1,50 @@
+/* QrCode. The symbol stays black on a white plate in both themes: scanners need that contrast,
+   so it reads the reference palette rather than the themed ink and surface. Its width is the
+   component's own geometry; the quiet zone is part of the drawing, not padding. */
+
+@layer ket.app {
+  :where([data-kv-design-system]) [data-ui="qr-code"] {
+    --kv-qr-code-size: 10rem;
+    display: inline-grid;
+    justify-items: center;
+    gap: var(--kv-space-2);
+    max-inline-size: 100%;
+    margin: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="qr-code"][data-size="small"] {
+    --kv-qr-code-size: 7.5rem;
+  }
+
+  :where([data-kv-design-system]) [data-ui="qr-code"][data-size="large"] {
+    --kv-qr-code-size: 13rem;
+  }
+
+  :where([data-kv-design-system]) [data-ui="qr-code-symbol"] {
+    display: block;
+    inline-size: min(var(--kv-qr-code-size), 100%);
+    block-size: auto;
+    aspect-ratio: 1;
+    border-radius: var(--kv-radius-sm);
+    background: var(--kv-ref-white);
+    color: var(--kv-ref-black);
+    fill: currentColor;
+  }
+
+  /* An account number is read whole: the caption takes the figure's width and breaks a word only
+     when nothing else fits. */
+  :where([data-kv-design-system]) [data-ui="qr-code-caption"] {
+    max-inline-size: 100%;
+    color: var(--kv-color-ink-secondary);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    text-align: center;
+    overflow-wrap: break-word;
+  }
+
+  @media print {
+    :where([data-kv-design-system]) [data-ui="qr-code-symbol"] {
+      print-color-adjust: exact;
+    }
+  }
+}

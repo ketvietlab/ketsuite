@@ -58,7 +58,7 @@ const ASSETS = designSystemSrc(HERE)
 // The one module this app composes: it backs /demo2's relation-select field with
 // real listCustomers/createCustomer calls instead of a client-only illusion of a
 // backend — see demo-backend.ts.
-const manifest = compose([demoBackendModule], { headless: true })
+const manifest = compose([demoBackendModule], { headless: true, companies: true })
 registerFunctions([demoBackendModule])
 const adapter = sqliteAdapter()
 await adapter.open()

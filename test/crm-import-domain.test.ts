@@ -48,6 +48,7 @@ async function boot(t: TestContext) {
   const app = await createTestDeployment(
     defineDeployment({
       name: 'cosmetic_crm_import_contract',
+      companies: true,
       modules: [...selected.values()],
       permissions: {
         requireCoverage: true,

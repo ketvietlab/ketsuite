@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import {
@@ -222,7 +223,7 @@ export const folioColumns = (_: Translator): Column<FolioBillingRow>[] => [
           method="post"
           submit={_('hospitality_billing.action.recordPayment')}
           submitVariant="secondary"
-          hidden={{ operation: 'record-payment', folioId: row.folioId }}
+          hidden={{ operation: 'record-payment', folioId: row.folioId, requestKey: randomUUID() }}
           fields={[
             {
               name: 'amount',

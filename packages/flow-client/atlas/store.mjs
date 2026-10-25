@@ -1,10 +1,7 @@
 import { atlasExtensions } from './extensions.mjs'
-import {
-  taskAssigneeIds,
-  taskUsers,
-  taskAssigneeNames,
-  assignableUsers,
-} from '@ketvietlab/flow-client/task-assignees.mjs'
+import { catalogTitleKey } from '@ketvietlab/flow-client/catalog-contract.mjs'
+import { taskAssigneeIds, taskUsers, taskAssigneeNames } from '@ketvietlab/flow-client/task-assignees.mjs'
+import { assignableUsers } from './assignable.mjs'
 import {
   taskColumns,
   taskTags,
@@ -19,6 +16,7 @@ import {
   incompatibleFieldValues,
 } from '@ketvietlab/flow-client/custom-fields.mjs'
 import { tr } from '@ketvietlab/flow-client/i18n.mjs'
+import { atlasFlowCommand } from '@ketvietlab/flow-client/command-contract.mjs'
 import { orderedTasks, taskGroupValue, taskGroups } from '@ketvietlab/flow-client/task-order.mjs'
 import {
   documentSiblings,
@@ -99,6 +97,7 @@ export function createFixtureSession(
   }
   let initial = true
   const call = (name, args = {}) => {
+    ;({ name, input: args } = atlasFlowCommand(name, args, data))
     if (scenario === 'forbidden') return failure('forbidden', 'Bạn không có quyền truy cập không gian này.')
     if (scenario === 'error' && !failedOnce && !args.shellOnly) {
       failedOnce = true
@@ -728,9 +727,7 @@ export function createFixtureSession(
               !item.archived &&
               (item.projectId ?? null) === owner &&
               (item.domain ?? 'task') === (held?.domain ?? 'task') &&
-              String(item.title ?? item.label)
-                .trim()
-                .toLocaleLowerCase() === args.title.trim().toLocaleLowerCase(),
+              catalogTitleKey(String(item.title ?? item.label)) === catalogTitleKey(args.title),
           )
         ) {
           const message = tr('flow.catalog.duplicateTitle')
@@ -973,7 +970,7 @@ export function createFixtureSession(
               !tag.archived &&
               (tag.projectId ?? null) === (held.projectId ?? null) &&
               (tag.domain ?? 'task') === (held.domain ?? 'task') &&
-              tag.title.trim().toLocaleLowerCase() === held.title.trim().toLocaleLowerCase(),
+              catalogTitleKey(tag.title) === catalogTitleKey(held.title),
           )
         )
           return failure('validation', tr('flow.catalog.restoreDuplicate'))

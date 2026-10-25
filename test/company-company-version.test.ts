@@ -8,7 +8,7 @@ const modules = [address, partner, company, user]
 const scope = { company: 'alpha', branch: 'root:alpha', branches: ['root:alpha'] }
 
 const boot = async (): Promise<{ adapter: Adapter; manifest: Manifest }> => {
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)

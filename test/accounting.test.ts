@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import {
   callFn,
@@ -127,7 +127,7 @@ const boundaryProbe = defineModule({
 })
 
 const modules = [address, partner, company, uom, product, account, boundaryProbe]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>
@@ -779,9 +779,21 @@ test('accounting: the shared draft boundary rejects malformed and cross-company 
   }
 })
 
+/** A module's functions: one functions.ts, or functions/ once it is split by capability. */
+const functionsSource = async (module: string): Promise<string> => {
+  const root = `packages/ketsuite/src/modules/${module}`
+  try {
+    return await readFile(`${root}/functions.ts`, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const files = (await readdir(`${root}/functions`)).filter((file) => file.endsWith('.ts')).sort()
+  return (await Promise.all(files.map((file) => readFile(`${root}/functions/${file}`, 'utf8')))).join('\n')
+}
+
 test('accounting: domain modules cannot bypass the shared draft boundary', async () => {
   for (const module of ['sale', 'purchase', 'pos']) {
-    const source = await readFile(`packages/ketsuite/src/modules/${module}/functions.ts`, 'utf8')
+    const source = await functionsSource(module)
     assert.doesNotMatch(source, /\.insert(?:IfAbsent)?\('account\.(?:Move|MoveLine)'/u, module)
     assert.match(source, /insertDraftMove/u, module)
   }

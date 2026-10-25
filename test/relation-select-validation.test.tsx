@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { readFileSync } from 'node:fs'
 import { countingHost, mount } from '@ketvietlab/ketjs-view'
 import type { HostNode } from '@ketvietlab/ketjs-view'
 import { createRelationSelectView } from '@ketvietlab/design-system'
@@ -41,4 +42,13 @@ test('relation validation: legacy config and a cleared error add no invalid/desc
     assert.ok(!trigger.attrs?.['aria-invalid'])
     assert.ok(!trigger.attrs?.['aria-describedby'])
   }
+})
+test('relation validation: a disabled picker disables its trigger and is styled as a disabled field control', () => {
+  const { trigger } = render({ disabled: true })
+  assert.equal(String(trigger.attrs?.disabled), 'true')
+  const css = readFileSync('packages/design-system/src/interactions/relation-select/styles.css', 'utf8')
+  const rule = /\[data-ui="relation-trigger"\]:disabled \{([^}]*)\}/u.exec(css)?.[1] ?? ''
+  for (const token of ['--kv-panel-border', '--kv-interactive-disabled', '--kv-text-disabled'])
+    assert.match(rule, new RegExp(`var\\(${token}\\)`, 'u'))
+  assert.match(rule, /cursor: not-allowed/u)
 })

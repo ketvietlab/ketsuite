@@ -66,3 +66,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+Bundled font: KÉT Sans (foundations/fonts/KETSans-*.woff2, also embedded in styles.css).
+
+KÉT Sans is not covered by the MIT License above.
+Copyright 2026 Két Việt. All rights reserved.
+It is licensed under the KÉT Sans Font License 1.0, reproduced in
+foundations/fonts/KETSans-LICENSE.txt: free to use, including commercially and embedded in
+websites, apps and documents, but the font files may not be modified or redistributed.

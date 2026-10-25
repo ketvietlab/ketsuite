@@ -1272,6 +1272,27 @@ const deliveryOf = (c: Context): CredentialDelivery =>
     : (c.data.credentialDelivery ?? 'oneTime')
 const activated = (c: Context): boolean => c.data.externalCredential?.activated ?? c.data.record.passwordReady
 
+/** The temporary password this modal has just shown, from an issue or a claim. */
+const issuedPassword = (c: Context): string | null =>
+  c.outcome<{ temporaryPassword?: string }>('resetPassword')?.temporaryPassword ??
+  c.outcome<{ temporaryPassword?: string }>('claimCredential')?.temporaryPassword ??
+  null
+
+/**
+ * Where an account kept by the deployment's sign-in service stands, in the
+ * administrator's terms: in use, waiting for its first sign-in, still being
+ * prepared by an earlier request, or not usable yet. A password issued in this
+ * modal made the account usable already, before the context is read again.
+ */
+type SignInState = 'active' | 'awaiting' | 'preparing' | 'none'
+const signInState = (c: Context): SignInState | null => {
+  const external = c.data.externalCredential
+  if (!external) return null
+  if (issuedPassword(c) || external.state === 'ready' || external.state === 'unmanaged')
+    return external.activated ? 'active' : 'awaiting'
+  return external.state === 'pending' ? 'preparing' : 'none'
+}
+
 /** Send the person a link to set their own password. The administrator never sees it. */
 const emailReset = (c: Context): JSXChild[] => {
   const sent = c.outcome<{ ok?: boolean; sentTo?: string; expiresAt?: string }>('sendResetLink')
@@ -1328,6 +1349,8 @@ const oneTimeReset = (c: Context): JSXChild[] => {
   const issued =
     c.outcome<{ ok?: boolean; token?: string; temporaryPassword?: string }>('resetPassword') ??
     c.outcome<{ token?: string; temporaryPassword?: string }>('claimCredential')
+  // An account nobody can sign in to yet gets its first password, not a new one.
+  const usable = ['active', 'awaiting'].includes(signInState(c) ?? '')
   return [
     // Shown once, by the only party that ever holds it in the clear.
     ...(issued?.token || issued?.temporaryPassword
@@ -1371,7 +1394,9 @@ const oneTimeReset = (c: Context): JSXChild[] => {
           description: t(
             c,
             c.data.externalCredential
-              ? 'login.temporaryHint'
+              ? usable
+                ? 'login.temporaryHint'
+                : 'login.firstTemporaryHint'
               : activated(c)
                 ? 'login.resetHint'
                 : 'login.activateHint',
@@ -1389,7 +1414,9 @@ const oneTimeReset = (c: Context): JSXChild[] => {
                       c.data.externalCredential
                         ? c.data.externalCredential.claimable
                           ? 'action.claimPassword'
-                          : 'action.temporaryPassword'
+                          : usable
+                            ? 'action.temporaryPassword'
+                            : 'action.firstTemporaryPassword'
                         : activated(c)
                           ? 'action.resetPassword'
                           : 'action.activationCode',
@@ -1417,9 +1444,19 @@ const oneTimeReset = (c: Context): JSXChild[] => {
  * configuration that Két Việt runs; the administrator of a business sees whether
  * the account works, not how.
  */
+/** Badge for each sign-in state, the same words the people list uses. */
+const SIGN_IN_BADGE: Record<SignInState, { label: string; tone: 'positive' | 'info' | 'warning' }> = {
+  active: { label: 'login.ready', tone: 'positive' },
+  awaiting: { label: 'login.awaitingFirstSignIn', tone: 'info' },
+  preparing: { label: 'login.externalPreparing', tone: 'info' },
+  none: { label: 'login.cannotSignIn', tone: 'warning' },
+}
+
 /** Whether the account works yet: ready, invited, or still being prepared. */
-const credentialBadge = (c: Context): JSXChild =>
-  Badge({
+const credentialBadge = (c: Context): JSXChild => {
+  const signIn = signInState(c)
+  if (signIn) return Badge({ label: t(c, SIGN_IN_BADGE[signIn].label), tone: SIGN_IN_BADGE[signIn].tone })
+  return Badge({
     label: t(
       c,
       activated(c)
@@ -1430,6 +1467,7 @@ const credentialBadge = (c: Context): JSXChild =>
     ),
     tone: activated(c) ? 'positive' : 'warning',
   })
+}
 
 const accountFacts = (c: Context): JSXChild => {
   const delivery = deliveryOf(c)
@@ -1464,23 +1502,19 @@ const accountFacts = (c: Context): JSXChild => {
 const accountFollowUp = (c: Context): JSXChild[] => {
   const delivery = deliveryOf(c)
   const mayReset = c.data.permissions.sendLink || c.data.permissions.resetPassword
+  const signIn = signInState(c)
   return [
-    // Preparing the account is Két Việt's work: the administrator is told whether
-    // to wait, never offered a provision, retry or status probe to run themselves.
-    // An existing linked account ('unmanaged') already signs in, like a ready one.
-    ...(c.data.externalCredential && !['ready', 'unmanaged'].includes(c.data.externalCredential.state)
+    // Only an account an earlier request is still preparing needs a word of its own;
+    // an account nobody can sign in to yet is answered by the password section
+    // below. The administrator never runs a provision, retry or status probe: they
+    // issue a password, and the deployment does what that takes.
+    ...(signIn === 'preparing'
       ? [
-          c.data.externalCredential.state === 'pending'
-            ? Notice({
-                tone: 'info',
-                title: t(c, 'login.externalState.pending'),
-                message: t(c, 'login.externalPendingHint'),
-              })
-            : Notice({
-                tone: 'warning',
-                title: t(c, 'login.externalState.handling'),
-                message: t(c, 'login.externalHandlingHint'),
-              }),
+          Notice({
+            tone: 'info',
+            title: t(c, 'login.externalState.pending'),
+            message: t(c, 'login.externalPendingHint'),
+          }),
         ]
       : []),
     ...(c.data.externalCredential?.emailState
@@ -1506,9 +1540,9 @@ const accountFollowUp = (c: Context): JSXChild[] => {
             ...(delivery !== 'oneTime' && c.data.permissions.sendLink ? emailReset(c) : []),
             ...(delivery !== 'email' && c.data.permissions.resetPassword ? oneTimeReset(c) : []),
           ]
-        : // An account still being prepared waits on its state, which the section above
-          // already names; calling that "read only" blames a permission the reader has.
-          c.data.externalCredential && c.data.externalCredential.state !== 'ready'
+        : // An account that does not sign in yet is named by its badge; calling that
+          // "read only" would blame a permission the reader may well have.
+          signIn && signIn !== 'active' && signIn !== 'awaiting'
           ? []
           : [
               Notice({
@@ -2152,6 +2186,8 @@ export const userModalDefinition: RecordModalDefinition<UserModalData> = {
       }),
       // Reload invitation status while keeping the delivery outcome visible.
       after: 'reload',
+      // The login tab says where the link went.
+      showsOutcome: true,
     },
     grantBreakGlass: {
       fn: 'user.setBreakGlass',
@@ -2194,6 +2230,8 @@ export const userModalDefinition: RecordModalDefinition<UserModalData> = {
       // Stay: the server hands back a credential it will never say again, and the
       // tab is where the person reading it is.
       after: 'stay',
+      // Showing the credential is the answer; "saved" would say less.
+      showsOutcome: true,
     },
     previewAssign: {
       fn: 'user.previewRoleAssignment',

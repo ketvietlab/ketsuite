@@ -11,7 +11,7 @@ import {
 import { evaluate, invalid, issue, n, normalizeCode } from '../loyalty/engine.ts'
 import { applyOrderReward, orderFunctions, removeOrderReward } from '../loyalty/order-functions.ts'
 import type { OrderSnapshot } from '../loyalty/types.ts'
-import { claimDraftRevision, functions as posFunctions } from '../pos/functions.ts'
+import { claimDraftRevision, functions as posFunctions } from '../pos/functions/index.ts'
 
 const effectsOf = (...specs: Array<FnSpec | undefined>): string[] => [
   ...new Set(specs.flatMap((spec) => spec?.effects ?? [])),

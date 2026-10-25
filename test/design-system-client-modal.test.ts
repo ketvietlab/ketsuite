@@ -110,3 +110,31 @@ test('client sheet traps both tab boundaries, closes once, and restores prior in
   delete globals.HTMLElement
   delete globals.document
 })
+
+test('client sheet leaves the dock region operable: a call runs over the dialog', () => {
+  const layer = new Element('layer'),
+    modal = new Element('modal'),
+    page = new Element('page'),
+    region = new Element('dock-region'),
+    island = new Element('dock-island')
+  region.matches = () => true
+  island.querySelector = (selector) => (selector === ':scope [data-ui="dock-region"]' ? region : null)
+  const root = new Element('root')
+  root.children = [page, island, region, layer]
+  layer.parentElement = root
+  root.querySelector = () => layer
+  layer.querySelector = () => modal
+  modal.querySelectorAll = () => [modal]
+  modal.querySelector = () => null
+  fakeDocument.addEventListener = () => {}
+  fakeDocument.removeEventListener = () => {}
+  const globals = globalThis as Record<string, unknown>
+  globals.HTMLElement = Element
+  globals.document = fakeDocument
+  const dispose = attachClientModalInteractions(root as unknown as HTMLElement)
+  assert.equal(page.inert, true)
+  assert.equal(island.inert, false)
+  assert.equal(region.inert, false)
+  dispose()
+  assert.equal(page.inert, false)
+})

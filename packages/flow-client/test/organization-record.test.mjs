@@ -151,7 +151,7 @@ test('renaming a Workspace or Team preserves omitted description, access and mem
     assert.equal(command(f, action, { id, title: 'Renamed' }).id, id)
     assert.equal(record.title, 'Renamed')
     assert.equal(record.description, before.description)
-    assert.equal(record.access, before.access ?? 'private')
+    assert.equal(record.access, before.access)
     assert.deepEqual(record.memberIds, before.memberIds)
   }
 })

@@ -23,7 +23,7 @@ if (outputIndex >= 0 && !output) {
   process.exit(2)
 }
 
-const document = openApiDocument(compose(ketsuite.modules, { headless: true }), profile)
+const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), profile)
 const rendered = `${JSON.stringify(document, null, 2)}\n`
 
 if (process.argv.includes('--check')) {

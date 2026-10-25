@@ -12,7 +12,7 @@ import { address, paperTheme, partner, website, websiteMenu } from '@ketvietlab/
 
 const SCOPE = { company: 'acme', branches: null }
 const modules = [address, partner, website, websiteMenu, paperTheme]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 
 const boot = async (): Promise<Adapter> => {
   const db = sqliteAdapter()
@@ -124,22 +124,25 @@ test('menu: the move stays a domain API while the old screen is retired', async 
   const backend = (await import('@ketvietlab/ketsuite/backend')).default
   const { company, livedoc, storage, user, websiteBackend, websiteForm, websiteSearch, websiteSeo } =
     await import('@ketvietlab/ketsuite')
-  const composed = compose([
-    address,
-    partner,
-    company,
-    storage,
-    backend,
-    website,
-    websiteMenu,
-    websiteSearch,
-    websiteSeo,
-    websiteForm,
-    livedoc,
-    user,
-    websiteBackend,
-    paperTheme,
-  ])
+  const composed = compose(
+    [
+      address,
+      partner,
+      company,
+      storage,
+      backend,
+      website,
+      websiteMenu,
+      websiteSearch,
+      websiteSeo,
+      websiteForm,
+      livedoc,
+      user,
+      websiteBackend,
+      paperTheme,
+    ],
+    { companies: true },
+  )
   assert.equal(composed.routes['/admin/website/menus/{id}/move'], undefined, 'the old UI must not come back')
   assert.ok(composed.functions['website_menu.moveMenuItem'])
 })

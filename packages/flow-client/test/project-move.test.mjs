@@ -89,3 +89,48 @@ test('closing during a preview resets progress; a late failure cannot leak into 
   assert.doesNotMatch(output(), /Late response|Preparing preview/)
   assert.match(output(), /Preview before confirming/)
 })
+
+test('a long impact pages from the server and names a retained grant', async () => {
+  const { change, preview, reads, output, view } = setup()
+  change('targetWorkspaceId', { value: 'operations' })
+  const retained = {
+    role: 'editor',
+    scope: 'project',
+    grantId: null,
+    teamId: null,
+    teamTitle: null,
+    teamMemberCount: null,
+    retained: true,
+  }
+  const row = (n) => ({
+    id: 'p' + n,
+    name: 'Person ' + n,
+    before: { role: 'editor', sources: [] },
+    after: { role: 'editor', sources: [retained] },
+    change: 'same',
+  })
+  const first = preview()
+  reads[0].resolve({
+    revision: 7,
+    people: [row(1)],
+    total: 2,
+    summary: { loss: 0, gain: 0, same: 2 },
+    cursor: 'next',
+  })
+  await first
+  assert.match(output(), /Direct · retained when moved/)
+  assert.match(output(), /Showing 1 of 2/)
+  const more = control(view(), 'click', 'Show more')()
+  assert.equal(reads[1].args.cursor, 'next')
+  assert.equal(reads[1].args.targetWorkspaceId, 'operations')
+  reads[1].resolve({
+    revision: 7,
+    people: [row(2)],
+    total: 2,
+    summary: { loss: 0, gain: 0, same: 2 },
+    cursor: null,
+  })
+  await more
+  assert.match(output(), /Person 1[\s\S]*Person 2/)
+  assert.doesNotMatch(output(), /Showing 1 of 2|Show more/)
+})

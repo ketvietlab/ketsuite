@@ -12,7 +12,7 @@ import type { Row } from '@ketvietlab/ketjs'
 import { createCommerceDeployment } from '@ketvietlab/ketsuite/deployment'
 
 const deployment = createCommerceDeployment()
-const manifest = compose([...deployment.modules, deployment.theme!])
+const manifest = compose([...deployment.modules, deployment.theme!], { companies: true })
 const scope = { company: 'catalog-a', branches: null }
 async function boot() {
   const db = sqliteAdapter()

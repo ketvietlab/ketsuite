@@ -713,6 +713,16 @@ test('bulk assignment gives the open records to one person, skips the rest and r
 })
 
 /** A sellable product, a warehouse and an 8% sales tax: what a quotation is written from. */
+/** What was queued, as stored: the outbox list never shows a subject a template may fill with secrets. */
+const storedDelivery = async (app: App, id: string) => {
+  const q = app.adapter!.quoteIdent.bind(app.adapter)
+  const [row] = await app.adapter!.all(
+    `SELECT ${q('subject')}, ${q('fromAddress')} FROM ${q(tableNameFor('mail_transport.Delivery'))} WHERE ${q('id')} = ?`,
+    [id],
+  )
+  return row
+}
+
 const quotable = async (call: Awaited<ReturnType<typeof boot>>['call']) => {
   await call('uom.saveUnit', { id: 'unit', name: 'Unit', relativeFactor: '1' })
   await call('product.saveTemplate', {
@@ -976,7 +986,8 @@ test('a quote goes out on a channel the customer agreed to, and either screen se
   const outbox = await call<{ deliveries: Row[] }>('mail_transport.listOutbox', {})
   const delivery = outbox.deliveries.find((row) => row.id === `crm-email:${mails[0]?.id}`)
   assert.deepEqual(delivery?.to, [{ address: 'hoa@example.com', name: 'Chị Hoa' }])
-  assert.equal(delivery?.subject, `Báo giá ${quote?.id}`)
+  assert.equal('subject' in delivery!, false)
+  assert.equal((await storedDelivery(app, String(delivery?.id)))?.subject, `Báo giá ${quote?.id}`)
 
   // The Sales desk sends it again on Zalo: the record shows that too.
   const order = (await call('crm_sale.sale.listQuotations', { caseId: 'deal-mine' }))[0] as Row
@@ -1242,9 +1253,11 @@ test('an email goes to a customer who agreed, from the company address, and a fa
   assert.equal(mails[0]?.state, 'queued')
   const outbox = await call<{ deliveries: Row[] }>('mail_transport.listOutbox', {})
   const delivery = outbox.deliveries.find((row) => row.id === `crm-email:${mails[0]?.id}`)
-  assert.equal(delivery?.subject, 'Đề xuất theo nhu cầu')
   assert.deepEqual(delivery?.to, [{ address: 'hoa@example.com', name: 'Chị Hoa' }])
-  assert.equal(delivery?.fromAddress, 'sales@acme.example')
+  assert.equal('subject' in delivery!, false)
+  const stored = await storedDelivery(app, String(delivery?.id))
+  assert.equal(stored?.subject, 'Đề xuất theo nhu cầu')
+  assert.equal(stored?.fromAddress, 'sales@acme.example')
 
   const retry = (messageId: string) =>
     send(app, {

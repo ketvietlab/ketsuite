@@ -41,6 +41,9 @@ class Modal extends Control {
   querySelectorAll() {
     return this.controls
   }
+  querySelector() {
+    return this
+  }
 }
 
 const focusTarget = new Function('HTMLElement', `${code}\nreturn routeModalFocusTarget`)(Control) as (
@@ -66,4 +69,19 @@ test('the route modal focuses through the shared rule', () => {
     source,
     /if \(modal instanceof HTMLElement\) \{[\s\S]*?routeModalFocusTarget\(modal\)\.focus\(\)/,
   )
+})
+
+test('the backend route-modal controller preserves the first invalid field selected by the design system', () => {
+  const backend = readFileSync('packages/ketsuite/src/ui/client/table-selection-view.tsx', 'utf8')
+  const start = backend.indexOf('const sheet = modal.querySelector<HTMLElement>')
+  const end = backend.indexOf(';(target ?? sheet)?.focus()', start)
+  assert.ok(start > 0 && end > start)
+  const selection = backend.slice(start, end).replace('<HTMLElement>', '')
+  const select = new Function('modal', 'modalFocusables', `${selection}; return target`)
+  const kind = new Control('buyerType'),
+    tax = new Control('buyerTaxCode', { 'aria-invalid': 'true' }),
+    address = new Control('buyerAddress', { 'aria-invalid': 'true' })
+  const modal = new Modal([kind, tax, address])
+  assert.equal(select(modal, (node: Modal) => node.controls).name, 'buyerTaxCode')
+  assert.equal(select(new Modal([kind]), (node: Modal) => node.controls).name, 'buyerType')
 })

@@ -24,7 +24,7 @@ const SCOPE = { company: 'c1', branch: 'main', branches: null }
 const mods = [catalog, inventory, checkout, theme]
 
 async function boot(): Promise<{ adapter: Adapter; manifest: Manifest }> {
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   for (const sql of renderSql(planMigration(null, schemaFromManifest(manifest)), adapter))
@@ -42,12 +42,12 @@ test('fullstack: schema is derived from the composed manifest, extensions includ
 })
 
 test('fullstack: destructive migrations are generated but refused by default', () => {
-  const before = schemaFromManifest(compose(mods))
+  const before = schemaFromManifest(compose(mods, { companies: true }))
   const shrunk = defineModule({
     name: 'catalog',
     models: { Product: { scope: 'shared', fields: { id: 'id', title: 'text' } } },
   })
-  const after = schemaFromManifest(compose([shrunk]))
+  const after = schemaFromManifest(compose([shrunk], { companies: true }))
   assert.throws(
     () => planMigration(before, after),
     (e: unknown) => {
@@ -68,7 +68,7 @@ test('fullstack: a server function cannot touch a model it did not declare', asy
     depends: ['catalog'],
     functions: { peek: { effects: [], handler: (ctx) => ctx.db.select('catalog.Product') } },
   })
-  const m2 = compose([...mods, rogue])
+  const m2 = compose([...mods, rogue], { companies: true })
   registerFunctions([...mods, rogue])
   await assert.rejects(
     () => callFn('rogue.peek', {}, { adapter, manifest: m2 }),
@@ -114,7 +114,8 @@ test('agent safety: dry-run reports intended writes and commits nothing', async 
   )
   assert.equal(res.dryRun, true)
   assert.equal(res.writes.length, 1)
-  assert.equal(res.writes[0]!.model, 'catalog.Product')
+  const write = res.writes[0]!
+  assert.equal('model' in write ? write.model : null, 'catalog.Product')
   const rows = await adapter.all('SELECT * FROM catalog_product WHERE id = ?', ['p9'])
   assert.equal(rows.length, 0, 'dry-run must not commit')
   await adapter.close()
@@ -433,7 +434,7 @@ test('streams: a dry run says what would happen, and tells nobody it happened', 
       },
     },
   })
-  const manifest = compose([announcing])
+  const manifest = compose([announcing], { companies: true })
   registerFunctions([announcing])
   const preview = await callFn('announcing.touch', {}, { adapter, manifest, dryRun: true })
   assert.deepEqual(preview.value, { ok: true }, 'the rehearsal still answers')

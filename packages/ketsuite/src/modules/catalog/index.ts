@@ -49,6 +49,8 @@ export default defineModule({
       effects: ['write:catalog.Product'],
       idempotent: true,
       agent: true,
+      // An agent previews this before committing it; the handler only writes rows.
+      dryRun: true,
       handler: async (ctx, args) => {
         // Casting is an explicit allow-list: anything else in args never reaches the row.
         const cs = ctx

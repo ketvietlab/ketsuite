@@ -6,7 +6,8 @@ Dimensions are pinned to Shopify Polaris React **13.9.5**, polaris-tokens **9.4.
 standard theme. Do not mix the optional light-mobile theme into these responsive rules.
 Sources: [Polaris](https://www.npmjs.com/package/@shopify/polaris/v/13.9.5) and
 [tokens](https://www.npmjs.com/package/@shopify/polaris-tokens/v/9.4.2).
-Két retains its semantic colours, Inter font family, 400/500/600/700 weight roles,
+Két retains its semantic colours, KÉT Sans font family (Inter for characters it lacks),
+400/500/600/700 weight roles (600 is drawn by KÉT Sans Medium, so it stays below Bold),
 Lucide geometry, native navigation and ERP composition. Desktop density and side
 labels are Két policy, not a claim of complete Shopify parity.
 
@@ -17,7 +18,8 @@ through rem-based tokens so user text scaling remains possible.
 
 | Role | Desktop >=768px | Mobile <768px | Owner |
 | --- | --- | --- | --- |
-| Page/modal title | 20/24/600 | 20/24/600 | Page/modal header |
+| Page title | 24/28.8/600 | 16/19.2/600 | Page header |
+| Modal title | 20/24/600 | 20/24/600 | Modal header |
 | Working surface title | 14/20/600 | 14/20/600 | Surface |
 | Group title | 14/20/600 | 14/20/600 | Section on a canvas or in a titled Surface; Section or flattened Surface directly in a modal |
 | Item heading | 13/20/600 | 13/20/600 | Section or Surface nested inside a group |
@@ -246,8 +248,8 @@ header and footer stationary while the body owns scrolling.
 Modal head and footer are bands around the work, as dense as a toolbar: about
 49px and 57px on desktop with a 20/24 title and 32px buttons. Do not pad them
 back to the 16px modal inset.
-ConfirmDialog is always a small centred dialog; below 768px it stays a card
-instead of becoming fullscreen.
+ConfirmDialog is a small centred dialog on desktop. Below 768px it fills the
+available viewport, with no outer gap, radius or shadow, like every other modal.
 
 `Button.logo` is an opt-in brand choice, not a new default control size. It owns
 an 80×24px contained logo on a 112×48px minimum white stage, original brand colours,
@@ -276,3 +278,12 @@ do not render a separate image placeholder and native file chooser below it.
 The application runtime owns file validation, transport and `dragging` state; it
 must ignore uploads while disabled or saving. Keep any image viewer action separate
 from the file input target. `FileUpload` remains the explicit native chooser variant.
+
+### Scannable codes
+
+`QrCode` draws a QR code as a server-rendered SVG, black on a white plate with its
+quiet zone in both themes and in print; scanners need that contrast, so never tint
+it or place it on a themed fill. `label` names what scanning does. Anything a person
+must read without scanning (account, amount, reference) is written in `caption` or
+beside the code, never only inside it. The consumer builds the payload; do not add
+a separate QR library or draw codes with canvas.

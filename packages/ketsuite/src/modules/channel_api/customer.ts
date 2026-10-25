@@ -47,7 +47,6 @@ const resetBody = schema({ token: { type: 'string', maxLength: 128 }, password: 
   'password',
 ])
 /** Where a mailed link lands: the reset page of the site the visitor asked from. */
-const RESET_PATH = '/account/reset'
 const RESET_WINDOW_MS = 60 * 60_000
 
 const hostnameOf = (req: Req): string => {
@@ -75,15 +74,6 @@ const cookieHeader = (req: Req, token: string, maxAge: number): string => {
     ...(secure ? ['Secure'] : []),
     `Max-Age=${Math.max(0, Math.floor(maxAge))}`,
   ].join('; ')
-}
-/** The site's own address as the visitor reached it, so a mailed link leads back to the same site. */
-const originOf = (req: Req): string => {
-  const forwarded = String(req.headers['x-forwarded-proto'] ?? '')
-    .split(',')[0]!
-    .trim()
-    .toLowerCase()
-  const secure = forwarded === 'https' || (req.socket as { encrypted?: boolean }).encrypted === true
-  return `${secure ? 'https' : 'http'}://${hostOf(req)}`
 }
 const rateKeyOf = (req: Req): string =>
   sha256(`${req.socket.remoteAddress ?? 'unknown'}\n${String(req.headers['user-agent'] ?? '')}`)
@@ -600,7 +590,7 @@ export const customerRoutes = routesOf(
           {
             resetId: reset.resetId,
             siteId: context.siteId,
-            resetUrl: `${originOf(req)}${RESET_PATH}?${new URLSearchParams({ token })}`,
+            token,
           },
           url,
           req,

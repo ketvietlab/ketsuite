@@ -20,6 +20,8 @@
 // browser-served /_ket/view/index.js) — the same split mail_backend's own
 // chatter view uses.
 import * as Y from 'yjs'
+import { createLiveDocTransport } from './live-doc-transport.ts'
+import type { LiveDocSyncState } from './live-doc-transport.ts'
 import { ensureTrailingParagraph } from './live-doc-tail.ts'
 import { floatingToolbarPosition } from './live-doc-floating.ts'
 import type { IslandController, IslandProps, TemplateResult } from '@ketvietlab/ketjs-view'
@@ -75,6 +77,8 @@ export type LiveDocProps = {
   /** Renders the document without letting anyone change it. */
   readOnly?: boolean
   onChange?: (value: LiveDocValue) => void
+  /** Remote updates stay pending until the owner acknowledges durable storage. */
+  onSync?: (state: LiveDocSyncState) => void
   /** Host owns the upload dialog and storage; insertion retains the current block anchor. */
   onImageRequest?: (insert: (image: { src: string; alt: string }) => boolean, trigger: HTMLElement) => void
   imageDisabled?: boolean
@@ -1251,12 +1255,28 @@ export function createLiveDocView(props: LiveDocProps) {
 
   // ---- transport ----------------------------------------------------------
 
-  async function pushLocalUpdate(update: Uint8Array) {
-    await fetch(`${base}/push`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ update: bytesToBase64(update) }),
-    }).catch(() => {})
+  const transport = createLiveDocTransport({
+    merge: Y.mergeUpdates,
+    online: () => typeof navigator === 'undefined' || navigator.onLine,
+    onState: props.onSync,
+    send: async (update) => {
+      const response = await fetch(`${base}/push`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ update: bytesToBase64(update) }),
+      })
+      if (!response.ok) throw new Error('Document update refused')
+      const result = (await response.json()) as { ok?: boolean; record?: Record<string, unknown> }
+      if (result.ok !== true) throw new Error('Document update was not acknowledged')
+      return result
+    },
+  })
+  const onOnline = () => {
+    if (!props.local)
+      void (async () => {
+        if (ready || (await resync())) await transport.flush()
+      })()
   }
 
   /**
@@ -1267,20 +1287,58 @@ export function createLiveDocView(props: LiveDocProps) {
    * disconnected; re-applying already-known updates through it is a no-op,
    * Yjs merges are idempotent.
    */
+  let ready = !!props.local
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let resyncing: Promise<boolean> | null = null
   async function resync() {
-    const response = await fetch(`${base}/content`).catch(() => null)
-    if (!response?.ok) return
-    const { snapshot, topic, viewerId } = (await response.json()) as {
-      snapshot: string
-      topic: string
-      viewerId?: string | null
-    }
-    if (viewerId) selfId = viewerId
-    Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
-    connectLive(topic)
+    if (disposed) return false
+    if (resyncing) return resyncing
+    resyncing = (async () => {
+      try {
+        const response = await fetch(`${base}/content`)
+        if (!response.ok) throw new Error('Document could not be read')
+        const { snapshot, topic, viewerId } = (await response.json()) as {
+          snapshot: string
+          topic: string
+          viewerId?: string | null
+        }
+        if (disposed) return false
+        if (typeof snapshot !== 'string' || typeof topic !== 'string')
+          throw new Error('Invalid document response')
+        if (viewerId) selfId = viewerId
+        const initial = !ready
+        Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
+        if (initial && !props.readOnly) ensureBlocks()
+        ready = true
+        container?.setAttribute('contenteditable', String(!props.readOnly))
+        if (initial) render(null)
+        connectLive(topic)
+        if (!heartbeat) {
+          void announce(0)
+          heartbeat = setInterval(() => {
+            if (document.visibilityState === 'visible') void announce(selectionSpan()?.start.index ?? 0)
+          }, HEARTBEAT_MS)
+          window.addEventListener('pagehide', onPageHide)
+        }
+        if (!transport.isPending()) props.onSync?.({ status: 'saved' })
+        return true
+      } catch {
+        if (!disposed) {
+          props.onSync?.({
+            status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
+          })
+          if (!ready) container?.setAttribute('contenteditable', 'false')
+        }
+        return false
+      }
+    })().finally(() => {
+      resyncing = null
+    })
+    return resyncing
   }
 
   function connectLive(topic: string) {
+    if (disposed) return
     source?.close()
     const es = new EventSource(`${base}/live?topic=${encodeURIComponent(topic)}`)
     es.onmessage = (event) => {
@@ -1297,8 +1355,17 @@ export function createLiveDocView(props: LiveDocProps) {
       }
     }
     es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) setTimeout(() => void resync(), 500)
+      if (!disposed && es.readyState === EventSource.CLOSED) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = setTimeout(() => {
+          void resync()
+        }, 500)
+      }
     }
+    es.addEventListener('done', () => {
+      es.close()
+      if (!disposed) void resync()
+    })
     source = es
   }
 
@@ -1562,8 +1629,8 @@ export function createLiveDocView(props: LiveDocProps) {
       // server's own incrementally-built state doesn't round-trip marks the
       // same way normal incremental merges do.
       if (origin !== REMOTE) {
-        if (props.local) props.onChange?.(currentValue())
-        else void pushLocalUpdate(update)
+        props.onChange?.(currentValue())
+        if (!props.local) transport.enqueue(update)
       }
       if (origin !== LOCAL_TYPING) {
         const keep = pending
@@ -1579,36 +1646,18 @@ export function createLiveDocView(props: LiveDocProps) {
       render(null)
       return
     }
-    const response = await fetch(`${base}/content`)
-    const { snapshot, topic, viewerId } = (await response.json()) as {
-      snapshot: string
-      topic: string
-      viewerId?: string | null
-    }
-    if (viewerId) selfId = viewerId
-    Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
-    ensureBlocks()
-    render(null)
-    connectLive(topic)
-
-    void announce(0)
-    // Only while the tab is actually being looked at: a background tab that
-    // kept announcing would hold its author in the room for as long as the
-    // browser stayed open, and would keep writing frames onto a topic that
-    // only a flatten ever ends.
-    heartbeat = setInterval(() => {
-      if (document.visibilityState === 'visible') void announce(selectionSpan()?.start.index ?? 0)
-    }, HEARTBEAT_MS)
-
-    window.addEventListener('pagehide', () => {
-      navigator.sendBeacon?.(`${base}/leave`)
-      // A Blob, because sendBeacon posts text/plain otherwise and the route
-      // reads JSON. Beacons survive the page going away; a fetch does not.
-      navigator.sendBeacon?.(
-        `${base}/presence`,
-        new Blob([JSON.stringify({ index: 0, gone: true })], { type: 'application/json' }),
-      )
-    })
+    window.addEventListener('online', onOnline)
+    await resync()
+  }
+  const onPageHide = () => {
+    if (disposed) return
+    navigator.sendBeacon?.(`${base}/leave`)
+    // A Blob, because sendBeacon posts text/plain otherwise and the route
+    // reads JSON. Beacons survive the page going away; a fetch does not.
+    navigator.sendBeacon?.(
+      `${base}/presence`,
+      new Blob([JSON.stringify({ index: 0, gone: true })], { type: 'application/json' }),
+    )
   }
 
   function updateImage(index: number, patch: { width?: number; align?: string }) {
@@ -1742,6 +1791,8 @@ export function createLiveDocView(props: LiveDocProps) {
   }
 
   return {
+    flush: async () => (props.local ? true : !ready && !(await resync()) ? false : transport.flush()),
+    isPending: () => !props.local && transport.isPending(),
     prepareImageInsertion,
     updateImage,
     removeImage,
@@ -1749,7 +1800,7 @@ export function createLiveDocView(props: LiveDocProps) {
       liveDocShell({
         containerId,
         lang: props.lang,
-        tables: props.local,
+        tables: true,
         images: props.local && !!props.onImageRequest,
         imageDisabled: props.readOnly || props.imageDisabled,
         toolbar: props.toolbar,
@@ -1762,6 +1813,10 @@ export function createLiveDocView(props: LiveDocProps) {
       floatingEvents?.abort()
       if (floatingFrame) cancelAnimationFrame(floatingFrame)
       source?.close()
+      transport.dispose()
+      clearTimeout(reconnectTimer)
+      if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPageHide)
+      if (typeof window !== 'undefined') window.removeEventListener('online', onOnline)
       doc.destroy()
       if (heartbeat) clearInterval(heartbeat)
       if (typeof document !== 'undefined') document.removeEventListener('selectionchange', onSelectionChange)

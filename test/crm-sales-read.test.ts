@@ -3,6 +3,10 @@ import { test } from 'node:test'
 import { type Row, tableNameFor } from '@ketvietlab/ketjs'
 import { salesHelp } from '../packages/ketsuite/src/modules/crm_backend/sales/help.mjs'
 import { boot, type Card, login, type Model, read } from './helpers/crm-sales.ts'
+import * as view from '@ketvietlab/ketjs-view'
+import * as ds from '../packages/design-system/src/index.ts'
+import { createSalesScreens } from '../packages/ketsuite/src/modules/crm_backend/sales/screens.mjs'
+import { adminSalesRoutes } from '../packages/ketsuite/src/modules/crm_backend/sales/routes.mjs'
 
 const cards = (model: Row) => ((model.pipeline as Row).lanes as Row[]).flatMap((lane) => lane.cards as Card[])
 
@@ -332,6 +336,13 @@ test('crm sales lead form: a customer link starts the form, read under the reade
   // An unknown customer or kind starts an empty lead.
   const unknown = (await read(app, 'screen=lead-new&kind=deal&partnerId=nobody')).body.value.form as Row
   assert.deepEqual(unknown.prefill, { kind: 'lead' })
+  // A call from a number no customer has yet: the softphone hands over the number, as the partner module keeps it.
+  const dialled = (await read(app, 'screen=lead-new&phone=%2B84%20938%20771%20205')).body.value.form as Row
+  assert.deepEqual(dialled.prefill, { kind: 'lead', phone: '0938771205' })
+  // A known customer's own phone wins over the number in the address.
+  const both = (await read(app, 'screen=lead-new&partnerId=lan-party&phone=0938771205')).body.value
+    .form as Row
+  assert.equal((both.prefill as Row).phone, saved.phone)
 
   // The agent may create records but not read customers: the link names nobody they may see.
   await login(app, 'agent')
@@ -501,4 +512,43 @@ test('crm sales configuration: a team switched off stays listed, marked off, to 
     .teams as Row[]
   assert.equal(teams.find((team) => team.id === 'team-retired')?.active, false)
   assert.equal(teams.find((team) => team.id === 'team-a')?.active, true)
+})
+
+test('crm sales record: a phone is a call link, from the record or else its customer', async (t) => {
+  const { app, call } = await boot(t)
+  // The partner module keeps a phone only with the customer's consent to be contacted.
+  await call('partner.savePartner', {
+    id: 'spa-party',
+    kind: 'company',
+    name: 'Spa Hoa Mai',
+    phone: '0912 345 678',
+    contactConsent: true,
+  })
+  await login(app, 'admin')
+  const screens = createSalesScreens({ view, ds, routes: adminSalesRoutes })
+  const page = async (id: string) => {
+    const query = `screen=lead-detail&id=${id}`
+    const { body } = await read(app, query)
+    // The island's page environment, without its signals: one request key per form, the quote as read.
+    const env = {
+      screen: 'lead-detail',
+      query,
+      lang: 'vi',
+      requestId: (key: string) => `request-${key}`,
+      quoteLines: (_key: string, initial: Row[]) => initial,
+      leadDraft: () => ({}),
+    }
+    return view.renderToString(screens.page(body.value, env).view)
+  }
+  // KétPhone's softphone places the call from the page; a device without it hands the number to its dialler.
+  assert.match(
+    await page('lead-queue'),
+    /<a\b[^>]*href="tel:0903182204"[^>]*>(?:(?!<\/a>)[\s\S])*0903 182 204/,
+  )
+  const customer = (await read(app, 'screen=lead-detail&id=deal-mine')).body.value.detail as Row
+  const number = String((customer.partner as Row).phone)
+  assert.equal((customer.record as Row).phone || '', '', 'the record has no phone of its own')
+  assert.ok(number.replace(/\D/g, '').endsWith('912345678'), 'its customer has one')
+  // The partner module keeps it in international form; the link keeps the plus sign (E.164).
+  assert.ok((await page('deal-mine')).includes(`href="tel:${number.replace(/[^\d+]/g, '')}"`))
 })

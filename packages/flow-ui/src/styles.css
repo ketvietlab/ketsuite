@@ -169,6 +169,16 @@
   font-size: var(--flow-type-body);
   font-weight: var(--kv-weight-normal);
 }
+/* The adapter selects Flow's touch density through public DS control tokens.
+   The DS calendar continues to own its markup, colors and internal spacing. */
+@media (max-width: 47.9375rem), (pointer: coarse) {
+  [data-flow-ui] [data-flow-date-input] {
+    --kv-control-height: var(--flow-control);
+    --kv-action-height: var(--flow-control);
+    --kv-control-height-prominent: var(--flow-control);
+    --kv-control-height-compact: var(--flow-control);
+  }
+}
 [data-flow-ui] [data-flow="field"] > span:first-child {
   color: var(--flow-muted);
   font-size: var(--flow-type-meta);
@@ -186,6 +196,32 @@
   border-radius: var(--flow-radius);
   padding: 0 var(--kv-space-2);
   min-width: 0;
+}
+[data-flow-ui] [data-flow="select-wrap"] {
+  position: relative;
+  display: inline-grid;
+  min-width: 0;
+  max-width: 100%;
+}
+[data-flow-ui] [data-flow="select"] {
+  appearance: none;
+  padding-inline-end: calc(var(--kv-space-2) * 2 + var(--kv-space-4));
+}
+[data-flow-ui] [data-flow="select"][data-size="sm"] {
+  height: var(--flow-control-sm);
+  font-size: var(--flow-type-control);
+}
+[data-flow-ui] [data-flow="select-caret"] {
+  position: absolute;
+  inset-inline-end: var(--kv-space-2);
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  color: var(--flow-muted);
+  pointer-events: none;
+}
+[data-flow-ui] [data-flow="select"]:disabled + [data-flow="select-caret"] {
+  opacity: 0.45;
 }
 [data-flow-ui] [data-flow="input"][aria-invalid="true"],
 [data-flow-ui] [data-flow="textarea"][aria-invalid="true"],
@@ -501,7 +537,7 @@
 [data-flow-ui] [data-flow="task-row"][data-selected="true"] {
   background: var(--flow-accent-soft);
 }
-[data-flow-ui] [data-flow="task-row"] td {
+[data-flow-ui] [data-flow="task-row"] > td {
   border-bottom: 1px solid var(--flow-border);
   padding: var(--kv-space-1) var(--kv-space-3);
 }
@@ -1039,7 +1075,7 @@
   border-collapse: collapse;
   text-align: left;
 }
-[data-flow-ui] [data-flow="table"] th {
+[data-flow-ui] [data-flow="table"] > thead > tr > th {
   font-size: var(--flow-type-meta);
   font-weight: var(--kv-weight-medium);
   color: var(--flow-muted);
@@ -1047,18 +1083,18 @@
   height: var(--flow-control);
   white-space: nowrap;
 }
-[data-flow-ui] [data-flow="table"] :is(th, td) {
+[data-flow-ui] [data-flow="table"] > :is(thead, tbody, tfoot) > tr > :is(th, td) {
   padding: var(--kv-space-1-5) var(--kv-space-3);
   border-bottom: 1px solid var(--flow-border);
 }
-[data-flow-ui] [data-flow="table"] tr {
+[data-flow-ui] [data-flow="table"] > :is(thead, tbody, tfoot) > tr {
   height: var(--flow-row);
 }
-[data-flow-ui] [data-flow="table"] th:first-child,
-[data-flow-ui] [data-flow="table"] td:first-child {
+[data-flow-ui] [data-flow="table"] > thead > tr > th:first-child,
+[data-flow-ui] [data-flow="table"] > tbody > tr > td:first-child {
   padding-left: var(--kv-space-5);
 }
-[data-flow-ui] [data-flow="table"] tbody tr:last-child td {
+[data-flow-ui] [data-flow="table"] > tbody > tr:last-child > td {
   border-bottom: 0;
 }
 [data-flow-ui] [data-flow="group"] {
@@ -1171,6 +1207,10 @@
   border-color: transparent;
   font-size: var(--flow-type-body);
   font-weight: var(--kv-weight-normal);
+}
+[data-flow-ui] [data-flow="property-fields"] [data-flow="select-wrap"] {
+  justify-self: start;
+  width: fit-content;
 }
 /* A scalar choice such as Sprint hugs its value instead of filling the rail. */
 [data-flow-ui] [data-flow="property-fields"] [data-flow="select"] {
@@ -1573,22 +1613,26 @@
   table-layout: fixed;
   min-width: var(--flow-task-table-min-width);
 }
-[data-flow-ui] [data-flow="table"][data-layout="tasks"] th:nth-child(1) {
+[data-flow-ui] [data-flow="table"][data-layout="tasks"] > thead > tr > th:nth-child(1) {
   width: var(--flow-task-select-width);
 }
-[data-flow-ui] [data-flow="table"][data-layout="tasks"] :is(th, td):first-child {
+[data-flow-ui]
+  [data-flow="table"][data-layout="tasks"]
+  > :is(thead, tbody, tfoot)
+  > tr
+  > :is(th, td):first-child {
   padding-inline: var(--kv-space-3);
 }
-[data-flow-ui] [data-flow="table"][data-layout="tasks"] th:nth-child(3) {
+[data-flow-ui] [data-flow="table"][data-layout="tasks"] > thead > tr > th:nth-child(3) {
   width: var(--flow-task-status-width);
 }
-[data-flow-ui] [data-flow="table"][data-layout="tasks"] th:nth-child(4) {
+[data-flow-ui] [data-flow="table"][data-layout="tasks"] > thead > tr > th:nth-child(4) {
   width: var(--flow-task-priority-width);
 }
-[data-flow-ui] [data-flow="table"][data-layout="tasks"] th:nth-child(5) {
+[data-flow-ui] [data-flow="table"][data-layout="tasks"] > thead > tr > th:nth-child(5) {
   width: var(--flow-task-assignee-width);
 }
-[data-flow-ui] [data-flow="table"][data-layout="tasks"] th:nth-child(6) {
+[data-flow-ui] [data-flow="table"][data-layout="tasks"] > thead > tr > th:nth-child(6) {
   width: var(--flow-task-due-width);
 }
 [data-flow-ui] [data-flow="launch-link"] {

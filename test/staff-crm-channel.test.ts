@@ -8,7 +8,10 @@ import { TERMINAL_STATES } from '../packages/ketsuite/src/modules/crm/types.ts'
 type Envelope<T> = { data: T; error: { code: string } | null }
 
 const boot = async (t: TestContext, options: { teamScope?: boolean } = {}) => {
-  const e2e = await createTestDeployment(ketsuite, { worker: false })
+  const e2e = await createTestDeployment(ketsuite, {
+    worker: false,
+    client: { headers: { connection: 'close' } },
+  })
   t.after(() => e2e.close())
   const scope = { company: 'acme', branches: null }
   const fixture = <T = Row>(name: string, input: Record<string, unknown>, actor?: string) =>

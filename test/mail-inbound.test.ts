@@ -19,6 +19,7 @@ import {
   user,
 } from '@ketvietlab/ketsuite'
 import { inboundPlainText } from '../packages/ketsuite/src/modules/mail_inbound/index.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const webhookSecret = 'inbound-provider-secret-for-tests'
 const scope = { company: 'acme', branches: null }
@@ -139,6 +140,7 @@ test('inbound plain text conversion discards active HTML instead of sanitizing i
 test('inbound email: signed reply/reference/bounce routing, attachment storage, dedupe and stock alias work end to end', async () => {
   const app = defineDeployment({
     name: 'mail_inbound_e2e',
+    companies: true,
     modules: [
       address,
       partner,
@@ -157,6 +159,7 @@ test('inbound email: signed reply/reference/bounce routing, attachment storage, 
     headless: true,
     worker: { queues: { maintenance: 1 } },
     serve: {
+      permissions: everyFunction,
       sessions: { anonymous: { company: 'acme' } },
     },
   })

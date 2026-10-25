@@ -31,6 +31,7 @@ const manifest = compose(modules, {
   headless: ketsuite.headless ?? false,
   modulePermissionDeclarations: ketsuite.permissions?.modules,
   roleTemplates: ketsuite.permissions?.roleTemplates,
+  companies: true,
 })
 const adapter = sqliteAdapter(database)
 const objects = namespacedStorage(localStorage({ dir: storage }), ketsuite.name)

@@ -16,7 +16,7 @@ import type { Adapter, Row } from '@ketvietlab/ketjs'
 import { account, address, company, partner, product, uom } from '@ketvietlab/ketsuite'
 
 const modules = [address, partner, company, uom, product, account]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>

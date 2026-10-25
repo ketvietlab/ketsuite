@@ -86,6 +86,20 @@
     content: ":";
   }
 
+  /* A notice without a message is its title alone: no colon after it and no empty line. */
+  :where([data-kv-design-system])
+    [data-ui="notice"][data-pattern="notice"]
+    [data-ui="notice-copy"]:not(:has([data-ui="notice-message"] > :not(:empty)))
+    [data-ui="notice-title"]::after {
+    content: none;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="notice"][data-pattern="notice"]
+    [data-ui="notice-message"]:not(:has(> :not(:empty))) {
+    display: none;
+  }
+
   :where([data-kv-design-system]) [data-ui="notice"][data-pattern="notice"] [data-ui="notice-message"] {
     margin: 0;
     color: var(--kv-color-ink-secondary);

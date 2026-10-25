@@ -1,5 +1,5 @@
 import { asc, defineFn, deleteFrom, desc, eq, from } from '@ketvietlab/ketjs'
-import type { FnSpec, Row } from '@ketvietlab/ketjs'
+import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { rescheduleCaseActivity } from '../crm/index.ts'
 import { activityEffects } from '../crm/functions/shared.ts'
 import {
@@ -42,6 +42,17 @@ export const salesReadOf = ({ clock, people, state }: LoadedSales) =>
     assigned: (loaded: { load?: Record<string, number> }, userId: string) => loaded.load?.[userId] ?? 0,
   })
 
+/**
+ * The islands other modules fill `crm_backend:record.related` with, each started on a record's page
+ * with that record's id.
+ */
+const relatedIslands = (ctx: Pick<Ctx, 'manifest'>): string[] =>
+  ctx.manifest.fills
+    .filter((fill) => fill.joint === 'crm_backend:record.related')
+    .flatMap((fill) =>
+      [...fill.template.matchAll(/\{%\s*island\s+"([^"]+)"\s*%\}/gu)].map((match) => match[1]!),
+    )
+
 const listInput = (value: unknown, lang: unknown): Record<string, unknown> => ({
   ...(value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}),
   lang: lang === 'en' ? 'en' : 'vi',
@@ -67,7 +78,12 @@ export const functions: Record<string, FnSpec> = {
       })
       try {
         const state = withLinkedPartner(loaded.state, args.partner)
-        return { model: salesReadOf(loaded).readSalesScreen(state, params, loaded.actor) }
+        const model = salesReadOf(loaded).readSalesScreen(state, params, loaded.actor)
+        // Only a record's page has a record for other modules to show something about.
+        return {
+          model:
+            model && 'detail' in model && model.detail ? { ...model, related: relatedIslands(ctx) } : model,
+        }
       } catch (error) {
         if (error instanceof SalesError)
           return { model: null, status: (error as SalesError & { status: number }).status }

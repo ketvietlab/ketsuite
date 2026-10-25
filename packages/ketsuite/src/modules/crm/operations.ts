@@ -1,4 +1,5 @@
 import { selectAssignmentMember } from './assignment-policy.ts'
+import { companyCivilDate } from '../company/civil-date.ts'
 import { randomUUID } from 'node:crypto'
 import {
   and,
@@ -645,7 +646,7 @@ export async function serializeCaseList(ctx: Ctx, rows: Row[]): Promise<Row[]> {
     tagsByCase.set(String(link.caseId), [...(tagsByCase.get(String(link.caseId)) ?? []), tag])
   }
   const activityByCase = await nextActivityByCase(ctx, caseIds)
-  const today = now().slice(0, 10)
+  const today = await companyCivilDate(ctx)
   const by = (values: Row[]) => new Map(values.map((row) => [String(row.id), row]))
   const stageBy = by(stages)
   const teamBy = by(teams)
@@ -915,7 +916,7 @@ export async function pipelineSummary(
   const L = ctx.table('crm.ActivityLink')
   const links = openCaseIds.length ? await ctx.db.all(from(L).where(inArray(L.caseId, openCaseIds))) : []
   const activityIds = [...new Set(links.map((link) => String(link.activityId)))]
-  const today = now().slice(0, 10)
+  const today = await companyCivilDate(ctx)
   const overdue = activityIds.length
     ? await ctx.db.all(
         from(A).where(
@@ -1432,7 +1433,9 @@ export async function completeCaseActivity(
     const held = (await tx.db.select('crm.Case', { id: link.caseId }))[0]
     if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
     if (!(await openActivity(tx, input.id))) return invalid(issue('id', 'crm.error.activityClosed'))
-    const result = await completeActivity(tx, input.id, input.feedback ?? '', input.completedDate)
+    const result = await completeActivity(tx, input.id, input.feedback ?? '', input.completedDate, {
+      canManage: async (_ctx, activity) => activity.threadId === held.threadId,
+    })
     await addTimeline(tx, {
       id: `timeline:${String(link.caseId)}:activity-done:${input.id}`,
       caseId: String(link.caseId),
@@ -1457,7 +1460,9 @@ export async function cancelCaseActivity(
     const held = (await tx.db.select('crm.Case', { id: link.caseId }))[0]
     if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
     if (!(await openActivity(tx, input.id))) return invalid(issue('id', 'crm.error.activityClosed'))
-    const activity = await cancelActivity(tx, input.id, input.feedback)
+    const activity = await cancelActivity(tx, input.id, input.feedback, {
+      canManage: async (_ctx, activity) => activity.threadId === held.threadId,
+    })
     await addTimeline(tx, {
       id: `timeline:${String(link.caseId)}:activity-cancel:${input.id}`,
       caseId: String(link.caseId),

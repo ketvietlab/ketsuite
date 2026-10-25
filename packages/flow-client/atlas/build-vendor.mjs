@@ -12,7 +12,8 @@ await build({
   platform: 'browser',
   target: 'es2023',
 })
-// Includes the Yjs binding; do not bundle a second view runtime.
+// Atlas hosts KetSuite's live document editor, as KetSuite does; the Flow kit never
+// imports it. Includes the Yjs binding; do not bundle a second view runtime.
 await build({
   entryPoints: [fileURLToPath(import.meta.resolve('@ketvietlab/ketsuite/livedoc'))],
   outfile: resolve(out, 'live-doc.mjs'),

@@ -3,7 +3,52 @@ import type { TemplateResult } from '@ketvietlab/ketjs-view'
 export const HOOKS = ['icon'] as const
 
 // Lucide glyphs (ISC). Keep their original 24px viewBox and stroke geometry.
+// Workspace/theme glyphs: lucide-react 0.469.0, dist/esm/icons; see LICENSE.txt.
 const glyphs = {
+  'layers-3': () => (
+    <>
+      <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+      <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+      <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+    </>
+  ),
+  'building-2': () => (
+    <>
+      <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z" />
+      <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+      <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2" />
+      <path d="M10 6h4" />
+      <path d="M10 10h4" />
+      <path d="M10 14h4" />
+      <path d="M10 18h4" />
+    </>
+  ),
+  'layout-grid': () => (
+    <>
+      <rect width="7" height="7" x="3" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="14" rx="1" />
+      <rect width="7" height="7" x="3" y="14" rx="1" />
+    </>
+  ),
+  sun: () => (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m6.34 17.66-1.41 1.41" />
+      <path d="m19.07 4.93-1.41 1.41" />
+    </>
+  ),
+  moon: () => (
+    <>
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+    </>
+  ),
   megaphone: () => (
     <>
       <path d="m3 11 18-5v12L3 14v-3z" />
@@ -138,6 +183,19 @@ const glyphs = {
       <path d="m22 7-8.5 8.5-5-5L2 17" />
     </>
   ),
+  // Money owed to the company comes in; money it owes goes out (receivables, payables).
+  'arrow-down-left': () => (
+    <>
+      <path d="M17 7 7 17" />
+      <path d="M17 17H7V7" />
+    </>
+  ),
+  'arrow-up-right': () => (
+    <>
+      <path d="M7 7h10v10" />
+      <path d="M7 17 17 7" />
+    </>
+  ),
   'trending-down': () => (
     <>
       <path d="M16 17h6v-6" />
@@ -192,6 +250,43 @@ const glyphs = {
   ),
   phone: () => (
     <path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384" />
+  ),
+  'phone-incoming': () => (
+    <>
+      <path d="M16 2v6h6" />
+      <path d="m22 2-6 6" />
+      <path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384" />
+    </>
+  ),
+  'phone-outgoing': () => (
+    <>
+      <path d="m16 8 6-6" />
+      <path d="M22 8V2h-6" />
+      <path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384" />
+    </>
+  ),
+  'phone-off': () => (
+    <>
+      <path d="M10.1 13.9a14 14 0 0 0 3.732 2.668 1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2 18 18 0 0 1-12.728-5.272" />
+      <path d="M22 2 2 22" />
+      <path d="M4.76 13.582A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 .244.473" />
+    </>
+  ),
+  'mic-off': () => (
+    <>
+      <path d="M12 19v3" />
+      <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
+      <path d="M16.95 16.95A7 7 0 0 1 5 12v-2" />
+      <path d="M18.89 13.23A7 7 0 0 0 19 12v-2" />
+      <path d="m2 2 20 20" />
+      <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+    </>
+  ),
+  smartphone: () => (
+    <>
+      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+      <path d="M12 18h.01" />
+    </>
   ),
   'message-circle': () => (
     <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
@@ -252,6 +347,7 @@ const glyphs = {
   'chevron-left': () => <path d="m15 18-6-6 6-6" />,
   'chevron-right': () => <path d="m9 18 6-6-6-6" />,
   'maximize-2': () => <path d="M15 3h6v6M21 3l-7 7M3 21l7-7M9 21H3v-6" />,
+  'minimize-2': () => <path d="m14 10 7-7M20 10h-6V4M3 21l7-7M4 14h6v6" />,
   info: () => (
     <>
       <circle cx="12" cy="12" r="10" />

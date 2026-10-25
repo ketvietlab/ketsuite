@@ -23,6 +23,10 @@ export default defineModule({
   islands,
   // Internal reads of the sales screens; their routes check the permission first.
   functions,
+  // What other modules keep about a record (the call a lead came from, say), shown on its page.
+  joints: {
+    'record.related': { props: { caseId: 'id', lang: 'text' }, multiple: true },
+  },
   fills: {
     'partner_backend:record.salesActions': `<a data-ui="action" data-variant="secondary" href="/admin/crm/cases/new?kind=lead&amp;partnerId={{ partnerId }}&amp;lang={{ lang }}"><span data-ui="action-label">{{ 'crm_backend.action.createLead' | _ }}</span></a>`,
   },

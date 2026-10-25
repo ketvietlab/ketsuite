@@ -31,7 +31,7 @@ const modules = [
   websiteFormMail,
   paperTheme,
 ]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 
 const boot = async (): Promise<Adapter> => {
   const db = sqliteAdapter()

@@ -2,7 +2,8 @@ import { asc, defineFn, desc, eq, from, inArray } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { ensureThread } from '../mail/index.ts'
 import type { TargetBridge } from '../mail/index.ts'
-import { actorId, addDays, scheduleActivity, stateOf, validatePlanStep } from './operations.ts'
+import { actorId, addDays, scheduleActivity, stateOf, validatePlanStep } from './activity-service.ts'
+import { companyCivilDate } from '../company/civil-date.ts'
 
 const threadFor = async (ctx: Ctx, bridge: TargetBridge, targetId: string): Promise<Row | null> => {
   const T = ctx.table('mail.Thread')
@@ -15,7 +16,7 @@ const ensureTargetThread = async (
   target: { id: string; displayName: string },
 ): Promise<Row> =>
   ensureThread(ctx, {
-    id: `thread:${bridge.resModel}:${target.id}`,
+    id: `thread:${encodeURIComponent(String(ctx.scope.company))}:${bridge.resModel}:${target.id}`,
     resModel: bridge.resModel,
     resId: target.id,
     displayName: target.displayName,
@@ -77,6 +78,7 @@ const readEffects = (target: string): string[] => [
   'read:activity.Attachment',
   'read:user.User',
   'read:storage.Attachment',
+  'read:company.Company',
 ]
 
 const scheduleEffects = (target: string): string[] => [
@@ -89,15 +91,17 @@ const scheduleEffects = (target: string): string[] => [
 export function targetActivityFunctions(bridge: TargetBridge): Record<string, FnSpec> {
   return {
     list: defineFn({
-      input: { targetId: 'id', today: 'date' },
-      output: { activities: 'json', threadId: 'id?' },
+      input: { targetId: 'id', today: 'date?' },
+      output: { activities: 'json', threadId: 'id?', today: 'date' },
       effects: readEffects(bridge.targetEffect),
       handler: async (ctx: Ctx, args) => {
         const target = await bridge.verify(ctx, String(args.targetId))
         const thread = await threadFor(ctx, bridge, target.id)
+        const today = args.today ? String(args.today) : await companyCivilDate(ctx)
         return {
+          today,
           threadId: thread?.id ?? null,
-          activities: thread ? await listForThread(ctx, String(thread.id), String(args.today)) : [],
+          activities: thread ? await listForThread(ctx, String(thread.id), today) : [],
         }
       },
     }),

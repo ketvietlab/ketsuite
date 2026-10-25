@@ -1,0 +1,96 @@
+name: browser
+
+# The browser lane: every suite that drives a real browser, kept apart from the HTTP and unit tests
+# that gate a promotion into develop (verify.yml). While the product is still settling no browser
+# suite is a merge gate. `browser-schedule.yml` starts this every four hours on integration and
+# develop when their head moved, and its checks (`browser / …`, `playwright / …`) land on that
+# commit, where a promotion pull request shows them without being held by them. Start it by hand
+# on any branch to run the lane now. No job waits for another, so one run says all that is broken.
+#
+# GitHub-hosted only: the suites find Chrome where the Ubuntu image installs it.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: browser-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  KET_BROWSER_BIN: /usr/bin/google-chrome
+  KET_CHROME: /usr/bin/google-chrome
+
+jobs:
+  tools:
+    name: browser / ${{ matrix.suite }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: node tests
+            run: npm run test:browser:built
+          - suite: design system
+            run: node .build/tools/design-system-browser-e2e.js
+          - suite: ketspec
+            run: node .build/tools/ketspec-browser-e2e.js
+          - suite: collaboration
+            run: node .build/tools/collaboration-browser-e2e.js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: npm ci
+      - uses: ./.github/actions/build
+      - name: run ${{ matrix.suite }}
+        run: ${{ matrix.run }}
+
+  playwright:
+    name: playwright / ${{ matrix.module }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - product_backend
+          - design_system
+          - loyalty_backend
+          - stock_backend
+          - website_backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+      - run: npm ci
+      - uses: ./.github/actions/build
+      - name: install Playwright and its Chromium
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: run the ${{ matrix.module }} specs
+        working-directory: e2e
+        env:
+          E2E_MODULE: ${{ matrix.module }}
+        run: npx playwright test
+      - name: keep the report of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.module }}
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7

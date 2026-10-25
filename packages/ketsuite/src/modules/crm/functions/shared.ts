@@ -78,6 +78,7 @@ export const caseWriteEffects = [
 ] as const
 
 export const activityEffects = [
+  'read:company.Company',
   ...caseReadEffects,
   'read:activity.Type',
   'read:activity.Plan',

@@ -28,7 +28,10 @@ test('the roles screen serves managed roles without authoring controls', async (
   assert.doesNotMatch(roles, /href="\/admin\/roles\/new/)
   const users = await (await app.client.get('/admin/users?lang=en')).text()
   assert.match(users, /data-ui="list-page"/)
-  assert.match(users, /href="\/admin\/roles/)
+  // The rail's gear opens the settings page, which is where roles are reached from.
+  assert.match(users, /href="\/admin\/settings/)
+  const settings = await (await app.client.get('/admin/settings?lang=en')).text()
+  assert.match(settings, /href="\/admin\/roles/)
   // The shared host is present, but its context rejects legacy/custom records.
   assert.match(users, /data-record-kind="user\.role"/)
   assert.match(users, /data-record-kind="user\.user"/)

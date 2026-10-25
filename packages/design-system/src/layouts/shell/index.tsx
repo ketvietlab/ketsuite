@@ -56,6 +56,12 @@ export type AppSwitcherItem = {
   id: string
   label: string
   href?: string
+  /**
+   * Open the destination in this tab, as a new document, instead of a new tab: for an app the
+   * host serves inside this same shell. Switching app replaces the rail, sidebar and content
+   * together, so the link opts out of fragment navigation (`data-ket-reload`).
+   */
+  sameTab?: boolean
   /** An app without a destination is informative and cannot be opened. */
   unavailableLabel?: string
   icon: IconName
@@ -121,11 +127,16 @@ export const AppSwitcher = (props: AppSwitcherProps): TemplateResult => (
           role={item.href ? undefined : 'link'}
           aria-disabled={item.href ? null : 'true'}
           tabindex={item.href ? null : '0'}
-          aria-label={`${item.label} · ${item.href ? props.newTabLabel : (item.unavailableLabel ?? item.label)}`}
+          aria-label={
+            item.href && item.sameTab
+              ? item.label
+              : `${item.label} · ${item.href ? props.newTabLabel : (item.unavailableLabel ?? item.label)}`
+          }
           title={item.label}
           href={item.href}
-          target={item.href ? '_blank' : null}
-          rel={item.href ? 'noopener noreferrer' : null}
+          target={item.href && !item.sameTab ? '_blank' : null}
+          rel={item.href && !item.sameTab ? 'noopener noreferrer' : null}
+          data-ket-reload={item.href && item.sameTab ? '' : null}
         >
           <Icon name={item.icon} />
           <span data-ui="app-switcher-tooltip" aria-hidden="true">

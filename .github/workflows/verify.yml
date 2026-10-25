@@ -1,10 +1,12 @@
 name: verify
 
 on:
-  # Two pull requests carry the full suite: the promotion of integration into
-  # develop, and the release into master. Integration takes merges on local
+  # Two pull requests carry the HTTP and unit suite: the promotion of integration
+  # into develop, and the release into master. Integration takes merges on local
   # evidence alone, so the promotion is the first place a test another branch
   # left stale can show; waiting for the release let #596 sit red on develop.
+  # Browser suites are not part of this gate while the product settles: they run
+  # on a schedule in browser.yml (started by browser-schedule.yml).
   # Other pull requests into develop carry no CI: whoever changes a part runs
   # that part's tests locally (AGENT.md), and `permission coverage` answers
   # from permission-coverage.yml.

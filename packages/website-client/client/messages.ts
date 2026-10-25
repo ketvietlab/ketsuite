@@ -1499,6 +1499,13 @@ export const coreMessages = {
     'website.settings.defaultLocale': 'Ngôn ngữ mặc định',
     'website.settings.googleTagManagerId': 'Google Tag Manager (để trống để tắt)',
     'website.settings.invalidGoogleTagManagerId': 'Mã container phải có dạng GTM-XXXXXXX.',
+    'website.settings.visitConsent': 'Xin đồng ý trước khi theo dõi khách truy cập',
+    'website.settings.visitConsentHelp':
+      'Khi bật, website hiện thông báo xin đồng ý. Chỉ khi khách đồng ý thì Google Tag Manager mới chạy và website mới ghi lượt truy cập: mã click quảng cáo, chiến dịch, trang và sản phẩm đã xem, lần bấm gọi hoặc nhắn tin.',
+    'website.settings.visitConsentNotice': 'Câu chữ xin đồng ý',
+    'website.settings.visitConsentNoticeHelp':
+      'Khách đọc câu này trước khi chọn. Đổi câu chữ thì mọi khách được hỏi lại.',
+    'website.settings.visitConsentNoticeRequired': 'Nhập câu chữ xin đồng ý trước khi bật theo dõi.',
     'website.settings.saved': 'Đã lưu cài đặt',
     'website.settings.domains': 'Tên miền',
     'website.settings.domainsHelp': 'Tên miền chính nhận khách; các tên miền khác chuyển hướng về đó.',

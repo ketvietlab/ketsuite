@@ -964,6 +964,8 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
             title,
             defaultLocale: String(values.defaultLocale || 'vi'),
             googleTagManagerId: String(values.googleTagManagerId ?? ''),
+            visitConsent: values.visitConsent === true,
+            visitConsentNotice: String(values.visitConsentNotice ?? ''),
             theme,
           })
           if (options.defaultPreset)
@@ -998,6 +1000,10 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
           title: String(values.title ?? site.title).trim(),
           defaultLocale: String(values.defaultLocale || site.defaultLocale),
           googleTagManagerId: String(values.googleTagManagerId ?? site.googleTagManagerId ?? ''),
+          // Unedited fields keep their value, so an older Settings form cannot switch tracking off.
+          visitConsent:
+            values.visitConsent === undefined ? site.visitConsent === true : values.visitConsent === true,
+          visitConsentNotice: String(values.visitConsentNotice ?? site.visitConsentNotice ?? ''),
           theme: site.theme,
           tokens: site.tokens ?? null,
           siteGroup: site.siteGroup ?? null,

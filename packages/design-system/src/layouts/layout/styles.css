@@ -51,6 +51,31 @@
     --kv-grid-columns: 4;
   }
 
+  /* With a minimum the grid keeps at most its columns, but a column is never narrower than the
+     minimum: auto-fit drops one when the grid itself is short of room, whatever the viewport. */
+  :where([data-kv-design-system]) [data-ui="grid"][data-minimum] {
+    --kv-grid-minimum: 17rem;
+    grid-template-columns: repeat(
+        auto-fit,
+        minmax(
+          max(
+            min(var(--kv-grid-minimum), 100%),
+            (100% - (var(--kv-grid-columns, 3) - 1) * var(--kv-stack-gap, var(--kv-layout-gap))) /
+            var(--kv-grid-columns, 3)
+          ),
+          1fr
+        )
+      );
+  }
+
+  :where([data-kv-design-system]) [data-ui="grid"][data-minimum="compact"] {
+    --kv-grid-minimum: 12rem;
+  }
+
+  :where([data-kv-design-system]) [data-ui="grid"][data-minimum="wide"] {
+    --kv-grid-minimum: 23rem;
+  }
+
   :where([data-kv-design-system]) [data-ui="card-grid"] {
     display: grid;
     min-width: 0;

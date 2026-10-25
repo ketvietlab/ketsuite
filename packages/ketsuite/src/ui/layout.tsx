@@ -20,6 +20,7 @@ import { listChrome } from './chrome.tsx'
 import type { ListChrome } from './chrome.tsx'
 import { viewerContext } from './navigation.tsx'
 import { ListPage } from './list-page.tsx'
+import { rememberShell } from './route-modal.ts'
 import { collectionActions, collectionControls } from './collection.tsx'
 
 export const HOOKS = [
@@ -34,6 +35,9 @@ export const HOOKS = [
 ] as const
 
 export type Extras = {
+  /** One screen-owned guide inside the replaced content slot and design-system scope. */
+  'screen.help'?: JSXChild
+  runtime?: JSXChild
   'topbar.end'?: JSXChild
   'sidebar.foot'?: JSXChild
   'nav.items'?: JSXChild
@@ -42,6 +46,11 @@ export type Extras = {
 export type Frame = {
   counts?: Readonly<Record<string, number>>
   locale?: string
+  /**
+   * The rail app this screen belongs to (`sales` by default). Another app, such as `phone`, is
+   * lit on the rail, names the sidebar, and fills it with its own menu root alone.
+   */
+  app?: string
   applications?: AppSwitcherProps
   globalSearchQuery?: string
   /** Server request URL for native collection controls; never browser state. */
@@ -128,10 +137,30 @@ export const shell = (
   title: string,
   body: TemplateResult,
   frame: Frame = {},
-): TemplateResult => {
-  const { viewer = null, extras = {}, menu = [], indicators = [] } = frame
+): TemplateResult =>
+  rememberShell(renderShell(_, title, body, frame), (modal) =>
+    renderShell(
+      _,
+      title,
+      <>
+        {body}
+        {modal}
+      </>,
+      frame,
+    ),
+  )
+
+const renderShell = (_: Translator, title: string, body: TemplateResult, frame: Frame): TemplateResult => {
+  const { viewer = null, extras = {}, menu = [], indicators = [], app = 'sales' } = frame
+  const screenBody = (
+    <>
+      {body}
+      {extras['screen.help'] ?? ''}
+    </>
+  )
   const sidebarOptions = {
-    menu: suiteMainMenu(menu),
+    menu: app === 'sales' ? suiteMainMenu(menu) : menu.filter((node) => node.id === app),
+    app,
     viewer,
     indicators,
     counts: frame.counts,
@@ -147,7 +176,7 @@ export const shell = (
         </template>
         <template data-ket-slot="backend.topbar">{topbarRegion(_, title, frame)}</template>
         <template data-ket-slot="backend.global-topbar">{locationBar(_, frame)}</template>
-        <template data-ket-slot="backend.content">{body}</template>
+        <template data-ket-slot="backend.content">{screenBody}</template>
       </ket-fragments>
     )
   // The design-system application shell. The theme scope sits above it, as the
@@ -158,7 +187,7 @@ export const shell = (
   return (
     <div data-kv-design-system data-presentation="grouped" data-density="compact">
       {AppShell({
-        applications: frame.applications ?? suiteApplications(menu, _),
+        applications: frame.applications ?? suiteApplications(menu, _, app),
         mode: 'viewport',
         location: <div data-ket-slot="backend.global-topbar">{locationBar(_, frame)}</div>,
         sidebar: sidebarMain(_, sidebarOptions),
@@ -166,7 +195,7 @@ export const shell = (
           <>
             <div data-ket-slot="backend.topbar">{topbarRegion(_, title, frame)}</div>
             <div data-ui="content" data-ket-slot="backend.content">
-              {body}
+              {screenBody}
             </div>
           </>
         ),

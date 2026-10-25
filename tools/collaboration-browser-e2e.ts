@@ -169,6 +169,14 @@ const navigate = async (cdp: Cdp, url: string): Promise<void> => {
   const loaded = cdp.once('Page.loadEventFired', 15_000)
   await cdp.send('Page.navigate', { url })
   await loaded
+  // The load event does not wait for the KetJS bootstrap's top-level await, so a
+  // form submitted right after it can beat the behavior that saves it in place.
+  // The bootstrap publishes its navigation once islands and behaviors are mounted.
+  await waitFor(
+    cdp,
+    `!document.querySelector('script[src="/_ket/islands.js"]') || globalThis.__ketNavigation`,
+    15_000,
+  )
 }
 
 const waitFor = async (cdp: Cdp, expression: string, timeoutMs = 10_000): Promise<void> => {
@@ -198,6 +206,69 @@ const capture = async (cdp: Cdp, path: string): Promise<void> => {
   await writeFile(path, Buffer.from(result.data, 'base64'))
 }
 
+/**
+ * A page script that starts the browser clock at `instant` and lets it run on from there,
+ * for screens that open on today while the fixture's records sit on a fixed day.
+ */
+const shiftedClock = (instant: string): string => `(() => {
+  const offset = ${Date.parse(instant)} - Date.now()
+  const Real = Date
+  globalThis.Date = class extends Real {
+    constructor(...args) { super(...(args.length ? args : [Real.now() + offset])) }
+    static now() { return Real.now() + offset }
+  }
+})()`
+
+/** The form a record modal of one kind shows, as a browser expression. */
+const recordForm = (kind: string): string =>
+  `document.querySelector('[role="dialog"] form[data-record-kind="${kind}"]')`
+
+/** The record modal shows a saved record of the kind, not the blank one it opened with. */
+const openedRecord = (kind: string): string =>
+  `(new URLSearchParams(location.search).get('record') ?? '').startsWith('${kind}:') && !location.search.includes('${encodeURIComponent(`${kind}:`)}new')`
+
+/**
+ * Fill a record modal form as typing does, then submit it through the record runtime,
+ * with the button of `command` when the form offers more than one.
+ */
+const submitRecordForm = async (
+  cdp: Cdp,
+  kind: string,
+  values: Record<string, string>,
+  command?: string,
+): Promise<void> => {
+  await evaluate(
+    cdp,
+    `(() => {
+      const form = ${recordForm(kind)}
+      for (const [name, value] of Object.entries(${JSON.stringify(values)})) {
+        const control = form.querySelector('[name="' + name + '"]')
+        control.value = value
+        control.dispatchEvent(new Event('input', { bubbles: true }))
+        control.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      const command = ${JSON.stringify(command ?? null)}
+      form.requestSubmit(command ? form.querySelector('button[name="__command"][value="' + command + '"]') : undefined)
+      return true
+    })()`,
+  )
+}
+
+/** A create record modal: its form, field rows, and a page that neither scrolls sideways nor shows a chatter. */
+const createModalLayout = (cdp: Cdp, kind: string) =>
+  evaluate<Record<string, boolean>>(
+    cdp,
+    `(() => {
+      const form = ${recordForm(kind)}
+      return {
+        recordModal: Boolean(form),
+        fieldsAtLeast28: Array.from(form?.querySelectorAll('[data-ui="field"]') ?? []).every((field) => field.getBoundingClientRect().height >= 28),
+        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
+        horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
+      }
+    })()`,
+  )
+
 const e2e = await collaborationEvidenceDeployment()
 let chrome: ChromeHandle | null = null
 const artifactDir = resolve('docs/public/assets/collaboration')
@@ -220,19 +291,6 @@ const purchaseOverviewEvidenceDir = resolve('docs/public/assets/purchase-overvie
 const saleOrderEvidenceDir = resolve('docs/public/assets/sales-order-detail')
 const salesOrderListEvidenceDir = resolve('docs/public/assets/sales-order-list')
 const invoicingPolicyEvidenceDir = resolve('docs/public/assets/sales-invoicing-policy')
-const accountingInvoiceEvidenceDir = resolve('docs/public/assets/accounting-customer-invoice')
-const accountingOverviewEvidenceDir = resolve('docs/public/assets/accounting-overview')
-const customerInvoicesEvidenceDir = resolve('docs/public/assets/accounting-customer-invoices')
-const vendorBillsEvidenceDir = resolve('docs/public/assets/accounting-vendor-bills')
-const journalEntriesEvidenceDir = resolve('docs/public/assets/accounting-journal-entries')
-const paymentsEvidenceDir = resolve('docs/public/assets/accounting-payments')
-const accountsEvidenceDir = resolve('docs/public/assets/accounting-chart-of-accounts')
-const journalsEvidenceDir = resolve('docs/public/assets/accounting-journals')
-const taxesEvidenceDir = resolve('docs/public/assets/accounting-taxes')
-const paymentTermsEvidenceDir = resolve('docs/public/assets/accounting-payment-terms')
-const trialBalanceEvidenceDir = resolve('docs/public/assets/accounting-trial-balance')
-const generalLedgerEvidenceDir = resolve('docs/public/assets/accounting-general-ledger')
-const partnerLedgerEvidenceDir = resolve('docs/public/assets/accounting-partner-ledger')
 const report: Array<{ screen: string; readyMs: number; navigationMs: number }> = []
 const onlyScreen = process.env.KET_E2E_SCREEN?.trim()
 const noArtifacts = process.env.KET_E2E_NO_ARTIFACTS === '1'
@@ -257,19 +315,6 @@ try {
   await mkdir(saleOrderEvidenceDir, { recursive: true })
   await mkdir(salesOrderListEvidenceDir, { recursive: true })
   await mkdir(invoicingPolicyEvidenceDir, { recursive: true })
-  await mkdir(accountingInvoiceEvidenceDir, { recursive: true })
-  await mkdir(accountingOverviewEvidenceDir, { recursive: true })
-  await mkdir(customerInvoicesEvidenceDir, { recursive: true })
-  await mkdir(vendorBillsEvidenceDir, { recursive: true })
-  await mkdir(journalEntriesEvidenceDir, { recursive: true })
-  await mkdir(paymentsEvidenceDir, { recursive: true })
-  await mkdir(accountsEvidenceDir, { recursive: true })
-  await mkdir(journalsEvidenceDir, { recursive: true })
-  await mkdir(taxesEvidenceDir, { recursive: true })
-  await mkdir(paymentTermsEvidenceDir, { recursive: true })
-  await mkdir(trialBalanceEvidenceDir, { recursive: true })
-  await mkdir(generalLedgerEvidenceDir, { recursive: true })
-  await mkdir(partnerLedgerEvidenceDir, { recursive: true })
   chrome = await startChrome()
   const { cdp } = chrome
   await cdp.send('Page.enable')
@@ -295,12 +340,12 @@ try {
     {
       name: 'product-list',
       path: '/admin/product/templates?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 6`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 6`,
     },
     {
       name: 'partner-list',
       path: '/admin/partner/partners?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 6`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 6`,
     },
     {
       name: 'partner-form',
@@ -320,17 +365,17 @@ try {
     {
       name: 'product-favorite',
       path: '/admin/product/templates/favorites/new?returnTo=%2Fadmin%2Fproduct%2Ftemplates%3Fq%3DOPS&lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#product-favorite-create-form')`,
+      ready: `document.querySelector('[data-route-modal="true"] #product-favorite-create-form') && document.querySelector('[data-ui="list-page"]')`,
     },
     {
       name: 'product-attributes',
-      path: '/admin/product/attributes?lang=vi',
-      ready: `document.querySelector('#product-attribute-create') && document.querySelectorAll('[data-ui="content-card"]').length >= 3`,
+      path: '/admin/product/attributes?lang=vi&record=product.attribute%3Anew',
+      ready: `${recordForm('product.attribute')}?.querySelector('[name="name"]') && document.querySelectorAll('[data-ui="kt-row"]').length >= 3`,
     },
     {
       name: 'product-create',
       path: '/admin/product/templates/new?lang=vi',
-      ready: `document.querySelector('#product-create-form') && document.querySelectorAll('[data-ui="record-toggle-input"]').length >= 3`,
+      ready: `document.querySelector('[data-ui="record-page-body"] form#product-record [name="name"]')`,
     },
     {
       name: 'transfer-chatter',
@@ -339,13 +384,13 @@ try {
     },
     {
       name: 'inventory-adjustment',
-      path: '/admin/stock/inventory?lang=vi',
-      ready: `document.querySelector('#inventory-adjustment-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      path: '/admin/stock/inventory?lang=vi&record=stock.count%3Anew',
+      ready: `${recordForm('stock.count')}?.querySelector('[name="productId"]') && document.querySelectorAll('[data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'transfer-list',
       path: '/admin/stock/transfers?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'transfer-create',
@@ -355,52 +400,52 @@ try {
     {
       name: 'warehouse-list',
       path: '/admin/stock/warehouses?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'warehouse-create',
-      path: '/admin/stock/warehouses/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#warehouse-create-form')`,
+      path: '/admin/stock/warehouses?lang=vi&record=stock.warehouse%3Anew',
+      ready: `${recordForm('stock.warehouse')}?.querySelector('[name="name"]')`,
     },
     {
       name: 'location-list',
       path: '/admin/stock/locations?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'location-create',
-      path: '/admin/stock/locations/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#location-create-form')`,
+      path: '/admin/stock/locations?lang=vi&record=stock.location%3Anew',
+      ready: `${recordForm('stock.location')}?.querySelector('[name="name"]')`,
     },
     {
       name: 'operation-type-list',
       path: '/admin/stock/picking-types?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'operation-type-create',
-      path: '/admin/stock/picking-types/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#picking-type-create-form')`,
+      path: '/admin/stock/picking-types?lang=vi&record=stock.pickingType%3Anew',
+      ready: `${recordForm('stock.pickingType')}?.querySelector('[name="name"]')`,
     },
     {
       name: 'route-list',
       path: '/admin/stock/routes?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'route-create',
-      path: '/admin/stock/routes/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#stock-route-create-form')`,
+      path: '/admin/stock/routes?lang=vi&record=stock.route%3Anew',
+      ready: `${recordForm('stock.route')}?.querySelector('[name="name"]')`,
     },
     {
       name: 'route-detail',
       path: '/admin/stock/routes/wh:receipt-route?lang=vi',
-      ready: `document.querySelector('#stock-route-detail-form') && document.querySelector('#stock-route-rule-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('#stock-route-detail-form') && document.querySelector('#stock-route-rule-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'replenishment',
       path: '/admin/stock/replenishment?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'replenishment-create',
@@ -410,12 +455,12 @@ try {
     {
       name: 'forecast',
       path: '/admin/stock/forecast?productId=variant-collab&warehouseId=wh&locationId=wh:stock&lang=vi',
-      ready: `document.querySelector('#forecast-filter-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length === 1`,
+      ready: `document.querySelector('#forecast-filter-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length === 1`,
     },
     {
       name: 'quotation-list',
       path: '/admin/sales/quotations?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'quotation-create',
@@ -435,27 +480,28 @@ try {
     {
       name: 'crm-pipeline',
       path: '/admin/crm/pipeline?lang=vi',
-      ready: `document.querySelector('ket-island[data-island="crm.pipeline"]') && document.querySelector('[data-ui="record-workspace"]')`,
+      ready: `document.querySelector('[data-ui="board-page"] [data-crm-board][role="region"]')`,
     },
     {
       name: 'crm-cases-list',
       path: '/admin/crm/cases?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]')`,
+      // The sales-screen island draws the page from a read it makes after mounting.
+      ready: `document.querySelector('[data-ui="list-page"] a[href*="/admin/crm/cases/new"]')`,
     },
     {
       name: 'crm-case-create',
       path: '/admin/crm/cases/new?kind=lead&lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#crm-case-create-form')`,
+      ready: `document.querySelector('[data-ui="record-page"] form#sales-create [name="name"]')`,
     },
     {
       name: 'sales-overview',
       path: '/admin/sales?lang=vi',
-      ready: `document.querySelector('[data-ui="record-workspace"]') && document.querySelectorAll('[data-ui="metric"]').length === 4`,
+      ready: `document.querySelector('[data-ui="dashboard-page"]') && document.querySelectorAll('[data-ui="metric"]').length === 4`,
     },
     {
       name: 'purchase-overview',
       path: '/admin/purchase?lang=vi',
-      ready: `document.querySelector('[data-ui="record-workspace"]') && document.querySelectorAll('[data-ui="metric"]').length === 5`,
+      ready: `document.querySelector('[data-ui="dashboard-page"]') && document.querySelectorAll('[data-ui="metric"]').length === 5`,
     },
     {
       name: 'sale-order-detail',
@@ -465,87 +511,22 @@ try {
     {
       name: 'sales-order-list',
       path: '/admin/sales/orders?lang=vi',
-      ready: `document.querySelector('[data-ui="record-workspace"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'sales-invoicing-policy',
-      path: '/admin/sales/invoicing-policies?lang=vi',
-      ready: `document.querySelector('#invoicing-policy-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-customer-invoice',
-      path: '/admin/accounting/customer-invoices/invoice-collab?lang=vi',
-      ready: `document.querySelector('[data-ui="record-workspace"]') && document.querySelector('[data-ui="chatter"][data-state="ready"]') && document.querySelector('[data-ui="activity-record"][data-state="ready"]')`,
-    },
-    {
-      name: 'accounting-overview',
-      path: '/admin/accounting?lang=vi',
-      ready: `document.querySelector('[data-ui="record-workspace"]') && document.querySelectorAll('[data-ui="content-card"]').length >= 10`,
-    },
-    {
-      name: 'accounting-customer-invoices',
-      path: '/admin/accounting/customer-invoices/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#customer-invoice-create-form')`,
-    },
-    {
-      name: 'accounting-vendor-bills',
-      path: '/admin/accounting/vendor-bills/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#vendor-bill-create-form')`,
-    },
-    {
-      name: 'accounting-journal-entries',
-      path: '/admin/accounting/entries?lang=vi&create=1',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelector('#journal-entry-create-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-payments',
-      path: '/admin/accounting/payments?lang=vi',
-      ready: `document.querySelector('#payment-register-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-chart-of-accounts',
-      path: '/admin/accounting/accounts?lang=vi',
-      ready: `document.querySelector('#account-create-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-journals',
-      path: '/admin/accounting/journals?lang=vi',
-      ready: `document.querySelector('#journal-create-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-taxes',
-      path: '/admin/accounting/taxes?lang=vi',
-      ready: `document.querySelector('#tax-create-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-payment-terms',
-      path: '/admin/accounting/terms?lang=vi&line=1',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelector('#payment-term-line-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-trial-balance',
-      path: '/admin/accounting/trial-balance?lang=vi',
-      ready: `document.querySelector('#trial-balance-filter-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-general-ledger',
-      path: '/admin/accounting/general-ledger?accountId=account-bank-collab&lang=vi',
-      ready: `document.querySelector('#general-ledger-filter-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
-    },
-    {
-      name: 'accounting-partner-ledger',
-      path: '/admin/accounting/partner-statement?partnerId=member-party&lang=vi',
-      ready: `document.querySelector('#partner-ledger-filter-form') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      path: '/admin/sales/invoicing-policies?lang=vi&record=sale.invoicePolicy%3Anew',
+      ready: `${recordForm('sale.invoicePolicy')}?.querySelector('[name="templateId"]') && document.querySelectorAll('[data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'lot-list',
       path: '/admin/stock/lots?lang=vi',
-      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1`,
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'lot-create',
-      path: '/admin/stock/lots/new?lang=vi',
-      ready: `document.querySelector('[data-ui="form-page"]') && document.querySelector('#lot-create-form')`,
+      path: '/admin/stock/lots?lang=vi&record=stock.lot%3Anew',
+      ready: `${recordForm('stock.lot')}?.querySelector('[name="name"]')`,
     },
     {
       name: 'lot-detail-chatter',
@@ -565,6 +546,8 @@ try {
     {
       name: 'calendar-agenda',
       path: '/admin/calendar?lang=vi&view=agenda',
+      // The agenda opens on today; the fixture's events are on 20 August 2026.
+      clock: '2026-08-20T01:00:00.000Z',
       ready: `document.querySelector('[data-ui="calendar-board"][data-state="ready"][data-view="agenda"]') && document.querySelectorAll('[data-ui="calendar-event"]').length >= 2`,
     },
     {
@@ -595,6 +578,11 @@ try {
         deviceScaleFactor: 1,
         mobile: false,
       })
+    const clock = screen.clock
+      ? await cdp.send<{ identifier: string }>('Page.addScriptToEvaluateOnNewDocument', {
+          source: shiftedClock(screen.clock),
+        })
+      : null
     const started = performance.now()
     await navigate(cdp, `${e2e.baseUrl}${screen.path}`)
     const navigationMs = await evaluate<number>(
@@ -603,6 +591,14 @@ try {
     )
     await waitFor(cdp, screen.ready, 15_000)
     const readyMs = performance.now() - started
+    assert.deepEqual(
+      await evaluate<string[]>(
+        cdp,
+        `[...new Set(document.body.innerText.match(/\\b(?:recordModal|[a-z]+_backend)\\.[a-zA-Z][\\w.]*/g) ?? [])]`,
+      ),
+      [],
+      `${screen.name}: every label is translated`,
+    )
     report.push({ screen: screen.name, readyMs, navigationMs })
 
     if (screen.name === 'product-list') {
@@ -610,12 +606,13 @@ try {
         {
           id: 'list',
           query: '',
-          ready: `document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 6`,
+          // The server draws placeholder rows; wait for the island's own.
+          ready: `document.querySelector('[data-ui="ket-table"]:not([data-loading])') && document.querySelectorAll('[data-ui="kt-row"]:not([data-row^="loading-"])').length >= 6`,
         },
         {
           id: 'kanban',
           query: '&view=kanban',
-          ready: `document.querySelectorAll('[data-ui="kanban-card"]').length >= 6`,
+          ready: `document.querySelectorAll('[data-ui="content-card"]').length >= 6`,
         },
         {
           id: 'empty',
@@ -646,7 +643,6 @@ try {
               actionVisible: boolean
               controlsVisible: boolean
               searchBounded: boolean
-              searchBesideStatus: boolean
               tailAtRight: boolean
               toolbarFullWidth: boolean
               ordered: boolean
@@ -660,11 +656,10 @@ try {
               const action = document.querySelector('[data-ui="list-page-actions"] [data-ui="action"]')
               const toolbar = document.querySelector('[data-ui="list-page-toolbar"]')
               const controls = document.querySelector('[data-ui="list-page-controls"]')
-                const search = document.querySelector('[data-ui="list-page-controls"] [data-ui="chrome-search"]')
-                const tail = document.querySelector('[data-ui="list-page-controls"] [data-ui="chrome-tail"]')
-                const status = document.querySelector('[data-ui="list-page-status"]')
+                const search = document.querySelector('[data-ui="list-page-controls"] [data-ui="search-filter"]')
+                const tail = document.querySelector('[data-ui="list-page-controls"] [data-ui="list-view-switch"]')
                 const body = document.querySelector('[data-ui="list-page-body"]')
-                const table = document.querySelector('[data-ui="table-scroll"]')
+                const table = document.querySelector('[data-ui="kt-scroll"]')
                 const pageBox = page.getBoundingClientRect()
                 const headerBox = header.getBoundingClientRect()
                 const titleBox = title.getBoundingClientRect()
@@ -673,7 +668,6 @@ try {
               const controlsBox = controls.getBoundingClientRect()
                 const searchBox = search.getBoundingClientRect()
                 const tailBox = tail.getBoundingClientRect()
-                const statusBox = status.getBoundingClientRect()
                 const bodyBox = body.getBoundingClientRect()
                 const tableBox = table?.getBoundingClientRect()
                 return {
@@ -683,17 +677,23 @@ try {
                   actionVisible: actionBox.width > 0 && actionBox.height >= 30,
                   controlsVisible: controlsBox.width > 0 && controlsBox.height > 0,
                   searchBounded: searchBox.width <= 801,
-                  searchBesideStatus: ${String(viewport.mobile)} ||
-                    (searchBox.left >= statusBox.right - 1 &&
-                      searchBox.left - statusBox.right <= 16),
                   tailAtRight: ${String(viewport.mobile)} ||
                     (tailBox.right <= toolbarBox.right &&
                       toolbarBox.right - tailBox.right <= 12),
-                  toolbarFullWidth: Math.abs(toolbarBox.left - bodyBox.left) <= 1 &&
-                    Math.abs(toolbarBox.right - bodyBox.right) <= 1,
+                  // The toolbar may bleed to the edge on a phone; its content lines up with the body's.
+                  toolbarFullWidth: (() => {
+                    const inner = (node) => {
+                      const box = node.getBoundingClientRect()
+                      const style = getComputedStyle(node)
+                      return [box.left + parseFloat(style.paddingLeft), box.right - parseFloat(style.paddingRight)]
+                    }
+                    const [toolbarLeft, toolbarRight] = inner(toolbar)
+                    const [bodyLeft, bodyRight] = inner(body)
+                    return Math.abs(toolbarLeft - bodyLeft) <= 1 && Math.abs(toolbarRight - bodyRight) <= 1
+                  })(),
                 ordered: headerBox.bottom <= toolbarBox.top + 1 &&
                   toolbarBox.bottom <= bodyBox.top + 1 &&
-                  statusBox.top >= toolbarBox.top - 1 && statusBox.bottom <= toolbarBox.bottom + 1 &&
+                  searchBox.top >= toolbarBox.top - 1 && searchBox.bottom <= toolbarBox.bottom + 1 &&
                   controlsBox.top >= toolbarBox.top - 1 && controlsBox.bottom <= toolbarBox.bottom + 1,
                   tableContained: !tableBox || (tableBox.left >= pageBox.left - 1 && tableBox.right <= pageBox.right + 1)
                 }
@@ -708,7 +708,6 @@ try {
                 actionVisible: true,
                 controlsVisible: true,
                 searchBounded: true,
-                searchBesideStatus: true,
                 tailAtRight: true,
                 toolbarFullWidth: true,
                 ordered: true,
@@ -717,33 +716,39 @@ try {
               `${viewport.id}/${lang}/${state.id}`,
             )
             if (state.id === 'list') {
+              // A selection replaces the search row with the bulk bar, in the same toolbar.
+              await evaluate(cdp, `document.querySelector('[data-ui="kt-row-select"]').click()`)
+              await waitFor(
+                cdp,
+                `document.querySelector('[data-ui="list-page-controls"] [data-ui="bulk-actions"]')`,
+              )
               assert.deepEqual(
                 await evaluate(
                   cdp,
                   `(() => {
-                    const create = document.querySelector('[data-ui="list-page-actions"] [data-ui="action"]')
-                    const rowSelect = document.querySelector('[data-ui="row-select"]')
-                    const more = document.querySelector('[data-ui="list-page-actions"] [data-ui="bulk-actions-open"]')
-                    rowSelect.click()
-                    const createBox = create.getBoundingClientRect()
-                    const moreBox = more.getBoundingClientRect()
-                    const result = {
-                      visible: moreBox.width > 0 && moreBox.height > 0,
-                      besideCreate: Math.abs(moreBox.top - createBox.top) <= 1 &&
-                        moreBox.left >= createBox.right && moreBox.left - createBox.right <= 16,
-                      absentFromControls: !document.querySelector('[data-ui="list-page-controls"] [data-ui="bulk-form"]')
+                    const toolbar = document.querySelector('[data-ui="list-page-toolbar"]').getBoundingClientRect()
+                    const bulk = document.querySelector('[data-ui="list-page-controls"] [data-ui="bulk-actions"]')
+                    const box = bulk.getBoundingClientRect()
+                    return {
+                      visible: box.width > 0 && box.height > 0,
+                      inToolbar: box.top >= toolbar.top - 1 && box.bottom <= toolbar.bottom + 1,
+                      replacesQuery: !document.querySelector('[data-ui="list-page-controls"] [data-ui="list-query"]'),
+                      counted: /1/.test(bulk.querySelector('[data-ui="bulk-summary"], [data-ui="bulk-count"]')?.textContent ?? '')
                     }
-                    return result
                   })()`,
                 ),
-                { visible: true, besideCreate: true, absentFromControls: true },
+                { visible: true, inToolbar: true, replacesQuery: true, counted: true },
               )
               if (!noArtifacts)
                 await capture(
                   cdp,
                   join(productListEvidenceDir, `product-list-selected-${lang}-${viewport.id}.png`),
                 )
-              await evaluate(cdp, `document.querySelector('[data-ui="row-select"]')?.click()`)
+              await evaluate(cdp, `document.querySelector('[data-ui="kt-row-select"]')?.click()`)
+              await waitFor(
+                cdp,
+                `document.querySelector('[data-ui="list-page-controls"] [data-ui="list-query"]')`,
+              )
             }
             if (!noArtifacts)
               await capture(
@@ -767,19 +772,19 @@ try {
           id: 'all',
           query: '',
           pager: true,
-          ready: `document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 6`,
+          ready: `document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 6`,
         },
         {
           id: 'customers',
           query: '&role=customer',
           pager: false,
-          ready: `document.querySelector('[data-ui="tab"][data-active="true"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 6`,
+          ready: `document.querySelectorAll('[data-ui="kt-row"]').length >= 6`,
         },
         {
           id: 'archived',
           query: '&archived=1',
           pager: true,
-          ready: `document.querySelector('[data-ui="tab"][data-active="true"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 6`,
+          ready: `document.querySelectorAll('[data-ui="kt-row"]').length >= 6`,
         },
         {
           id: 'empty',
@@ -813,10 +818,8 @@ try {
                 actionVisible: boolean
                 controlsVisible: boolean
                 searchBounded: boolean
-                searchBesideStatus: boolean
                 tailAtRight: boolean
                 toolbarFullWidth: boolean
-                tabsFullWidth: boolean
                 ordered: boolean
                 tableContained: boolean
                 legacyRemoved: boolean
@@ -831,12 +834,10 @@ try {
                   const action = document.querySelector('[data-ui="list-page-actions"] [data-ui="action"]')
                   const toolbar = document.querySelector('[data-ui="list-page-toolbar"]')
                   const controls = document.querySelector('[data-ui="list-page-controls"]')
-                  const search = document.querySelector('[data-ui="list-page-controls"] [data-ui="chrome-search"]')
+                  const search = document.querySelector('[data-ui="list-page-controls"] [data-ui="search-filter"]')
                   const tail = document.querySelector('[data-ui="list-page-controls"] [data-ui="chrome-tail"]')
-                  const status = document.querySelector('[data-ui="list-page-status"]')
                   const body = document.querySelector('[data-ui="list-page-body"]')
-                  const tabs = document.querySelector('[data-ui="tabs"]')
-                  const table = document.querySelector('[data-ui="table-scroll"]')
+                  const table = document.querySelector('[data-ui="kt-scroll"]')
                   const pageBox = page.getBoundingClientRect()
                   const headerBox = header.getBoundingClientRect()
                   const titleBox = title.getBoundingClientRect()
@@ -845,9 +846,7 @@ try {
                   const controlsBox = controls.getBoundingClientRect()
                   const searchBox = search.getBoundingClientRect()
                   const tailBox = tail.getBoundingClientRect()
-                  const statusBox = status.getBoundingClientRect()
                   const bodyBox = body.getBoundingClientRect()
-                  const tabsBox = tabs.getBoundingClientRect()
                   const tableBox = table?.getBoundingClientRect()
                   return {
                     pageContained: pageBox.left >= -1 && pageBox.right <= innerWidth + 1,
@@ -857,17 +856,22 @@ try {
                     actionVisible: actionBox.width > 0 && actionBox.height >= 30,
                     controlsVisible: controlsBox.width > 0 && controlsBox.height > 0,
                     searchBounded: searchBox.width <= 801,
-                    searchBesideStatus: ${String(viewport.mobile)} ||
-                      (searchBox.left >= statusBox.right - 1 && searchBox.left - statusBox.right <= 16),
                     tailAtRight: ${String(viewport.mobile)} ||
                       (tailBox.right <= toolbarBox.right && toolbarBox.right - tailBox.right <= 12),
-                    toolbarFullWidth: Math.abs(toolbarBox.left - bodyBox.left) <= 1 &&
-                      Math.abs(toolbarBox.right - bodyBox.right) <= 1,
-                    tabsFullWidth: Math.abs(tabsBox.left - bodyBox.left) <= 1 &&
-                      Math.abs(tabsBox.right - bodyBox.right) <= 1,
+                    // The toolbar may bleed to the edge on a phone; its content lines up with the body's.
+                    toolbarFullWidth: (() => {
+                      const inner = (node) => {
+                        const box = node.getBoundingClientRect()
+                        const style = getComputedStyle(node)
+                        return [box.left + parseFloat(style.paddingLeft), box.right - parseFloat(style.paddingRight)]
+                      }
+                      const [toolbarLeft, toolbarRight] = inner(toolbar)
+                      const [bodyLeft, bodyRight] = inner(body)
+                      return Math.abs(toolbarLeft - bodyLeft) <= 1 && Math.abs(toolbarRight - bodyRight) <= 1
+                    })(),
                     ordered: headerBox.bottom <= toolbarBox.top + 1 &&
                       toolbarBox.bottom <= bodyBox.top + 1 &&
-                      statusBox.top >= toolbarBox.top - 1 && statusBox.bottom <= toolbarBox.bottom + 1 &&
+                      searchBox.top >= toolbarBox.top - 1 && searchBox.bottom <= toolbarBox.bottom + 1 &&
                       controlsBox.top >= toolbarBox.top - 1 && controlsBox.bottom <= toolbarBox.bottom + 1,
                     tableContained: !tableBox ||
                       (tableBox.left >= bodyBox.left - 1 && tableBox.right <= bodyBox.right + 1),
@@ -886,10 +890,8 @@ try {
                   actionVisible: true,
                   controlsVisible: true,
                   searchBounded: true,
-                  searchBesideStatus: true,
                   tailAtRight: true,
                   toolbarFullWidth: true,
-                  tabsFullWidth: true,
                   ordered: true,
                   tableContained: true,
                   legacyRemoved: true,
@@ -899,14 +901,19 @@ try {
                 `${viewport.id}/${theme}/${lang}/${state.id}`,
               )
               if (state.id === 'all') {
+                // The table selects on the client; the bulk menu shows once it has rendered.
+                await evaluate(cdp, `document.querySelector('[data-ui="kt-row-select"]').click()`)
+                await waitFor(
+                  cdp,
+                  `document.querySelector('[data-ui="list-page-actions"] [data-ui="bulk-actions-open"]')?.getBoundingClientRect().width > 0`,
+                )
                 assert.deepEqual(
                   await evaluate(
                     cdp,
                     `(() => {
                       const create = document.querySelector('[data-ui="list-page-actions"] [data-ui="action"]')
-                      const rowSelect = document.querySelector('[data-ui="row-select"]')
+                      const rowSelect = document.querySelector('[data-ui="kt-row-select"]')
                       const more = document.querySelector('[data-ui="list-page-actions"] [data-ui="bulk-actions-open"]')
-                      rowSelect.click()
                       const createBox = create.getBoundingClientRect()
                       const moreBox = more.getBoundingClientRect()
                       return {
@@ -914,7 +921,9 @@ try {
                         besideCreate: Math.abs(moreBox.top - createBox.top) <= 1 &&
                           moreBox.left >= createBox.right && moreBox.left - createBox.right <= 16,
                         checked: rowSelect.checked,
-                        formLinked: rowSelect.getAttribute('form') === 'partner-directory-bulk',
+                        formLinked: Boolean(
+                          document.querySelector('[data-ui="kt-select-persisted"] input[form="partner-directory-bulk"][name^="selected."]'),
+                        ),
                         apiLinked: document.querySelector('[data-ui="list-page-actions"] [data-ui="bulk-form"]')
                           ?.getAttribute('action')?.startsWith('/admin/partner/partners/bulk') === true,
                         absentFromControls: !document.querySelector(
@@ -937,7 +946,7 @@ try {
                     cdp,
                     join(partnerListEvidenceDir, `partner-list-selected-${lang}-${theme}-${viewport.id}.png`),
                   )
-                await evaluate(cdp, `document.querySelector('[data-ui="row-select"]')?.click()`)
+                await evaluate(cdp, `document.querySelector('[data-ui="kt-row-select"]')?.click()`)
               }
               if (!noArtifacts)
                 await capture(
@@ -1003,7 +1012,7 @@ try {
                 compactHeader: boolean
                 compactTitle: boolean
                 noHeavyIdentity: boolean
-                noBreadcrumb: boolean
+                trailFromFrame: boolean
                 actionVisible: boolean
                 actionInHeader: boolean
                 inlineFields: boolean
@@ -1024,6 +1033,8 @@ try {
                   const action = page.querySelector('[data-ui="form-page-actions"] [data-ui="action"][data-variant="primary"]')
                   const form = document.querySelector(${JSON.stringify(state.form)})
                   const fields = [...form.querySelectorAll('[data-ui="form-field"]:not([data-kind="checkbox"])')]
+                  // Labels sit beside their controls from 48rem, above them below it.
+                  const narrow = innerWidth < 768
                   const inline = fields.every((field) => {
                     const label = field.querySelector(':scope > [data-ui="form-label"]')
                     const control = field.querySelector(
@@ -1032,7 +1043,7 @@ try {
                     if (!label || !control) return false
                     const labelBox = label.getBoundingClientRect()
                     const controlBox = control.getBoundingClientRect()
-                    return labelBox.right <= controlBox.left + 1 &&
+                    return (narrow ? labelBox.bottom <= controlBox.top + 1 : labelBox.right <= controlBox.left + 1) &&
                       label.scrollWidth <= label.clientWidth + 1 &&
                       controlBox.width > 80
                   })
@@ -1051,14 +1062,20 @@ try {
                   return {
                     pageContained: pageBox.left >= -1 && pageBox.right <= innerWidth + 1,
                     noPageOverflow: document.documentElement.scrollWidth <= innerWidth,
-                    compactHeader: headerBox.height <= (${String(viewport.mobile)} ? 170 : 120),
+                    compactHeader: headerBox.height <= (narrow ? 170 : 120),
                     compactTitle: Number.parseFloat(getComputedStyle(title).fontSize) <= 24,
                     noHeavyIdentity: !page.querySelector(
-                      '[data-ui="record-thumbnail"], [data-ui="record-kicker"], [data-ui="form-page-leading"], [data-ui="form-page-eyebrow"], [data-ui="breadcrumbs"]'
+                      '[data-ui="record-thumbnail"], [data-ui="record-kicker"], [data-ui="form-page-leading"], [data-ui="form-page-eyebrow"]'
                     ),
-                    noBreadcrumb: !page.querySelector('[data-ui="form-page-back"], [data-ui="breadcrumbs"]'),
+                    // The location comes from the frame, once, above the title; no separate back link.
+                    trailFromFrame: page.querySelectorAll('[data-ui="breadcrumbs"]').length === 1 &&
+                      Boolean(page.querySelector('[data-ui="form-page-context"] [data-ui="breadcrumbs"]')) &&
+                      !page.querySelector('[data-ui="form-page-back"]'),
                     actionVisible: actionBox.width > 0 && actionBox.height >= 30,
-                    actionInHeader: actionBox.top >= titleRowBox.top - 1 && actionBox.bottom <= titleRowBox.bottom + 1,
+                    // Below 42rem the commands follow the title inside the header instead of sharing its row.
+                    actionInHeader: innerWidth <= 672
+                      ? actionBox.top >= titleBox.bottom - 1 && actionBox.bottom <= headerBox.bottom + 1
+                      : actionBox.top >= titleRowBox.top - 1 && actionBox.bottom <= titleRowBox.bottom + 1,
                     inlineFields: inline,
                     compactControlsWideEnough: ${JSON.stringify(viewport.id)} !== 'compact-desktop' || fields.every((field) => {
                       const control = field.querySelector(
@@ -1098,7 +1115,7 @@ try {
                   compactHeader: true,
                   compactTitle: true,
                   noHeavyIdentity: true,
-                  noBreadcrumb: true,
+                  trailFromFrame: true,
                   actionVisible: true,
                   actionInHeader: true,
                   inlineFields: true,
@@ -1168,14 +1185,15 @@ try {
           }
         })()`,
       )
-      assert.equal(layout.clusters, 2)
+      // One cluster per open activity: complete, reschedule and cancel in one row.
+      assert.ok(layout.clusters >= 2, `${layout.clusters} activity clusters`)
       assert.equal(layout.aligned, true)
       assert.equal(layout.contained, true)
       assert.equal(layout.uniqueIds, true)
-      assert.deepEqual(layout.variants, [
-        ['primary', 'secondary', 'destructive'],
-        ['primary', 'secondary', 'destructive'],
-      ])
+      assert.deepEqual(
+        layout.variants,
+        layout.variants.map(() => ['primary', 'secondary', 'destructive']),
+      )
 
       await waitFor(
         cdp,
@@ -1190,12 +1208,10 @@ try {
       }>(
         cdp,
         `(() => {
-          const sidebar = document.querySelector('[data-ui="sidebar"]')
           const mail = document.querySelector('[data-ui="mail-indicator"]')
           const activity = document.querySelector('[data-ui="activity-indicator"]')
           const viewer = document.querySelector('[data-ui="viewer"]')
           viewer.open = true
-          const sidebarBox = sidebar.getBoundingClientRect()
           const mailBox = mail.getBoundingClientRect()
           const activityBox = activity.getBoundingClientRect()
           const menuBox = viewer.querySelector('[data-ui="viewer-menu"]').getBoundingClientRect()
@@ -1204,7 +1220,7 @@ try {
             aligned: Math.abs(mailBox.top - activityBox.top) <= 1 &&
               Math.abs(mailBox.height - activityBox.height) <= 1,
             accountMenuVisible: menuBox.width > 0 && menuBox.height > 0,
-            accountMenuContained: menuBox.left >= sidebarBox.left && menuBox.right <= sidebarBox.right,
+            accountMenuContained: menuBox.left >= 0 && menuBox.right <= innerWidth,
             signoutPost: viewer.querySelector('[data-ui="signout"]')?.method === 'post'
           }
           viewer.open = false
@@ -1221,25 +1237,8 @@ try {
     }
 
     if (screen.name === 'product-chatter') {
-      const generalPadding = await evaluate(
-        cdp,
-        `getComputedStyle(document.querySelector('[data-ui="form-page-body"]')).padding`,
-      )
-      await navigate(cdp, `${e2e.baseUrl}/admin/product/templates/tpl-collab?tab=variants&lang=vi`)
-      await waitFor(
-        cdp,
-        `document.querySelector('[data-ui="tab"][data-active="true"]')?.textContent.includes('Thuộc tính')`,
-      )
-      assert.equal(
-        await evaluate(cdp, `getComputedStyle(document.querySelector('[data-ui="form-page-body"]')).padding`),
-        generalPadding,
-      )
-      await navigate(cdp, `${e2e.baseUrl}${screen.path}`)
-      await waitFor(cdp, `document.querySelector('form[data-scope="product-detail"]')`)
-      await waitFor(
-        cdp,
-        `document.querySelector('ket-island[data-island="product.editor"]')?.hidden === true`,
-      )
+      // The record keeps its reading width and the rail its own track; a wider screen
+      // leaves the rest empty instead of stretching either.
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: 1920,
         height: 1100,
@@ -1247,84 +1246,84 @@ try {
         mobile: false,
       })
       await navigate(cdp, `${e2e.baseUrl}${screen.path}`)
-      await waitFor(cdp, `document.querySelector('[data-ui="form-page-aside"]')`)
+      await waitFor(cdp, screen.ready)
       assert.deepEqual(
-        await evaluate(
+        await evaluate<Record<string, boolean>>(
           cdp,
           `(() => {
-            const workspace = document.querySelector('[data-ui="form-page-layout"]')
-            const aside = document.querySelector('[data-ui="form-page-aside"]')
-            const available = workspace.getBoundingClientRect().width
-            const width = aside.getBoundingClientRect().width
-            return { atLeast32Rem: width >= 512, oneThird: Math.abs(width / available - 1 / 3) <= 0.01 }
+            const layout = document.querySelector('[data-ui="record-page-layout"]')
+            const body = document.querySelector('[data-ui="record-page-body"]').getBoundingClientRect()
+            const aside = document.querySelector('[data-ui="record-page-aside"]').getBoundingClientRect()
+            const rail = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--kv-right-rail-width')) *
+              Number.parseFloat(getComputedStyle(document.documentElement).fontSize)
+            const [bodyTrack, railTrack] = getComputedStyle(layout).gridTemplateColumns.split(' ').map(Number.parseFloat)
+            return {
+              railTrack: Math.abs(railTrack - rail) <= 1,
+              bodyCapped: bodyTrack + railTrack < layout.getBoundingClientRect().width - 1,
+              asideBeside: aside.left >= body.right - 1,
+              collaborationInBody: ['[data-ui="chatter"]', '[data-ui="activity-record"]']
+                .every((hook) => document.querySelector(hook)?.closest('[data-ui="record-page-body"]')),
+              noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth,
+            }
           })()`,
         ),
-        { atLeast32Rem: true, oneThird: true },
+        {
+          railTrack: true,
+          bodyCapped: true,
+          asideBeside: true,
+          collaborationInBody: true,
+          noHorizontalOverflow: true,
+        },
       )
       await cdp.send('Emulation.clearDeviceMetricsOverride')
       await navigate(cdp, `${e2e.baseUrl}${screen.path}`)
-      await waitFor(
-        cdp,
-        `document.querySelector('ket-island[data-island="product.editor"]')?.hidden === true`,
-      )
+      await waitFor(cdp, screen.ready)
       assert.deepEqual(
-        await evaluate(
+        await evaluate<Record<string, boolean | number>>(
           cdp,
-          `({
-            editorIdle: document.querySelector('ket-island[data-island="product.editor"]')?.hidden === true,
-            controllerCollapsed: document.querySelector('[data-ui="form-page-controller"]').getBoundingClientRect().height === 0,
-            bodyType: document.querySelectorAll('[data-ui="form-page-body"] [name="type"]').length,
-            bodyToggles: document.querySelectorAll('[data-ui="form-page-body"] input[type="checkbox"]').length,
-            gridRowsAtLeast28: Array.from(document.querySelectorAll('[data-ui="form-page-body"] [data-ui="form-grid"] > [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            collaborationNarrower: document.querySelector('[data-ui="form-page-aside"]').getBoundingClientRect().width < document.querySelector('[data-ui="form-page-body"]').getBoundingClientRect().width,
-            noHeavyIdentity: !document.querySelector('[data-ui="record-thumbnail"], [data-ui="record-kicker"], [data-ui="record-facts"], [data-ui="breadcrumbs"]'),
-            businessUseFirst: (() => {
-              const field = document.querySelector('#product-detail-form [data-ui="form-field"]')
-              return field?.getAttribute('data-kind') === 'checkbox-group' &&
-                JSON.stringify([...field.querySelectorAll('input[type="checkbox"]')].map((input) => input.name)) ===
-                  JSON.stringify(['saleOk', 'purchaseOk', 'isStorable'])
-            })()
-          })`,
+          `(() => {
+            const form = document.querySelector('[data-ui="record-page-body"] form#product-record')
+            return {
+              saves: document.querySelectorAll('button[type="submit"][form="product-record"][value="save"], #product-record button[type="submit"][value="save"]').length,
+              businessUse: ['saleOk', 'purchaseOk', 'isStorable'].every((name) => form?.querySelector('input[type="checkbox"][name="' + name + '"]')),
+              fieldsAtLeast28: [...form.querySelectorAll('[data-ui="field"]')].every((field) => field.getBoundingClientRect().height >= 28),
+              noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth,
+            }
+          })()`,
         ),
-        {
-          editorIdle: true,
-          controllerCollapsed: true,
-          bodyType: 2,
-          bodyToggles: 3,
-          gridRowsAtLeast28: true,
-          collaborationNarrower: true,
-          noHeavyIdentity: true,
-          businessUseFirst: true,
-        },
+        { saves: 1, businessUse: true, fieldsAtLeast28: true, noHorizontalOverflow: true },
       )
+      // Saving reads the record again in place: the collaboration islands and the shell stay.
       await evaluate(
         cdp,
         `(() => {
           globalThis.__productSaveNodes = {
-            chatter: document.querySelector('ket-island[data-island="mail.chatter"]'),
-            activity: document.querySelector('ket-island[data-island="activity.record"]'),
+            chatter: document.querySelector('[data-island="mail.chatter"]'),
+            activity: document.querySelector('[data-island="activity.record"]'),
             sidebar: document.querySelector('[data-ui="sidebar-foot"]')
           }
-          document.querySelector('form[data-scope="product-detail"]').requestSubmit()
+          document.querySelector('button[type="submit"][form="product-record"][value="save"], #product-record button[type="submit"][value="save"]').click()
           return true
         })()`,
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="form-page-controller"] [data-ui="notice"][data-tone="positive"]')`,
+        `document.querySelector('[data-ui="record-page"] [data-ui="notice"][data-tone="positive"]')`,
       )
       assert.deepEqual(
         await evaluate(
           cdp,
           `({
-            chatter: globalThis.__productSaveNodes.chatter === document.querySelector('ket-island[data-island="mail.chatter"]'),
-            activity: globalThis.__productSaveNodes.activity === document.querySelector('ket-island[data-island="activity.record"]'),
-            sidebar: globalThis.__productSaveNodes.sidebar === document.querySelector('[data-ui="sidebar-foot"]'),
-            formReady: Boolean(document.querySelector('form[data-scope="product-detail"]:not([aria-busy="true"])')),
-            editorVisible: document.querySelector('ket-island[data-island="product.editor"]')?.hidden === false
+            chatter: Boolean(globalThis.__productSaveNodes.chatter) &&
+              globalThis.__productSaveNodes.chatter === document.querySelector('[data-island="mail.chatter"]'),
+            activity: Boolean(globalThis.__productSaveNodes.activity) &&
+              globalThis.__productSaveNodes.activity === document.querySelector('[data-island="activity.record"]'),
+            sidebar: Boolean(globalThis.__productSaveNodes.sidebar) &&
+              globalThis.__productSaveNodes.sidebar === document.querySelector('[data-ui="sidebar-foot"]'),
+            formReady: Boolean(document.querySelector('form#product-record:not([aria-busy="true"])'))
           })`,
         ),
-        { chatter: true, activity: true, sidebar: true, formReady: true, editorVisible: true },
+        { chatter: true, activity: true, sidebar: true, formReady: true },
       )
 
       await evaluate(cdp, `document.querySelector('[data-ui="chatter-kind"][data-kind="comment"]').click()`)
@@ -1414,18 +1413,19 @@ try {
       await waitFor(cdp, `document.querySelector('form[data-scope="product-variant"]')`)
       await waitFor(
         cdp,
-        `document.querySelector('ket-island[data-island="product.editor"]')?.hidden === true`,
+        `document.querySelector('ket-island[data-island="product.editor"] [data-record-save-status]')?.hidden === true`,
       )
       assert.deepEqual(
         await evaluate(
           cdp,
           `({
-            editorIdle: document.querySelector('ket-island[data-island="product.editor"]')?.hidden === true,
+            editorIdle: document.querySelector('ket-island[data-island="product.editor"] [data-record-save-status]')?.hidden === true,
             controllerCollapsed: document.querySelector('[data-ui="form-page-controller"]').getBoundingClientRect().height === 0,
             tabs: document.querySelectorAll('[data-ui="form-page-navigation"] [data-ui="tab"]').length,
             gridRowsAtLeast28: Array.from(document.querySelectorAll('[data-ui="form-page-body"] [data-ui="form-grid"] > [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
             collaborationNarrower: document.querySelector('[data-ui="form-page-aside"]').getBoundingClientRect().width < document.querySelector('[data-ui="form-page-body"]').getBoundingClientRect().width,
-            noHeavyIdentity: !document.querySelector('[data-ui="record-thumbnail"], [data-ui="record-kicker"], [data-ui="record-facts"], [data-ui="breadcrumbs"]'),
+            noHeavyIdentity: !document.querySelector('[data-ui="record-thumbnail"], [data-ui="record-kicker"], [data-ui="record-facts"]'),
+            trailFromFrame: document.querySelectorAll('[data-ui="form-page-context"] [data-ui="breadcrumbs"]').length === 1,
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
@@ -1436,6 +1436,7 @@ try {
           gridRowsAtLeast28: true,
           collaborationNarrower: true,
           noHeavyIdentity: true,
+          trailFromFrame: true,
           horizontalOverflow: false,
         },
       )
@@ -1463,7 +1464,7 @@ try {
             activity: globalThis.__variantSaveNodes.activity === document.querySelector('ket-island[data-island="activity.record"]'),
             sidebar: globalThis.__variantSaveNodes.sidebar === document.querySelector('[data-ui="sidebar-foot"]'),
             formReady: Boolean(document.querySelector('form[data-scope="product-variant"]:not([aria-busy="true"])')),
-            editorVisible: document.querySelector('ket-island[data-island="product.editor"]')?.hidden === false
+            editorVisible: document.querySelector('ket-island[data-island="product.editor"] [data-record-save-status]')?.hidden === false
           })`,
         ),
         { chatter: true, activity: true, sidebar: true, formReady: true, editorVisible: true },
@@ -1471,59 +1472,47 @@ try {
     }
     if (screen.name === 'product-attributes') {
       assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-            cards: document.querySelectorAll('[data-ui="content-card"]').length,
-            createFieldsAtLeast28: Array.from(document.querySelectorAll('#product-attribute-create [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            valueFieldsAtLeast28: Array.from(document.querySelectorAll('form[data-scope="product-attribute-value"] [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
         {
-          cards: 3,
-          createFieldsAtLeast28: true,
-          valueFieldsAtLeast28: true,
-          chatter: false,
-          horizontalOverflow: false,
+          ...(await createModalLayout(cdp, 'product.attribute')),
+          rows: await evaluate(cdp, `document.querySelectorAll('[data-ui="kt-row"]').length`),
         },
+        { recordModal: true, fieldsAtLeast28: true, chatter: false, horizontalOverflow: false, rows: 3 },
       )
-      await evaluate(
-        cdp,
-        `(() => {
-          const form = document.querySelector('#product-attribute-create')
-          form.querySelector('[name="name"]').value = 'Hoàn thiện'
-          form.querySelector('[name="sequence"]').value = '20'
-          form.querySelector('[name="displayType"]').value = 'pills'
-          form.querySelector('[name="createVariant"]').value = 'no_variant'
-          form.requestSubmit()
-          return true
-        })()`,
-      )
+      await submitRecordForm(cdp, 'product.attribute', { name: 'Hoàn thiện', createVariant: 'no_variant' })
+      // The modal closes and the list, read again, carries the new attribute.
       await waitFor(
         cdp,
-        `[...document.querySelectorAll('[data-ui="card-title"]')].some((title) => title.textContent.includes('Hoàn thiện'))`,
+        `!new URLSearchParams(location.search).has('record') && [...document.querySelectorAll('[data-ui="kt-row"]')].some((row) => row.textContent.includes('Hoàn thiện'))`,
       )
-      assert.equal(await evaluate(cdp, `document.querySelectorAll('[data-ui="content-card"]').length`), 4)
+      assert.equal(await evaluate(cdp, `document.querySelectorAll('[data-ui="kt-row"]').length`), 4)
     }
     if (screen.name === 'product-favorite') {
+      // Saving a view opens over the list it saves, inside the content slot, and returns to it.
       assert.deepEqual(
         await evaluate(
           cdp,
-          `({
-            formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-            fields: document.querySelectorAll('#product-favorite-create-form [data-ui="form-field"]').length,
-            returnTo: document.querySelector('#product-favorite-create-form [name="returnTo"]')?.value,
-            cancelPath: document.querySelector('[data-ui="form-page-actions"] a')?.getAttribute('href'),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
+          `(() => {
+            const modal = document.querySelector('[data-route-modal="true"]')
+            const form = modal.querySelector('#product-favorite-create-form')
+            const sheet = modal.querySelector('[data-ui="modal-sheet"]').getBoundingClientRect()
+            return {
+              inContent: Boolean(modal.closest('[data-ket-slot="backend.content"]')),
+              visible: sheet.width > 0 && sheet.height > 0,
+              fields: form.querySelectorAll('[data-ui="form-field"]').length,
+              returnTo: form.querySelector('[name="returnTo"]')?.value,
+              closePath: modal.querySelector('[data-ui="modal-close"]')?.getAttribute('href'),
+              cancelPath: modal.querySelector('a[data-ui="action"]')?.getAttribute('href'),
+              chatter: Boolean(document.querySelector('[data-island="mail.chatter"]')),
+              horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
+            }
+          })()`,
         ),
         {
-          formPage: true,
+          inContent: true,
+          visible: true,
           fields: 2,
-          returnTo: '/admin/product/templates?q=OPS',
+          returnTo: '/admin/product/templates?q=OPS&lang=vi',
+          closePath: '/admin/product/templates?q=OPS&lang=vi',
           cancelPath: '/admin/product/templates?q=OPS&lang=vi',
           chatter: false,
           horizontalOverflow: false,
@@ -1534,18 +1523,25 @@ try {
       assert.deepEqual(
         await evaluate(
           cdp,
-          `({
-            typeRadios: document.querySelectorAll('#product-create-form [name="type"][type="radio"]').length,
-            headerToggles: document.querySelectorAll('[data-ui="form-page-meta"] [data-ui="record-toggle-input"][form="product-create-form"]').length,
-            gridRowsAtLeast28: Array.from(document.querySelectorAll('#product-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
+          `(() => {
+            const form = document.querySelector('[data-ui="record-page-body"] form#product-record')
+            return {
+              noRail: !document.querySelector('[data-ui="record-page-aside"]'),
+              type: Boolean(form.querySelector('[name="type"]')),
+              businessUse: ['saleOk', 'purchaseOk', 'isStorable'].every((name) => form.querySelector('input[type="checkbox"][name="' + name + '"]')),
+              creates: document.querySelectorAll('button[type="submit"][form="product-record"][value="create"], #product-record button[type="submit"][value="create"]').length,
+              fieldsAtLeast28: [...form.querySelectorAll('[data-ui="field"]')].every((field) => field.getBoundingClientRect().height >= 28),
+              chatter: Boolean(document.querySelector('[data-island="mail.chatter"]')),
+              horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
+            }
+          })()`,
         ),
         {
-          typeRadios: 2,
-          headerToggles: 3,
-          gridRowsAtLeast28: true,
+          noRail: true,
+          type: true,
+          businessUse: true,
+          creates: 1,
+          fieldsAtLeast28: true,
           chatter: false,
           horizontalOverflow: false,
         },
@@ -1553,58 +1549,70 @@ try {
       await evaluate(
         cdp,
         `(() => {
-          const form = document.querySelector('#product-create-form')
-          form.querySelector('[name="name"]').value = 'Sản phẩm Browser E2E'
-          form.querySelector('[name="uomId"]').value = 'unit'
-          form.querySelector('[name="listPrice"]').value = '320000'
-          form.querySelector('[name="description"]').value = 'Được tạo bằng trình duyệt headless.'
-          form.requestSubmit()
+          const form = document.querySelector('form#product-record')
+          for (const [name, value] of Object.entries({
+            name: 'Sản phẩm Browser E2E',
+            uomId: 'unit',
+            listPrice: '320000',
+            description: 'Được tạo bằng trình duyệt headless.',
+          })) {
+            const control = form.querySelector('[name="' + name + '"]')
+            control.value = value
+            control.dispatchEvent(new Event('input', { bubbles: true }))
+            control.dispatchEvent(new Event('change', { bubbles: true }))
+          }
+          document.querySelector('button[type="submit"][form="product-record"][value="create"], #product-record button[type="submit"][value="create"]').click()
           return true
         })()`,
       )
+      // The new product opens as its own page, with its collaboration.
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="form-page-title"]')?.textContent.includes('Sản phẩm Browser E2E') && document.querySelector('[data-ui="chatter"][data-state="ready"]')`,
+        `!location.pathname.endsWith('/new') && document.querySelector('[data-ui="record-page-title"]')?.textContent.includes('Sản phẩm Browser E2E') && document.querySelector('[data-ui="chatter"][data-state="ready"]')`,
       )
     }
     if (screen.name === 'inventory-adjustment') {
       assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-            productSelector: document.querySelector('#inventory-adjustment-form [name="productId"]')?.tagName === 'SELECT',
-            stockRowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            formRowsAtLeast28: Array.from(document.querySelectorAll('#inventory-adjustment-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
         {
-          workspace: true,
-          productSelector: true,
-          stockRowsAtLeastOne: true,
-          formRowsAtLeast28: true,
+          ...(await createModalLayout(cdp, 'stock.count')),
+          ...(await evaluate<Record<string, boolean>>(
+            cdp,
+            `({
+              listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
+              productSelector: ${recordForm('stock.count')}.querySelector('[name="productId"]')?.tagName === 'SELECT',
+              stockRowsAtLeastOne: document.querySelectorAll('[data-ui="kt-row"]').length >= 1
+            })`,
+          )),
+        },
+        {
+          recordModal: true,
+          fieldsAtLeast28: true,
           chatter: false,
           horizontalOverflow: false,
+          listPage: true,
+          productSelector: true,
+          stockRowsAtLeastOne: true,
         },
       )
-      await evaluate(
+      await submitRecordForm(
         cdp,
-        `(() => {
-          const form = document.querySelector('#inventory-adjustment-form')
-          form.querySelector('[name="productId"]').value = 'variant-collab'
-          form.querySelector('[name="locationId"]').value = 'wh:stock'
-          form.querySelector('[name="inventoryLocationId"]').value = 'inventory-adjustment'
-          form.querySelector('[name="productUomId"]').value = 'unit'
-          form.querySelector('[name="countedQuantity"]').value = '21'
-          form.requestSubmit()
-          return true
-        })()`,
+        'stock.count',
+        {
+          productId: 'variant-collab',
+          locationId: 'wh:stock',
+          countedQuantity: '21',
+          inventoryLocationId: 'inventory-adjustment',
+        },
+        'preview',
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="notice"][data-tone="positive"]')?.textContent.includes('Đã áp dụng kiểm kê') && document.querySelector('[data-ui="table"]')?.textContent.includes('21')`,
+        `${recordForm('stock.count')}?.querySelector('button[name="__command"][value="apply"]')`,
+      )
+      await submitRecordForm(cdp, 'stock.count', {}, 'apply')
+      await waitFor(
+        cdp,
+        `!new URLSearchParams(location.search).has('record') && document.querySelector('[data-ui="ket-table"]')?.textContent.includes('21')`,
       )
       assert.equal(
         await evaluate(cdp, `Boolean(document.querySelector('ket-island[data-island="mail.chatter"]'))`),
@@ -1617,10 +1625,10 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            source: document.querySelector('[data-ui="table"]')?.textContent.includes('Tồn kho'),
-            destination: document.querySelector('[data-ui="table"]')?.textContent.includes('Khách hàng'),
-            createLink: Boolean(document.querySelector('[data-ui="list-page-actions"] a[href*="/admin/stock/transfers/new"]')),
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            source: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Tồn kho'),
+            destination: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Khách hàng'),
+            createLink: Boolean(document.querySelector('[data-ui="list-page-actions"] a[href*="record=stock.transfer%3Anew"]')),
             inlineCreate: Boolean(document.querySelector('#transfer-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -1737,8 +1745,8 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/stock/warehouses/new"]')?.getAttribute('href') ?? '',
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=stock.warehouse%3Anew"]')?.getAttribute('href') ?? '',
             inlineForm: Boolean(document.querySelector('#warehouse-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -1747,7 +1755,7 @@ try {
         {
           listPage: true,
           rowsAtLeastOne: true,
-          createHref: '/admin/stock/warehouses/new?lang=vi',
+          createHref: '/admin/stock/warehouses?lang=vi&record=stock.warehouse%3Anew',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -1756,42 +1764,35 @@ try {
     }
     if (screen.name === 'warehouse-create') {
       assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-            formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-            receiptRadios: document.querySelectorAll('#warehouse-create-form [name="receptionSteps"]').length,
-            deliveryRadios: document.querySelectorAll('#warehouse-create-form [name="deliverySteps"]').length,
-            formRowsAtLeast28: Array.from(document.querySelectorAll('#warehouse-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
         {
-          formPage: true,
-          receiptRadios: 3,
-          deliveryRadios: 3,
-          formRowsAtLeast28: true,
+          ...(await createModalLayout(cdp, 'stock.warehouse')),
+          ...(await evaluate<Record<string, number | boolean>>(
+            cdp,
+            `({
+              receiptSteps: ${recordForm('stock.warehouse')}.querySelectorAll('[name="receptionSteps"] option').length,
+              deliverySteps: ${recordForm('stock.warehouse')}.querySelectorAll('[name="deliverySteps"] option').length
+            })`,
+          )),
+        },
+        {
+          recordModal: true,
+          fieldsAtLeast28: true,
           chatter: false,
           horizontalOverflow: false,
+          receiptSteps: 3,
+          deliverySteps: 3,
         },
       )
-      await evaluate(
-        cdp,
-        `(() => {
-          const form = document.querySelector('#warehouse-create-form')
-          form.querySelector('[name="name"]').value = 'Kho Browser'
-          form.querySelector('[name="code"]').value = 'BRW'
-          form.querySelector('[name="receptionSteps"][value="three_steps"]').checked = true
-          form.querySelector('[name="deliverySteps"][value="pick_pack_ship"]').checked = true
-          form.requestSubmit()
-          return true
-        })()`,
-      )
-      await waitFor(cdp, `location.pathname === '/admin/stock/warehouses'`)
+      await submitRecordForm(cdp, 'stock.warehouse', {
+        name: 'Kho Browser',
+        code: 'BRW',
+        receptionSteps: 'three_steps',
+        deliverySteps: 'pick_pack_ship',
+      })
+      await waitFor(cdp, openedRecord('stock.warehouse'))
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]')?.textContent.includes('Kho Browser') && document.querySelector('[data-ui="table"]')?.textContent.includes('BRW')`,
+        `document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Kho Browser') && document.querySelector('[data-ui="ket-table"]')?.textContent.includes('BRW')`,
       )
       assert.equal(
         await evaluate(cdp, `Boolean(document.querySelector('ket-island[data-island="mail.chatter"]'))`),
@@ -1804,9 +1805,9 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            completeName: document.querySelector('[data-ui="table"]')?.textContent.includes('Kho Thành Phẩm / Tồn kho'),
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/stock/locations/new"]')?.getAttribute('href') ?? '',
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            completeName: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Kho Thành Phẩm / Tồn kho'),
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=stock.location%3Anew"]')?.getAttribute('href') ?? '',
             inlineForm: Boolean(document.querySelector('#location-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -1816,7 +1817,7 @@ try {
           listPage: true,
           rowsAtLeastOne: true,
           completeName: true,
-          createHref: '/admin/stock/locations/new?lang=vi',
+          createHref: '/admin/stock/locations?lang=vi&record=stock.location%3Anew',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -1825,42 +1826,35 @@ try {
     }
     if (screen.name === 'location-create') {
       assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-            formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-            parentOptions: document.querySelectorAll('#location-create-form [name="parentId"] option').length > 1,
-            usageOptions: document.querySelectorAll('#location-create-form [name="usage"] option').length,
-            formRowsAtLeast28: Array.from(document.querySelectorAll('#location-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
         {
-          formPage: true,
-          parentOptions: true,
-          usageOptions: 7,
-          formRowsAtLeast28: true,
+          ...(await createModalLayout(cdp, 'stock.location')),
+          ...(await evaluate<Record<string, number | boolean>>(
+            cdp,
+            `({
+              parentOptions: ${recordForm('stock.location')}.querySelectorAll('[name="parentId"] option').length > 1,
+              usageOptions: ${recordForm('stock.location')}.querySelectorAll('[name="usage"] option').length
+            })`,
+          )),
+        },
+        {
+          recordModal: true,
+          fieldsAtLeast28: true,
           chatter: false,
           horizontalOverflow: false,
+          parentOptions: true,
+          usageOptions: 7,
         },
       )
-      await evaluate(
-        cdp,
-        `(() => {
-          const form = document.querySelector('#location-create-form')
-          form.querySelector('[name="name"]').value = 'Kệ A-01'
-          form.querySelector('[name="parentId"]').value = 'wh:stock'
-          form.querySelector('[name="usage"]').value = 'internal'
-          form.querySelector('[name="warehouseId"]').value = 'wh'
-          form.requestSubmit()
-          return true
-        })()`,
-      )
-      await waitFor(cdp, `location.pathname === '/admin/stock/locations'`)
+      await submitRecordForm(cdp, 'stock.location', {
+        name: 'Kệ A-01',
+        usage: 'internal',
+        parentId: 'wh:stock',
+        warehouseId: 'wh',
+      })
+      await waitFor(cdp, openedRecord('stock.location'))
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]')?.textContent.includes('Kho Thành Phẩm / Tồn kho / Kệ A-01')`,
+        `document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Kho Thành Phẩm / Tồn kho / Kệ A-01')`,
       )
       assert.equal(
         await evaluate(cdp, `Boolean(document.querySelector('ket-island[data-island="mail.chatter"]'))`),
@@ -1873,9 +1867,9 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            completeLocations: document.querySelector('[data-ui="table"]')?.textContent.includes('Kho Thành Phẩm / Tồn kho'),
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/stock/picking-types/new"]')?.getAttribute('href') ?? '',
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            completeLocations: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Kho Thành Phẩm / Tồn kho'),
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=stock.pickingType%3Anew"]')?.getAttribute('href') ?? '',
             inlineForm: Boolean(document.querySelector('#picking-type-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -1885,7 +1879,7 @@ try {
           listPage: true,
           rowsAtLeastOne: true,
           completeLocations: true,
-          createHref: '/admin/stock/picking-types/new?lang=vi',
+          createHref: '/admin/stock/picking-types?lang=vi&record=stock.pickingType%3Anew',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -1894,44 +1888,37 @@ try {
     }
     if (screen.name === 'operation-type-create') {
       assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-            formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-            codeRadios: document.querySelectorAll('#picking-type-create-form [name="code"]').length,
-            sourceOptions: document.querySelectorAll('#picking-type-create-form [name="defaultLocationSrcId"] option').length > 1,
-            formRowsAtLeast28: Array.from(document.querySelectorAll('#picking-type-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
         {
-          formPage: true,
-          codeRadios: 3,
-          sourceOptions: true,
-          formRowsAtLeast28: true,
+          ...(await createModalLayout(cdp, 'stock.pickingType')),
+          ...(await evaluate<Record<string, number | boolean>>(
+            cdp,
+            `({
+              codeOptions: ${recordForm('stock.pickingType')}.querySelectorAll('[name="code"] option').length,
+              sourceOptions: ${recordForm('stock.pickingType')}.querySelectorAll('[name="defaultLocationSrcId"] option').length > 1
+            })`,
+          )),
+        },
+        {
+          recordModal: true,
+          fieldsAtLeast28: true,
           chatter: false,
           horizontalOverflow: false,
+          codeOptions: 3,
+          sourceOptions: true,
         },
       )
-      await evaluate(
-        cdp,
-        `(() => {
-          const form = document.querySelector('#picking-type-create-form')
-          form.querySelector('[name="name"]').value = 'Điều chuyển Browser'
-          form.querySelector('[name="code"][value="internal"]').checked = true
-          form.querySelector('[name="warehouseId"]').value = 'wh'
-          form.querySelector('[name="defaultLocationSrcId"]').value = 'wh:stock'
-          form.querySelector('[name="defaultLocationDestId"]').value = 'wh:output'
-          form.querySelector('[name="createBackorder"]').value = 'ask'
-          form.requestSubmit()
-          return true
-        })()`,
-      )
-      await waitFor(cdp, `location.pathname === '/admin/stock/picking-types'`)
+      await submitRecordForm(cdp, 'stock.pickingType', {
+        name: 'Điều chuyển Browser',
+        code: 'internal',
+        warehouseId: 'wh',
+        defaultLocationSrcId: 'wh:stock',
+        defaultLocationDestId: 'wh:output',
+        createBackorder: 'ask',
+      })
+      await waitFor(cdp, openedRecord('stock.pickingType'))
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]')?.textContent.includes('Điều chuyển Browser')`,
+        `document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Điều chuyển Browser')`,
       )
       assert.equal(
         await evaluate(cdp, `Boolean(document.querySelector('ket-island[data-island="mail.chatter"]'))`),
@@ -1944,10 +1931,10 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            detailLink: Boolean(document.querySelector('[data-ui="table"] a[href*="/admin/stock/routes/"]')),
-            ruleCount: [...document.querySelectorAll('[data-ui="table"] [data-ui="row"]')].some((row) => /[1-9]/.test(row.lastElementChild?.textContent ?? '')),
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/stock/routes/new"]')?.getAttribute('href') ?? '',
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            detailLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href*="record=stock.route%3A"]')),
+            ruleCount: [...document.querySelectorAll('[data-ui="kt-row"] [data-col="ruleCount"]')].some((cell) => /[1-9]/.test(cell.textContent ?? '')),
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=stock.route%3Anew"]')?.getAttribute('href') ?? '',
             inlineForm: Boolean(document.querySelector('#stock-route-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -1958,7 +1945,7 @@ try {
           rowsAtLeastOne: true,
           detailLink: true,
           ruleCount: true,
-          createHref: '/admin/stock/routes/new?lang=vi',
+          createHref: '/admin/stock/routes?lang=vi&record=stock.route%3Anew',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -1990,7 +1977,7 @@ try {
           cdp,
           `({
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-            listVisible: document.querySelector('[data-ui="table"]')?.getBoundingClientRect().height > 0
+            listVisible: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.getBoundingClientRect().height > 0
           })`,
         ),
         { horizontalOverflow: false, listVisible: true },
@@ -2016,33 +2003,18 @@ try {
       })
     }
     if (screen.name === 'route-create') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-            formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-            formRowsAtLeast28: Array.from(document.querySelectorAll('#stock-route-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
-        { formPage: true, formRowsAtLeast28: true, chatter: false, horizontalOverflow: false },
-      )
-      await evaluate(
-        cdp,
-        `(() => {
-          const form = document.querySelector('#stock-route-create-form')
-          form.querySelector('[name="name"]').value = 'Tuyến Browser hai bước'
-          form.querySelector('[name="sequence"]').value = '15'
-          form.requestSubmit()
-          return true
-        })()`,
-      )
+      assert.deepEqual(await createModalLayout(cdp, 'stock.route'), {
+        recordModal: true,
+        fieldsAtLeast28: true,
+        chatter: false,
+        horizontalOverflow: false,
+      })
+      await submitRecordForm(cdp, 'stock.route', { name: 'Tuyến Browser hai bước', sequence: '15' })
+      await waitFor(cdp, openedRecord('stock.route'))
       await waitFor(
         cdp,
-        `location.pathname.startsWith('/admin/stock/routes/') && !location.pathname.endsWith('/new')`,
+        `document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Tuyến Browser hai bước')`,
       )
-      assert.equal(await evaluate(cdp, `Boolean(document.querySelector('[data-ui="form-page"]'))`), true)
     }
     if (screen.name === 'route-detail') {
       assert.deepEqual(
@@ -2052,9 +2024,9 @@ try {
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
             routeForm: Boolean(document.querySelector('#stock-route-detail-form[data-scope="stock-route"]')),
             ruleForm: Boolean(document.querySelector('#stock-route-rule-form[data-scope="stock-route-rule"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
             localizedRoute: document.body.textContent.includes('Nhận hàng trực tiếp'),
-            localizedRule: document.querySelector('[data-ui="table"]')?.textContent.includes('Cung ứng theo nhu cầu'),
+            localizedRule: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Cung ứng theo nhu cầu'),
             rawSelectionCode: /one_step|make_to_stock/.test(document.querySelector('[data-ui="form-page"]')?.textContent ?? ''),
             formRowsAtLeast28: Array.from(document.querySelectorAll('#stock-route-detail-form [data-ui="form-field"], #stock-route-rule-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
@@ -2167,11 +2139,11 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            forecast: document.querySelector('[data-ui="table"]')?.textContent.includes('Dự báo'),
-            proposal: Boolean(document.querySelector('[data-ui="table"] [data-ui="badge"][data-tone="warning"]')),
-            runAction: Boolean(document.querySelector('[data-ui="table"] form[action*="/admin/stock/replenishment/"]')),
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/stock/replenishment/new"]')?.getAttribute('href') ?? '',
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            forecast: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Dự báo'),
+            proposal: Boolean(document.querySelector('[data-ui="table"] [data-ui="badge"][data-tone="warning"], [data-ui="ket-table"] [data-ui="badge"][data-tone="warning"]')),
+            runAction: Boolean(document.querySelector('[data-ui="table"] form[action*="/admin/stock/replenishment/"], [data-ui="ket-table"] form[action*="/admin/stock/replenishment/"]')),
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=stock.replenishment%3Anew"]')?.getAttribute('href') ?? '',
             inlineForm: Boolean(document.querySelector('#replenishment-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -2183,7 +2155,7 @@ try {
           forecast: true,
           proposal: true,
           runAction: true,
-          createHref: '/admin/stock/replenishment/new?lang=vi',
+          createHref: '/admin/stock/replenishment?lang=vi&record=stock.replenishment%3Anew',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -2273,7 +2245,7 @@ try {
           cdp,
           `({
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-            listVisible: document.querySelector('[data-ui="table"]')?.getBoundingClientRect().height > 0
+            listVisible: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.getBoundingClientRect().height > 0
           })`,
         ),
         { horizontalOverflow: false, listVisible: true },
@@ -2305,12 +2277,12 @@ try {
         await evaluate(
           cdp,
           `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
+            dashboardPage: Boolean(document.querySelector('[data-ui="dashboard-page"]')),
             filterForm: Boolean(document.querySelector('#forecast-filter-form[data-scope="stock-forecast"]')),
             selectedProduct: document.querySelector('#forecast-filter-form [name="productId"]')?.value === 'variant-collab',
             selectedLocation: document.querySelector('#forecast-filter-form [name="locationId"]')?.value === 'wh:stock',
-            locationPrecedence: document.querySelector('[data-ui="record-workspace"]')?.textContent.includes('Vị trí: Tồn kho'),
-            result: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length === 1,
+            locationPrecedence: document.querySelector('[data-ui="dashboard-page"]')?.textContent.includes('Vị trí: Tồn kho'),
+            result: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length === 1,
             formula: document.body.textContent.includes('Tồn thực tế + sắp nhận − sắp xuất = tồn dự báo'),
             formRowsAtLeast28: Array.from(document.querySelectorAll('#forecast-filter-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
@@ -2318,7 +2290,7 @@ try {
           })`,
         ),
         {
-          workspace: true,
+          dashboardPage: true,
           filterForm: true,
           selectedProduct: true,
           selectedLocation: true,
@@ -2338,7 +2310,7 @@ try {
           cdp,
           `({
             empty: document.body.textContent.includes('Chưa chọn sản phẩm'),
-            table: Boolean(document.querySelector('[data-ui="table"]')),
+            table: Boolean(document.querySelector('[data-ui="table"], [data-ui="ket-table"]')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]'))
           })`,
         ),
@@ -2351,7 +2323,7 @@ try {
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'vi'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'vi'`,
       )
       await evaluate(cdp, `scrollTo(0, 0)`)
       if (!noArtifacts) await capture(cdp, join(forecastEvidenceDir, 'forecast-vi-desktop.png'))
@@ -2362,7 +2334,7 @@ try {
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'en'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'en'`,
       )
       assert.equal(await evaluate(cdp, `document.body.textContent.includes('Availability')`), true)
       await evaluate(cdp, `scrollTo(0, 0)`)
@@ -2380,7 +2352,7 @@ try {
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'vi'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'vi'`,
       )
       assert.deepEqual(
         await evaluate(
@@ -2388,7 +2360,7 @@ try {
           `({
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
             formRowsAtLeast28: Array.from(document.querySelectorAll('#forecast-filter-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            resultVisible: document.querySelector('[data-ui="table"]')?.getBoundingClientRect().height > 0
+            resultVisible: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.getBoundingClientRect().height > 0
           })`,
         ),
         { horizontalOverflow: false, formRowsAtLeast28: true, resultVisible: true },
@@ -2402,7 +2374,7 @@ try {
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'en'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'en'`,
       )
       assert.equal(
         await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
@@ -2424,8 +2396,8 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/sales/quotations/new"]')?.getAttribute('href'),
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=sale.order%3Anew"]')?.getAttribute('href'),
             inlineForm: Boolean(document.querySelector('#quotation-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -2434,7 +2406,7 @@ try {
         {
           listPage: true,
           rowsAtLeastOne: true,
-          createHref: '/admin/sales/quotations/new?lang=vi',
+          createHref: '/admin/sales/quotations?lang=vi&record=sale.order%3Anew',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -2498,7 +2470,7 @@ try {
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
             methodForm: Boolean(document.querySelector('form [name="action"][value="method"]')),
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="/admin/purchase/vendor-pricelists/new"]')?.getAttribute('href'),
+            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=purchase.vendorPrice%3Anew"]')?.getAttribute('href'),
             inlineCreate: Boolean(document.querySelector('#purchase-vendor-pricelist-create')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -2507,7 +2479,7 @@ try {
         {
           listPage: true,
           methodForm: true,
-          createHref: '/admin/purchase/vendor-pricelists/new?lang=vi',
+          createHref: '/admin/purchase/vendor-pricelists?lang=vi&record=purchase.vendorPrice%3Anew',
           inlineCreate: false,
           chatter: false,
           horizontalOverflow: false,
@@ -2542,18 +2514,20 @@ try {
         await evaluate(
           cdp,
           `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-            board: Boolean(document.querySelector('ket-island[data-island="crm.pipeline"]')),
-            metricsAtLeastOne: document.querySelectorAll('[data-ui="metric"]').length >= 1,
+            boardPage: Boolean(document.querySelector('[data-ui="board-page"]')),
+            board: Boolean(document.querySelector('[data-crm-board][role="region"]')),
+            summary: Boolean(document.querySelector('[data-ui="board-page-meta"]')?.textContent.trim()),
+            search: Boolean(document.querySelector('[data-ui="board-page"] form[role="search"]')),
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
         {
-          workspace: true,
+          boardPage: true,
           board: true,
-          metricsAtLeastOne: true,
+          summary: true,
+          search: true,
           listPage: false,
           formPage: false,
           horizontalOverflow: false,
@@ -2576,7 +2550,7 @@ try {
         ),
         {
           listPage: true,
-          createHref: '/admin/crm/cases/new?lang=vi&returnTo=%2Fadmin%2Fcrm%2Fcases%3Flang%3Dvi',
+          createHref: '/admin/crm/cases/new?lang=vi',
           inlineForm: false,
           columns: 0,
           chatter: false,
@@ -2589,22 +2563,25 @@ try {
       assert.deepEqual(
         await evaluate(
           cdp,
-          `({
-            formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-            fields: document.querySelectorAll('#crm-case-create-form [data-ui="form-field"]').length,
-            kind: document.querySelector('#crm-case-create-form [name="kind"]')?.value,
-            returnTo: document.querySelector('#crm-case-create-form [name="returnTo"]')?.value,
-            relationIslandsAtLeastFive: document.querySelectorAll('#crm-case-create-form ket-island[data-island="backend.relation-select"]').length >= 5,
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
+          `(() => {
+            const form = document.querySelector('[data-ui="record-page"] form#sales-create')
+            return {
+              recordPage: Boolean(form),
+              fields: ['name', 'kind', 'partnerId', 'contactName', 'phone', 'email', 'source', 'teamId'].every(
+                (name) => form?.querySelector('[name="' + name + '"]'),
+              ),
+              kind: form?.querySelector('[name="kind"]')?.value,
+              context: form?.querySelector('[name="context"]')?.value,
+              chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
+              horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
+            }
+          })()`,
         ),
         {
-          formPage: true,
-          fields: 15,
+          recordPage: true,
+          fields: true,
           kind: 'lead',
-          returnTo: '/admin/crm/cases?lang=vi',
-          relationIslandsAtLeastFive: true,
+          context: 'screen=lead-new&kind=lead&lang=vi',
           chatter: false,
           horizontalOverflow: false,
         },
@@ -2616,10 +2593,10 @@ try {
         await evaluate(
           cdp,
           `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
+            dashboardPage: Boolean(document.querySelector('[data-ui="dashboard-page"]')),
             metrics: document.querySelectorAll('[data-ui="metric"]').length,
-            createHref: document.querySelector('a[href*="/admin/sales/quotations/new"]')?.getAttribute('href'),
-            recentRowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
+            createHref: document.querySelector('a[href*="record=sale.order%3Anew"]')?.getAttribute('href'),
+            recentRowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
@@ -2627,9 +2604,9 @@ try {
           })`,
         ),
         {
-          workspace: true,
+          dashboardPage: true,
           metrics: 4,
-          createHref: '/admin/sales/quotations/new?lang=vi',
+          createHref: '/admin/sales/quotations?lang=vi&record=sale.order%3Anew',
           recentRowsAtLeastOne: true,
           listPage: false,
           formPage: false,
@@ -2644,9 +2621,9 @@ try {
         await evaluate(
           cdp,
           `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
+            dashboardPage: Boolean(document.querySelector('[data-ui="dashboard-page"]')),
             metrics: document.querySelectorAll('[data-ui="metric"]').length,
-            rfqHref: document.querySelector('a[href*="/admin/purchase/rfqs"][href*="#rfq-create-form"]')?.getAttribute('href'),
+            rfqHref: document.querySelector('a[href*="record=purchase.order%3Anew"]')?.getAttribute('href'),
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
@@ -2654,9 +2631,9 @@ try {
           })`,
         ),
         {
-          workspace: true,
+          dashboardPage: true,
           metrics: 5,
-          rfqHref: '/admin/purchase/rfqs?lang=vi#rfq-create-form',
+          rfqHref: '/admin/purchase/rfqs?lang=vi&record=purchase.order%3Anew',
           listPage: false,
           formPage: false,
           chatter: false,
@@ -2674,40 +2651,45 @@ try {
       })
       await navigate(cdp, `${e2e.baseUrl}${screen.path}`)
       await waitFor(cdp, screen.ready, 15_000)
-      await waitFor(cdp, `document.querySelector('ket-island[data-island="sale.editor"]')?.hidden === true`)
+      await waitFor(
+        cdp,
+        `document.querySelector('ket-island[data-island="sale.editor"] [data-record-save-status]')?.hidden === true`,
+      )
       assert.deepEqual(
         await evaluate(
           cdp,
           `(() => {
-            const workspace = document.querySelector('[data-ui="record-workspace"]')
-            const aside = document.querySelector('[data-ui="record-aside"]')
-            const gap = parseFloat(getComputedStyle(workspace).columnGap)
-            const available = workspace.getBoundingClientRect().width - gap
-            const width = aside.getBoundingClientRect().width
+            const layout = document.querySelector('[data-ui="record-page-layout"]')
+            const body = document.querySelector('[data-ui="record-page-body"]')
+            const aside = document.querySelector('[data-ui="record-page-aside"]')
+            const rail = getComputedStyle(layout).gridTemplateColumns.split(' ').at(-1)
             return {
-              workspace: Boolean(workspace),
+              recordPage: Boolean(layout),
               chatter: Boolean(document.querySelector('[data-ui="chatter"][data-state="ready"]')),
               activity: Boolean(document.querySelector('[data-ui="activity-record"][data-state="ready"]')),
-              lineRows: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length,
+              lineRows: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length,
               productSelector: document.querySelector('#sale-order-line-form [name="productId"]')?.tagName === 'SELECT',
               formRowsAtLeast28: Array.from(document.querySelectorAll('#sale-order-line-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-              editorIdle: document.querySelector('ket-island[data-island="sale.editor"]')?.hidden === true,
-              asideAtLeast32Rem: width >= 512,
-              asideOneThird: Math.abs(width / available - 1 / 3) <= 0.01,
+              editorIdle: document.querySelector('ket-island[data-island="sale.editor"] [data-record-save-status]')?.hidden === true,
+              asideRailWidth:
+                parseFloat(rail) ===
+                parseFloat(getComputedStyle(layout).getPropertyValue('--kv-right-rail-width')) *
+                  parseFloat(getComputedStyle(document.documentElement).fontSize),
+              asideBesideBody: aside.getBoundingClientRect().left >= body.getBoundingClientRect().right - 1,
               horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
             }
           })()`,
         ),
         {
-          workspace: true,
+          recordPage: true,
           chatter: true,
           activity: true,
           lineRows: 1,
           productSelector: true,
           formRowsAtLeast28: true,
           editorIdle: true,
-          asideAtLeast32Rem: true,
-          asideOneThird: true,
+          asideRailWidth: true,
+          asideBesideBody: true,
           horizontalOverflow: false,
         },
       )
@@ -2723,7 +2705,7 @@ try {
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="record-controller"] [data-ui="notice"][data-tone="danger"]')`,
+        `document.querySelector('[data-ui="record-page-controller"] [data-ui="notice"][data-tone="danger"]')`,
       )
       await evaluate(
         cdp,
@@ -2743,7 +2725,7 @@ try {
       )
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="record-controller"] [data-ui="notice"][data-tone="positive"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 2`,
+        `document.querySelector('[data-ui="record-page-controller"] [data-ui="notice"][data-tone="positive"]') && document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 2`,
       )
       assert.deepEqual(
         await evaluate(
@@ -2794,7 +2776,7 @@ try {
           `({
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
             formRowsAtLeast28: Array.from(document.querySelectorAll('#sale-order-line-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatterBelowSheet: document.querySelector('[data-ui="record-aside"]').getBoundingClientRect().top >= document.querySelector('[data-ui="record-sheet"]').getBoundingClientRect().bottom
+            chatterBelowSheet: document.querySelector('[data-ui="record-page-aside"]').getBoundingClientRect().top >= document.querySelector('[data-ui="record-page-body"]').getBoundingClientRect().bottom
           })`,
         ),
         { horizontalOverflow: false, formRowsAtLeast28: true, chatterBelowSheet: true },
@@ -2826,17 +2808,17 @@ try {
         await evaluate(
           cdp,
           `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            customer: document.querySelector('[data-ui="table"]')?.textContent.includes('Trần Điều Phối'),
-            invoiceStatus: document.querySelector('[data-ui="table"]')?.textContent.includes('Chờ lập hoá đơn'),
-            detailLink: Boolean(document.querySelector('[data-ui="table"] a[href*="/admin/sales/orders/sales-order-collab"]')),
+            listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            customer: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Trần Điều Phối'),
+            invoiceStatus: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Chờ lập hoá đơn'),
+            detailLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href*="record=sale.order%3Asales-order-collab"]')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
         {
-          workspace: true,
+          listPage: true,
           rowsAtLeastOne: true,
           customer: true,
           invoiceStatus: true,
@@ -2851,15 +2833,15 @@ try {
       await navigate(cdp, `${e2e.baseUrl}/admin/sales/orders?lang=en`)
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'en'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'en'`,
       )
       assert.deepEqual(
         await evaluate(
           cdp,
           `({
-            title: document.body.textContent.includes('Confirmed sales orders'),
-            invoiceStatus: document.querySelector('[data-ui="table"]')?.textContent.includes('To Invoice'),
-            localizedLink: Boolean(document.querySelector('[data-ui="table"] a[href*="/admin/sales/orders/sales-order-collab?lang=en"]')),
+            title: document.querySelector('[data-ui="list-page-title"]')?.textContent.trim() === 'Sales Orders',
+            invoiceStatus: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('To Invoice'),
+            localizedLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href="/admin/sales/orders?lang=en&record=sale.order%3Asales-order-collab"]')),
             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
@@ -2877,14 +2859,14 @@ try {
       await navigate(cdp, `${e2e.baseUrl}/admin/sales/orders?lang=vi`)
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'vi'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'vi'`,
       )
       assert.deepEqual(
         await evaluate(
           cdp,
           `({
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-            tableVisible: document.querySelector('[data-ui="table"]')?.getBoundingClientRect().height > 0,
+            tableVisible: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.getBoundingClientRect().height > 0,
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]'))
           })`,
         ),
@@ -2896,7 +2878,7 @@ try {
       await navigate(cdp, `${e2e.baseUrl}/admin/sales/orders?lang=en`)
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'en'`,
+        `document.querySelector('[data-ui="table"], [data-ui="ket-table"]') && document.documentElement.lang === 'en'`,
       )
       assert.equal(
         await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
@@ -2913,61 +2895,57 @@ try {
       })
     }
     if (screen.name === 'sales-invoicing-policy') {
-      assert.deepEqual(
-        await evaluate(
+      const policyModal = async (lang: 'vi' | 'en') => {
+        await navigate(
           cdp,
-          `({
-            workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-            productSelect: document.querySelector('#invoicing-policy-form [name="templateId"]')?.tagName === 'SELECT',
-            radios: document.querySelectorAll('#invoicing-policy-form [name="invoicePolicy"][type="radio"]').length,
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            formRowsAtLeast28: Array.from(document.querySelectorAll('#invoicing-policy-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-            chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-          })`,
-        ),
+          `${e2e.baseUrl}/admin/sales/invoicing-policies?lang=${lang}&record=sale.invoicePolicy%3Anew`,
+        )
+        await waitFor(
+          cdp,
+          `${recordForm('sale.invoicePolicy')}?.querySelector('[name="templateId"]')?.getBoundingClientRect().height >= 28 && document.documentElement.lang === '${lang}'`,
+        )
+      }
+      assert.deepEqual(
         {
-          workspace: true,
+          ...(await createModalLayout(cdp, 'sale.invoicePolicy')),
+          ...(await evaluate<Record<string, number | boolean>>(
+            cdp,
+            `({
+              listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
+              productSelect: ${recordForm('sale.invoicePolicy')}.querySelector('[name="templateId"]')?.tagName === 'SELECT',
+              radios: ${recordForm('sale.invoicePolicy')}.querySelectorAll('[name="invoicePolicy"][type="radio"]').length,
+              rowsAtLeastOne: document.querySelectorAll('[data-ui="kt-row"]').length >= 1,
+              deliveredPolicy: document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Theo số lượng giao')
+            })`,
+          )),
+        },
+        {
+          recordModal: true,
+          fieldsAtLeast28: true,
+          chatter: false,
+          horizontalOverflow: false,
+          listPage: true,
           productSelect: true,
           radios: 2,
           rowsAtLeastOne: true,
-          formRowsAtLeast28: true,
-          chatter: false,
-          overflow: false,
+          deliveredPolicy: true,
         },
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.querySelector('[data-ui="table"]')?.textContent.includes('Theo số lượng giao')`,
-        ),
-        true,
       )
       await evaluate(cdp, `scrollTo(0, 0)`)
       if (!noArtifacts)
         await capture(cdp, join(invoicingPolicyEvidenceDir, 'invoicing-policy-vi-desktop.png'))
 
-      await navigate(cdp, `${e2e.baseUrl}/admin/sales/invoicing-policies?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('[data-ui="table"]') && document.documentElement.lang === 'en'`,
-      )
+      await policyModal('en')
       assert.deepEqual(
         await evaluate(
           cdp,
           `({
-            localized: document.body.textContent.includes('Policies by product') && document.querySelector('[data-ui="table"]')?.textContent.includes('Delivered quantities'),
-            action: document.querySelector('#invoicing-policy-form')?.getAttribute('action'),
-            productSelectVisible: document.querySelector('#invoicing-policy-form [name="templateId"]')?.getBoundingClientRect().width > 100,
+            localized: document.querySelector('[data-ui="list-page-title"]')?.textContent.trim() === 'Invoicing Policies' && document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Delivered quantities'),
+            productSelectVisible: ${recordForm('sale.invoicePolicy')}.querySelector('[name="templateId"]')?.getBoundingClientRect().width > 100,
             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
-        {
-          localized: true,
-          action: '/admin/sales/invoicing-policies?lang=en',
-          productSelectVisible: true,
-          overflow: false,
-        },
+        { localized: true, productSelectVisible: true, overflow: false },
       )
       await evaluate(cdp, `scrollTo(0, 0)`)
       if (!noArtifacts)
@@ -2979,857 +2957,17 @@ try {
         deviceScaleFactor: 1,
         mobile: true,
       })
-      await navigate(cdp, `${e2e.baseUrl}/admin/sales/invoicing-policies?lang=vi`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#invoicing-policy-form [name="templateId"]')?.getBoundingClientRect().height >= 28 && document.documentElement.lang === 'vi'`,
-      )
-      assert.equal(
-        await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-        false,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(invoicingPolicyEvidenceDir, 'invoicing-policy-vi-mobile.png'))
+      for (const lang of ['vi', 'en'] as const) {
+        await policyModal(lang)
+        assert.equal(
+          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
+          false,
+        )
+        await evaluate(cdp, `scrollTo(0, 0)`)
+        if (!noArtifacts)
+          await capture(cdp, join(invoicingPolicyEvidenceDir, `invoicing-policy-${lang}-mobile.png`))
+      }
 
-      await navigate(cdp, `${e2e.baseUrl}/admin/sales/invoicing-policies?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#invoicing-policy-form [name="templateId"]')?.getBoundingClientRect().height >= 28 && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-        false,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(invoicingPolicyEvidenceDir, 'invoicing-policy-en-mobile.png'))
-
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-overview') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-          workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-          cards: document.querySelectorAll('[data-ui="content-card"]').length,
-          operations: document.body.textContent.includes('Nghiệp vụ hằng ngày'),
-          chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-        })`,
-        ),
-        { workspace: true, cards: 11, operations: true, chatter: false, overflow: false },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(accountingOverviewEvidenceDir, 'overview-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelectorAll('[data-ui="content-card"]').length >= 10 && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Daily operations') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(accountingOverviewEvidenceDir, 'overview-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelectorAll('[data-ui="content-card"]').length >= 10 && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(accountingOverviewEvidenceDir, `overview-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-customer-invoice') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-          workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-          chatter: document.querySelectorAll('[data-ui="chatter-message"]').length >= 1,
-          activity: document.querySelectorAll('[data-ui="activity-item"]').length >= 1,
-          lineForm: Boolean(document.querySelector('#account-move-line-form')),
-          formRowsAtLeast28: Array.from(document.querySelectorAll('#account-move-line-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-        })`,
-        ),
-        {
-          workspace: true,
-          chatter: true,
-          activity: true,
-          lineForm: true,
-          formRowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts)
-        await capture(cdp, join(accountingInvoiceEvidenceDir, 'customer-invoice-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/customer-invoices/invoice-collab?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('[data-ui="chatter"][data-state="ready"]') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-        false,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts)
-        await capture(cdp, join(accountingInvoiceEvidenceDir, 'customer-invoice-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/customer-invoices/invoice-collab?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('[data-ui="chatter"][data-state="ready"]') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(accountingInvoiceEvidenceDir, `customer-invoice-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-vendor-bills') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-        form: Boolean(document.querySelector('#vendor-bill-create-form')),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#vendor-bill-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        { formPage: true, form: true, chatter: false, rowsAtLeast28: true, overflow: false },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(vendorBillsEvidenceDir, 'vendor-bills-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/vendor-bills/new?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#vendor-bill-create-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current vendor bills') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(vendorBillsEvidenceDir, 'vendor-bills-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/vendor-bills/new?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#vendor-bill-create-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts) await capture(cdp, join(vendorBillsEvidenceDir, `vendor-bills-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-customer-invoices') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-        form: Boolean(document.querySelector('#customer-invoice-create-form')),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#customer-invoice-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        { formPage: true, form: true, chatter: false, rowsAtLeast28: true, overflow: false },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts)
-        await capture(cdp, join(customerInvoicesEvidenceDir, 'customer-invoices-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/customer-invoices/new?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#customer-invoice-create-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current customer invoices') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts)
-        await capture(cdp, join(customerInvoicesEvidenceDir, 'customer-invoices-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/customer-invoices/new?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#customer-invoice-create-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(customerInvoicesEvidenceDir, `customer-invoices-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-journal-entries') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        list: Boolean(document.querySelector('[data-ui="list-page"]')),
-        modal: Boolean(document.querySelector('[data-ui="modal-layer"]')),
-        form: Boolean(document.querySelector('#journal-entry-create-form')),
-        entry: document.querySelector('[data-ui="table"]')?.textContent.includes('journal-entry-collab'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#journal-entry-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          list: true,
-          modal: true,
-          form: true,
-          entry: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(journalEntriesEvidenceDir, 'journal-entries-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/entries?lang=en&create=1`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#journal-entry-create-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current journal entries') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(journalEntriesEvidenceDir, 'journal-entries-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/entries?lang=${lang}&create=1`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#journal-entry-create-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(journalEntriesEvidenceDir, `journal-entries-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-payments') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#payment-register-form')),
-        payment: document.querySelector('[data-ui="table"]')?.textContent.includes('PAY/COLLAB/2026'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#payment-register-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        { workspace: true, form: true, payment: true, chatter: false, rowsAtLeast28: true, overflow: false },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(paymentsEvidenceDir, 'payments-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/payments?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#payment-register-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Recorded payments') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(paymentsEvidenceDir, 'payments-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/payments?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#payment-register-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts) await capture(cdp, join(paymentsEvidenceDir, `payments-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-chart-of-accounts') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#account-create-form')),
-        account: document.querySelector('[data-ui="table"]')?.textContent.includes('131'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#account-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        { workspace: true, form: true, account: true, chatter: false, rowsAtLeast28: true, overflow: false },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(accountsEvidenceDir, 'chart-of-accounts-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/accounts?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#account-create-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current chart of accounts') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(accountsEvidenceDir, 'chart-of-accounts-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/accounts?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#account-create-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(accountsEvidenceDir, `chart-of-accounts-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-journals') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#journal-create-form')),
-        journal: document.querySelector('[data-ui="table"]')?.textContent.includes('BNK'),
-        accountLabel: document.querySelector('[data-ui="table"]')?.textContent.includes('1121'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#journal-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          workspace: true,
-          form: true,
-          journal: true,
-          accountLabel: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(journalsEvidenceDir, 'journals-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/journals?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#journal-create-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current journals') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(journalsEvidenceDir, 'journals-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/journals?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#journal-create-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts) await capture(cdp, join(journalsEvidenceDir, `journals-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-taxes') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#tax-create-form')),
-        tax: document.querySelector('[data-ui="table"]')?.textContent.includes('VAT 10%'),
-        amountLabel: document.querySelector('#tax-create-form')?.textContent.includes('Số tiền / tỷ lệ'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#tax-create-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          workspace: true,
-          form: true,
-          tax: true,
-          amountLabel: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(taxesEvidenceDir, 'taxes-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/taxes?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#tax-create-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current taxes') && document.querySelector('#tax-create-form')?.textContent.includes('Amount / rate') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(taxesEvidenceDir, 'taxes-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/taxes?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#tax-create-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts) await capture(cdp, join(taxesEvidenceDir, `taxes-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-payment-terms') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-        termForm: Boolean(document.querySelector('#payment-term-create-form')),
-        lineForm: Boolean(document.querySelector('#payment-term-line-form')),
-        term: document.querySelector('[data-ui="table"]')?.textContent.includes('30 ngày'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#payment-term-line-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          listPage: true,
-          termForm: false,
-          lineForm: true,
-          term: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(paymentTermsEvidenceDir, 'payment-terms-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/terms?lang=en&line=1`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#payment-term-line-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Current payment terms') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(paymentTermsEvidenceDir, 'payment-terms-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/terms?lang=${lang}&line=1`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#payment-term-line-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(paymentTermsEvidenceDir, `payment-terms-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-trial-balance') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#trial-balance-filter-form')),
-        rows: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-        totals: document.querySelector('[data-ui="record-facts"]')?.textContent.includes('Tổng Nợ'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#trial-balance-filter-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          workspace: true,
-          form: true,
-          rows: true,
-          totals: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(trialBalanceEvidenceDir, 'trial-balance-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/trial-balance?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#trial-balance-filter-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Balances by account') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(trialBalanceEvidenceDir, 'trial-balance-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/accounting/trial-balance?lang=${lang}`)
-        await waitFor(
-          cdp,
-          `document.querySelector('#trial-balance-filter-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(trialBalanceEvidenceDir, `trial-balance-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-general-ledger') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#general-ledger-filter-form')),
-        rows: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-        entry: document.querySelector('[data-ui="table"]')?.textContent.includes('Khách hàng thanh toán một phần'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#general-ledger-filter-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          workspace: true,
-          form: true,
-          rows: true,
-          entry: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(generalLedgerEvidenceDir, 'general-ledger-vi-desktop.png'))
-      await navigate(
-        cdp,
-        `${e2e.baseUrl}/admin/accounting/general-ledger?accountId=account-bank-collab&lang=en`,
-      )
-      await waitFor(
-        cdp,
-        `document.querySelector('#general-ledger-filter-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Account movements') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(generalLedgerEvidenceDir, 'general-ledger-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(
-          cdp,
-          `${e2e.baseUrl}/admin/accounting/general-ledger?accountId=account-bank-collab&lang=${lang}`,
-        )
-        await waitFor(
-          cdp,
-          `document.querySelector('#general-ledger-filter-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(generalLedgerEvidenceDir, `general-ledger-${lang}-mobile.png`))
-      }
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1100,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-    }
-    if (screen.name === 'accounting-partner-ledger') {
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `({
-        workspace: Boolean(document.querySelector('[data-ui="record-workspace"]')),
-        form: Boolean(document.querySelector('#partner-ledger-filter-form')),
-        rows: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-        movement: document.querySelector('[data-ui="table"]')?.textContent.includes('Khách hàng thanh toán một phần'),
-        chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-        rowsAtLeast28: Array.from(document.querySelectorAll('#partner-ledger-filter-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-      })`,
-        ),
-        {
-          workspace: true,
-          form: true,
-          rows: true,
-          movement: true,
-          chatter: false,
-          rowsAtLeast28: true,
-          overflow: false,
-        },
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(partnerLedgerEvidenceDir, 'partner-ledger-vi-desktop.png'))
-      await navigate(cdp, `${e2e.baseUrl}/admin/accounting/partner-statement?partnerId=member-party&lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#partner-ledger-filter-form') && document.documentElement.lang === 'en'`,
-      )
-      assert.equal(
-        await evaluate(
-          cdp,
-          `document.body.textContent.includes('Partner movements') && document.documentElement.scrollWidth === document.documentElement.clientWidth`,
-        ),
-        true,
-      )
-      await evaluate(cdp, `scrollTo(0, 0)`)
-      if (!noArtifacts) await capture(cdp, join(partnerLedgerEvidenceDir, 'partner-ledger-en-desktop.png'))
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(
-          cdp,
-          `${e2e.baseUrl}/admin/accounting/partner-statement?partnerId=member-party&lang=${lang}`,
-        )
-        await waitFor(
-          cdp,
-          `document.querySelector('#partner-ledger-filter-form') && document.documentElement.lang === '${lang}'`,
-        )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        await evaluate(cdp, `scrollTo(0, 0)`)
-        if (!noArtifacts)
-          await capture(cdp, join(partnerLedgerEvidenceDir, `partner-ledger-${lang}-mobile.png`))
-      }
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: 1440,
         height: 1100,
@@ -3843,10 +2981,10 @@ try {
           cdp,
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"]').length >= 1,
-            onHand: document.querySelector('[data-ui="table"]')?.textContent.includes('12'),
-            detailLink: Boolean(document.querySelector('[data-ui="table"] a[href*="/admin/stock/lots/lot-collab"]')),
-            createLink: Boolean(document.querySelector('[data-ui="list-page-actions"] a[href*="/admin/stock/lots/new"]')),
+            rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
+            onHand: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('12'),
+            detailLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href*="record=stock.lot%3Alot-collab"]')),
+            createLink: Boolean(document.querySelector('[data-ui="list-page-actions"] a[href*="record=stock.lot%3Anew"]')),
             inlineCreate: Boolean(document.querySelector('#lot-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -3889,8 +3027,8 @@ try {
           cdp,
           `({
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-            createVisible: document.querySelector('[data-ui="list-page-actions"] a[href*="/admin/stock/lots/new"]')?.getBoundingClientRect().height >= 28,
-            listVisible: document.querySelector('[data-ui="table"]')?.getBoundingClientRect().height > 0
+            createVisible: document.querySelector('[data-ui="list-page-actions"] a[href*="record=stock.lot%3Anew"]')?.getBoundingClientRect().height >= 28,
+            listVisible: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.getBoundingClientRect().height > 0
           })`,
         ),
         {
@@ -3920,99 +3058,83 @@ try {
       })
     }
     if (screen.name === 'lot-create') {
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 1280,
-        height: 900,
-        deviceScaleFactor: 1,
-        mobile: false,
-      })
-      await navigate(cdp, `${e2e.baseUrl}/admin/stock/lots/new?lang=vi`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#lot-create-form') && document.documentElement.lang === 'vi'`,
-      )
-      assert.deepEqual(
-        await evaluate(
-          cdp,
-          `(() => {
-            const form = document.querySelector('#lot-create-form')
-            const fields = [...form.querySelectorAll('[data-ui="form-field"]')]
-            return {
-              formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
-              productSelector: form.querySelector('[name="productId"]')?.tagName === 'SELECT',
-              productLabel: form.querySelector('[name="productId"]')?.textContent.includes('Áo khoác vận hành · OPS-JACKET'),
-              formRowsAtLeast28: fields.every((field) => field.getBoundingClientRect().height >= 28),
-              controlsWiderThanLabels: fields.every((field) => {
-                const label = field.querySelector(':scope > [data-ui="form-label"]')
-                const control = field.querySelector(':scope > [data-ui="form-control"]')
-                return !label || !control || control.getBoundingClientRect().width > label.getBoundingClientRect().width
-              }),
-              chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
-              horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
-            }
-          })()`,
-        ),
-        {
-          formPage: true,
-          productSelector: true,
-          productLabel: true,
-          formRowsAtLeast28: true,
-          controlsWiderThanLabels: true,
-          chatter: false,
-          horizontalOverflow: false,
-        },
-      )
-      if (!noArtifacts) await capture(cdp, join(lotEvidenceDir, 'lot-create-vi-compact-desktop.png'))
-
-      await navigate(cdp, `${e2e.baseUrl}/admin/stock/lots/new?lang=en`)
-      await waitFor(
-        cdp,
-        `document.querySelector('#lot-create-form') && document.documentElement.lang === 'en'`,
-      )
-      if (!noArtifacts) await capture(cdp, join(lotEvidenceDir, 'lot-create-en-compact-desktop.png'))
-
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 844,
-        deviceScaleFactor: 1,
-        mobile: true,
-      })
-      for (const lang of ['vi', 'en']) {
-        await navigate(cdp, `${e2e.baseUrl}/admin/stock/lots/new?lang=${lang}`)
+      const lotModal = async (lang: 'vi' | 'en') => {
+        await navigate(cdp, `${e2e.baseUrl}/admin/stock/lots?lang=${lang}&record=stock.lot%3Anew`)
         await waitFor(
           cdp,
-          `document.querySelector('#lot-create-form') && document.documentElement.lang === '${lang}'`,
+          `${recordForm('stock.lot')}?.querySelector('[name="name"]') && document.documentElement.lang === '${lang}'`,
         )
-        assert.equal(
-          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
-          false,
-        )
-        if (!noArtifacts) await capture(cdp, join(lotEvidenceDir, `lot-create-${lang}-mobile.png`))
       }
-
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: 1440,
         height: 1100,
         deviceScaleFactor: 1,
         mobile: false,
       })
-      await navigate(cdp, `${e2e.baseUrl}/admin/stock/lots/new?lang=vi`)
-      await waitFor(cdp, `document.querySelector('#lot-create-form')`)
-      await evaluate(
-        cdp,
-        `(() => {
-          const form = document.querySelector('#lot-create-form')
-          form.querySelector('[name="productId"]').value = 'variant-collab'
-          form.querySelector('[name="name"]').value = 'LOT/BROWSER/0085'
-          form.querySelector('[name="ref"]').value = 'BROWSER-REF-85'
-          form.querySelector('[name="note"]').value = 'Được tạo qua form riêng.'
-          form.requestSubmit()
-          return true
-        })()`,
+      await lotModal('vi')
+      assert.deepEqual(
+        {
+          ...(await createModalLayout(cdp, 'stock.lot')),
+          ...(await evaluate<Record<string, boolean>>(
+            cdp,
+            `(() => {
+              const form = ${recordForm('stock.lot')}
+              return {
+                productSelector: form.querySelector('[name="productId"]')?.tagName === 'SELECT',
+                productLabel: form.querySelector('[name="productId"]')?.textContent.includes('Áo khoác vận hành · OPS-JACKET'),
+                controlsWiderThanLabels: [...form.querySelectorAll('[data-ui="field"]')].every((field) => {
+                  const label = field.querySelector('[data-ui="field-label"]')
+                  const control = field.querySelector('[data-ui="field-control"]')
+                  return !label || !control || control.getBoundingClientRect().width > label.getBoundingClientRect().width
+                })
+              }
+            })()`,
+          )),
+        },
+        {
+          recordModal: true,
+          fieldsAtLeast28: true,
+          chatter: false,
+          horizontalOverflow: false,
+          productSelector: true,
+          productLabel: true,
+          controlsWiderThanLabels: true,
+        },
       )
+      if (!noArtifacts) await capture(cdp, join(lotEvidenceDir, 'lot-create-vi-compact-desktop.png'))
+      await lotModal('en')
+      if (!noArtifacts) await capture(cdp, join(lotEvidenceDir, 'lot-create-en-compact-desktop.png'))
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      })
+      for (const lang of ['vi', 'en'] as const) {
+        await lotModal(lang)
+        assert.equal(
+          await evaluate(cdp, `document.documentElement.scrollWidth > document.documentElement.clientWidth`),
+          false,
+        )
+        if (!noArtifacts) await capture(cdp, join(lotEvidenceDir, `lot-create-${lang}-mobile.png`))
+      }
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: 1440,
+        height: 1100,
+        deviceScaleFactor: 1,
+        mobile: false,
+      })
+      await lotModal('vi')
+      await submitRecordForm(cdp, 'stock.lot', {
+        productId: 'variant-collab',
+        name: 'LOT/BROWSER/0085',
+        ref: 'BROWSER-REF-85',
+        note: 'Được tạo qua form riêng.',
+      })
+      await waitFor(cdp, openedRecord('stock.lot'))
       await waitFor(
         cdp,
-        `document.querySelector('[data-ui="list-page"] [data-ui="table"]')?.textContent.includes('LOT/BROWSER/0085')`,
+        `document.querySelector('[data-ui="list-page"] [data-ui="ket-table"]')?.textContent.includes('LOT/BROWSER/0085')`,
       )
     }
     if (screen.name === 'lot-detail-chatter') {
@@ -4022,7 +3144,7 @@ try {
           `({
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
             aside: Boolean(document.querySelector('[data-ui="form-page-aside"]')),
-            editorIdle: document.querySelector('ket-island[data-island="stock.editor"]')?.hidden === true,
+            editorIdle: document.querySelector('ket-island[data-island="stock.editor"] [data-record-save-status]')?.hidden === true,
             formRowsAtLeast28: Array.from(document.querySelectorAll('#lot-detail-form [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
             collaborationNarrower: document.querySelector('[data-ui="form-page-aside"]').getBoundingClientRect().width < document.querySelector('[data-ui="form-page-body"]').getBoundingClientRect().width,
             collaborationAtLeast32rem: document.querySelector('[data-ui="form-page-aside"]').getBoundingClientRect().width >= 512,
@@ -4071,7 +3193,7 @@ try {
             chatter: globalThis.__lotSaveNodes.chatter === document.querySelector('ket-island[data-island="mail.chatter"]'),
             activity: globalThis.__lotSaveNodes.activity === document.querySelector('ket-island[data-island="activity.record"]'),
             sidebar: globalThis.__lotSaveNodes.sidebar === document.querySelector('[data-ui="sidebar-foot"]'),
-            editorVisible: document.querySelector('ket-island[data-island="stock.editor"]')?.hidden === false,
+            editorVisible: document.querySelector('ket-island[data-island="stock.editor"] [data-record-save-status]')?.hidden === false,
             savedReference: document.querySelector('#lot-detail-form [name="ref"]')?.value === 'NCC-LOT-84-BROWSER',
             formReady: document.querySelector('#lot-detail-form')?.getAttribute('aria-busy') !== 'true'
           })`,
@@ -4155,7 +3277,7 @@ try {
           `({
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
             aside: Boolean(document.querySelector('[data-ui="form-page-aside"]')),
-            editorIdle: document.querySelector('ket-island[data-island="stock.editor"]')?.hidden === true,
+            editorIdle: document.querySelector('ket-island[data-island="stock.editor"] [data-record-save-status]')?.hidden === true,
             formRowsAtLeast28: Array.from(document.querySelectorAll('form[data-scope="stock-transfer"] [data-ui="form-field"]')).every((field) => field.getBoundingClientRect().height >= 28),
             collaborationNarrower: document.querySelector('[data-ui="form-page-aside"]').getBoundingClientRect().width < document.querySelector('[data-ui="form-page-body"]').getBoundingClientRect().width,
             collaborationAboutThird: (() => {
@@ -4200,7 +3322,7 @@ try {
             chatter: globalThis.__transferActionNodes.chatter === document.querySelector('ket-island[data-island="mail.chatter"]'),
             activity: globalThis.__transferActionNodes.activity === document.querySelector('ket-island[data-island="activity.record"]'),
             sidebar: globalThis.__transferActionNodes.sidebar === document.querySelector('[data-ui="sidebar-foot"]'),
-            editorVisible: document.querySelector('ket-island[data-island="stock.editor"]')?.hidden === false,
+            editorVisible: document.querySelector('ket-island[data-island="stock.editor"] [data-record-save-status]')?.hidden === false,
             formReady: Array.from(document.querySelectorAll('form[data-scope="stock-transfer"]')).every((form) => form.getAttribute('aria-busy') !== 'true')
           })`,
         ),
@@ -4300,6 +3422,7 @@ try {
         deviceScaleFactor: 1,
         mobile: false,
       })
+    if (clock) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: clock.identifier })
   }
 
   if (!noArtifacts && !onlyScreen)

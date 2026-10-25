@@ -27,7 +27,7 @@ import {
 } from '../packages/ketsuite/src/modules/product_backend/modal/product-workspace-context.ts'
 
 const modules = [address, partner, company, uom, product, pricing, stock, account, sale, purchase]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = async <T = Row>(name: string, args: Record<string, unknown>, adapter: Adapter, at = scope) =>
   (await callFn(name, args, { adapter, manifest, scope: at })).value as T

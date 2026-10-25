@@ -16,10 +16,16 @@ export type RecordFormProps = {
   columns?: 2 | 3
   submitLabel: string
   submitVariant?: ActionVariant
+  /** Keep the fields editable while validation or a domain prerequisite prevents submission. */
+  submitDisabled?: boolean
+  /** Opt a full-page native form into the host unsaved-draft guard. */
+  unsavedPrompt?: string
+  /** A refused submission still contains an unsaved draft on first render. */
+  initialDraft?: boolean
   cancelHref?: string | null
   cancelLabel?: string | null
   errors?: readonly string[]
-  hidden?: Record<string, string>
+  hidden?: Record<string, string | readonly string[]>
   /** A GET filter form without a submit step: the runtime submits a choice at once and typed text after
    * a pause. The submit button stays only as a hidden default button, so Enter still applies at once. */
   applyOnInput?: boolean
@@ -52,17 +58,38 @@ export const FormGrid = (props: FormGridProps): TemplateResult => (
   </div>
 )
 
+export type FormActionsProps = {
+  /** The form's commands, the one Enter submits first: a native form submits its first submit button. */
+  actions: readonly JSXChild[]
+  label?: string | null
+}
+
+/**
+ * The record form's action row for a form whose `<form>` belongs to the caller, beside the groups that
+ * `FormGrid` lays out: a multi-step form whose step needs Back as well as Continue, say. It draws the same
+ * divider and alignment as `RecordForm`'s own row. Put the primary command first.
+ */
+export const FormActions = (props: FormActionsProps): TemplateResult => (
+  <div data-ui="form-actions">
+    <ActionGroup actions={props.actions} label={props.label} />
+  </div>
+)
+
 export const RecordForm = (props: RecordFormProps): TemplateResult => (
   <form
     data-ui="record-form"
+    data-unsaved-prompt={props.unsavedPrompt}
+    data-initial-draft={props.initialDraft ? 'true' : undefined}
     id={props.id ?? undefined}
     action={props.action}
     method={props.method ?? 'post'}
     data-apply={props.applyOnInput ? 'input' : undefined}
   >
-    {Object.entries(props.hidden ?? {}).map(([name, value]) => (
-      <input type="hidden" name={name} value={value} />
-    ))}
+    {Object.entries(props.hidden ?? {}).flatMap(([name, value]) =>
+      (typeof value === 'string' ? [value] : value).map((item) => (
+        <input type="hidden" name={name} value={item} />
+      )),
+    )}
     {!!props.errors?.length && (
       <ul data-ui="form-errors" role="alert">
         {each(
@@ -85,30 +112,29 @@ export const RecordForm = (props: RecordFormProps): TemplateResult => (
     </div>
     {props.applyOnInput && <button type="submit" hidden aria-label={props.submitLabel} />}
     {(!props.applyOnInput || !!props.cancelHref) && (
-      <div data-ui="form-actions">
-        <ActionGroup
-          actions={[
-            ...(props.applyOnInput
-              ? []
-              : [
-                  <Button
-                    label={props.submitLabel}
-                    variant={props.submitVariant ?? 'primary'}
-                    type="submit"
-                  />,
-                ]),
-            ...(props.cancelHref
-              ? [
-                  <LinkButton
-                    label={props.cancelLabel ?? 'Cancel'}
-                    href={props.cancelHref}
-                    variant="tertiary"
-                  />,
-                ]
-              : []),
-          ]}
-        />
-      </div>
+      <FormActions
+        actions={[
+          ...(props.applyOnInput
+            ? []
+            : [
+                <Button
+                  label={props.submitLabel}
+                  variant={props.submitVariant ?? 'primary'}
+                  type="submit"
+                  disabled={props.submitDisabled}
+                />,
+              ]),
+          ...(props.cancelHref
+            ? [
+                <LinkButton
+                  label={props.cancelLabel ?? 'Cancel'}
+                  href={props.cancelHref}
+                  variant="tertiary"
+                />,
+              ]
+            : []),
+        ]}
+      />
     )}
   </form>
 )

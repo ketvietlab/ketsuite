@@ -16,6 +16,7 @@ export function seedOperations(d) {
     Object.assign(f, {
       responses: 0,
       access: 'internal',
+      assigneeId: 'mai',
       assignee: 'Mai Anh',
       priority: 'normal',
       fields: [{ id: 'details', label: 'Chi tiết yêu cầu', type: 'textarea', required: true }],
@@ -35,7 +36,9 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
   if (!args.idempotencyKey) return fail('Thiếu khóa thao tác.')
   const key = d.company.id + ':operations:' + args.idempotencyKey
   if (replay.has(key)) return structuredClone(replay.get(key))
-  if (args.expectedRevision !== d.operationsRevision)
+  // Preferences and read notifications are the actor's own: no shared revision is checked or moved.
+  const personal = ['preferences.save', 'inbox.read'].includes(args.action)
+  if (!personal && args.expectedRevision !== d.operationsRevision)
     return {
       ok: true,
       value: {
@@ -74,8 +77,9 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
       )
     )
       return fail('Mỗi trường cần tên và kiểu dữ liệu, tối đa 12 trường.')
+    // The recipient is posted by id, as the native command takes it; the name is display only.
     const recipient = d.members.find(
-      (m) => m.name === args.assignee && m.status === 'active' && m.role !== 'guest',
+      (m) => m.id === args.assigneeId && m.status === 'active' && m.role !== 'guest',
     )
     if (!recipient || !accessFor(d, project, recipient.id).role)
       return fail('Chọn người tiếp nhận đang hoạt động trong dự án.', {
@@ -95,7 +99,8 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
       title: args.title.trim(),
       description: args.description ?? f.description ?? '',
       access: args.access,
-      assignee: args.assignee,
+      assigneeId: recipient.id,
+      assignee: recipient.name,
       priority: args.priority ?? f.priority ?? 'normal',
       fields: args.fields.map((x, i) => ({
         label: x.label.trim(),
@@ -130,7 +135,7 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
       title: args.title,
       description: f.fields.map((field) => `${field.label}: ${args.answers?.[field.id] ?? ''}`).join('\n'),
       projectId: f.projectId,
-      assignee: f.assignee,
+      assigneeIds: [f.assigneeId],
       priority: f.priority,
       idempotencyKey: args.idempotencyKey + ':task',
     })
@@ -212,7 +217,7 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
       notifications: args.notifications ?? d.personalPreferences.notifications,
     })
   } else return fail('Thao tác chưa được hỗ trợ.')
-  d.operationsRevision++
+  if (!personal) d.operationsRevision++
   const result = { ok: true, value }
   replay.set(key, structuredClone(result))
   return result

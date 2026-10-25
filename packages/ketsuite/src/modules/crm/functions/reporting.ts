@@ -1,6 +1,16 @@
 import { defineFn, from, inArray } from '@ketvietlab/ketjs'
-import type { FnSpec, Row } from '@ketvietlab/ketjs'
-import { addTimeline, canEditCase, invalid, issue, now, ownsKind, visibleCases } from '../operations.ts'
+import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
+import {
+  addTimeline,
+  canEditCase,
+  commandKey,
+  invalid,
+  issue,
+  now,
+  ownsKind,
+  visibleCases,
+} from '../operations.ts'
+import type { CrmResult } from '../operations.ts'
 import { INTERACTION_CHANNELS, INTERACTION_OUTCOMES, salesReport } from '../reporting.ts'
 import { caseReadEffects, caseWriteEffects, command, ensureCase } from './shared.ts'
 
@@ -90,60 +100,88 @@ export const reportingFunctions: Record<string, FnSpec> = {
     effects: [...caseWriteEffects],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const refusal = command(ctx, args.idempotencyKey)
-      if (refusal) return refusal
-      if (!INTERACTION_CHANNELS.includes(args.channel as never))
-        return invalid(issue('channel', 'crm.error.invalidInteraction'))
-      if (!INTERACTION_OUTCOMES.includes(args.outcome as never))
-        return invalid(issue('outcome', 'crm.error.invalidInteraction'))
-      return ctx.tx(async (tx) => {
-        const held = await ensureCase(tx, args.id)
-        if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
-        const eventId = `timeline:${args.id}:interaction:${args.idempotencyKey}`
-        const request = JSON.stringify([
-          tx.actor,
-          args.expectedVersion,
-          args.channel,
-          args.outcome,
-          args.occurredAt ?? null,
-          String(args.note ?? '').trim(),
-        ])
-        const previous = (await tx.db.select('crm.TimelineEntry', { id: eventId }))[0]
-        if (previous) {
-          const data = previous.metadata as Row
-          return data.request === request
-            ? { ok: true, id: args.id, version: Number(data.version) }
-            : invalid(issue('idempotencyKey', 'crm.error.interactionKeyConflict'))
-        }
-        const timestamp = now()
-        const occurredAt = String(args.occurredAt ?? timestamp)
-        if (
-          !Number.isFinite(Date.parse(occurredAt)) ||
-          Date.parse(occurredAt) < Date.parse(String(held.createdAt)) ||
-          Date.parse(occurredAt) > Date.parse(timestamp)
-        )
-          return invalid(issue('occurredAt', 'crm.error.invalidInteractionTime'))
-        const version = Number(held.version) + 1
-        const changed = await tx.db.compareAndSet(
-          'crm.Case',
-          { id: args.id },
-          { version: args.expectedVersion },
-          { version, updatedAt: timestamp },
-        )
-        if (!('dryRun' in changed) && !changed.matched)
-          return invalid(issue('version', 'crm.error.stageConflict'))
-        await addTimeline(tx, {
-          id: eventId,
-          caseId: String(args.id),
-          eventType: 'interaction',
-          body: String(args.note ?? '').trim() || 'crm.timeline.interaction',
-          customerVisible: false,
-          occurredAt,
-          metadata: { channel: args.channel, outcome: args.outcome, recordedAt: timestamp, request, version },
-        })
-        return { ok: true, id: args.id, version }
-      })
-    },
+    handler: (ctx, args) => logInteraction(ctx, args as unknown as InteractionInput),
   }),
+}
+
+export type InteractionInput = {
+  id: string
+  expectedVersion: number
+  channel: string
+  outcome: string
+  occurredAt?: string | null
+  note?: string | null
+  idempotencyKey: string
+}
+
+/**
+ * Logs one contact with a case (a call, a meeting) as a timeline entry and moves the case's version.
+ * `case.logInteraction` is this for a signed-in user; a module's job that writes a case as the system
+ * passes `actorRequired: false`, and `inTransaction` when it already holds the transaction the case
+ * was written in, as `saveCase` takes them.
+ */
+export async function logInteraction(
+  ctx: Ctx,
+  args: InteractionInput,
+  options: { actorRequired?: boolean; inTransaction?: boolean } = {},
+): Promise<CrmResult> {
+  const refusal =
+    options.actorRequired === false
+      ? commandKey(args.idempotencyKey)
+        ? null
+        : invalid(issue('idempotencyKey', 'crm.error.idempotencyRequired'))
+      : command(ctx, args.idempotencyKey)
+  if (refusal) return refusal
+  if (!INTERACTION_CHANNELS.includes(args.channel as never))
+    return invalid(issue('channel', 'crm.error.invalidInteraction'))
+  if (!INTERACTION_OUTCOMES.includes(args.outcome as never))
+    return invalid(issue('outcome', 'crm.error.invalidInteraction'))
+  const run = async (tx: Ctx): Promise<CrmResult> => {
+    const held = await ensureCase(tx, args.id)
+    if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
+    const eventId = `timeline:${args.id}:interaction:${args.idempotencyKey}`
+    const request = JSON.stringify([
+      tx.actor,
+      args.expectedVersion,
+      args.channel,
+      args.outcome,
+      args.occurredAt ?? null,
+      String(args.note ?? '').trim(),
+    ])
+    const previous = (await tx.db.select('crm.TimelineEntry', { id: eventId }))[0]
+    if (previous) {
+      const data = previous.metadata as Row
+      return data.request === request
+        ? { ok: true, id: args.id, version: Number(data.version) }
+        : invalid(issue('idempotencyKey', 'crm.error.interactionKeyConflict'))
+    }
+    const timestamp = now()
+    const occurredAt = String(args.occurredAt ?? timestamp)
+    if (
+      !Number.isFinite(Date.parse(occurredAt)) ||
+      Date.parse(occurredAt) < Date.parse(String(held.createdAt)) ||
+      Date.parse(occurredAt) > Date.parse(timestamp)
+    )
+      return invalid(issue('occurredAt', 'crm.error.invalidInteractionTime'))
+    const version = Number(held.version) + 1
+    const changed = await tx.db.compareAndSet(
+      'crm.Case',
+      { id: args.id },
+      { version: args.expectedVersion },
+      { version, updatedAt: timestamp },
+    )
+    if (!('dryRun' in changed) && !changed.matched)
+      return invalid(issue('version', 'crm.error.stageConflict'))
+    await addTimeline(tx, {
+      id: eventId,
+      caseId: String(args.id),
+      eventType: 'interaction',
+      body: String(args.note ?? '').trim() || 'crm.timeline.interaction',
+      customerVisible: false,
+      occurredAt,
+      metadata: { channel: args.channel, outcome: args.outcome, recordedAt: timestamp, request, version },
+    })
+    return { ok: true, id: args.id, version }
+  }
+  return options.inTransaction ? run(ctx) : ctx.tx(run)
 }

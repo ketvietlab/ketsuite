@@ -30,6 +30,7 @@ export const nightAuditScreen = (
     today: string
     preview?: NightAuditPreview
     runs: NightAuditRow[]
+    workbench?: TemplateResult
   },
   locale: string,
   frame: Frame,
@@ -103,6 +104,18 @@ export const nightAuditScreen = (
                 tone: 'neutral' as const,
               },
               {
+                id: 'room-nights',
+                label: _('hospitality_core.nightAudit.metric.roomNights'),
+                value: data.preview.roomNightCount ?? 0,
+                tone: 'neutral' as const,
+              },
+              {
+                id: 'held-arrivals',
+                label: _('hospitality_core.nightAudit.metric.heldArrivals'),
+                value: data.preview.heldCount ?? 0,
+                tone: 'neutral' as const,
+              },
+              {
                 id: 'services',
                 label: _('hospitality_core.nightAudit.metric.servicesDue'),
                 value: data.preview.serviceDue,
@@ -125,25 +138,27 @@ export const nightAuditScreen = (
             card={(item) => <Metric label={item.label} value={String(item.value)} tone={item.tone} />}
           />
         ) : null,
-        <Section
-          title={_('hospitality_core.nightAudit.section.run')}
-          description={_('hospitality_core.nightAudit.section.runHint')}
-          body={
-            <RecordForm
-              action="/admin/hospitality/night-audit"
-              method="post"
-              submit={_('hospitality_core.nightAudit.action.run')}
-              submitVariant="primary"
-              hidden={{
-                ...lang,
-                operation: 'request-night-audit',
-                propertyId: data.propertyId,
-                auditDate: data.auditDate,
-              }}
-              fields={[]}
-            />
-          }
-        />,
+        data.workbench ?? (
+          <Section
+            title={_('hospitality_core.nightAudit.section.run')}
+            description={_('hospitality_core.nightAudit.section.runHint')}
+            body={
+              <RecordForm
+                action="/admin/hospitality/night-audit"
+                method="post"
+                submit={_('hospitality_core.nightAudit.action.run')}
+                submitVariant="primary"
+                hidden={{
+                  ...lang,
+                  operation: 'request-night-audit',
+                  propertyId: data.propertyId,
+                  auditDate: data.auditDate,
+                }}
+                fields={[]}
+              />
+            }
+          />
+        ),
         <Section
           title={_('hospitality_core.nightAudit.section.history')}
           description={_('hospitality_core.nightAudit.section.historyHint')}

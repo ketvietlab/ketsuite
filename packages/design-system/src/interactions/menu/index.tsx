@@ -73,6 +73,12 @@ export type MenuProps = {
   selectionMode?: 'single' | 'multiple'
   /** Replaces the label inside the trigger — an icon, say. The label still names it. */
   trigger?: JSXChild
+  /**
+   * `plain` leaves the trigger without a frame, padding or fill: a bare hit
+   * area whose `trigger` content draws the face, such as an avatar or a tile
+   * matching its neighbours. Focus, open state and the panel stay the menu's.
+   */
+  triggerAppearance?: 'button' | 'plain'
   open?: boolean
   align?: 'start' | 'end'
   /** Optional alignment below 768px when page actions wrap to the leading edge. */
@@ -171,6 +177,7 @@ export const Menu = (props: MenuProps): TemplateResult => (
     data-align={props.align ?? 'start'}
     data-mobile-align={props.mobileAlign}
     data-size={props.size === 'compact' ? 'compact' : null}
+    data-trigger={props.triggerAppearance === 'plain' ? 'plain' : null}
     data-active={props.count ? 'true' : null}
     data-placement={props.placement ?? 'bottom'}
     open={props.open === true ? true : undefined}

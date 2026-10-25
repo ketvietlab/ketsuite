@@ -8,6 +8,9 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
   if (props.type === 'textarea')
     return (
       <textarea
+        on:input={props.onInput}
+        on:change={props.onChange}
+        on:blur={props.onBlur}
         data-ui="field-control"
         data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
         id={props.id}
@@ -39,6 +42,9 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
         : (options.find((option) => option.disabled !== true)?.value ?? null)
     return (
       <select
+        on:input={props.onInput}
+        on:change={props.onChange}
+        on:blur={props.onBlur}
         data-ui="field-control"
         data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
         id={props.id}
@@ -72,6 +78,9 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
   return (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-checked is emitted only for the checkbox branch.
     <input
+      on:input={props.onInput}
+      on:change={props.onChange}
+      on:blur={props.onBlur}
       data-ui="field-control"
       data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
       id={props.id}

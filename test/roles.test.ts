@@ -45,7 +45,7 @@ const shop = defineModule({
 })
 
 const boot = async () => {
-  const manifest = compose([shop])
+  const manifest = compose([shop], { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
@@ -113,7 +113,7 @@ test('allow: an empty list is a real restriction, not a missing one', async () =
 // ── the role model, and the whole thing running ──────────────────────────────
 
 test('legacy presets: exported audit helpers are the exact current User/Manager projection', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const catalogue = legacyPermissionCatalogue(manifest)
 
   assert.equal(

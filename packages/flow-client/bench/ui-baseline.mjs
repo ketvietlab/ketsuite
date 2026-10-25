@@ -24,6 +24,10 @@ const arg = (name, fallback) =>
 const SCALES = arg('scales', '1,4,16,40').split(',').map(Number)
 const ROUNDS = Number(arg('rounds', 7))
 const BASE = arg('base', '')
+const NATIVE = process.argv.includes('--native')
+const COMPANY = arg('company', 'demo'),
+  WORKSPACE = arg('workspace', 'product'),
+  PROJECT = arg('project', 'core')
 const TODAY = '2026-10-11'
 const ATLAS_HOLD_MS = 120
 const SCREENS = [
@@ -34,9 +38,11 @@ const SCREENS = [
   ['inbox', {}],
   ['issue', { record: 'KV-142', recordProvided: true }],
 ]
-const { createOrganizationSession } = await import(
-  arg('store', '') ? pathToFileURL(resolve(arg('store'))).href : '../atlas/organization-store.mjs'
-)
+const { createOrganizationSession } = NATIVE
+  ? {}
+  : await import(
+      arg('store', '') ? pathToFileURL(resolve(arg('store'))).href : '../atlas/organization-store.mjs'
+    )
 setFlowLocale('vi')
 
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]
@@ -132,7 +138,7 @@ async function screenCost(fixture, screen, props) {
 }
 
 const inProcess = []
-for (const k of SCALES) {
+for (const k of NATIVE ? [] : SCALES) {
   const fixture = createOrganizationSession('baseline', 'my-work', { profile: 'realistic', today: TODAY })
   const data = fixture.sessions.get('demo').data
   scale(data, k)
@@ -173,18 +179,42 @@ for (const k of SCALES) {
 
 let http = null
 if (BASE) {
+  let nativeCookie = ''
+  if (NATIVE) {
+    const password = process.env[arg('password-env', 'FLOW_BENCH_PASSWORD')]
+    if (!password) throw new Error('Native benchmark requires a test account password environment variable')
+    const login = await fetch(BASE + '/login', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: arg('login', 'owner'), password }),
+    })
+    if (login.status >= 400) throw new Error('Native benchmark shared login failed: ' + login.status)
+    nativeCookie = login.headers
+      .getSetCookie()
+      .map((cookie) => cookie.split(';')[0])
+      .join('; ')
+    if (!nativeCookie) throw new Error('Native benchmark shared login produced no session')
+  }
   const routes = [
     'my-work?company=demo&workspace=product&lang=vi',
     'all-issues?company=demo&workspace=product&lang=vi&group=status',
     'board?company=demo&workspace=product&lang=vi&project=core&group=status',
     'workspace-overview?company=demo&workspace=product&lang=vi',
-  ]
+  ].map((route) =>
+    NATIVE
+      ? route
+          .replace('company=demo', 'company=' + encodeURIComponent(COMPANY))
+          .replace('workspace=product', 'workspace=' + encodeURIComponent(WORKSPACE))
+          .replace('project=core', 'project=' + encodeURIComponent(PROJECT))
+      : route,
+  )
   const documents = []
   let first = ''
   for (const route of routes) {
     const cold = [],
       warm = []
-    let cookie = '',
+    let cookie = nativeCookie,
       bytes = 0,
       documentWire = 0
     for (let i = 0; i <= ROUNDS; i++) {
@@ -193,13 +223,15 @@ if (BASE) {
         headers: { 'accept-encoding': 'br, gzip', ...(cookie ? { cookie } : {}) },
       })
       const body = await res.text()
+      if (!res.ok || !body.includes('type="importmap"'))
+        throw new Error('Benchmark document unavailable: ' + res.status)
       ;(i ? warm : cold).push(performance.now() - t)
       cookie ||= (res.headers.get('set-cookie') ?? '').split(';')[0]
       bytes = Buffer.byteLength(body)
       documentWire = Number(res.headers.get('content-length') ?? bytes)
       first ||= body
     }
-    const session = JSON.parse(first.match(/id="flow-environment">([^<]+)</)[1]).session
+    const session = NATIVE ? null : JSON.parse(first.match(/id="flow-environment">([^<]+)</)[1]).session
     const reads = []
     let readBytes = 0,
       readWire = 0,
@@ -210,12 +242,36 @@ if (BASE) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-flow-fixture': session,
+          ...(NATIVE ? { cookie } : { 'x-flow-fixture': session }),
           'accept-encoding': 'gzip, br',
         },
-        body: JSON.stringify({ route: route.split('?')[0] }),
+        body: JSON.stringify({
+          route: route.split('?')[0],
+          ...(NATIVE
+            ? {
+                companyId: COMPANY,
+                workspaceId: WORKSPACE,
+                ...(route.startsWith('board?') ? { projectId: PROJECT } : {}),
+              }
+            : {}),
+        }),
       })
-      readBytes = Buffer.byteLength(await res.text())
+      const body = await res.text()
+      if (!res.ok) throw new Error('Benchmark collection unavailable: ' + res.status)
+      readBytes = Buffer.byteLength(body)
+      if (NATIVE && i === 0) {
+        const envelope = JSON.parse(body)
+        if (envelope.ok === false || envelope.value?.ok === false)
+          throw new Error('Native benchmark read refused')
+        const result = envelope.value
+        const view = await screenCost({ call: () => ({ ok: true, value: result }) }, route.split('?')[0], {
+          companyId: COMPANY,
+          workspaceId: WORKSPACE,
+          project: PROJECT,
+          serverShell: true,
+        })
+        inProcess.push(view)
+      }
       readWire = Number(res.headers.get('content-length') ?? readBytes)
       encoding = res.headers.get('content-encoding') ?? 'identity'
       reads.push(performance.now() - t)
@@ -227,7 +283,7 @@ if (BASE) {
       documentKB: kb(bytes),
       documentWireKB: kb(documentWire),
       bootstrapMedianMs: ms(median(reads)),
-      bootstrapLessHoldMs: ms(median(reads) - ATLAS_HOLD_MS),
+      ...(NATIVE ? {} : { bootstrapLessHoldMs: ms(median(reads) - ATLAS_HOLD_MS) }),
       bootstrapKB: kb(readBytes),
       bootstrapWireKB: kb(readWire),
       bootstrapEncoding: encoding,
@@ -246,7 +302,9 @@ if (BASE) {
   const files = new Map()
   const load = async (path) => {
     if (files.has(path)) return files.get(path)
-    const res = await fetch(BASE + path, { headers: { 'accept-encoding': 'br, gzip' } })
+    const res = await fetch(BASE + path, {
+      headers: { 'accept-encoding': 'br, gzip', ...(nativeCookie ? { cookie: nativeCookie } : {}) },
+    })
     const text = res.ok ? await res.text() : null
     const entry =
       text === null ? null : { ...sizes(text), wire: Number(res.headers.get('content-length') ?? 0), text }
@@ -344,5 +402,16 @@ const out = arg('json', '')
 if (out)
   await writeFile(
     out,
-    JSON.stringify({ node: process.version, rounds: ROUNDS, today: TODAY, inProcess, http }, null, 2) + '\n',
+    JSON.stringify(
+      {
+        node: process.version,
+        rounds: ROUNDS,
+        mode: NATIVE ? 'native' : 'atlas',
+        today: NATIVE ? null : TODAY,
+        inProcess,
+        http,
+      },
+      null,
+      2,
+    ) + '\n',
   )

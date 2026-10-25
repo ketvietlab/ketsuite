@@ -4,6 +4,13 @@ import type { MenuNode } from '@ketvietlab/ketjs'
 const destination = (node?: MenuNode): string | undefined =>
   node?.path ?? node?.children.map(destination).find(Boolean)
 
+// Only the native workspace is an app destination. Legacy admin pages remain
+// in their existing menu until that deployment replaces its Flow composition.
+const flowDestination = (node?: MenuNode): string | undefined => {
+  const path = destination(node)
+  return path?.startsWith('/flow/') ? path : undefined
+}
+
 const hasLink = (nodes: readonly MenuNode[]): boolean =>
   nodes.some((node) => !!node.path || hasLink(node.children))
 
@@ -12,7 +19,11 @@ export const SETTINGS_PATH = '/admin/settings'
 
 /** Keep existing route permissions; apps live in the rail and configuration on the settings page. */
 export const suiteMainMenu = (menu: readonly MenuNode[]): MenuNode[] =>
-  menu.filter((node) => !['accounting', 'admin', 'website'].includes(node.id))
+  menu.filter(
+    (node) =>
+      !['accounting', 'admin', 'website', 'phone'].includes(node.id) &&
+      !(node.id === 'flow' && flowDestination(node)),
+  )
 
 /** The deployment's permitted menu supplies destinations; no domain or URL is guessed. */
 export const suiteApplications = (
@@ -25,9 +36,12 @@ export const suiteApplications = (
   const admin = menu.find((node) => node.id === 'admin')
   const sale = destination(menu.find((node) => node.id === 'sale'))
   const website = destination(menu.find((node) => node.id === 'website'))
+  const phone = destination(menu.find((node) => node.id === 'phone'))
+  const flow = flowDestination(menu.find((node) => node.id === 'flow'))
   return {
     label: _('backend.apps.label'),
     newTabLabel: _('backend.apps.newTab'),
+    helpLabel: _('backend.apps.help'),
     activeId,
     brand: {
       label: _('backend.brand'),
@@ -79,12 +93,16 @@ export const suiteApplications = (
         id: 'flow',
         label: _('backend.apps.flow'),
         icon: 'git-branch',
+        href: flow,
         unavailableLabel: _('backend.apps.comingSoon'),
       },
       {
         id: 'phone',
         label: _('backend.apps.phone'),
         icon: 'phone',
+        // Phone is served inside this shell, so it opens here rather than in a new tab.
+        href: phone,
+        sameTab: true,
         unavailableLabel: _('backend.apps.comingSoon'),
       },
       {

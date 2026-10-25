@@ -91,6 +91,11 @@ export type FrameOptions = {
    * reads as "you have left this section".
    */
   active?: string
+  /**
+   * The rail app the screen belongs to, `sales` by default. Another app, such as `phone`, is lit on
+   * the rail, names the sidebar and fills it with its own menu root alone.
+   */
+  app?: string
   /** Screen-specific joints, merged over the ones every screen gets. */
   extras?: Extras
 }
@@ -129,14 +134,16 @@ export const frameOf = async (
   const navigation = isNavigationRequest(req)
   const lang = ctx.localeOf(url, req)
   const menu = await ctx.menu(menuUrl, req)
+  const app = options.app ?? 'sales'
   return {
     navigation,
     locale: lang,
     globalSearchQuery: url.pathname === '/admin/search' ? (url.searchParams.get('q') ?? '') : '',
     collectionUrl: url.pathname + url.search,
     viewer: await viewerOf(ctx, url, req),
-    applications: suiteApplications(menu, ctx.translate(lang)),
-    menu: suiteMainMenu(menu),
+    ...(options.app ? { app } : {}),
+    applications: suiteApplications(menu, ctx.translate(lang), app),
+    menu: app === 'sales' ? suiteMainMenu(menu) : menu.filter((node) => node.id === app),
     rootList: ctx.navigation?.rootList,
     extras: {
       'nav.items': await ctx.joint(url, req, 'backend:nav.items', { active, lang }),

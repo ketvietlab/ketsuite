@@ -26,16 +26,18 @@ from input borders and row dividers. Check a boundary/inset has exactly one owne
 
 ## KétJS repository commands
 
-After public component/hook edits:
+After public component/hook edits (the inventory itself is derived on build and not committed;
+the check fails when an export has no entry in `inventory-policy.json`):
 
 ```sh
-npm run design:inventory
 npm run design:inventory:check
 npm run design:governance:check
 ```
 
 Run focused tests and `npm run check`; use `npm run verify` for a PR-sized DS/runtime
 change. Run `npm run test:design-system:browser` for geometry/composition changes.
+Browser suites are not a merge gate: CI runs them on a schedule (`browser.yml`), so the local
+run is the evidence a change has before it merges.
 The Polaris fixture at `test/fixtures/polaris-dimensions.json` pins reference values.
 The catalogue runs with `npm run design:system` at port 4100, with `/primitives` and
 `/layering?presentation=grouped` showing actual public components.

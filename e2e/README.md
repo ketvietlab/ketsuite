@@ -4,8 +4,22 @@ Playwright tests are grouped by the KetSuite module they exercise. Tests, fixtur
 and generated evidence for a module stay inside the directory with that module's
 exact source name.
 
-Run Product tests from this directory with `npm run test:product`, and the
-accounting overview with `npm run test:accounting`.
+Run Product tests from this directory with `npm run test:product`.
+
+In CI these specs are the browser lane, not a merge gate: `browser.yml` runs every module here,
+one job each (`playwright / <module>`), every four hours on `integration` and `develop` when the
+head moved, and keeps the report of a failed run as an artifact for a week.
+
+A new module adds its directory here with `fixtures/server.mjs` and one line to the `playwright`
+matrix in `browser.yml`; `test/ci-test-groups.test.ts` fails when the two lists differ.
+
+After a navigation, wait for `globalThis.__ketNavigation` before acting on the page, not for
+`load`. The load event does not wait for the KetJS bootstrap's top-level await, so a click or a
+submit right after it can run before islands and behaviors attach: a form then posts natively and a
+link that should open a modal navigates instead. The bootstrap sets `__ketNavigation` only once it
+has attached them. `loyalty_backend` and `stock_backend` open every screen through such a helper
+(`open`), and the collaboration runner waits the same way. These races show on slower CI runners;
+reproduce them locally by delaying script responses with `page.route`, not by throttling the CPU.
 
 ## Product
 

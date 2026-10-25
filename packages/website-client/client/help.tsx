@@ -102,9 +102,9 @@ const recipes: Record<string, readonly [string, string, string, string]> = {
   ],
   settings: [
     'Cấu hình website đang chọn và các liên kết quản trị.',
-    'Sửa thông tin, kiểm tra các trường báo lỗi và lưu. Mở phần tên miền hoặc giao diện để chỉnh cấu hình tương ứng.',
+    'Sửa thông tin, kiểm tra các trường báo lỗi và lưu. Muốn ghi lại lượt truy cập (trang khách xem, nút gọi hoặc Zalo khách bấm) thì bật “Xin đồng ý trước khi theo dõi khách truy cập” và viết câu chữ xin đồng ý; khách chỉ được ghi khi đã đồng ý, đổi nội dung thông báo là hỏi lại. Mở phần tên miền hoặc giao diện để chỉnh cấu hình tương ứng.',
     'Configure the selected website and its administration links.',
-    'Edit information, correct invalid fields and save. Open domains or appearance to edit those settings.',
+    'Edit information, correct invalid fields and save. To record visits (pages viewed, call or Zalo links pressed), turn on asking visitors before tracking and write the notice; only visitors who agree are recorded, and changing the notice asks them again. Open domains or appearance to edit those settings.',
   ],
   domains: [
     'Quản lý địa chỉ truy cập của website đang chọn.',

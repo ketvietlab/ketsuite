@@ -52,6 +52,7 @@ type Verdict = {
   branches?: string[]
   defaultBranchId?: string | null
   securityVersion?: number
+  created?: boolean
   linked?: boolean
   errors?: ErrorRow[]
 }
@@ -162,7 +163,11 @@ const start =
         nonce: begun.nonce,
         codeVerifier: begun.codeVerifier,
       })
-      return redirect(location, flowCookie(provider, begun.state))
+      const authorize = new URL(location)
+      // OIDC registration extension: never forward arbitrary caller-supplied prompts.
+      if (mode === 'login' && url.searchParams.get('prompt') === 'create')
+        authorize.searchParams.set('prompt', 'create')
+      return redirect(authorize.href, flowCookie(provider, begun.state))
     } catch (error) {
       const code = error instanceof OauthProtocolError ? error.code : 'oauth.error.providerUnavailable'
       await recordFailure(ctx, url, req, provider.code, code)
@@ -269,7 +274,9 @@ const callback =
         branch: verdict.defaultBranchId ?? null,
         securityVersion: verdict.securityVersion ?? 0,
       })
-      return redirect(safeReturnTo(claimed.returnTo ?? null), cookie)
+      const destination = new URL(safeReturnTo(claimed.returnTo ?? null), url.origin)
+      if (verdict.created) destination.searchParams.set('account_created', '1')
+      return redirect(destination.pathname + destination.search + destination.hash, cookie)
     } catch (error) {
       const reason = error instanceof OauthProtocolError ? error.code : 'oauth.error.loginFailed'
       await recordFailure(ctx, url, req, provider.code, reason)

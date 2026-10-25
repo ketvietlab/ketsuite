@@ -61,7 +61,7 @@ const modules = [
   saleBackend,
   posBackend,
 ]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 
 test('ketsuite i18n: business catalogues have complete vi/en parity', () => {
   const gaps = missingMessages(manifest, ['vi', 'en'])

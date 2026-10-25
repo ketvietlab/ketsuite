@@ -5,7 +5,7 @@ import type { Row } from '@ketvietlab/ketjs'
 import { address, company, partner, product, uom, user } from '@ketvietlab/ketsuite'
 
 const modules = [address, partner, company, user, uom, product]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 type Result = { ok: boolean; id?: string; values?: Row[]; errors?: Array<{ field: string; code: string }> }
 const draft = (extra: Row = {}) => ({

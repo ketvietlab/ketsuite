@@ -6,4 +6,40 @@
     grid-template-columns: repeat(var(--kv-grid-columns, 3), minmax(16rem, 1fr));
     align-items: start;
   }
+
+  /* Master-detail. The detail grows and keeps at least 60% of the row; when the master's
+     20rem would leave it less, both wrap to full width, master first. No viewport query:
+     the app navigation takes a different share of the width at each breakpoint. The body
+     gap separates the two once. */
+  :where([data-kv-design-system]) [data-ui="workspace-split"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--kv-gap-section);
+    min-width: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="workspace-master"] {
+    flex: 1 1 20rem;
+    min-width: 0;
+    max-block-size: min(40rem, 70dvh);
+    overflow: auto;
+    border: 1px solid var(--kv-panel-border);
+    border-radius: var(--kv-radius-md);
+    background: var(--kv-panel-bg);
+  }
+
+  /* The list owns its rows; inside the framed master it drops its own top and bottom rules. */
+  :where([data-kv-design-system]) [data-ui="workspace-master"] > * > [data-ui="resource-list"],
+  :where([data-kv-design-system]) [data-ui="workspace-master"] > [data-ui="resource-list"] {
+    border-block: 0;
+  }
+
+  /* The detail keeps 60% of the row and the 38rem a table needs; narrower, the master wraps above it. */
+  :where([data-kv-design-system]) [data-ui="workspace-detail"] {
+    display: grid;
+    flex: 999 1 0;
+    min-inline-size: min(100%, max(60%, 38rem));
+    gap: var(--kv-gap-section);
+  }
 }

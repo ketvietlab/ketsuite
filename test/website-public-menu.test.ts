@@ -11,7 +11,7 @@ import { address, paperTheme, partner, website, websiteMenu } from '@ketvietlab/
 
 const SCOPE = { company: 'acme', branches: null }
 const modules = [address, partner, website, websiteMenu, paperTheme]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 
 const boot = async (): Promise<Adapter> => {
   const db = sqliteAdapter()

@@ -33,6 +33,7 @@ export type FormField = {
   fields?: readonly FormField[]
   open?: boolean
 
+  readOnly?: boolean
   name: string
   label: string
   /** A trusted control such as a progressively enhanced relational selector. */
@@ -131,6 +132,7 @@ const control = (field: FormField, id: string, describedBy: string | null): Temp
       placeholder={field.placeholder ?? null}
       required={field.required === true}
       disabled={field.disabled === true}
+      readOnly={field.readOnly === true}
       aria-invalid={field.error ? 'true' : null}
       aria-describedby={describedBy}
       step={field.type === 'decimal' ? (field.step ?? 'any') : (field.step ?? null)}

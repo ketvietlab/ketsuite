@@ -1,4 +1,18 @@
 import { tr, trRich } from './i18n.mjs'
+import { AppSwitcherHelp, HelpDrawer, MarkdownContent } from '@ketvietlab/design-system'
+/** @param {{label:string}} p */
+export const FlowHelpTrigger = (p) => html`<span data-kv-design-system>${AppSwitcherHelp(p)}</span>`
+/** @param {Omit<import('@ketvietlab/design-system').HelpDrawerProps, 'body'> & import('@ketvietlab/design-system').MarkdownContentProps} p */
+export const FlowScreenHelp = (p) =>
+  html`<div data-kv-design-system>${HelpDrawer({
+    ...p,
+    body: MarkdownContent({
+      source: p.source,
+      lexer: p.lexer,
+      labels: p.labels,
+      headingOffset: 1,
+    }),
+  })}</div>`
 export { FlowGlobalSearch } from './global-search.mjs'
 export { FlowColorPicker, FlowCatalogEditor, FLOW_TAG_COLORS } from './catalog-editor.mjs'
 export { FlowDateField } from './date-field.mjs'
@@ -403,11 +417,14 @@ export const FlowLaunchLink = (p) =>
     >${FlowIcon('arrow')}${p.label ?? tr('flow.ui.open.flow')}<span data-flow="sr">${tr('flow.ui.new.tab.8f664a')}</span></a
   >`
 
-/** @param {{name:string,label:string,icon?:Parameters<typeof FlowIcon>[0],value:string,options:{value:string,label:string}[],disabled?:boolean,error?:string,onChange?:(e:Event)=>void}} p */
-export const FlowSelectField = (p) =>
-  html`<label data-flow="field" for=${p.name}
-    ><span>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span>${FlowSelect({ ...p, id: p.name, invalid: !!p.error, descriptionId: p.error ? `${p.name}-error` : undefined })}${p.error ? html`<small id=${`${p.name}-error`} data-flow="field-error">${p.error}</small>` : null}</label
+/** `id` scopes labels/errors independently of the submitted form name.
+ * @param {{id?:string,name:string,label:string,icon?:Parameters<typeof FlowIcon>[0],value:string,options:{value:string,label:string}[],disabled?:boolean,error?:string,onChange?:(e:Event)=>void}} p */
+export const FlowSelectField = (p) => {
+  const id = p.id ?? p.name
+  return html`<label data-flow="field" for=${id}
+    ><span>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span>${FlowSelect({ ...p, id, invalid: !!p.error, descriptionId: p.error ? `${id}-error` : undefined })}${p.error ? html`<small id=${`${id}-error`} data-flow="field-error">${p.error}</small>` : null}</label
   >`
+}
 
 /** Host slot for the official KetAtlas viewer; the consumer owns its lifecycle.
  * @param {{label:string,children?:Child}} p */
@@ -560,7 +577,9 @@ export const FlowToast = (
 
 /** @typedef {{id:string,title:string,color?:'neutral'|'blue'|'green'|'yellow'|'red',archived?:boolean}} FlowLabel */
 /** A controlled multi-select; selection and persistence belong to the consumer.
- * @param {{id:string,label?:string,placeholder?:string,value:string[],options:FlowLabel[],disabled?:boolean,onChange:(ids:string[])=>void,onManage?:()=>void}} p */
+ * With `menu`, search and options are built only while the consumer reports the menu open;
+ * with `remote`, the consumer searches and pages them (selected options stay in `options`).
+ * @param {{id:string,label?:string,placeholder?:string,value:string[],options:FlowLabel[],disabled?:boolean,onChange:(ids:string[])=>void,onManage?:()=>void,menu?:{open:boolean,onToggle:(open:boolean)=>void},remote?:{query:string,loading:boolean,error?:string|null,total:number,onQuery:(query:string)=>void,onRetry:()=>void,onMore?:()=>void}}} p */
 export const FlowTagPicker = (p) => html`<div data-flow="field">
   <span id=${`${p.id}-label`}>${FlowIcon('tag')}${p.label ?? tr('flow.ui.labels')}</span>
   <div data-flow="tag-picker">
@@ -586,19 +605,28 @@ export const FlowTagPicker = (p) => html`<div data-flow="field">
           }
         }>${FlowIcon('plus')}${p.value.length ? tr('flow.ui.add') : (p.placeholder ?? tr('flow.ui.select.labels'))}</button>
     </div>
-    <div data-flow="tag-menu" id=${`${p.id}-menu`} popover="auto" role="group" aria-labelledby=${`${p.id}-label`}>
-      <input data-flow="input" type="text" placeholder=${p.placeholder ? tr('flow.ui.search.options') : tr('flow.ui.search.labels')} aria-label=${p.placeholder ? tr('flow.ui.search.options.c05398') : tr('flow.ui.search.labels.99b4f6')} on:input=${
-        /** @param {Event} e */ (e) => {
-          const input = /** @type {HTMLInputElement} */ (e.currentTarget)
-          input.parentElement?.querySelectorAll('[data-flow="tag-option"]').forEach((node) => {
-            const option = /** @type {HTMLElement} */ (node)
-            option.hidden = !option.textContent
-              ?.toLocaleLowerCase()
-              .includes(input.value.toLocaleLowerCase().trim())
-          })
-        }
-      } />
-      <div data-flow="tag-options">
+    <div data-flow="tag-menu" id=${`${p.id}-menu`} popover="auto" role="group" aria-labelledby=${`${p.id}-label`}
+      on:beforetoggle=${/** @param {ToggleEvent} e */ (e) => e.newState === 'open' && p.menu?.onToggle(true)}
+      on:toggle=${/** @param {ToggleEvent} e */ (e) => e.newState !== 'open' && p.menu?.onToggle(false)}>
+      ${
+        p.menu && !p.menu.open
+          ? null
+          : html`<input data-flow="input" type="text" value=${p.remote?.query} placeholder=${p.placeholder ? tr('flow.ui.search.options') : tr('flow.ui.search.labels')} aria-label=${p.placeholder ? tr('flow.ui.search.options.c05398') : tr('flow.ui.search.labels.99b4f6')} autocomplete="off" on:input=${
+              /** @param {Event} e */ (e) => {
+                const input = /** @type {HTMLInputElement} */ (e.currentTarget)
+                if (p.remote) {
+                  p.remote.onQuery(input.value)
+                  return
+                }
+                input.parentElement?.querySelectorAll('[data-flow="tag-option"]').forEach((node) => {
+                  const option = /** @type {HTMLElement} */ (node)
+                  option.hidden = !option.textContent
+                    ?.toLocaleLowerCase()
+                    .includes(input.value.toLocaleLowerCase().trim())
+                })
+              }
+            } />
+      <div data-flow="tag-options" aria-busy=${p.remote?.loading ? 'true' : null}>
         ${each(
           p.options.filter((t) => !t.archived || p.value.includes(t.id)),
           (t) => t.id,
@@ -608,8 +636,12 @@ export const FlowTagPicker = (p) => html`<div data-flow="field">
           ${FlowTag({ label: t.title, tone: t.color ?? 'neutral' })}
         </label>`,
         )}
-        ${p.options.some((t) => !t.archived) ? null : html`<p>${p.placeholder ? tr('flow.ui.no.available.options') : tr('flow.ui.no.labels.yet.create.labels.in.settings')}</p>`}
+        ${(p.remote ? p.remote.loading || p.remote.error || p.remote.total > 0 : p.options.some((t) => !t.archived)) ? null : html`<p>${p.placeholder ? tr('flow.ui.no.available.options') : tr('flow.ui.no.labels.yet.create.labels.in.settings')}</p>`}
       </div>
+      ${p.remote?.loading ? html`<p role="status">${tr('flow.ui.search.loading')}</p>` : null}
+      ${p.remote?.error ? html`<p role="alert">${p.remote.error}</p>${FlowButton({ label: tr('flow.ui.search.retry'), size: 'sm', onClick: p.remote.onRetry })}` : null}
+      ${p.remote?.onMore ? FlowButton({ label: tr('flow.ui.options.more'), size: 'sm', disabled: p.remote.loading, onClick: p.remote.onMore }) : null}`
+      }
       ${p.onManage ? FlowButton({ label: tr('flow.ui.manage.labels'), icon: 'settings', variant: 'ghost', disabled: p.disabled, onClick: p.onManage }) : null}
     </div>
   </div>

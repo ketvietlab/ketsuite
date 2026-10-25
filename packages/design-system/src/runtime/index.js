@@ -799,21 +799,6 @@ export const attachDesignSystemInteractions = (root = document) => {
 
   /** @param {MouseEvent} event */
   const onDocumentClick = (event) => {
-    const help =
-      event.target instanceof Element
-        ? event.target.closest('[data-ui="app-switcher-help"], button[name="screen-help"]')
-        : null
-    if (help instanceof HTMLElement && root.contains(help) && !event.defaultPrevented) {
-      event.preventDefault()
-      help.dispatchEvent(
-        new CustomEvent('ket:screen-help-request', {
-          bubbles: true,
-          cancelable: true,
-          detail: { trigger: help },
-        }),
-      )
-    }
-
     const target = event.target
     if (!(target instanceof Node)) return
     const toggle = target instanceof Element ? target.closest('[data-ui="navigation-toggle"]') : null

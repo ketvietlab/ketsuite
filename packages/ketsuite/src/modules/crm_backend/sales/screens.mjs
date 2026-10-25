@@ -33,6 +33,7 @@ export const createSalesScreens = ({ view, ds, routes }) => {
     Inline,
     KanbanCard,
     KanbanGrid,
+    Link,
     LinkButton,
     ListPage,
     LoadingState,
@@ -62,7 +63,23 @@ export const createSalesScreens = ({ view, ds, routes }) => {
     return present.length ? ActionGroup({ actions: present }) : undefined
   }
   const toneOf = (tone) => (tone === 'neutral' ? undefined : tone)
+  // A number is a `tel:` link: KétPhone's softphone places the call, a phone dials it, a desktop without
+  // either asks the system's handler.
+  const phoneLink = (number) =>
+    number ? Link({ href: `tel:${String(number).replace(/[^\d+]/g, '')}`, label: number }) : '—'
   const recordHref = (k, id) => k.href('lead-detail', { id, returnTo: k.here({ id: null }) })
+  // What other modules keep about the record (`crm_backend:record.related`): one island each, which
+  // reads and draws its own part. The host lays out nothing itself, so an island with nothing about
+  // this record takes no room in the tab.
+  const related = (k, caseId) =>
+    (k.model.related ?? []).map(
+      (island) =>
+        html`<ket-island
+          data-island=${island}
+          data-props=${JSON.stringify({ caseId, lang: k.lang })}
+          data-crm-related
+        ></ket-island>`,
+    )
   /** A single-choice filter whose trigger names what is applied ("Đội: Tư vấn"). */
   const choice = (k, id, label, value, options, param = id) => {
     const chosen = options.find((o) => o.id === (value ?? '')) ?? options[0]
@@ -1344,6 +1361,7 @@ export const createSalesScreens = ({ view, ds, routes }) => {
                 ),
               })
             : null,
+          ...related(k, r.id),
           Surface({
             title: t('Lịch sử hoạt động', 'Activity history'),
             body: ActivityTimeline({
@@ -1406,7 +1424,7 @@ export const createSalesScreens = ({ view, ds, routes }) => {
                   label: t('Thông tin hồ sơ', 'Record details'),
                   items: [
                     { id: 'contact', label: t('Người liên hệ', 'Contact'), value: r.contact || '—' },
-                    { id: 'phone', label: t('Điện thoại', 'Phone'), value: r.phone || '—' },
+                    { id: 'phone', label: t('Điện thoại', 'Phone'), value: phoneLink(r.phone) },
                     { id: 'email', label: 'Email', value: r.email || '—' },
                     {
                       id: 'priority',
@@ -1806,7 +1824,11 @@ export const createSalesScreens = ({ view, ds, routes }) => {
                     label: t('Liên hệ', 'Contact'),
                     value: r.contact || partner?.contactName || '—',
                   },
-                  { id: 'phone', label: t('Điện thoại', 'Phone'), value: r.phone || partner?.phone || '—' },
+                  {
+                    id: 'phone',
+                    label: t('Điện thoại', 'Phone'),
+                    value: phoneLink(r.phone || partner?.phone),
+                  },
                   { id: 'email', label: 'Email', value: r.email || partner?.email || '—' },
                   {
                     id: 'consent',

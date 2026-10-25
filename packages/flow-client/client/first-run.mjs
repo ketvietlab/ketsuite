@@ -202,12 +202,29 @@ export function createFirstRun(ctx) {
     )
   }
   const current = () => step() || 'workspace'
+  const intents = new Map()
+  const invoke = async (name, args, key) => {
+    const held = intents.get(key) ?? { ...args, idempotencyKey: key }
+    intents.set(key, held)
+    try {
+      const value = await ctx.call(name, held)
+      intents.delete(key)
+      return value
+    } catch (error) {
+      if (['conflict', 'validation'].includes(error.code)) intents.delete(key)
+      throw error
+    }
+  }
   const organizationCommand = (/** @type {Record<string,unknown>} */ args, /** @type {string} */ key) =>
-    ctx.call('flow.organization.command', {
-      ...args,
-      idempotencyKey: key,
-      expectedRevision: ctx.data().organizationRevision,
-    })
+    invoke(
+      'flow.organization.command',
+      {
+        ...args,
+        idempotencyKey: key,
+        expectedRevision: ctx.data().organizationRevision,
+      },
+      key,
+    )
 
   const workspaceStep = () => ({
     title: t('workspace.title'),
@@ -267,22 +284,27 @@ export function createFirstRun(ctx) {
       project.key ||= crypto.randomUUID()
       void run(
         async () => {
-          const value = await ctx.call('flow.entity.save', {
-            collection: 'projects',
-            workspaceId: created.workspaceId,
-            title: project.title.trim(),
-            code: project.code,
-            description: '',
-            access: 'workspace',
-            ownerId: ctx.data().user.id,
-            defaultView: project.defaultView,
-            sprintCadence: project.plan === 'sprint' ? { ...DEFAULT_CADENCE } : null,
-            state: 'planned',
-            tags: [],
-            memberIds: [],
-            teamIds: [],
-            idempotencyKey: project.key,
-          })
+          const value = await invoke(
+            'flow.entity.save',
+            {
+              collection: 'projects',
+              workspaceId: created.workspaceId,
+              title: project.title.trim(),
+              code: project.code,
+              description: '',
+              access: 'workspace',
+              ownerId: ctx.data().user.id,
+              defaultView: project.defaultView,
+              sprintCadence: project.plan === 'sprint' ? { ...DEFAULT_CADENCE } : null,
+              state: 'planned',
+              tags: [],
+              memberIds: [],
+              teamIds: [],
+              expectedRevision: ctx.data().organizationRevision,
+              idempotencyKey: project.key,
+            },
+            project.key,
+          )
           created.projectId = value.id
           project.key = ''
           step.set('invite')

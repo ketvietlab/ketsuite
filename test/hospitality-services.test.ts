@@ -1,21 +1,32 @@
+import { roomFixtureCall } from './helpers/hospitality-room-fixture.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { callFn, compose, migrateOne, registerFunctions, sqliteAdapter } from '@ketvietlab/ketjs'
 import type { Adapter, Row } from '@ketvietlab/ketjs'
 import { address, company, hospitalityCore, partner, product, storage, uom } from '@ketvietlab/ketsuite'
+import { addCalendarDays, dateKeyIn } from '../packages/ketsuite/src/modules/hospitality_core/calendar.ts'
 import backend from '@ketvietlab/ketsuite/backend'
 
 const modules = [address, partner, company, storage, backend, uom, product, hospitalityCore]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
+const serviceDay = dateKeyIn(new Date(), 'UTC')
+const nextServiceDay = addCalendarDays(serviceDay, 1)
+const departureDay = addCalendarDays(serviceDay, 2)
 const scope = { company: 'acme', branches: null }
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>
-  callFn(name, args, { adapter, manifest, scope })
+  roomFixtureCall(name, args, { adapter, manifest, scope })
 
 async function boot(): Promise<Adapter> {
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
   registerFunctions(modules)
+  await call('partner.savePartner', { id: 'company-party', name: 'Hotel company', kind: 'company' }, adapter)
+  await call(
+    'company.saveCompany',
+    { id: 'acme', code: 'ACME', partnerId: 'company-party', currency: 'VND' },
+    adapter,
+  )
   await call('partner.savePartner', { id: 'guest', kind: 'person', name: 'Nguyễn An' }, adapter)
   await call('uom.saveUnit', { id: 'unit', name: 'Lần', relativeFactor: '1' }, adapter)
   await call(
@@ -67,6 +78,33 @@ async function boot(): Promise<Adapter> {
     { id: '101', propertyId: 'hotel', roomTypeId: 'deluxe', code: '101', name: '101' },
     adapter,
   )
+  await call(
+    'hospitality_core.saveRatePlan',
+    {
+      id: 'bar',
+      propertyId: 'hotel',
+      roomTypeId: 'deluxe',
+      code: 'BAR',
+      name: 'Best rate',
+      rateType: 'nightly',
+      amount: '100',
+    },
+    adapter,
+  )
+  const profile = (await call('hospitality_core.getPropertyProfile', { id: 'hotel' }, adapter)).value as Row
+  const opened = (
+    await call(
+      'hospitality_core.setPropertyLifecycle',
+      {
+        propertyId: 'hotel',
+        lifecycle: 'active',
+        expectedVersion: (profile.property as Row | null)?.version ?? 0,
+        requestKey: 'services-fixture-open-property',
+      },
+      adapter,
+    )
+  ).value as Row
+  assert.equal(opened.ok, true, JSON.stringify(opened))
   const reservation = await call(
     'hospitality_core.createReservation',
     {
@@ -75,8 +113,8 @@ async function boot(): Promise<Adapter> {
       roomTypeId: 'deluxe',
       partnerId: 'guest',
       bookingType: 'nightly',
-      checkIn: '2026-09-01T14:00:00.000Z',
-      checkOut: '2026-09-03T12:00:00.000Z',
+      checkIn: `${serviceDay}T14:00:00.000Z`,
+      checkOut: `${departureDay}T12:00:00.000Z`,
       rate: '100',
       createdAt: '2026-08-20T00:00:00.000Z',
     },
@@ -157,12 +195,12 @@ test('hospitality services: once and per-night materialisation is idempotent and
       },
       adapter,
     )
-    for (const serviceDate of ['2026-09-01', '2026-09-02', '2026-09-02'])
+    for (const serviceDate of [serviceDay, nextServiceDay, nextServiceDay])
       await call('hospitality_core.materializeExtraLine', { id: 'breakfast-nightly', serviceDate }, adapter)
     const outside = (
       await call(
         'hospitality_core.materializeExtraLine',
-        { id: 'breakfast-nightly', serviceDate: '2026-09-03' },
+        { id: 'breakfast-nightly', serviceDate: departureDay },
         adapter,
       )
     ).value as Row
@@ -184,7 +222,7 @@ test('hospitality services: once and per-night materialisation is idempotent and
     )
     await call(
       'hospitality_core.cancelReservation',
-      { id: 'reservation', reason: 'guest request', at: '2026-08-25T00:00:00.000Z' },
+      { id: 'reservation', reason: 'guest request', at: new Date().toISOString() },
       adapter,
     )
     const voided = (await call('hospitality_core.listServiceCharges', { propertyId: 'hotel' }, adapter))
@@ -341,7 +379,7 @@ test('hospitality services: per-unit requests have caller idempotency and posted
       recurrence: 'per_unit',
     }
     await call('hospitality_core.saveExtraLine', line, adapter)
-    for (const requestKey of ['bag-1', 'bag-1', 'bag-2'])
+    for (const requestKey of ['laundry-bag-1', 'laundry-bag-1', 'laundry-bag-2'])
       await call(
         'hospitality_core.materializeExtraLine',
         { id: 'laundry', requestKey, quantity: '3' },
@@ -399,6 +437,112 @@ test('hospitality services: invalid targets and unsaleable products never create
     assert.equal(unsaleable.ok, false)
     assert.equal(((unsaleable.errors as Row[])[0] as Row).code, 'product_not_saleable')
     assert.equal((await adapter.all('SELECT COUNT(*) AS n FROM hospitality_core_extra_line'))[0]!.n, 0)
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('Hospitality service records reject stale, relocated and already charged edits and isolate lookup scope', async () => {
+  const adapter = await boot()
+  const value = async (name: string, args: Record<string, unknown>) =>
+    (await call(name, args, adapter)).value as Row
+  const codes = (r: Row) => ((r.errors as Row[]) ?? []).map((e) => e.code)
+  try {
+    const input = {
+      id: 'editable',
+      propertyId: 'hotel',
+      reservationId: 'reservation',
+      productId: 'breakfast',
+      quantity: '1',
+      unitPrice: '25',
+      expectedVersion: 0,
+      requestKey: 'service-create-record',
+    }
+    assert.equal((await value('hospitality_core.saveExtraLine', input)).ok, true)
+    assert.equal((await value('hospitality_core.saveExtraLine', input)).ok, true)
+    const read = (await value('hospitality_core.getServiceRecord', { id: 'editable' })).record as Row
+    assert.equal(read.version, 1)
+    assert.equal(read.locked, false)
+    assert.equal(read.target, 'reservation:reservation')
+    assert.equal(read.unitName, 'Lần')
+    const products = (
+      await call(
+        'hospitality_core.lookupServiceProducts',
+        { propertyId: 'hotel', search: 'Bữa', limit: 1 },
+        adapter,
+      )
+    ).value as Row[]
+    assert.equal(products.length, 1)
+    assert.equal(products[0]?.unitName, 'Lần')
+    const targets = (
+      await call(
+        'hospitality_core.lookupServiceTargets',
+        { propertyId: 'hotel', search: 'Nguyễn', limit: 1 },
+        adapter,
+      )
+    ).value as Row[]
+    assert.equal(targets[0]?.id, 'reservation:reservation')
+    const edited = { ...input, expectedVersion: 1, quantity: '2', requestKey: 'service-edit-record' }
+    assert.equal((await value('hospitality_core.saveExtraLine', edited)).ok, true)
+    assert.ok(
+      codes(
+        await value('hospitality_core.saveExtraLine', {
+          ...edited,
+          quantity: '3',
+          requestKey: 'service-edit-stale',
+        }),
+      ).includes('transition_conflict'),
+    )
+    assert.ok(
+      codes(
+        await value('hospitality_core.saveExtraLine', {
+          ...edited,
+          expectedVersion: 2,
+          propertyId: 'elsewhere',
+          requestKey: 'service-relocate-attempt',
+        }),
+      ).includes('property_mismatch'),
+    )
+    assert.equal(
+      (
+        await value('hospitality_core.materializeExtraLine', {
+          id: 'editable',
+          expectedVersion: 2,
+          requestKey: 'service-materialize-one',
+        })
+      ).ok,
+      true,
+    )
+    const charged = (await value('hospitality_core.getServiceRecord', { id: 'editable' })).record as Row
+    assert.equal(charged.locked, true)
+    assert.ok(
+      codes(
+        await value('hospitality_core.saveExtraLine', {
+          ...edited,
+          quantity: '3',
+          expectedVersion: charged.version,
+          requestKey: 'service-rewrite-charged',
+        }),
+      ).includes('extra_line_materialized'),
+    )
+    const restricted = await callFn(
+      'hospitality_core.getServiceRecord',
+      { id: 'editable' },
+      { adapter, manifest, scope: { company: 'acme', branches: ['foreign-branch'] } },
+    )
+    assert.equal((restricted.value as Row).record, null)
+    const deniedLookup = await callFn(
+      'hospitality_core.lookupServiceTargets',
+      { propertyId: 'hotel' },
+      { adapter, manifest, scope: { company: 'acme', branches: ['foreign-branch'] } },
+    )
+    assert.deepEqual(deniedLookup.value, [])
+    const foreign = await callFn(
+      'hospitality_core.getServiceRecord',
+      { id: 'editable' },
+      { adapter, manifest, scope: { company: 'other', branches: null } },
+    )
+    assert.equal((foreign.value as Row).record, null)
   } finally {
     await adapter.close()
   }

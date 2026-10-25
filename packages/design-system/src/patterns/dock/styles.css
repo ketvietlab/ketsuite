@@ -1,0 +1,259 @@
+@layer ket.app {
+  /*
+   * A dock is a panel with a rail's width, so a record stays readable beside it. The region floats the docks at
+   * the bottom end of the viewport, over the page and its dialogs (a call runs across them) and under toasts.
+   */
+  :where([data-kv-design-system]) {
+    --kv-dock-width: var(--kv-right-rail-width);
+    --kv-dock-inset: var(--kv-space-5);
+    /* Scroll room the page keeps under its last row: a collapsed dock (head, status and actions), its inset
+       from the viewport edge and a gap. */
+    --kv-dock-reserve: 11.5rem;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-region"] {
+    display: flex;
+    min-width: 0;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: var(--kv-space-3);
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-region"]:not(:has(> [data-ui="dock"])) {
+    display: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-region"][data-placement="fixed"] {
+    position: fixed;
+    z-index: var(--kv-layer-dock);
+    inset-inline-end: var(--kv-dock-inset);
+    bottom: var(--kv-dock-inset);
+    max-width: calc(100vw - 2 * var(--kv-dock-inset));
+    /* The gaps between docks pass clicks to the page. */
+    pointer-events: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"] {
+    max-height: calc(100dvh - 2 * var(--kv-dock-inset));
+    box-shadow: var(--kv-shadow-float);
+    pointer-events: auto;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock"] {
+    display: grid;
+    width: var(--kv-dock-width);
+    min-width: 0;
+    flex: 0 1 var(--kv-dock-width);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+    border: 1px solid var(--kv-border-default);
+    border-radius: var(--kv-radius-lg);
+    background: var(--kv-panel-bg);
+  }
+
+  /* Waiting for the reader: a second ring on the frame, beside the eyebrow that says why. */
+  :where([data-kv-design-system]) [data-ui="dock"][data-tone="attention"] {
+    border-color: var(--kv-info);
+    box-shadow: 0 0 0 1px var(--kv-info);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="dock-region"][data-placement="fixed"]
+    > [data-ui="dock"][data-tone="attention"] {
+    box-shadow:
+      0 0 0 1px var(--kv-info),
+      var(--kv-shadow-float);
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-head"] {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--kv-space-2);
+    padding: var(--kv-space-3) var(--kv-space-3) var(--kv-space-3) var(--kv-surface-inset);
+    border-bottom: 1px solid var(--kv-color-line);
+  }
+
+  /* Collapsed, the head is a bar: no rule under it unless the actions follow. */
+  :where([data-kv-design-system])
+    [data-ui="dock"][data-collapsed="true"]:not(:has(> [data-ui="dock-foot"]))
+    > [data-ui="dock-head"] {
+    border-bottom: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-heading"] {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--kv-space-1);
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-eyebrow"] {
+    margin: 0;
+    overflow: hidden;
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    font-weight: var(--kv-weight-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock"][data-tone="attention"] [data-ui="dock-eyebrow"] {
+    color: var(--kv-info);
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-title"] {
+    min-width: 0;
+    margin: 0;
+    color: var(--kv-color-ink);
+    font-size: var(--kv-text-md);
+    line-height: var(--kv-line-md);
+    font-weight: var(--kv-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-tools"] {
+    display: flex;
+    align-items: center;
+    gap: var(--kv-space-1);
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-status"] {
+    display: flex;
+    min-width: 0;
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--kv-space-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-body"] {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--kv-surface-inset);
+    overscroll-behavior: contain;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-body"][hidden] {
+    display: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-foot"] {
+    display: grid;
+    min-width: 0;
+    padding: var(--kv-space-3) var(--kv-surface-inset);
+    border-top: 1px solid var(--kv-color-line);
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock"][data-collapsed="true"] > [data-ui="dock-foot"] {
+    border-top: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="dock-actions"] {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--kv-space-2);
+  }
+
+  /* The page keeps room to scroll its last row (a pager, a form's actions) above a collapsed dock. */
+  :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+  [data-ui="app-main"] {
+    padding-block-end: var(--kv-dock-reserve);
+  }
+
+  /*
+   * A dialog leaves the collapsed dock's room free at the bottom, so its own actions stay clear of a call that
+   * runs over it; the dock region is not made inert by the dialog.
+   */
+  :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+  [data-ui="modal-layer"]:not([data-mode="embedded"]) {
+    padding-block-end: var(--kv-dock-reserve);
+  }
+
+  :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+    [data-ui="modal-layer"]:not([data-mode="embedded"])
+    [data-ui="modal-sheet"] {
+    height: calc(100dvh - var(--kv-dock-reserve));
+  }
+
+  :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+    [data-ui="modal-layer"][data-presentation="dialog"]:not([data-mode="embedded"])
+    [data-ui="modal-sheet"] {
+    height: auto;
+    max-height: calc(100dvh - var(--kv-space-6) - var(--kv-dock-reserve));
+  }
+
+  /* Toasts leave the docks' corner for the top end, under the topbar, whatever the docks' size. */
+  :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+  [data-ui="toast-region"] {
+    top: calc(var(--kv-app-topbar-height) + var(--kv-space-3));
+    bottom: auto;
+  }
+
+  /*
+   * Below 48rem the docks span the bottom edge as a sheet does, one above the other, and are capped
+   * so the page shows above them. The owner keeps one of them expanded at a time.
+   */
+  @media (max-width: 47.9375rem) {
+    :where([data-kv-design-system]) [data-ui="dock-region"][data-placement="fixed"] {
+      inset-inline: 0;
+      bottom: 0;
+      max-width: none;
+      max-height: 70dvh;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-block-end: env(safe-area-inset-bottom);
+      border-top: 1px solid var(--kv-color-line-strong);
+      border-radius: var(--kv-radius-lg) var(--kv-radius-lg) 0 0;
+      background: var(--kv-panel-bg);
+      box-shadow: var(--kv-shadow-float);
+      pointer-events: auto;
+    }
+
+    :where([data-kv-design-system]) [data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"] {
+      width: auto;
+      max-height: none;
+      flex: none;
+      border-width: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="dock-region"][data-placement="fixed"]
+      > [data-ui="dock"]
+      + [data-ui="dock"] {
+      border-top: 1px solid var(--kv-color-line);
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="dock-region"][data-placement="fixed"]
+      > [data-ui="dock"][data-tone="attention"] {
+      box-shadow: inset 3px 0 0 var(--kv-info);
+    }
+
+    :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+      [data-ui="toast-region"] {
+      top: max(var(--kv-space-4), env(safe-area-inset-top));
+    }
+
+    /* A full-screen dialog ends above the collapsed docks. */
+    :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+      [data-ui="modal-layer"]:not([data-mode="embedded"])
+      [data-ui="modal-sheet"],
+    :where([data-kv-design-system]):has([data-ui="dock-region"][data-placement="fixed"] > [data-ui="dock"])
+      [data-ui="modal-layer"][data-presentation="dialog"]:not([data-mode="embedded"])
+      [data-ui="modal-sheet"] {
+      height: calc(100dvh - var(--kv-dock-reserve));
+      max-height: calc(100dvh - var(--kv-dock-reserve));
+    }
+  }
+}

@@ -288,4 +288,45 @@ export const attachSalesRuntime = ({ view, ds, routes, root, signal, lang = 'vi'
     },
     { signal },
   )
+  watchRelatedIslands(root, signal)
+}
+
+const RELATED = 'ket-island[data-crm-related]'
+
+/**
+ * Islands other modules place on a record (`crm_backend:record.related`) start when a drawing adds
+ * their host and stop when one removes it, through the page's own island manager. A host the next
+ * record reuses gets new props: it is stopped, emptied and started again for that record.
+ */
+export const watchRelatedIslands = (root, signal) => {
+  const holds = (node) =>
+    node instanceof Element && (node.matches(RELATED) || node.querySelector(RELATED) !== null)
+  const tell = (name, node) => document.dispatchEvent(new CustomEvent(name, { detail: { root: node } }))
+  const observer = new MutationObserver((records) => {
+    const removed = new Set(),
+      added = new Set(),
+      moved = new Set()
+    for (const record of records) {
+      for (const node of record.removedNodes) if (holds(node)) removed.add(node)
+      for (const node of record.addedNodes) if (holds(node) && node.isConnected) added.add(node)
+      if (record.type === 'attributes' && record.target.matches(RELATED) && record.target.isConnected)
+        moved.add(record.target)
+    }
+    for (const node of removed) if (!node.isConnected) tell('ket:islands-detach', node)
+    for (const node of moved) {
+      if (added.has(node)) continue
+      tell('ket:islands-detach', node)
+      node.replaceChildren()
+      tell('ket:islands-attach', node)
+    }
+    for (const node of added) tell('ket:islands-attach', node)
+  })
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-props'],
+  })
+  for (const host of root.querySelectorAll(RELATED)) tell('ket:islands-attach', host)
+  signal.addEventListener('abort', () => observer.disconnect(), { once: true })
 }

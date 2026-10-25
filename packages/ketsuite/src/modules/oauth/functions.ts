@@ -238,6 +238,23 @@ const externalIdentity = async (ctx: Ctx, providerId: unknown, issuer: unknown, 
   return ctx.db.one(from(E).where(eq(E.providerId, providerId), eq(E.issuer, issuer), eq(E.subject, subject)))
 }
 
+/**
+ * An account this provider created belongs to the provider: each sign-in refreshes its name and
+ * verified email. Administrator-created accounts linked to the provider keep their own values.
+ */
+const providerProfile = async (tx: Ctx, provider: Row, userId: string, a: Row): Promise<Row> => {
+  if (provider.autoProvision !== true || !userId.startsWith(`oauth:${provider.code}:`)) return {}
+  const U = tx.table('user.User')
+  const user = await tx.db.one(from(U).where(eq(U.id, userId)))
+  if (!user) return {}
+  const name = String(a.displayName ?? '').trim()
+  const email = a.emailVerified === true ? String(a.email ?? '').trim() : ''
+  return {
+    ...(name && name !== user.name ? { name } : {}),
+    ...(email && email !== user.email ? { email } : {}),
+  }
+}
+
 const safeIdentityRows = (rows: Row[]): Row[] =>
   rows.map((row) => {
     const provider = row.provider as Row | null
@@ -274,11 +291,13 @@ const provisionLogin = async (
   if (!company || !root) return invalid([issue('providerId', 'oauth.error.defaultCompanyInvalid')])
 
   const identityHash = digest(`${input.issuer}\n${input.subject}`)
-  const userId = `oauth:${provider.code}:${identityHash.slice(0, 24)}`
+  // An unlinked identity gets a fresh account. Deleted/archived account IDs must never be reused.
+  const userId = `oauth:${provider.code}:${randomUUID()}`
   const U = ctx.table('user.User')
   const preferred = normalizeLogin(input.preferredUsername || input.email || '')
   const preferredOwner = preferred ? await ctx.db.one(from(U).where(eq(U.login, preferred))) : null
-  const login = preferred && !preferredOwner ? preferred : `${provider.code}.${identityHash.slice(0, 16)}`
+  const fallbackLogin = `${provider.code}.${userId.split(':').at(-1)}`
+  const login = preferred && !preferredOwner ? preferred : fallbackLogin
   const at = nowIso()
   try {
     return await ctx.tx(async (tx) => {
@@ -307,7 +326,7 @@ const provisionLogin = async (
         if (!existingUser) {
           const fallback = await tx.db.insertIfAbsent('user.User', {
             id: userId,
-            login: `${provider.code}.${identityHash.slice(0, 16)}`,
+            login: fallbackLogin,
             passwordHash: null,
             partnerId: null,
             name: String(
@@ -362,7 +381,7 @@ const provisionLogin = async (
         if (winner.userId !== userId) throw new IdentityLinkRace()
         return { ok: true, userId: winner.userId }
       }
-      return { ok: true, userId }
+      return { ok: true, userId, created: true }
     })
   } catch (error) {
     if (!(error instanceof IdentityLinkRace)) throw error
@@ -780,6 +799,7 @@ export const functions: Record<string, FnSpec> = {
       defaultBranchId: 'id?',
       securityVersion: 'int?',
       linked: 'bool?',
+      created: 'bool?',
       errors: 'json?',
     },
     effects: [
@@ -809,6 +829,7 @@ export const functions: Record<string, FnSpec> = {
       if (!subject) return invalid([issue('subject', 'oauth.error.subjectInvalid')])
       let identity = await externalIdentity(ctx, provider.id, provider.issuer, subject)
       let userId: string | null = identity ? String(identity.userId) : null
+      let created = false
 
       if (String(a.mode) === 'link') {
         if (!provider.allowLinking || !ctx.actor || ctx.actor !== a.linkUserId)
@@ -846,6 +867,7 @@ export const functions: Record<string, FnSpec> = {
         })
         if (provisioned.ok !== true || !('userId' in provisioned) || !provisioned.userId) return provisioned
         userId = String(provisioned.userId)
+        created = 'created' in provisioned && provisioned.created === true
         identity = await externalIdentity(ctx, provider.id, provider.issuer, subject)
       }
 
@@ -866,12 +888,16 @@ export const functions: Record<string, FnSpec> = {
               updatedAt: at,
             },
           )
-        await tx.db.update('user.User', { id: userId }, { lastLoginAt: at })
+        await tx.db.update(
+          'user.User',
+          { id: userId },
+          { ...(await providerProfile(tx, provider, userId, a)), lastLoginAt: at },
+        )
         await audit(tx, String(a.mode) === 'link' ? 'oauth.identity.link' : 'oauth.login.success', userId, {
           provider: provider.code,
           subject: digest(subject),
         })
-        return { ...session, linked: String(a.mode) === 'link' }
+        return { ...session, linked: String(a.mode) === 'link', created }
       })
     },
   }),

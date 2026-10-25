@@ -302,9 +302,5 @@ correcting and archiving a chart entry, and through reversing a posted document.
 `test/stored-value.test.ts` proves issue/expiry posting, liability-backed POS settlement,
 receivable reconciliation and retry-stable coordination with the Loyalty wallet ledger.
 
-`e2e/account_backend` drives the overview in a browser, at desktop and phone widths in
-both colour schemes and in both locales. Three of its assertions exist because nothing
-on the server can make them: that Chart.js mounted onto the canvases at all, that it
-drew them in the palette rather than in its own default black, and that a canvas — which
-has no intrinsic size — did not push the page sideways on a phone. Evidence lands under
-`artifacts/` and is not committed.
+The accounting overview has no browser suite while the accounting module is being rebuilt;
+one is written against the new module.

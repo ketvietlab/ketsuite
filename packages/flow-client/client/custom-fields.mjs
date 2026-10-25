@@ -60,6 +60,11 @@ export function validateCustomFields(fields, values, projectId, requireAll = fal
       continue
     }
     if (
+      ['text', 'url', 'person'].includes(field.kind ?? 'text') &&
+      (typeof value !== 'string' || value.length > 4000)
+    )
+      return field.title + tr('flow.catalog.invalidTextValue')
+    if (
       field.kind === 'number' &&
       (!['number', 'string'].includes(typeof value) ||
         (typeof value === 'string' && !value.trim()) ||

@@ -50,7 +50,7 @@ test('sandbox: a theme cannot reach globals, and unknown filters are refused at 
 })
 
 test('view model: a drop exposes exactly the declared fields and nothing else', () => {
-  const manifest = compose([catalog, inventory, theme])
+  const manifest = compose([catalog, inventory, theme], { companies: true })
   const row = {
     id: 'p1',
     title: 'Áo',
@@ -71,7 +71,7 @@ test('view model: a drop exposes exactly the declared fields and nothing else', 
 
 test('theme: renders regions and fills joints from other modules', () => {
   const mods = [catalog, inventory, theme]
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const rt = createTheme(manifest, mods)
   const html = rt.renderRegion('product.detail', {
     product: { id: 'p1', title: 'Áo thun', priceCents: 150000, leadTimeDays: 3 },
@@ -88,7 +88,7 @@ test('theme: a template pointing at an unpublished joint fails at build time', (
     { ...theme, templates: { ...theme.templates, layout: '{% joint "catalog:nope" %}' } },
   ]
   assert.throws(
-    () => createTheme(compose(mods as never), mods as never),
+    () => createTheme(compose(mods as never, { companies: true }), mods as never),
     /E_TEMPLATE_UNKNOWN_JOINT|no composed module publishes/,
   )
 })
@@ -103,7 +103,10 @@ test('theme: omit removes fills from KTL rendering too', () => {
     templates: { layout: `<main>{% joint "owner:slot" %}</main>` },
   })
   const modules = [owner, fill, omit, shell]
-  assert.equal(createTheme(compose(modules), modules).renderRegion('layout', {}), '<main></main>')
+  assert.equal(
+    createTheme(compose(modules, { companies: true }), modules).renderRegion('layout', {}),
+    '<main></main>',
+  )
 })
 
 test('tokens: become CSS custom properties inside a declared cascade layer', () => {
@@ -114,7 +117,7 @@ test('tokens: become CSS custom properties inside a declared cascade layer', () 
 
 test('view model: a view-typed prop is projected, not merely type-checked', () => {
   const mods = [catalog, inventory, theme]
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const rt = createTheme(manifest, mods)
   // `active` is on catalog.Product and in nobody's view. The joint declares
   // `product: 'catalog.product'`, so the row the page happens to hold is not what
@@ -142,7 +145,7 @@ test('view model: a view-typed prop is projected, not merely type-checked', () =
     templates: { layout: `{% joint "shop:item.badge" %}` },
   })
   const nosyMods = [owner, nosy, shell]
-  const out = createTheme(compose(nosyMods), nosyMods).renderRegion('layout', {
+  const out = createTheme(compose(nosyMods, { companies: true }), nosyMods).renderRegion('layout', {
     item: { id: 'i1', name: 'Ghế', cost: 990 },
   })
   assert.equal(out, '[Ghế][]', 'a field no view declares does not reach a fill, whoever wrote it')
@@ -170,7 +173,7 @@ test('sections: a placement carries only the settings its section declared', () 
     },
   })
   const mods = [owner, shell]
-  const out = createTheme(compose(mods), mods).renderRegion('layout', {
+  const out = createTheme(compose(mods, { companies: true }), mods).renderRegion('layout', {
     sections: [{ type: 'blocks.note', settings: { body: 'xin chào', leftover: 'bí mật' } }],
   })
   // A stored layout written before the schema changed still carries `leftover`.
@@ -180,7 +183,7 @@ test('sections: a placement carries only the settings its section declared', () 
 
 test('tokens: the theme runtime carries the CSS of what it actually renders', () => {
   const mods = [catalog, inventory, theme]
-  const rt = createTheme(compose(mods), mods)
+  const rt = createTheme(compose(mods, { companies: true }), mods)
   assert.match(rt.tokensCss, /@layer ket\.reset, ket\.theme, ket\.app, ket\.user;/)
   assert.match(rt.tokensCss, /--ket-color-accent:/, 'a declared token has to reach a page as CSS')
 
@@ -188,7 +191,7 @@ test('tokens: the theme runtime carries the CSS of what it actually renders', ()
   const bareTheme = defineTheme({ name: 'bare_shell', templates: { layout: 'x' } })
   const bareMods = [bare, bareTheme]
   assert.equal(
-    createTheme(compose(bareMods), bareMods).tokensCss,
+    createTheme(compose(bareMods, { companies: true }), bareMods).tokensCss,
     '',
     'a deployment that declares no token gets no stylesheet to link',
   )
@@ -199,7 +202,10 @@ test('templates: two modules cannot claim one template name in silence', () => {
   const second = defineModule({ name: 'second_mod', templates: { 'shared.row': 'b' } })
   const shell = defineTheme({ name: 'collide_shell', templates: { layout: 'x' } })
   const mods = [first, second, shell]
-  assert.throws(() => createTheme(compose(mods), mods), /E_TEMPLATE_DUPLICATE|already provided by/)
+  assert.throws(
+    () => createTheme(compose(mods, { companies: true }), mods),
+    /E_TEMPLATE_DUPLICATE|already provided by/,
+  )
 
   // A theme overriding a module's template is the whole point of a theme.
   const override = defineTheme({
@@ -207,7 +213,7 @@ test('templates: two modules cannot claim one template name in silence', () => {
     templates: { layout: `{% render 'shared.row' %}`, 'shared.row': 'themed' },
   })
   const ok = [first, override]
-  assert.equal(createTheme(compose(ok), ok).renderRegion('layout', {}), 'themed')
+  assert.equal(createTheme(compose(ok, { companies: true }), ok).renderRegion('layout', {}), 'themed')
 })
 
 test('tokens: a page links the stylesheet the framework serves for it', async () => {
@@ -219,7 +225,7 @@ test('tokens: a page links the stylesheet the framework serves for it', async ()
     templates: { layout: `<html><head><title>x</title></head><body><main>ok</main></body></html>` },
   })
   const modules = [shop, shell]
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   const server = await createKetServer({

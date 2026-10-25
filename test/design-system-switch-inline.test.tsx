@@ -18,6 +18,7 @@ test('inline Switch keeps native label, checked state and responsive toolbar geo
     new URL('../packages/design-system/src/forms/scalar-fields/styles.css', import.meta.url),
     'utf8',
   )
+  assert.match(css, /\[data-ui="switch-track"\]::after\s*\{[^}]*background: var\(--kv-color-on-accent\);/)
   assert.match(css, /\[data-layout="inline"\]\s*\{\s*grid-template-columns: max-content auto;/)
   assert.match(
     css,

@@ -144,12 +144,22 @@ test('CRM island clicks and history redraw tabs with one read, and detach with t
   const entries = [current.href]
   let position = 0,
     reads = 0,
-    html = ''
+    html = '',
+    watching = 0
   const globals: Record<string, unknown> = {
     document: doc,
     location: current,
     Element: ElementFixture,
     HTMLAnchorElement: AnchorFixture,
+    // The record's related islands are watched for (`watchRelatedIslands`); a settings screen has none.
+    MutationObserver: class {
+      observe() {
+        watching++
+      }
+      disconnect() {
+        watching--
+      }
+    },
     addEventListener: win.addEventListener.bind(win),
     history: {
       pushState(_state: unknown, _title: string, url: string) {
@@ -222,6 +232,8 @@ test('CRM island clicks and history redraw tabs with one read, and detach with t
     assert.deepEqual(activeTab(html), [tab])
   }
   assert.equal(reads, 1, 'tab and history navigation reuse configuration data')
+  assert.equal(watching, 1)
   lifetime.abort()
+  assert.equal(watching, 0, 'disposed islands stop watching for islands')
   assert.equal(click('process').defaultPrevented, false, 'disposed islands do not intercept links')
 })

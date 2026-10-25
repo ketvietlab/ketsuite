@@ -22,7 +22,7 @@ const suite = process.env.KET_BENCH_KETSUITE_MODULE
   ? ((await import(pathToFileURL(process.env.KET_BENCH_KETSUITE_MODULE).href)) as Suite)
   : shippedSuite
 const modules = [suite.address, suite.partner, suite.company, suite.user]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'company-a', branch: 'root:company-a', branches: null }
 const adapter = postgresAdapter(url)
 const call = (name: string, args: Record<string, unknown>) =>

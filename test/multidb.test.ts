@@ -21,7 +21,7 @@ import {
 import { catalog, checkout, defaultTheme as theme, inventory } from '@ketvietlab/ketsuite'
 
 const mods = [catalog, inventory, checkout, theme]
-const manifest = compose(mods)
+const manifest = compose(mods, { companies: true })
 
 // A file-less SQLite database per tenant: each key is its own isolated store.
 const stores = new Map<string, ReturnType<typeof sqliteAdapter>>()
@@ -246,7 +246,7 @@ test('fleet: a tenant created later catches up to the same shape', async () => {
       },
     },
   })
-  const v1 = compose([older], { headless: true })
+  const v1 = compose([older], { headless: true, companies: true })
 
   await migrateFleet(pool, ['early'], v1) // tenant created against the old manifest
   await migrateFleet(pool, ['late'], manifest) // tenant created today
@@ -291,7 +291,7 @@ test('migration: DDL and the applied-schema marker roll back together', async ()
         },
       }),
     ],
-    { headless: true },
+    { headless: true, companies: true },
   )
   const base = sqliteAdapter()
   let injectFailure = true
@@ -337,7 +337,7 @@ test('migration: type, required-column and nullability changes require a hand-wr
           },
         }),
       ],
-      { headless: true },
+      { headless: true, companies: true },
     )
 
   const optional = version('text?')
@@ -401,7 +401,7 @@ test('migration: a manual schema is confirmed only after the physical database m
           },
         }),
       ],
-      { headless: true },
+      { headless: true, companies: true },
     )
   const before = version(null)
   const automatic = version('int?')
@@ -486,7 +486,7 @@ test('migration: a partial index cannot satisfy manual confirmation', async () =
           },
         }),
       ],
-      { headless: true },
+      { headless: true, companies: true },
     )
   const before = version(false)
   const target = version(true)
@@ -550,7 +550,7 @@ test('migration: a PostgreSQL expression index cannot masquerade as a model inde
           },
         }),
       ],
-      { headless: true },
+      { headless: true, companies: true },
     )
   const before = version(false)
   const target = version(true)
@@ -561,6 +561,8 @@ test('migration: a PostgreSQL expression index cannot masquerade as a model inde
     transaction: true,
     introspect: async () => ({ ket_migration: { schema: 'TEXT' } }),
     all: async (sql) => {
+      // KetJS serialises migrations with a transaction-scoped advisory lock.
+      if (sql.includes('pg_advisory_xact_lock')) return [{}]
       if (sql.includes('SELECT schema FROM ket_migration'))
         return [{ schema: JSON.stringify(schemaFromManifest(before)) }]
       if (sql.includes('information_schema.columns'))
@@ -623,7 +625,7 @@ test('fleet: destructive changes are refused per tenant, not silently applied', 
   await migrateFleet(pool, ['shrink'], manifest)
   const shrunk = compose(
     [defineModule({ name: 'catalog', models: { Product: { scope: 'shared', fields: { id: 'id' } } } })],
-    { headless: true },
+    { headless: true, companies: true },
   )
   const r = await migrateFleet(pool, ['shrink'], shrunk)
   assert.equal(r[0]!.applied, false)

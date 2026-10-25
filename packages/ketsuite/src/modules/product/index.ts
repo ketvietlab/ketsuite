@@ -11,6 +11,9 @@ export default defineModule({
   name: 'product',
   version: '0.2.0',
   depends: ['uom'],
+  // Modal contexts read the company, product images (product_media builds on this module)
+  // and user grants where a deployment installs them.
+  optional: ['company', 'product_media', 'user'],
   title: 'Sản phẩm',
   summary: 'Danh mục, mẫu sản phẩm và biến thể.',
   category: 'Bán hàng',

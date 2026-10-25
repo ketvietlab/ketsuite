@@ -6,6 +6,7 @@ import { suiteApplications } from '../../../ui/application-switcher.ts'
 import { imageRoutes } from './images.ts'
 import { searchRoutes } from './search.ts'
 import { formRoutes } from './forms.ts'
+import { visitRoutes } from './visits.ts'
 import { accountRoutes } from './account.ts'
 import { studioPaths } from './paths.ts'
 import { studioTransport } from './transport.ts'
@@ -114,6 +115,7 @@ export const createStudioRoutes = (options: StudioOptions = {}): Record<string, 
   ...imageRoutes,
   ...searchRoutes,
   ...formRoutes,
+  ...visitRoutes,
   ...accountRoutes,
 })
 export const studioRoutes = createStudioRoutes()

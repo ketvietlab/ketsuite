@@ -1,4 +1,30 @@
-import { asc, defineFn, eq, from, inArray } from '@ketvietlab/ketjs'
+import { roomFitsStay } from './functions/room-capacity.ts'
+import { reservationEarlyBenefit } from './functions/guest-benefits.ts'
+import {
+  cancellationTerms,
+  cancellationFee,
+  noShowFeePlan,
+  confirmCancellationAmount,
+} from './functions/cancellation-terms.ts'
+export { cancellationTerms } from './functions/cancellation-terms.ts'
+import { getDepartureReadinessHandler, validateDeparture } from './functions/departure.ts'
+import { applyArrivalFee, beforeArrivalTime } from './functions/arrival-fee.ts'
+import {
+  ARRIVAL_GUEST_EFFECTS,
+  assertArrivalGuestsDeclared,
+  declareArrivalGuestsInTransaction,
+} from './functions/arrival-guests.ts'
+import { AUTHORIZATION_READ_EFFECTS, effectiveFunctionKeys } from '../user/authorization.ts'
+import {
+  claimVersion,
+  readRecord,
+  propertyAccess,
+  recordChange,
+  reject,
+  runCommand,
+} from './functions/command.ts'
+import { GUARANTEE_READS, reservationGuaranteeValid } from './functions/guarantee-source.ts'
+import { asc, defineFn, eq, from, gt, gte, inArray } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import {
   addDecimals,
@@ -20,7 +46,7 @@ import {
   OCR_STATES,
   OUT_OF_SERVICE_ROOM_STATUSES,
 } from './types.ts'
-import { dateKeyIn } from './calendar.ts'
+import { addCalendarDays, dateKeyIn } from './calendar.ts'
 import {
   defaultRatePlan,
   hourlyAvailable,
@@ -34,7 +60,7 @@ import {
   restrictionIssues,
 } from './inventory.ts'
 import { FolioConflict, postCharge, settleCancelledFolio } from './services.ts'
-import { initializeRecurringRent } from './night-audit.ts'
+import { initializeRecurringRentInTransaction as initializeRecurringRent } from './night-audit.ts'
 
 type Issue = { field: string; code: string; messageKey: string; params?: Record<string, unknown> }
 type Schedule = {
@@ -65,8 +91,7 @@ const date = (value: unknown): Date | null => {
 }
 
 const record = async (ctx: Ctx, model: string, id: unknown): Promise<Row | null> => {
-  const table = ctx.table(model)
-  return ctx.db.one(from(table).where(eq(table.id, id)))
+  return readRecord(ctx, model, id)
 }
 
 const calendarDays = (start: Date, end: Date, timezone: string): number => {
@@ -124,61 +149,6 @@ const scheduleOf = (
   }
 }
 
-/** The cancellation terms in force for a room type, resolved once at booking. */
-export const cancellationTerms = async (ctx: Ctx, propertyId: unknown, roomTypeId: unknown): Promise<Row> => {
-  const roomType = await record(ctx, 'hospitality_core.RoomType', roomTypeId)
-  const property = await record(ctx, 'hospitality_core.Property', propertyId)
-  const policyId = roomType?.cancellationPolicyId ?? property?.defaultCancellationPolicyId
-  const policy = policyId ? await record(ctx, 'hospitality_core.CancellationPolicy', policyId) : null
-  return {
-    cancellationPolicyId: policy?.id,
-    cancellationPolicyType: policy?.type,
-    freeCancellationHours: policy ? Number(policy.freeCancellationHours ?? 0) : undefined,
-    penaltyPercent: policy ? String(policy.penaltyPercent ?? '0') : undefined,
-  }
-}
-
-/**
- * The fee a policy charges for cancelling now. `penaltyPercent` was stored,
- * validated and shown for a long time without anything ever reading it, so a
- * strict or non-refundable rate cancelled exactly like a flexible one.
- */
-const cancellationFee = async (
-  ctx: Ctx,
-  reservation: Row,
-  at: Date,
-): Promise<{ amount: string; code: string }> => {
-  // Reservations booked before the snapshot existed fall back to the live
-  // policy; new ones carry their own terms and are immune to later edits.
-  const terms = reservation.cancellationPolicyType
-    ? reservation
-    : await cancellationTerms(ctx, reservation.propertyId, reservation.roomTypeId)
-  if (!terms.cancellationPolicyType) return { amount: '0', code: 'policy' }
-  const total = canonicalDecimalText(String(reservation.amountTotal ?? '0'))
-  if (compareDecimals(total, '0') <= 0) return { amount: '0', code: 'policy' }
-  const percent = canonicalDecimalText(
-    terms.cancellationPolicyType === 'non_refundable'
-      ? '100'
-      : at.getTime() >
-          new Date(String(reservation.checkIn)).getTime() -
-            Number(terms.freeCancellationHours ?? 0) * 3_600_000
-        ? String(terms.penaltyPercent ?? '0')
-        : '0',
-  )
-  const code = String(terms.cancellationPolicyType)
-  if (compareDecimals(percent, '0') <= 0) return { amount: '0', code }
-  const bounded = compareDecimals(percent, '100') > 0 ? '100' : percent
-  const company = await record(ctx, 'company.Company', ctx.scope.company)
-  const scale = scaleOf(company?.currency)
-  return { amount: minorText(percentOfMinor(moneyMinor(total, scale), bounded), scale), code }
-}
-
-const overlaps = (startA: unknown, endA: unknown, startB: Date, endB: Date): boolean => {
-  const a = date(startA)
-  const b = date(endA)
-  return !!a && !!b && a < endB && b > startB
-}
-
 class TransitionConflict extends Error {
   readonly problem: Issue
 
@@ -199,7 +169,8 @@ const transition = async <T>(run: () => Promise<T>): Promise<T | { ok: false; er
   }
 }
 
-type ReservationPlanInput = {
+export type ReservationPlanInput = {
+  ratePlanId?: unknown
   propertyId?: unknown
   roomTypeId?: unknown
   bookingType?: unknown
@@ -226,14 +197,21 @@ const bookingTypeIssues = (bookingType: string, property: Row | null, roomType: 
   return []
 }
 
-const planReservation = async (ctx: Ctx, args: ReservationPlanInput) => {
+export const planReservation = async (ctx: Ctx, args: ReservationPlanInput) => {
   const property = await record(ctx, 'hospitality_core.Property', args.propertyId)
   const roomType = await record(ctx, 'hospitality_core.RoomType', args.roomTypeId)
+  if (property && (property.active !== true || (property.lifecycle && property.lifecycle !== 'active')))
+    return { ok: false, errors: [issue('propertyId', 'property_not_open')] }
+
   const bookingType = String(args.bookingType ?? 'nightly')
   const billingMode = String(
     args.billingMode ?? (bookingType === 'weekly' || bookingType === 'monthly' ? 'recurring' : 'upfront'),
   )
-  const ratePlan = roomType ? await defaultRatePlan(ctx, args.roomTypeId, bookingType) : null
+  const ratePlan = args.ratePlanId
+    ? await record(ctx, 'hospitality_core.RatePlan', args.ratePlanId)
+    : roomType
+      ? await defaultRatePlan(ctx, args.roomTypeId, bookingType)
+      : null
   const rate = String(args.rate ?? ratePlan?.amount ?? roomType?.baseRate ?? '0')
   const calculated = scheduleOf(
     bookingType,
@@ -243,6 +221,32 @@ const planReservation = async (ctx: Ctx, args: ReservationPlanInput) => {
     String(property?.timezone ?? 'UTC'),
   )
   const errors = [...calculated.errors]
+  if (
+    args.ratePlanId &&
+    (!ratePlan ||
+      ratePlan.active !== true ||
+      ratePlan.propertyId !== args.propertyId ||
+      ratePlan.roomTypeId !== args.roomTypeId ||
+      ratePlan.rateType !== bookingType)
+  )
+    errors.push(issue('ratePlanId', 'rate_plan_invalid'))
+  if (ratePlan && property && calculated.schedule) {
+    const lead = Math.round(
+      (Date.parse(dateKeyIn(new Date(calculated.schedule.checkIn), String(property.timezone))) -
+        Date.parse(dateKeyIn(new Date(), String(property.timezone)))) /
+        86400000,
+    )
+    if (Number(ratePlan.minAdvanceDays ?? 0) > 0 && lead < Number(ratePlan.minAdvanceDays))
+      errors.push(issue('ratePlanId', 'rate_plan_advance', { count: ratePlan.minAdvanceDays }))
+  }
+  if (property && Number.isFinite(Date.parse(String(args.checkIn)))) {
+    const arrivalDate = dateKeyIn(new Date(String(args.checkIn)), String(property.timezone))
+    if (
+      (property.businessDate && arrivalDate < String(property.businessDate)) ||
+      (property.closingDate && arrivalDate <= String(property.closingDate))
+    )
+      errors.push(issue('checkIn', 'date_locked'))
+  }
   if (!property) errors.push(issue('propertyId', 'property_missing'))
   if (!roomType) errors.push(issue('roomTypeId', 'room_type_missing'))
   else if (roomType.propertyId !== args.propertyId) errors.push(issue('roomTypeId', 'property_mismatch'))
@@ -343,6 +347,13 @@ const planReservation = async (ctx: Ctx, args: ReservationPlanInput) => {
 }
 
 const reservationOutput = {
+  version: 'int?',
+  auditHoldDate: 'date?',
+  auditHoldUntil: 'datetime?',
+  guaranteeAmount: 'decimal?',
+  guaranteeKind: 'text?',
+  guaranteeReference: 'text?',
+  guaranteeVerifiedAt: 'datetime?',
   id: 'id',
   companyId: 'id',
   code: 'text',
@@ -382,6 +393,7 @@ const reservationOutput = {
 
 const stayOutput = {
   id: 'id',
+  version: 'int?',
   code: 'text',
   folioId: 'id',
   reservationId: 'id?',
@@ -394,11 +406,13 @@ const stayOutput = {
   checkOut: 'datetime',
   adults: 'int',
   children: 'int',
+  extraBeds: 'int?',
   billingMode: 'text',
   rate: 'decimal',
   nextBillDate: 'date?',
   state: 'text',
   checkedInAt: 'datetime?',
+  issuedKeys: 'int?',
   checkedOutAt: 'datetime?',
   noShowAt: 'datetime?',
   partner: 'json?',
@@ -409,7 +423,7 @@ const stayOutput = {
   guests: 'json?',
 }
 
-const reservationQuoteEffects = [
+export const reservationQuoteEffects = [
   'read:hospitality_core.Property',
   'read:hospitality_core.RoomType',
   'read:hospitality_core.Room',
@@ -420,7 +434,8 @@ const reservationQuoteEffects = [
   'read:hospitality_core.Reservation',
 ]
 
-const bookingEffects = [
+export const bookingEffects = [
+  'read:company.Company',
   ...reservationQuoteEffects,
   'read:partner.Partner',
   // The cancellation terms are snapshotted onto the reservation at creation.
@@ -491,14 +506,17 @@ export const applyNoShow = async (
   reservation: Row,
   reason: string,
   at: Date,
-): Promise<{ ok: boolean; id?: string; errors: Issue[]; state?: string }> => {
+  contractCancellationFee?: unknown,
+): Promise<{ ok: boolean; id?: string; errors: Issue[]; state?: string; noShowFee?: string }> => {
   const timestamp = at.toISOString()
   const property = await record(ctx, 'hospitality_core.Property', reservation.propertyId)
   // A guest who never arrived owes what the cancellation policy says, not the
   // whole stay. The folio used to close with every room night still active on
   // it, so a flexible booking nobody showed up for was billed in full — a
   // no-show is the cancellation the guest never got around to making.
-  const fee = await cancellationFee(ctx, reservation, at)
+  const fee = await noShowFeePlan(ctx, reservation, at)
+  const retainedRoomAmount = fee.retainedRoomAmount,
+    totalFee = await confirmCancellationAmount(ctx, reservation, fee, contractCancellationFee)
   const inventoryDates =
     reservation.bookingType === 'hourly'
       ? []
@@ -528,7 +546,8 @@ export const applyNoShow = async (
     await settleCancelledFolio(tx, {
       folioId: folio.id,
       stayId: reservation.stayId,
-      fee: fee.amount,
+      fee: totalFee,
+      retainedRoomAmount,
       chargeId: `${String(reservation.id)}:no_show`,
       sourceKey: `reservation:${String(reservation.id)}:no_show`,
       reason: fee.code,
@@ -552,7 +571,7 @@ export const applyNoShow = async (
         aggregateId: reservation.id,
       })
     }
-    return success(reservation.id, { state: 'no_show', noShowFee: fee.amount })
+    return success(reservation.id, { state: 'no_show', noShowFee: totalFee })
   })
 }
 
@@ -594,6 +613,21 @@ const roomTakenBetween = async (
   endAt: string | null,
   exceptStayId?: unknown,
 ): Promise<boolean> => {
+  const target = await record(ctx, 'hospitality_core.Room', roomId)
+  const property = target ? await record(ctx, 'hospitality_core.Property', target.propertyId) : null
+  const B = ctx.table('hospitality_core.RoomBlock')
+  const blocks = await ctx.db.all(from(B).where(eq(B.roomId, roomId), eq(B.state, 'active')))
+  const timezone = String(property?.timezone ?? 'UTC')
+  const first = dateKeyIn(new Date(startAt), timezone)
+  const last = endAt ? dateKeyIn(new Date(endAt), timezone) : '9999-12-31'
+  if (
+    blocks.some(
+      (block) =>
+        String(block.dateFrom) < (last === first ? addCalendarDays(last, 1) : last) &&
+        String(block.dateTo) > first,
+    )
+  )
+    return true
   const A = ctx.table('hospitality_core.RoomAssignment')
   const rows = await ctx.db.all(from(A).where(eq(A.roomId, roomId)))
   return rows.some((row) => {
@@ -628,11 +662,192 @@ const closeHold = async (ctx: Ctx, stayId: unknown, reason: string): Promise<voi
   await ctx.db.update('hospitality_core.RoomAssignment', { id: held.id }, { state: 'closed', reason })
 }
 
+/** Booking aggregate creation, shared by the API and atomic desk intake. Caller rolls back on failure. */
+export async function createReservationBooking(
+  ctx: Ctx,
+  args: Record<string, unknown>,
+  inTransaction = false,
+) {
+  const existing = await record(ctx, 'hospitality_core.Reservation', args.id)
+  if (existing)
+    return success(existing.id, {
+      folioId: existing.folioId,
+      stayId: existing.stayId,
+      existing: true,
+    })
+  const partner = await record(ctx, 'partner.Partner', args.partnerId)
+  const provider = String(args.provider ?? 'direct')
+  const plan = await planReservation(ctx, { ...args, provider })
+  const errors = [...plan.errors]
+  if (
+    args.expectedAmountTotal != null &&
+    plan.schedule &&
+    compareDecimals(String(args.expectedAmountTotal), plan.schedule.amountTotal) !== 0
+  )
+    errors.push(issue('quote', 'booking_quote_changed'))
+  if (
+    args.expectedRateVersion != null &&
+    Number(args.expectedRateVersion) !== Number(plan.ratePlan?.version ?? 0)
+  )
+    errors.push(issue('quote', 'booking_quote_changed'))
+  if (!partner) errors.push(issue('partnerId', 'partner_missing'))
+  if (!oneOf(BOOKING_PROVIDERS, provider)) errors.push(issue('provider', 'booking_provider'))
+  if (args.externalId) {
+    const R = ctx.table('hospitality_core.Reservation')
+    const duplicate = await ctx.db.one(
+      from(R).where(
+        eq(R.propertyId, args.propertyId),
+        eq(R.provider, provider),
+        eq(R.externalId, args.externalId),
+      ),
+    )
+    if (duplicate) errors.push(issue('externalId', 'provider_external_unique'))
+  }
+  if (errors.length || !plan.schedule) return failure(...errors)
+
+  const schedule = plan.schedule
+  const terms = await cancellationTerms(
+    ctx,
+    args.propertyId,
+    args.roomTypeId,
+    plan.ratePlan?.cancellationPolicyId,
+  )
+  const company = await record(ctx, 'company.Company', ctx.scope.company)
+  const now = date(args.createdAt)?.toISOString() ?? new Date().toISOString()
+  const folioId = `${String(args.id)}:folio`
+  const stayId = `${String(args.id)}:stay`
+  const chargeId = `${String(args.id)}:room`
+  const guestId = `${String(args.id)}:guest`
+  const code = text(args.code) || String(args.id).toUpperCase()
+  const state = 'confirmed'
+  const initialFolioTotal = plan.billingMode === 'upfront' ? schedule.amountTotal : '0'
+  return transition(() =>
+    persistReservation(ctx, inTransaction, async (tx) => {
+      if (plan.inventoryDates.length)
+        await reserveInventory(tx, args.propertyId, args.roomTypeId, plan.inventoryDates)
+      // Hourly holds no ledger row, so the only place the race can be closed
+      // is here, with the write transaction already open.
+      if (plan.bookingType === 'hourly' && schedule) {
+        const free = await hourlyAvailable(
+          tx,
+          args.propertyId,
+          args.roomTypeId,
+          schedule.checkIn,
+          schedule.checkOut,
+        )
+        if (free < 1)
+          throw new TransitionConflict(
+            issue('roomTypeId', 'no_availability_hourly', { available: free, required: 1 }),
+          )
+      }
+      if (plan.inventoryDates.length)
+        await recordInventoryChange(tx, {
+          propertyId: args.propertyId,
+          roomTypeId: args.roomTypeId,
+          kind: 'availability',
+          dateFrom: plan.inventoryDates[0]!,
+          dateTo: plan.inventoryDates.at(-1)!,
+          aggregateId: args.id,
+        })
+      await tx.db.insert('hospitality_core.Folio', {
+        id: folioId,
+        code: `F-${code}`,
+        propertyId: args.propertyId,
+        partnerId: args.partnerId,
+        state: 'open',
+        amountTotal: initialFolioTotal,
+        version: 0,
+        openedAt: now,
+      })
+      await tx.db.insert('hospitality_core.Reservation', {
+        id: args.id,
+        code,
+        version: 1,
+        propertyId: args.propertyId,
+        roomTypeId: args.roomTypeId,
+        ratePlanId: plan.ratePlan?.id ?? null,
+        folioId,
+        partnerId: args.partnerId,
+        ...terms,
+        currency: company?.currency ?? null,
+        provider,
+        externalId: args.externalId,
+        channelRef: args.channelRef,
+        bookingType: plan.bookingType,
+        checkIn: schedule.checkIn,
+        checkOut: schedule.checkOut,
+        adults: Number(args.adults ?? 1),
+        children: Number(args.children ?? 0),
+        infants: 0,
+        roomQuantity: 1,
+        rate: plan.rate,
+        quantity: schedule.quantity,
+        billingMode: plan.billingMode,
+        amountTotal: schedule.amountTotal,
+        state,
+        createdAt: now,
+        updatedAt: now,
+      })
+      await tx.db.insert('hospitality_core.Stay', {
+        id: stayId,
+        code: `S-${code}`,
+        folioId,
+        reservationId: args.id,
+        partnerId: args.partnerId,
+        propertyId: args.propertyId,
+        roomTypeId: args.roomTypeId,
+        bookingType: plan.bookingType,
+        checkIn: schedule.checkIn,
+        checkOut: schedule.checkOut,
+        adults: Number(args.adults ?? 1),
+        children: Number(args.children ?? 0),
+        infants: 0,
+        roomQuantity: 1,
+        billingMode: plan.billingMode,
+        rate: plan.rate,
+        state: 'draft',
+      })
+      await tx.db.update('hospitality_core.Reservation', { id: args.id }, { stayId })
+      await tx.db.insert('hospitality_core.StayGuest', {
+        id: guestId,
+        stayId,
+        propertyId: args.propertyId,
+        partnerId: args.partnerId,
+        displayName: partner!.name,
+        primary: true,
+        primaryKey: 'primary',
+      })
+      if (plan.billingMode === 'upfront')
+        await tx.db.insert('hospitality_core.Charge', {
+          id: chargeId,
+          folioId,
+          stayId,
+          description: `room:${String(args.roomTypeId)}`,
+          type: 'room',
+          quantity: schedule.quantity,
+          unitPrice: plan.rate,
+          amount: schedule.amountTotal,
+          occurredAt: now,
+          serviceDate: String(
+            plan.property?.businessDate ?? dateKeyIn(new Date(now), String(plan.property?.timezone ?? 'UTC')),
+          ),
+          sourceKey: `reservation:${String(args.id)}:room`,
+          state: 'active',
+        })
+      return success(args.id, { folioId, stayId, existing: false })
+    }),
+  )
+}
+
+const persistReservation = <T>(ctx: Ctx, inTransaction: boolean, run: (tx: Ctx) => Promise<T>): Promise<T> =>
+  inTransaction ? run(ctx) : ctx.tx(run)
+
 export const operations: Record<string, FnSpec> = {
   quoteReservation: defineFn({
     input: {
       propertyId: 'id',
       roomTypeId: 'id',
+      ratePlanId: 'id?',
       bookingType: 'text?',
       checkIn: 'datetime',
       checkOut: 'datetime',
@@ -685,6 +900,7 @@ export const operations: Record<string, FnSpec> = {
       code: 'text?',
       propertyId: 'id',
       roomTypeId: 'id',
+      ratePlanId: 'id?',
       partnerId: 'id',
       provider: 'text?',
       externalId: 'text?',
@@ -697,159 +913,14 @@ export const operations: Record<string, FnSpec> = {
       rate: 'decimal?',
       billingMode: 'text?',
       createdAt: 'datetime?',
+      expectedAmountTotal: 'decimal?',
+      expectedRateVersion: 'int?',
     },
     output: { ok: 'bool', id: 'id?', folioId: 'id?', stayId: 'id?', existing: 'bool?', errors: 'json?' },
     effects: bookingEffects,
     idempotent: true,
     agent: true,
-    handler: async (ctx: Ctx, args) => {
-      const existing = await record(ctx, 'hospitality_core.Reservation', args.id)
-      if (existing)
-        return success(existing.id, {
-          folioId: existing.folioId,
-          stayId: existing.stayId,
-          existing: true,
-        })
-      const partner = await record(ctx, 'partner.Partner', args.partnerId)
-      const provider = String(args.provider ?? 'direct')
-      const plan = await planReservation(ctx, { ...args, provider })
-      const errors = [...plan.errors]
-      if (!partner) errors.push(issue('partnerId', 'partner_missing'))
-      if (!oneOf(BOOKING_PROVIDERS, provider)) errors.push(issue('provider', 'booking_provider'))
-      if (args.externalId) {
-        const R = ctx.table('hospitality_core.Reservation')
-        const duplicate = await ctx.db.one(
-          from(R).where(
-            eq(R.propertyId, args.propertyId),
-            eq(R.provider, provider),
-            eq(R.externalId, args.externalId),
-          ),
-        )
-        if (duplicate) errors.push(issue('externalId', 'provider_external_unique'))
-      }
-      if (errors.length || !plan.schedule) return failure(...errors)
-
-      const schedule = plan.schedule
-      const terms = await cancellationTerms(ctx, args.propertyId, args.roomTypeId)
-      const now = date(args.createdAt)?.toISOString() ?? new Date().toISOString()
-      const folioId = `${String(args.id)}:folio`
-      const stayId = `${String(args.id)}:stay`
-      const chargeId = `${String(args.id)}:room`
-      const guestId = `${String(args.id)}:guest`
-      const code = text(args.code) || String(args.id).toUpperCase()
-      const state = 'confirmed'
-      const initialFolioTotal = plan.billingMode === 'upfront' ? schedule.amountTotal : '0'
-      return transition(() =>
-        ctx.tx(async (tx) => {
-          if (plan.inventoryDates.length)
-            await reserveInventory(tx, args.propertyId, args.roomTypeId, plan.inventoryDates)
-          // Hourly holds no ledger row, so the only place the race can be closed
-          // is here, with the write transaction already open.
-          if (plan.bookingType === 'hourly' && schedule) {
-            const free = await hourlyAvailable(
-              tx,
-              args.propertyId,
-              args.roomTypeId,
-              schedule.checkIn,
-              schedule.checkOut,
-            )
-            if (free < 1)
-              throw new TransitionConflict(
-                issue('roomTypeId', 'no_availability_hourly', { available: free, required: 1 }),
-              )
-          }
-          if (plan.inventoryDates.length)
-            await recordInventoryChange(tx, {
-              propertyId: args.propertyId,
-              roomTypeId: args.roomTypeId,
-              kind: 'availability',
-              dateFrom: plan.inventoryDates[0]!,
-              dateTo: plan.inventoryDates.at(-1)!,
-              aggregateId: args.id,
-            })
-          await tx.db.insert('hospitality_core.Folio', {
-            id: folioId,
-            code: `F-${code}`,
-            propertyId: args.propertyId,
-            partnerId: args.partnerId,
-            state: 'open',
-            amountTotal: initialFolioTotal,
-            version: 0,
-            openedAt: now,
-          })
-          await tx.db.insert('hospitality_core.Reservation', {
-            id: args.id,
-            code,
-            propertyId: args.propertyId,
-            roomTypeId: args.roomTypeId,
-            folioId,
-            partnerId: args.partnerId,
-            ...terms,
-            provider,
-            externalId: args.externalId,
-            channelRef: args.channelRef,
-            bookingType: plan.bookingType,
-            checkIn: schedule.checkIn,
-            checkOut: schedule.checkOut,
-            adults: Number(args.adults ?? 1),
-            children: Number(args.children ?? 0),
-            infants: 0,
-            roomQuantity: 1,
-            rate: plan.rate,
-            quantity: schedule.quantity,
-            billingMode: plan.billingMode,
-            amountTotal: schedule.amountTotal,
-            state,
-            createdAt: now,
-            updatedAt: now,
-          })
-          await tx.db.insert('hospitality_core.Stay', {
-            id: stayId,
-            code: `S-${code}`,
-            folioId,
-            reservationId: args.id,
-            partnerId: args.partnerId,
-            propertyId: args.propertyId,
-            roomTypeId: args.roomTypeId,
-            bookingType: plan.bookingType,
-            checkIn: schedule.checkIn,
-            checkOut: schedule.checkOut,
-            adults: Number(args.adults ?? 1),
-            children: Number(args.children ?? 0),
-            infants: 0,
-            roomQuantity: 1,
-            billingMode: plan.billingMode,
-            rate: plan.rate,
-            state: 'draft',
-          })
-          await tx.db.update('hospitality_core.Reservation', { id: args.id }, { stayId })
-          await tx.db.insert('hospitality_core.StayGuest', {
-            id: guestId,
-            stayId,
-            propertyId: args.propertyId,
-            partnerId: args.partnerId,
-            displayName: partner!.name,
-            primary: true,
-            primaryKey: 'primary',
-          })
-          if (plan.billingMode === 'upfront')
-            await tx.db.insert('hospitality_core.Charge', {
-              id: chargeId,
-              folioId,
-              stayId,
-              description: `room:${String(args.roomTypeId)}`,
-              type: 'room',
-              quantity: schedule.quantity,
-              unitPrice: plan.rate,
-              amount: schedule.amountTotal,
-              occurredAt: now,
-              sourceKey: `reservation:${String(args.id)}:room`,
-              state: 'active',
-            })
-          return success(args.id, { folioId, stayId, existing: false })
-        }),
-      )
-    },
+    handler: (ctx, args) => createReservationBooking(ctx, args),
   }),
 
   amendReservation: defineFn({
@@ -872,6 +943,7 @@ export const operations: Record<string, FnSpec> = {
       'read:hospitality_core.Stay',
       'read:hospitality_core.StayGuest',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Charge',
       'write:hospitality_core.Reservation',
       'write:hospitality_core.Stay',
@@ -1071,6 +1143,7 @@ export const operations: Record<string, FnSpec> = {
       'read:hospitality_core.RoomType',
       'read:hospitality_core.Stay',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
     ],
     agent: true,
     handler: async (ctx: Ctx, args) => {
@@ -1080,12 +1153,19 @@ export const operations: Record<string, FnSpec> = {
   }),
 
   cancelReservation: defineFn({
-    input: { id: 'id', reason: 'text?', at: 'datetime?' },
+    input: {
+      id: 'id',
+      reason: 'text?',
+      at: 'datetime?',
+      expectedCancellationFee: 'decimal?',
+      contractCancellationFee: 'decimal?',
+    },
     output: { ok: 'bool', id: 'id?', state: 'text?', cancellationFee: 'decimal?', errors: 'json?' },
     effects: [
       'read:hospitality_core.Reservation',
       'read:hospitality_core.Charge',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Property',
       'read:hospitality_core.RoomType',
       'read:hospitality_core.CancellationPolicy',
@@ -1114,6 +1194,13 @@ export const operations: Record<string, FnSpec> = {
       const at = cancelledAt.toISOString()
       const property = await record(ctx, 'hospitality_core.Property', reservation.propertyId)
       const fee = await cancellationFee(ctx, reservation, cancelledAt)
+      if (
+        args.expectedCancellationFee != null &&
+        compareDecimals(String(args.expectedCancellationFee), fee.amount) !== 0
+      )
+        return failure(issue('review', 'cancellation_review_changed'))
+      if (fee.requiresAgreement && !text(args.reason)) return failure(issue('reason', 'required'))
+      fee.amount = await confirmCancellationAmount(ctx, reservation, fee, args.contractCancellationFee)
       const inventoryDates =
         reservation.bookingType === 'hourly'
           ? []
@@ -1172,12 +1259,19 @@ export const operations: Record<string, FnSpec> = {
   }),
 
   markNoShow: defineFn({
-    input: { id: 'id', reason: 'text', at: 'datetime?' },
+    input: {
+      id: 'id',
+      reason: 'text',
+      at: 'datetime?',
+      expectedCancellationFee: 'decimal?',
+      contractCancellationFee: 'decimal?',
+    },
     output: { ok: 'bool', id: 'id?', state: 'text?', noShowFee: 'decimal?', errors: 'json?' },
     effects: [
       'read:hospitality_core.Reservation',
       'read:hospitality_core.Charge',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Property',
       'read:hospitality_core.RoomType',
       'read:hospitality_core.CancellationPolicy',
@@ -1204,7 +1298,12 @@ export const operations: Record<string, FnSpec> = {
       if (!reason) return failure(issue('reason', 'required'))
       const at = date(args.at) ?? new Date()
       if (at < date(reservation.checkIn)!) return failure(issue('at', 'reservation_no_show_too_early'))
-      return transition(() => applyNoShow(ctx, reservation, reason, at))
+      if (args.expectedCancellationFee != null) {
+        const fee = await noShowFeePlan(ctx, reservation, at)
+        if (compareDecimals(String(args.expectedCancellationFee), fee.amount) !== 0)
+          return failure(issue('review', 'cancellation_review_changed'))
+      }
+      return transition(() => applyNoShow(ctx, reservation, reason, at, args.contractCancellationFee))
     },
   }),
 
@@ -1260,14 +1359,35 @@ export const operations: Record<string, FnSpec> = {
   }),
 
   checkIn: defineFn({
-    input: { stayId: 'id', roomId: 'id?', assignmentId: 'id?', at: 'datetime?', earlyReason: 'text?' },
+    input: {
+      stayId: 'id',
+      roomId: 'id?',
+      assignmentId: 'id?',
+      at: 'datetime?',
+      earlyReason: 'text?',
+      earlyFee: 'text?',
+      keys: 'int?',
+      guests: 'json?',
+      expectedVersion: 'int?',
+      requestKey: 'text?',
+    },
     output: { ok: 'bool', id: 'id?', roomId: 'id?', state: 'text?', errors: 'json?' },
     effects: [
+      ...GUARANTEE_READS,
+      ...ARRIVAL_GUEST_EFFECTS,
+      ...AUTHORIZATION_READ_EFFECTS,
+      'read:hospitality_core.CommandReceipt',
+      'write:hospitality_core.CommandReceipt',
+      'write:hospitality_core.Property',
+      'write:hospitality_core.OperationalChange',
+      'read:hospitality_core.RoomBlock',
+      'read:hospitality_core.Property',
       'read:hospitality_core.Stay',
       'read:hospitality_core.Reservation',
       'read:hospitality_core.Property',
       'read:hospitality_core.Room',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Charge',
       'write:hospitality_core.Charge',
       'write:hospitality_core.Room',
@@ -1280,125 +1400,7 @@ export const operations: Record<string, FnSpec> = {
     ],
     idempotent: true,
     agent: true,
-    handler: async (ctx: Ctx, args) => {
-      const stay = await record(ctx, 'hospitality_core.Stay', args.stayId)
-      if (!stay) return failure(issue('stayId', 'stay_missing'))
-      if (stay.state === 'checked_in') {
-        const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
-        if (property) {
-          const rent = await initializeRecurringRent(ctx, stay, property)
-          if (rent.ok !== true) return rent
-        }
-        await ctx.jobs.enqueue(
-          'hospitality_core.prepareStayNotices',
-          { stayId: stay.id },
-          { uniqueKey: `stay-notices:${String(stay.id)}` },
-        )
-        return success(stay.id, { roomId: stay.currentRoomId, state: stay.state })
-      }
-      if (stay.state !== 'draft') return failure(issue('state', 'stay_cannot_check_in'))
-      const reservation = stay.reservationId
-        ? await record(ctx, 'hospitality_core.Reservation', stay.reservationId)
-        : null
-      if (stay.reservationId && !reservation) return failure(issue('state', 'transition_conflict'))
-      const at = date(args.at) ?? new Date()
-      const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
-      // A guest standing at the desk before check-in time is routine. Refusing
-      // outright left the front desk with no move at all, so the arrival is
-      // allowed once someone puts a reason against it.
-      const early = property?.enforceTimes === true && at < date(stay.checkIn)!
-      if (early && !text(args.earlyReason)) return failure(issue('at', 'early_check_in'))
-
-      const R = ctx.table('hospitality_core.Room')
-      const held = await heldAssignment(ctx, stay.id)
-      let room: Row | null = null
-      if (args.roomId) room = await record(ctx, 'hospitality_core.Room', args.roomId)
-      // The desk already decided which room this guest gets; arriving is not the
-      // moment to decide it again. A clerk who passes a room explicitly still
-      // overrides, and the hold is closed either way below.
-      else if (held) room = await record(ctx, 'hospitality_core.Room', held.roomId)
-      else {
-        const candidates = await ctx.db.all(
-          from(R).where(
-            eq(R.propertyId, stay.propertyId),
-            eq(R.roomTypeId, stay.roomTypeId),
-            eq(R.status, 'available'),
-            eq(R.active, true),
-          ),
-        )
-        // A room kept for somebody arriving later is not a free room now.
-        for (const candidate of candidates) {
-          if (await roomTakenBetween(ctx, candidate.id, String(stay.checkIn), String(stay.checkOut), stay.id))
-            continue
-          room = candidate
-          break
-        }
-      }
-      if (!room) return failure(issue('roomId', 'no_available_room'))
-      if (room.propertyId !== stay.propertyId) return failure(issue('roomId', 'property_mismatch'))
-      if (room.roomTypeId !== stay.roomTypeId) return failure(issue('roomId', 'room_type_mismatch'))
-      if (room.status !== 'available' || room.active !== true)
-        return failure(issue('roomId', 'room_not_available'))
-      if (await roomTakenBetween(ctx, room.id, String(stay.checkIn), String(stay.checkOut), stay.id))
-        return failure(issue('roomId', 'room_already_held'))
-
-      const assignmentId = args.assignmentId ?? `${String(stay.id)}:assignment:1`
-      const transitioned = await transition(() =>
-        ctx.tx(async (tx) => {
-          if (stay.reservationId) {
-            const reservationClaim = await tx.db.compareAndSet(
-              'hospitality_core.Reservation',
-              { id: stay.reservationId },
-              { state: 'confirmed', updatedAt: reservation!.updatedAt },
-              { state: 'checked_in', updatedAt: at.toISOString() },
-            )
-            if (!('matched' in reservationClaim) || !reservationClaim.matched)
-              throw new TransitionConflict(issue('state', 'transition_conflict'))
-          }
-          const stayClaim = await tx.db.compareAndSet(
-            'hospitality_core.Stay',
-            { id: stay.id },
-            { state: 'draft' },
-            { state: 'checked_in', currentRoomId: room!.id, checkedInAt: at.toISOString() },
-          )
-          if (!('matched' in stayClaim) || !stayClaim.matched)
-            throw new TransitionConflict(issue('state', 'transition_conflict'))
-          const roomClaim = await tx.db.compareAndSet(
-            'hospitality_core.Room',
-            { id: room!.id },
-            { status: 'available', active: true },
-            { status: 'occupied' },
-          )
-          if (!('matched' in roomClaim) || !roomClaim.matched)
-            throw new TransitionConflict(issue('roomId', 'room_not_available'))
-          await closeHold(tx, stay.id, 'room_hold_taken')
-          await tx.db.insert('hospitality_core.RoomAssignment', {
-            id: assignmentId,
-            stayId: stay.id,
-            propertyId: stay.propertyId,
-            roomId: room!.id,
-            roomTypeId: room!.roomTypeId,
-            startAt: at.toISOString(),
-            state: 'active',
-            reason: early ? text(args.earlyReason) : undefined,
-          })
-          await tx.db.update('hospitality_core.Folio', { id: stay.folioId }, { state: 'open' })
-          await tx.jobs.enqueue(
-            'hospitality_core.prepareStayNotices',
-            { stayId: stay.id },
-            { uniqueKey: `stay-notices:${String(stay.id)}` },
-          )
-          return success(stay.id, { roomId: room!.id, state: 'checked_in' })
-        }),
-      )
-      if (transitioned.ok !== true) return transitioned
-      const checkedIn = await record(ctx, 'hospitality_core.Stay', stay.id)
-      if (checkedIn && property) {
-        const rent = await initializeRecurringRent(ctx, checkedIn, property)
-        if (rent.ok !== true) return rent
-      }
-      return transitioned
-    },
+    handler: (ctx, args) => runCommand(ctx, args, 'checkIn', (tx) => checkInStay(tx, args)),
   }),
 
   adjustStayDeparture: defineFn({
@@ -1410,6 +1412,7 @@ export const operations: Record<string, FnSpec> = {
       'read:hospitality_core.Property',
       'read:hospitality_core.Room',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Charge',
       'read:hospitality_core.AvailabilityLedger',
       'write:hospitality_core.Stay',
@@ -1540,6 +1543,8 @@ export const operations: Record<string, FnSpec> = {
     input: { stayId: 'id', roomId: 'id', reason: 'text?' },
     output: { ok: 'bool', id: 'id?', roomId: 'id?', errors: 'json?' },
     effects: [
+      'read:hospitality_core.RoomBlock',
+      'read:hospitality_core.Property',
       'read:hospitality_core.Stay',
       'read:hospitality_core.Room',
       'read:hospitality_core.RoomAssignment',
@@ -1557,6 +1562,8 @@ export const operations: Record<string, FnSpec> = {
       if (!room) return failure(issue('roomId', 'room_missing'))
       if (room.propertyId !== stay.propertyId) return failure(issue('roomId', 'property_mismatch'))
       if (room.roomTypeId !== stay.roomTypeId) return failure(issue('roomId', 'room_type_mismatch'))
+      if (Number(stay.adults ?? 0) + Number(stay.children ?? 0) > Number(room.capacity))
+        return failure(issue('roomId', 'room_guest_capacity'))
       if (room.active !== true || oneOf(OUT_OF_SERVICE_ROOM_STATUSES, room.status))
         return failure(issue('roomId', 'room_not_available'))
 
@@ -1622,8 +1629,11 @@ export const operations: Record<string, FnSpec> = {
     },
     output: { ok: 'bool', id: 'id?', roomId: 'id?', roomTypeId: 'id?', state: 'text?', errors: 'json?' },
     effects: [
+      'read:hospitality_core.RoomBlock',
+      'read:hospitality_core.Property',
       'read:hospitality_core.Stay',
       'read:hospitality_core.Room',
+      'read:hospitality_core.RoomType',
       'read:hospitality_core.Property',
       'read:hospitality_core.RoomAssignment',
       'read:hospitality_core.AvailabilityLedger',
@@ -1646,6 +1656,10 @@ export const operations: Record<string, FnSpec> = {
       if (room.propertyId !== stay.propertyId) return failure(issue('roomId', 'property_mismatch'))
       if (room.status !== 'available' || room.active !== true)
         return failure(issue('roomId', 'room_not_available'))
+      const type = await record(ctx, 'hospitality_core.RoomType', room.roomTypeId)
+      if (!type || type.propertyId !== stay.propertyId || type.active !== true)
+        return failure(issue('roomId', 'room_type_mismatch'))
+      if (!roomFitsStay(room, type, stay)) return failure(issue('roomId', 'room_guest_capacity'))
       if (room.id === stay.currentRoomId)
         return success(stay.id, { roomId: room.id, roomTypeId: stay.roomTypeId, state: 'checked_in' })
       // An upgrade re-prices nothing by itself, but it does move room-nights
@@ -1660,6 +1674,9 @@ export const operations: Record<string, FnSpec> = {
       if (!current) return failure(issue('stayId', 'active_assignment_missing'))
       const at = date(args.at) ?? new Date()
       if (at <= date(current.startAt)!) return failure(issue('at', 'assignment_order'))
+      if (at >= date(stay.checkOut)!) return failure(issue('at', 'assignment_order'))
+      if (await roomTakenBetween(ctx, room.id, at.toISOString(), String(stay.checkOut), stay.id))
+        return failure(issue('roomId', 'room_not_available'))
       const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
       const timezone = String(property?.timezone ?? 'UTC')
       // Nights already slept stay charged to the room type that hosted them;
@@ -1676,8 +1693,8 @@ export const operations: Record<string, FnSpec> = {
           const roomClaim = await tx.db.compareAndSet(
             'hospitality_core.Room',
             { id: room.id },
-            { status: 'available', active: true },
-            { status: 'occupied' },
+            { status: 'available', active: true, version: room!.version ?? null },
+            { status: 'occupied', version: Number(room!.version ?? 0) + 1 },
           )
           if (!('matched' in roomClaim) || !roomClaim.matched)
             throw new TransitionConflict(issue('roomId', 'room_not_available'))
@@ -1694,14 +1711,16 @@ export const operations: Record<string, FnSpec> = {
             { id: current.id },
             { state: 'closed', endAt: at.toISOString() },
           )
+          const vacatedRoom = await record(tx, 'hospitality_core.Room', stay.currentRoomId)
+          if (!vacatedRoom) throw new TransitionConflict(issue('roomId', 'room_missing'))
+          await claimVersion(tx, 'hospitality_core.Room', vacatedRoom, vacatedRoom.version)
           await tx.db.update('hospitality_core.Room', { id: stay.currentRoomId }, { status: 'dirty' })
           await tx.db.insert('hospitality_core.CleaningTask', {
             id: `move:${String(current.id)}:clean`,
-            code: `HK-${String(stay.code)}-MOVE`,
+            code: `HK-MOVE-${String(current.id)}`,
             propertyId: stay.propertyId,
             roomId: stay.currentRoomId,
-            stayId: stay.id,
-            taskType: 'daily_clean',
+            taskType: 'checkout_clean',
             priority: 'normal',
             state: 'todo',
             requestedAt: at.toISOString(),
@@ -1745,7 +1764,7 @@ export const operations: Record<string, FnSpec> = {
   }),
 
   checkOut: defineFn({
-    input: { stayId: 'id', at: 'datetime?', lateReason: 'text?' },
+    input: { stayId: 'id', at: 'datetime?', lateReason: 'text?', handover: 'json', departureNotes: 'text?' },
     output: {
       ok: 'bool',
       id: 'id?',
@@ -1758,11 +1777,14 @@ export const operations: Record<string, FnSpec> = {
       'read:hospitality_core.Stay',
       'read:hospitality_core.Property',
       'read:hospitality_core.Room',
+      'read:hospitality_core.ExtraLine',
+      'read:hospitality_core.Charge',
       'read:hospitality_core.RoomAssignment',
       'read:hospitality_core.AvailabilityLedger',
       'write:hospitality_core.Room',
       'write:hospitality_core.Stay',
       'write:hospitality_core.Reservation',
+      'read:hospitality_core.Folio',
       'write:hospitality_core.Folio',
       'write:hospitality_core.RoomAssignment',
       'write:hospitality_core.CleaningTask',
@@ -1781,6 +1803,7 @@ export const operations: Record<string, FnSpec> = {
       const at = date(args.at) ?? new Date()
       const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
       if (!property) return failure(issue('propertyId', 'property_missing'))
+      await validateDeparture(ctx, stay, property, args, at)
       // The departure side had no policy at all, so a stay could be closed hours
       // past checkout with nothing recorded and nothing to charge against.
       if (property.enforceTimes === true && at > date(stay.checkOut)! && !text(args.lateReason))
@@ -1812,7 +1835,14 @@ export const operations: Record<string, FnSpec> = {
             'hospitality_core.Stay',
             { id: stay.id },
             { state: 'checked_in', currentRoomId: stay.currentRoomId },
-            { state: 'checked_out', currentRoomId: null, checkedOutAt: at.toISOString() },
+            {
+              state: 'checked_out',
+              currentRoomId: null,
+              checkedOutAt: at.toISOString(),
+              departureChecklist: ['keys', 'charges'],
+              departureNotes: String(args.departureNotes ?? '').trim() || null,
+              departedBy: ctx.actor ?? null,
+            },
           )
           if (!('matched' in stayClaim) || !stayClaim.matched)
             throw new TransitionConflict(issue('state', 'transition_conflict'))
@@ -1821,6 +1851,9 @@ export const operations: Record<string, FnSpec> = {
             { id: current.id },
             { state: 'closed', endAt: at.toISOString() },
           )
+          const vacatedRoom = await record(tx, 'hospitality_core.Room', stay.currentRoomId)
+          if (!vacatedRoom) throw new TransitionConflict(issue('roomId', 'room_missing'))
+          await claimVersion(tx, 'hospitality_core.Room', vacatedRoom, vacatedRoom.version)
           await tx.db.update('hospitality_core.Room', { id: stay.currentRoomId }, { status: 'dirty' })
           await tx.db.insert('hospitality_core.CleaningTask', {
             id: `checkout:${stay.id}`,
@@ -1880,6 +1913,8 @@ export const operations: Record<string, FnSpec> = {
     handler: async (ctx: Ctx, args) => {
       const stay = await record(ctx, 'hospitality_core.Stay', args.stayId)
       const existing = await record(ctx, 'hospitality_core.StayGuest', args.id)
+      if (existing && (existing.stayId !== args.stayId || existing.propertyId !== stay?.propertyId))
+        return failure(issue('id', 'property_mismatch'))
       if (existing) {
         if (stay?.state === 'checked_in')
           await ctx.jobs.enqueue(
@@ -1889,6 +1924,7 @@ export const operations: Record<string, FnSpec> = {
           )
         return success(existing.id)
       }
+      if (stay?.state !== 'draft') return failure(issue('stayId', 'additional_guest_command_required'))
       const errors: Issue[] = []
       if (!stay) errors.push(issue('stayId', 'stay_missing'))
       if (!text(args.displayName)) errors.push(issue('displayName', 'required'))
@@ -1958,6 +1994,7 @@ export const operations: Record<string, FnSpec> = {
     output: { ok: 'bool', id: 'id?', amount: 'decimal?', existing: 'bool?', errors: 'json?' },
     effects: [
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Stay',
       'read:hospitality_core.Charge',
       'read:product.Product',
@@ -1984,6 +2021,7 @@ export const operations: Record<string, FnSpec> = {
     },
     effects: [
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Charge',
       'write:hospitality_core.Folio',
       'write:hospitality_core.Charge',
@@ -2008,7 +2046,12 @@ export const operations: Record<string, FnSpec> = {
       partner: 'json?',
       stays: 'json?',
     },
-    effects: ['read:hospitality_core.Folio', 'read:partner.Partner', 'read:hospitality_core.Stay'],
+    effects: [
+      'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
+      'read:partner.Partner',
+      'read:hospitality_core.Stay',
+    ],
     agent: true,
     handler: async (ctx: Ctx, args) => {
       const F = ctx.table('hospitality_core.Folio')
@@ -2034,9 +2077,10 @@ export const operations: Record<string, FnSpec> = {
    * would refuse most of them.
    */
   checkOutReadiness: defineFn({
-    input: { stayId: 'id' },
+    input: { stayId: 'id', page: 'int?' },
     output: {
       stayId: 'id',
+      stayVersion: 'int',
       state: 'text',
       ready: 'bool',
       roomId: 'id?',
@@ -2052,6 +2096,9 @@ export const operations: Record<string, FnSpec> = {
       charges: 'json?',
       awaitingFulfilment: 'json?',
       blockers: 'json?',
+      chargesPage: 'json?',
+      pendingCount: 'int?',
+      issuedKeys: 'int?',
     },
     effects: [
       'read:hospitality_core.Stay',
@@ -2059,81 +2106,13 @@ export const operations: Record<string, FnSpec> = {
       'read:hospitality_core.Room',
       'read:hospitality_core.RoomAssignment',
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:hospitality_core.Charge',
       'read:hospitality_core.ExtraLine',
       'read:partner.Partner',
     ],
     agent: true,
-    handler: async (ctx: Ctx, args) => {
-      const stay = await record(ctx, 'hospitality_core.Stay', args.stayId)
-      if (!stay)
-        return {
-          stayId: args.stayId,
-          state: 'missing',
-          ready: false,
-          late: false,
-          lateReasonRequired: false,
-          blockers: [issue('stayId', 'stay_missing')],
-        }
-      const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
-      const room = stay.currentRoomId ? await record(ctx, 'hospitality_core.Room', stay.currentRoomId) : null
-      const partner = stay.partnerId ? await record(ctx, 'partner.Partner', stay.partnerId) : null
-      const folio = stay.folioId ? await record(ctx, 'hospitality_core.Folio', stay.folioId) : null
-      const now = new Date()
-      const dueOut = date(stay.checkOut)
-      const late = !!dueOut && now > dueOut
-      const blockers: Issue[] = []
-      if (stay.state === 'checked_out') blockers.push(issue('state', 'stay_already_checked_out'))
-      else if (stay.state !== 'checked_in' || !stay.currentRoomId)
-        blockers.push(issue('state', 'stay_cannot_check_out'))
-      if (!property) blockers.push(issue('propertyId', 'property_missing'))
-
-      const A = ctx.table('hospitality_core.RoomAssignment')
-      const active = await ctx.db.one(from(A).where(eq(A.stayId, stay.id), eq(A.state, 'active')))
-      if (stay.state === 'checked_in' && !active) blockers.push(issue('stayId', 'active_assignment_missing'))
-
-      const C = ctx.table('hospitality_core.Charge')
-      const charges = folio
-        ? await ctx.db.all(
-            from(C)
-              .where(eq(C.folioId, folio.id), eq(C.state, 'active'))
-              .orderBy(asc(C.occurredAt), asc(C.id)),
-          )
-        : []
-
-      // A line a supplier still owes us is not a refusal, but closing the folio
-      // over it is how a charge goes missing. The desk gets to see it first.
-      const E = ctx.table('hospitality_core.ExtraLine')
-      const lines = await ctx.db.all(
-        from(E).where(eq(E.stayId, stay.id), eq(E.active, true)).preload('charges'),
-      )
-      const awaitingFulfilment = lines
-        .filter((line) => String(line.fulfillmentKind ?? 'none') === 'external_stock')
-        .filter(
-          (line) => !((line.charges as Row[] | undefined) ?? []).some((charge) => charge.state === 'active'),
-        )
-        .map((line) => ({ id: line.id, description: line.description, quantity: line.quantity }))
-
-      const lateReasonRequired = property?.enforceTimes === true && late
-      return {
-        stayId: stay.id,
-        state: String(stay.state),
-        ready: blockers.length === 0,
-        roomId: stay.currentRoomId ?? null,
-        roomName: room ? String(room.name ?? room.code ?? room.id) : null,
-        guestName: partner ? String(partner.name ?? '') : null,
-        checkIn: stay.checkIn ?? null,
-        dueOut: stay.checkOut ?? null,
-        late,
-        lateReasonRequired,
-        folioId: folio?.id ?? null,
-        folioState: folio ? String(folio.state) : null,
-        balance: folio ? String(folio.amountTotal ?? '0') : null,
-        charges,
-        awaitingFulfilment,
-        blockers,
-      }
-    },
+    handler: getDepartureReadinessHandler,
   }),
 
   getFolio: defineFn({
@@ -2154,6 +2133,7 @@ export const operations: Record<string, FnSpec> = {
     },
     effects: [
       'read:hospitality_core.Folio',
+      'read:hospitality_core.RoomNightSnapshot',
       'read:partner.Partner',
       'read:hospitality_core.Charge',
       'read:hospitality_core.Stay',
@@ -2282,107 +2262,178 @@ export const operations: Record<string, FnSpec> = {
       }))
     },
   }),
+}
 
-  getTapeChart: defineFn({
-    input: { propertyId: 'id', from: 'datetime', to: 'datetime' },
-    output: {
-      propertyId: 'id',
-      timezone: 'text',
-      from: 'datetime',
-      to: 'datetime',
-      rooms: 'json',
-      events: 'json',
-    },
-    effects: [
-      'read:hospitality_core.Property',
-      'read:hospitality_core.Room',
-      'read:hospitality_core.RoomType',
-      'read:hospitality_core.Stay',
-      'read:hospitality_core.RoomAssignment',
-      'read:partner.Partner',
-      'read:hospitality_core.Reservation',
-    ],
-    agent: true,
-    handler: async (ctx: Ctx, args) => {
-      const start = date(args.from)
-      const end = date(args.to)
-      const property = await record(ctx, 'hospitality_core.Property', args.propertyId)
-      const timezone = String(property?.timezone ?? 'UTC')
-      if (!start || !end || end <= start)
-        return { propertyId: args.propertyId, timezone, from: args.from, to: args.to, rooms: [], events: [] }
-      const R = ctx.table('hospitality_core.Room')
-      const S = ctx.table('hospitality_core.Stay')
-      const A = ctx.table('hospitality_core.RoomAssignment')
-      const rooms = await ctx.db.all(
-        from(R)
-          .where(eq(R.propertyId, args.propertyId), eq(R.active, true))
-          .orderBy(asc(R.name))
-          .preload('roomType'),
+/** Arrival workflow shared by the standalone command and atomic financial arrival. Caller owns the transaction. */
+export async function checkInStay(ctx: Ctx, args: Record<string, unknown>) {
+  if (!ctx.scope.company) reject('stayId', 'stay_missing')
+  const keys = Number(args.keys ?? 1)
+  if (!Number.isInteger(keys) || keys < 1 || keys > 4) reject('keys', 'arrival_keys')
+  const stay = await record(ctx, 'hospitality_core.Stay', args.stayId)
+  if (!stay) return failure(issue('stayId', 'stay_missing'))
+  const scopedProperty = await propertyAccess(ctx, stay.propertyId)
+  if (scopedProperty.closingDate) reject('date', 'business_date_locked')
+  const actual = date(args.at) ?? new Date()
+  if (args.at && !date(args.at)) reject('at', 'datetime')
+  const civil = dateKeyIn(actual, String(scopedProperty.timezone))
+  const today = dateKeyIn(new Date(), String(scopedProperty.timezone))
+  if (civil < today && scopedProperty.businessDate && civil < String(scopedProperty.businessDate))
+    reject('date', 'business_date_locked')
+  await claimVersion(ctx, 'hospitality_core.Property', scopedProperty, undefined)
+  await claimVersion(ctx, 'hospitality_core.Stay', stay, args.expectedVersion)
+  if (stay.state !== 'checked_in' && ctx.manifest.models['hospitality_billing.GuaranteeAllocation']) {
+    const booking = stay.reservationId
+      ? await readRecord(ctx, 'hospitality_core.Reservation', stay.reservationId)
+      : null
+    if (!booking || !(await reservationGuaranteeValid(ctx, booking)))
+      reject('reservationId', 'guarantee_required')
+    if (booking.auditHoldUntil && Date.parse(String(booking.auditHoldUntil)) <= Date.now())
+      reject('reservationId', 'arrival_hold_expired')
+  }
+
+  if (stay.state === 'checked_in') {
+    const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
+    if (property) {
+      const rent = await initializeRecurringRent(ctx, stay, property)
+      if (rent.ok !== true) return { ...rent, ok: false }
+    }
+    await ctx.jobs.enqueue(
+      'hospitality_core.prepareStayNotices',
+      { stayId: stay.id },
+      { uniqueKey: `stay-notices:${String(stay.id)}` },
+    )
+    return success(stay.id, { roomId: stay.currentRoomId, state: stay.state })
+  }
+  if (stay.state !== 'draft') return failure(issue('state', 'stay_cannot_check_in'))
+  if (args.guests !== undefined) {
+    if (ctx.actor) {
+      const permissions = await effectiveFunctionKeys(ctx, ctx.actor)
+      if (permissions !== null && !permissions.includes('hospitality_core.declareArrivalGuests'))
+        reject('guests', 'arrival_authority')
+    }
+    await declareArrivalGuestsInTransaction(ctx, stay, args.guests)
+  } else {
+    await assertArrivalGuestsDeclared(ctx, stay, scopedProperty)
+  }
+  const reservation = stay.reservationId
+    ? await record(ctx, 'hospitality_core.Reservation', stay.reservationId)
+    : null
+  if (stay.reservationId && !reservation) return failure(issue('state', 'transition_conflict'))
+  const at = date(args.at) ?? new Date()
+  const property = await record(ctx, 'hospitality_core.Property', stay.propertyId)
+  const arrivalDay = dateKeyIn(date(stay.checkIn)!, String(scopedProperty.timezone))
+  const heldLateArrival =
+    reservation?.auditHoldUntil && at.getTime() < Date.parse(String(reservation.auditHoldUntil))
+  if (civil < arrivalDay || (civil > arrivalDay && !heldLateArrival) || at >= date(stay.checkOut)!)
+    return failure(issue('stayId', 'arrival_day_only'))
+  // A guest standing at the desk before check-in time is routine. Refusing
+  // outright left the front desk with no move at all, so the arrival is
+  // allowed once someone puts a reason against it.
+  const early = property?.enforceTimes === true && beforeArrivalTime(stay, property, at)
+  const benefit = reservationEarlyBenefit(reservation)
+  const earlyReason =
+    text(args.earlyReason) ||
+    (benefit && (args.earlyFee == null || args.earlyFee === 'waived') ? `guest_benefit:${benefit}` : '')
+  if (early && !earlyReason)
+    return failure(issue('earlyReason', args.earlyFee === 'waived' ? 'arrival_fee_reason' : 'early_check_in'))
+
+  const R = ctx.table('hospitality_core.Room')
+  const held = await heldAssignment(ctx, stay.id)
+  let room: Row | null = null
+  if (args.roomId) room = await record(ctx, 'hospitality_core.Room', args.roomId)
+  // The desk already decided which room this guest gets; arriving is not the
+  // moment to decide it again. A clerk who passes a room explicitly still
+  // overrides, and the hold is closed either way below.
+  else if (held) room = await record(ctx, 'hospitality_core.Room', held.roomId)
+  else {
+    const base = from(R).where(
+      eq(R.propertyId, stay.propertyId),
+      eq(R.roomTypeId, stay.roomTypeId),
+      eq(R.status, 'available'),
+      eq(R.active, true),
+      gte(R.capacity, Number(stay.adults) + Number(stay.children ?? 0)),
+    )
+    let after: unknown = null
+    while (!room) {
+      const candidates = await ctx.db.all(
+        (after ? base.where(gt(R.id, after)) : base).orderBy(asc(R.id)).limit(50),
       )
-      const stays = (
-        await ctx.db.all(from(S).where(eq(S.propertyId, args.propertyId)).preload('partner', 'reservation'))
-      ).filter(
-        (stay) =>
-          stay.state !== 'cancelled' &&
-          stay.state !== 'no_show' &&
-          overlaps(stay.checkIn, stay.checkOut, start, end),
-      )
-      const stayIds = new Set(stays.map((stay) => stay.id))
-      const assignments = (await ctx.db.all(from(A).where(eq(A.propertyId, args.propertyId)))).filter(
-        (assignment) =>
-          stayIds.has(assignment.stayId) &&
-          overlaps(assignment.startAt, assignment.endAt ?? end.toISOString(), start, end),
-      )
-      const assigned = new Set(assignments.map((assignment) => assignment.stayId))
-      type TapeEvent = {
-        id: string
-        stayId: string
-        reservationId: string | null
-        roomId: string | null
-        roomTypeId: string
-        guest: string
-        provider: string
-        state: string
-        start: string
-        end: string
+      for (const candidate of candidates) {
+        if (await roomTakenBetween(ctx, candidate.id, String(stay.checkIn), String(stay.checkOut), stay.id))
+          continue
+        room = candidate
+        break
       }
-      const events: TapeEvent[] = assignments.map((assignment) => {
-        const stay = stays.find((row) => row.id === assignment.stayId)!
-        return {
-          id: String(assignment.id),
-          stayId: String(stay.id),
-          reservationId: stay.reservationId ? String(stay.reservationId) : null,
-          roomId: assignment.roomId ? String(assignment.roomId) : null,
-          roomTypeId: String(assignment.roomTypeId),
-          guest: String((stay.partner as Row | undefined)?.name ?? ''),
-          provider: String((stay.reservation as Row | undefined)?.provider ?? 'direct'),
-          state: String(stay.state),
-          start: String(assignment.startAt),
-          end: String(assignment.endAt ?? stay.checkOut),
-        }
-      })
-      for (const stay of stays)
-        if (!assigned.has(stay.id))
-          events.push({
-            id: `${String(stay.id)}:unassigned`,
-            stayId: String(stay.id),
-            reservationId: stay.reservationId ? String(stay.reservationId) : null,
-            roomId: null,
-            roomTypeId: String(stay.roomTypeId),
-            guest: String((stay.partner as Row | undefined)?.name ?? ''),
-            provider: String((stay.reservation as Row | undefined)?.provider ?? 'direct'),
-            state: String(stay.state),
-            start: String(stay.checkIn),
-            end: String(stay.checkOut),
-          })
-      return {
-        propertyId: args.propertyId,
-        timezone,
-        from: start.toISOString(),
-        to: end.toISOString(),
-        rooms,
-        events,
-      }
-    },
-  }),
+      if (candidates.length < 50) break
+      after = candidates.at(-1)!.id
+    }
+  }
+  if (!room) return failure(issue('roomId', 'no_available_room'))
+  if (room.propertyId !== stay.propertyId) return failure(issue('roomId', 'property_mismatch'))
+  if (room.roomTypeId !== stay.roomTypeId) return failure(issue('roomId', 'room_type_mismatch'))
+  if (Number(stay.adults) + Number(stay.children ?? 0) > Number(room.capacity))
+    return failure(issue('roomId', 'room_guest_capacity'))
+  if (room.status !== 'available' || room.active !== true)
+    return failure(issue('roomId', 'room_not_available'))
+  if (await roomTakenBetween(ctx, room.id, String(stay.checkIn), String(stay.checkOut), stay.id))
+    return failure(issue('roomId', 'room_already_held'))
+
+  const assignmentId = args.assignmentId ?? `${String(stay.id)}:assignment:1`
+  const transitioned = await transition(async () => {
+    const tx = ctx
+    if (stay.reservationId) {
+      const reservationClaim = await tx.db.compareAndSet(
+        'hospitality_core.Reservation',
+        { id: stay.reservationId },
+        { state: 'confirmed', updatedAt: reservation!.updatedAt },
+        { state: 'checked_in', updatedAt: at.toISOString() },
+      )
+      if (!('matched' in reservationClaim) || !reservationClaim.matched)
+        throw new TransitionConflict(issue('state', 'transition_conflict'))
+    }
+    const stayClaim = await tx.db.compareAndSet(
+      'hospitality_core.Stay',
+      { id: stay.id },
+      { state: 'draft' },
+      { state: 'checked_in', currentRoomId: room!.id, checkedInAt: at.toISOString(), issuedKeys: keys },
+    )
+    if (!('matched' in stayClaim) || !stayClaim.matched)
+      throw new TransitionConflict(issue('state', 'transition_conflict'))
+    const roomClaim = await tx.db.compareAndSet(
+      'hospitality_core.Room',
+      { id: room!.id },
+      { status: 'available', active: true, version: room!.version ?? null },
+      { status: 'occupied', version: Number(room!.version ?? 0) + 1 },
+    )
+    if (!('matched' in roomClaim) || !roomClaim.matched)
+      throw new TransitionConflict(issue('roomId', 'room_not_available'))
+    await closeHold(tx, stay.id, 'room_hold_taken')
+    await tx.db.insert('hospitality_core.RoomAssignment', {
+      id: assignmentId,
+      stayId: stay.id,
+      propertyId: stay.propertyId,
+      roomId: room!.id,
+      roomTypeId: room!.roomTypeId,
+      startAt: at.toISOString(),
+      state: 'active',
+      reason: early ? earlyReason : undefined,
+    })
+    await tx.db.update('hospitality_core.Folio', { id: stay.folioId }, { state: 'open' })
+    await tx.jobs.enqueue(
+      'hospitality_core.prepareStayNotices',
+      { stayId: stay.id },
+      { uniqueKey: `stay-notices:${String(stay.id)}` },
+    )
+    return success(stay.id, { roomId: room!.id, state: 'checked_in' })
+  })
+  if (transitioned.ok !== true) return transitioned
+  const checkedIn = await record(ctx, 'hospitality_core.Stay', stay.id)
+  if (checkedIn && property) {
+    const rent = await initializeRecurringRent(ctx, checkedIn, property)
+    if (rent.ok !== true) return { ...rent, ok: false }
+  }
+  if (property) await applyArrivalFee(ctx, stay, property, args.earlyFee, args.earlyReason, at)
+  if (transitioned.ok === true)
+    await recordChange(ctx, scopedProperty.id, stay.id, 'checkIn', { state: 'checked_in' })
+  return transitioned
 }

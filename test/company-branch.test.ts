@@ -9,7 +9,7 @@ const modules = [address, partner, company, user]
 const scope = { company: 'acme', branch: 'root:acme', branches: ['root:acme'] }
 
 const boot = async (): Promise<{ adapter: Adapter; manifest: Manifest }> => {
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
@@ -237,4 +237,38 @@ test('company-branch: active-user defaults protect company and branch archive', 
   assert.equal(branchGuard.ok, false)
   assert.match(JSON.stringify(branchGuard.errors), /user\.error\.branchDefaultActive/)
   await runtime.adapter.close()
+})
+
+test('company-branch: a branch picker searches one company without accents or case, and stops at its limit', async () => {
+  const runtime = await boot()
+  await createCompany(runtime, 'a', 'A')
+  await createCompany(runtime, 'b', 'B')
+  for (const [id, companyId, code, name] of [
+    ['a:thao-dien', 'a', 'TD', 'Thảo Điền'],
+    ['a:phu-nhuan', 'a', 'PN', 'Phú Nhuận'],
+    ['b:thao-dien', 'b', 'TD', 'Thảo Điền'],
+  ])
+    await call(runtime, 'company.saveBranch', { id, companyId, code, name, parentId: `root:${companyId}` })
+  const names = (rows: Array<{ id: string }>) => rows.map((row) => row.id)
+  assert.deepEqual(
+    names(
+      await call<Array<{ id: string }>>(runtime, 'company.listBranches', {
+        companyId: 'a',
+        search: 'THAO dien',
+      }),
+    ),
+    ['a:thao-dien'],
+  )
+  assert.deepEqual(
+    names(
+      await call<Array<{ id: string }>>(runtime, 'company.listBranches', { companyId: 'a', search: 'pn' }),
+    ),
+    ['a:phu-nhuan'],
+  )
+  const all = await call<Array<{ id: string }>>(runtime, 'company.listBranches', { companyId: 'a' })
+  assert.equal(all.length, 3)
+  assert.equal(
+    (await call<unknown[]>(runtime, 'company.listBranches', { companyId: 'a', search: '', limit: 2 })).length,
+    2,
+  )
 })

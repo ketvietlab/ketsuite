@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
+  BROWSER_MARKERS,
   GROUPS,
   discoverTests,
   groupForModule,
@@ -44,6 +45,28 @@ test('selects every group for shared or unknown code', () => {
 
 test('selects no test groups for documentation-only changes', () => {
   assert.deepEqual(groupsForChanges(['README.md', 'docs/src/content/docs/ketjs/testing.md']), [])
+})
+
+test('the HTTP and unit tests the gate runs never start a browser', () => {
+  const browserTests = GROUPS.flatMap((group) => discoverTests(group)).filter((path) =>
+    BROWSER_MARKERS.test(readFileSync(path, 'utf8')),
+  )
+  assert.deepEqual(
+    browserTests,
+    [],
+    'a test that drives a browser belongs in test/browser/, which browser.yml runs on a schedule',
+  )
+  // The markers do find a browser test: the one the browser lane runs.
+  assert.ok(BROWSER_MARKERS.test(readFileSync('test/browser/list-bulk-selection.test.tsx', 'utf8')))
+})
+
+test('the browser lane is apart from the gate', () => {
+  assert.ok(!GROUPS.flatMap((group) => discoverTests(group)).some((path) => path.startsWith('test/browser/')))
+  assert.deepEqual(
+    groupsForChanges(['test/browser/list-bulk-selection.test.tsx', 'e2e/product_backend/list.spec.ts']),
+    [],
+  )
+  assert.deepEqual(groupsForChanges(['e2e/product_backend/list.spec.ts', 'tools/build.mjs']), GROUPS)
 })
 
 test('permission coverage runs for anything that can declare a function', () => {
@@ -114,5 +137,23 @@ test('the two files the skip rule trusts really do declare nothing', () => {
   assert.deepEqual(
     suspects.filter((path) => declaring.test(readFileSync(path, 'utf8'))),
     [],
+  )
+})
+
+test('the browser lane runs every Playwright module in e2e/', () => {
+  // The matrix in browser.yml is a list, not a glob: a module that adds its specs under e2e/
+  // without a line there would never run, and nothing would say so.
+  const modules = readdirSync('e2e', { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(`e2e/${entry.name}/fixtures/server.mjs`))
+    .map((entry) => entry.name)
+    .sort()
+  const matrix = readFileSync('.github/workflows/browser.yml', 'utf8').match(
+    /\n {8}module:\n((?: {10}- \w+\n)+)/,
+  )?.[1]
+  assert.ok(matrix, 'browser.yml lists the Playwright modules under strategy.matrix.module')
+  assert.deepEqual(
+    [...matrix.matchAll(/- (\w+)/g)].map(([, module]) => module).sort(),
+    modules,
+    'every e2e/<module>/ has a `playwright / <module>` job in browser.yml, and every job has its module',
   )
 })

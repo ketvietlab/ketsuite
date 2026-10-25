@@ -54,7 +54,7 @@ const shop = defineTheme({
 })
 
 test('island: a theme places behaviour it cannot write', () => {
-  const manifest = compose([cart, shop])
+  const manifest = compose([cart, shop], { companies: true })
   assert.deepEqual(manifest.islands, { 'cart.widget': { by: 'cart', props: { qty: 'int' } } })
 
   const rt = createTheme(manifest, [cart, shop])
@@ -95,7 +95,7 @@ test('island: a theme declaring one is refused outright', () => {
 test('island: placing one nobody provides fails at build time', () => {
   const bad = defineTheme({ name: 't2', templates: { p: `{% island "ghost.widget" %}` } })
   assert.throws(
-    () => createTheme(compose([cart, bad]), [cart, bad]),
+    () => createTheme(compose([cart, bad], { companies: true }), [cart, bad]),
     /places island "ghost.widget", which no composed module provides/,
   )
 })
@@ -103,41 +103,54 @@ test('island: placing one nobody provides fails at build time', () => {
 test('island: two modules cannot claim the same island', () => {
   const otherIsland: IslandDefinition = { view: () => () => html`<b>x</b>` }
   const other = defineModule({ name: 'other', islands: { 'cart.widget': otherIsland } })
-  assert.throws(() => compose([cart, other]), /already provided by "cart"/)
+  assert.throws(() => compose([cart, other], { companies: true }), /already provided by "cart"/)
 })
 
 test('island: prop contracts and browser module paths are validated while composing', () => {
   assert.throws(
     () =>
-      compose([
-        defineModule({
-          name: 'bad_props',
-          islands: { bad: { props: { value: 'mystery' }, view: () => () => html`<b>x</b>` } },
-        }),
-      ]),
+      compose(
+        [
+          defineModule({
+            name: 'bad_props',
+            islands: { bad: { props: { value: 'mystery' }, view: () => () => html`<b>x</b>` } },
+          }),
+        ],
+        { companies: true },
+      ),
     /prop "value" has unknown type "mystery"/,
   )
   assert.throws(
     () =>
-      compose([
-        defineModule({
-          name: 'bad_client',
-          assets: new URL('.', import.meta.url),
-          islands: { bad: { client: '../escape.mjs', view: () => () => html`<b>x</b>` } },
-        }),
-      ]),
+      compose(
+        [
+          defineModule({
+            name: 'bad_client',
+            assets: new URL('.', import.meta.url),
+            islands: { bad: { client: '../escape.mjs', view: () => () => html`<b>x</b>` } },
+          }),
+        ],
+        { companies: true },
+      ),
     /client path must stay inside/,
   )
   assert.throws(
     () =>
-      compose([
-        defineModule({
-          name: 'bad_key',
-          islands: {
-            bad: { props: { id: 'id?', payload: 'json' }, key: ['id', 'payload'], view: () => () => html`x` },
-          },
-        }),
-      ]),
+      compose(
+        [
+          defineModule({
+            name: 'bad_key',
+            islands: {
+              bad: {
+                props: { id: 'id?', payload: 'json' },
+                key: ['id', 'payload'],
+                view: () => () => html`x`,
+              },
+            },
+          }),
+        ],
+        { companies: true },
+      ),
     /key prop .* must be a declared, required scalar/,
   )
 })
@@ -150,7 +163,7 @@ test('browser behavior: composition owns its asset, selector, and unique name', 
       'shell.shortcuts': { client: 'shortcuts.mjs', export: 'shortcuts', when: '[data-shell]' },
     },
   })
-  assert.deepEqual(compose([behavior]).behaviors, {
+  assert.deepEqual(compose([behavior], { companies: true }).behaviors, {
     'shell.shortcuts': {
       by: 'shell_behavior',
       client: { src: '/_ket/asset/shell_behavior/shortcuts.mjs', export: 'shortcuts' },
@@ -159,13 +172,16 @@ test('browser behavior: composition owns its asset, selector, and unique name', 
   })
   assert.throws(
     () =>
-      compose([
-        defineModule({
-          name: 'bad_behavior',
-          assets: new URL('.', import.meta.url),
-          behaviors: { bad: { client: '../escape.mjs' } },
-        }),
-      ]),
+      compose(
+        [
+          defineModule({
+            name: 'bad_behavior',
+            assets: new URL('.', import.meta.url),
+            behaviors: { bad: { client: '../escape.mjs' } },
+          }),
+        ],
+        { companies: true },
+      ),
     /client path must stay inside/,
   )
   assert.throws(
@@ -186,7 +202,7 @@ test('browser behavior: a document gets the shell bootstrap without contaminatin
       'shell.shortcuts': { client: 'shortcuts.mjs', when: '[data-shell]' },
     },
   })
-  const manifest = compose([behavior])
+  const manifest = compose([behavior], { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   const server = await createKetServer({
@@ -225,7 +241,7 @@ test('island: a standard div host causes the server to publish the island bootst
   const adapter = sqliteAdapter()
   await adapter.open()
   const server = await createKetServer({
-    manifest: compose([]),
+    manifest: compose([], { companies: true }),
     adapter,
     islandNames: ['standard'],
     routes: {
@@ -247,7 +263,7 @@ test('island: a standard div host causes the server to publish the island bootst
 })
 
 test('island: only the island hydrates; the rest of the page stays inert', () => {
-  const manifest = compose([cart, shop])
+  const manifest = compose([cart, shop], { companies: true })
   const rt = createTheme(manifest, [cart, shop])
   const container = parseFragment(rt.renderRegion('page', { title: 'Cửa hàng', qty: 2 }))
 
@@ -523,7 +539,7 @@ test('island: the server publishes a tenant-specific browser bootstrap and view 
     },
   })
   const modules = [address, partner, website, websiteSearch, shell]
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const theme = createTheme(manifest, modules)
   const adapter = sqliteAdapter()
   await adapter.open()
@@ -625,7 +641,7 @@ test('island: an initially empty text hole hydrates and can become content', () 
       },
     },
   })
-  const manifest = compose([empty])
+  const manifest = compose([empty], { companies: true })
   const rt = createTheme(manifest, [empty])
   const markup = renderIsland('empty', rt.islands.empty!, {})
   assert.match(markup, /<!--k\[--><!--k-->/, 'SSR correctly emits no empty text node')

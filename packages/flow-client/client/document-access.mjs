@@ -1,9 +1,9 @@
-import { accessFor, canManageScope } from './access-model.mjs'
+import { accessFor, canManageScope, teamIdsOf } from './access-model.mjs'
 export function documentAccess(data, page, userId = data.user.id) {
   const member = data.members.find((m) => m.id === userId && m.status === 'active')
   if (!member || !page) return { read: false, write: false }
   const project = data.projects.find((p) => p.id === page.projectId),
-    teams = data.teams.filter((t) => t.memberIds.includes(userId)).map((t) => t.id)
+    teams = teamIdsOf(data, userId)
   const role = project
     ? accessFor(data, project, userId).role
     : canManageScope(data, 'workspace', page.workspaceId, userId)

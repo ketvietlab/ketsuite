@@ -44,10 +44,14 @@ test('Customer password reset: mailed once to an account with an email, the same
     password: 'lan-123456',
   })
   const staff = { scope: { company: 'studio-a', branches: null }, actor: 'studio-designer' }
-  const outbox = async () =>
-    ((await app.fixture.call<Row>('mail_transport.listOutbox', {}, staff)).value.deliveries as Row[]).filter(
-      (d) => d.templateName === 'website.customer.password-reset',
-    )
+  // Tests inspect private fixture storage; staff APIs deliberately expose metadata only.
+  const outbox = async (): Promise<Row[]> =>
+    (
+      await app.adapter!.all(
+        'SELECT * FROM mail_transport_delivery WHERE "companyId" = ? ORDER BY "queuedAt" DESC, id DESC',
+        ['studio-a'],
+      )
+    ).map((row) => ({ ...row, to: typeof row.to === 'string' ? JSON.parse(row.to) : row.to }))
 
   const visitor = app.client.anonymous()
   const forgot = (body: Row) => visitor.request(`${API}/auth/password/forgot`, json(body))
@@ -65,6 +69,12 @@ test('Customer password reset: mailed once to an account with an email, the same
   assert.equal((await forgot({ email: 'cuc@example.com' })).status, 202)
   assert.equal((await outbox()).length, 0)
 
+  await fixture('website.saveDomain', {
+    id: 'canonical-domain',
+    siteId: 'site-a',
+    host: 'canonical.example.test',
+    primary: true,
+  })
   await app.fixture.call(
     'mail_transport.saveTemplate',
     {
@@ -92,7 +102,7 @@ test('Customer password reset: mailed once to an account with an email, the same
   assert.equal(mail!.subject, 'Đặt lại mật khẩu tại site-a')
   const link = new URL(/https?:\/\/\S+/.exec(String(mail!.text))![0])
   assert.equal(link.pathname, '/account/reset')
-  assert.equal(link.host, new URL(app.baseUrl).host)
+  assert.equal(link.origin, 'https://canonical.example.test')
   const token = link.searchParams.get('token')!
   assert.ok(token.length >= 40)
 

@@ -416,6 +416,43 @@ test('screen help resolves the current guide after content-slot navigation, incl
   })
 })
 
+test('standalone help restores the host navigation toggle after its menu closes', () => {
+  browser((document, cleanup) => {
+    const trigger = new Element('button'),
+      toggle = new Element('summary')
+    document.append(trigger)
+    document.append(toggle)
+    let menuOpen = true
+    const drawer = Reflect.construct(globalThis.HTMLDialogElement, ['dialog']) as Element & {
+      id: string
+      open: boolean
+    }
+    drawer.id = 'host-guide'
+    const close = new Element('button')
+    drawer.append(close)
+    drawer.queries.set('[data-ui="help-close"]', [close])
+    document.append(drawer)
+    document.queries.set('[data-ui="help-drawer"]', [drawer])
+    cleanup.push(
+      attachHelpDrawers(document as unknown as Document, {
+        beforeOpen: (source) => {
+          assert.equal(source, trigger)
+          menuOpen = false
+          return toggle as unknown as HTMLElement
+        },
+      }),
+    )
+    const event = new Event('ket:screen-help-request', { cancelable: true })
+    Object.defineProperty(event, 'target', { value: trigger })
+    document.dispatchEvent(event)
+    assert.equal(menuOpen, false)
+    assert.equal(drawer.open, true)
+    press(document, 'Escape')
+    assert.equal(drawer.open, false)
+    assert.equal(document.activeElement, toggle)
+  })
+})
+
 test('record help resolves its own guide even when a background screen guide was previously bound', () => {
   browser((document, cleanup) => {
     const sheet = new Element('section')

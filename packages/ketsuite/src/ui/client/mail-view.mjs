@@ -1,4 +1,5 @@
-// @ts-nocheck This dependency-free browser/SSR source is contract-tested through both runtimes.
+// @ts-nocheck Shared browser/SSR chatter; domain requests remain effect-checked.
+import { createRelationSelectView, Checkbox, TextArea } from '@ketvietlab/design-system'
 const LABELS = {
   vi: {
     title: 'Thảo luận',
@@ -18,6 +19,9 @@ const LABELS = {
     retry: 'Thử lại',
     system: 'KetSuite',
     inbox: 'Hộp thư thông báo',
+    mentions: '@Nhắc đến',
+    externalConfirm: 'Tôi đồng ý gửi ghi chú nội bộ cho người ngoài được nhắc đến.',
+    unavailable: 'Không tải được số thông báo',
     email: 'Email',
     deliveryStates: {
       queued: 'đang chờ',
@@ -46,6 +50,9 @@ const LABELS = {
     retry: 'Retry',
     system: 'KetSuite',
     inbox: 'Notification inbox',
+    mentions: '@Mention',
+    externalConfirm: 'I agree to send this internal note to the mentioned external recipients.',
+    unavailable: 'Notification count is unavailable',
     email: 'Email',
     deliveryStates: {
       queued: 'queued',
@@ -147,8 +154,68 @@ export function createChatterView(runtime, props, seed = {}) {
   )
   const bridge = apiFor(String(props.resModel))
   const requests = requestScope()
-  let pollCount = 0
   let pollTimer = null
+  const en = String(props.lang).toLowerCase().startsWith('en')
+  const pickerLabels = en
+    ? {
+        choose: '@Mention',
+        empty: 'No contacts',
+        search: 'Find a contact',
+        loading: 'Loading…',
+        loadError: 'Cannot load contacts',
+        dialogTitle: 'Mention contacts',
+        close: 'Close',
+        select: 'Select',
+        create: 'Create',
+        edit: 'Edit',
+        save: 'Save',
+        cancel: 'Cancel',
+        remove: 'Remove',
+        confirmRemove: 'Remove?',
+        retry: 'Retry',
+        clear: 'Clear',
+        chosen: 'Chosen',
+      }
+    : {
+        choose: '@Nhắc đến',
+        empty: 'Không có liên hệ',
+        search: 'Tìm liên hệ',
+        loading: 'Đang tải…',
+        loadError: 'Không tải được liên hệ',
+        dialogTitle: 'Nhắc đến liên hệ',
+        close: 'Đóng',
+        select: 'Chọn',
+        create: 'Tạo',
+        edit: 'Sửa',
+        save: 'Lưu',
+        cancel: 'Hủy',
+        remove: 'Bỏ',
+        confirmRemove: 'Bỏ?',
+        retry: 'Thử lại',
+        clear: 'Xóa chọn',
+        chosen: 'Đã chọn',
+      }
+  const mentions = createRelationSelectView(
+    {
+      id: `chatter-${props.resModel}-${props.resId}-mentions`,
+      config: {
+        name: 'mentionPartnerIds',
+        ariaLabel: labels.mentions,
+        multiple: true,
+        options: [],
+        labels: pickerLabels,
+        manager: {
+          listFunction: `${bridge}.mentionCandidates`,
+          listInput: { targetId: props.resId },
+          searchInDropdown: true,
+          idField: 'id',
+          labelField: 'name',
+          limit: 20,
+        },
+      },
+    },
+    { disabled: () => busy() },
+  )
 
   const load = async ({ append = false, quiet = false } = {}) => {
     if (!bridge) {
@@ -194,6 +261,8 @@ export function createChatterView(runtime, props, seed = {}) {
         kind: String(values.get('kind') ?? 'comment'),
         body,
         attachmentIds,
+        mentionPartnerIds: mentions.getSelectedValues(),
+        confirmExternalMentions: values.get('confirmExternalMentions') === 'true',
       })
       form.reset()
       await load()
@@ -225,8 +294,7 @@ export function createChatterView(runtime, props, seed = {}) {
   }
 
   const schedulePoll = () => {
-    if (requests.disposed() || pollCount >= 240) return
-    pollCount++
+    if (requests.disposed()) return
     pollTimer = setTimeout(async () => {
       if (requests.disposed()) return
       if (document.visibilityState === 'visible' && !busy()) await load({ quiet: true })
@@ -234,7 +302,8 @@ export function createChatterView(runtime, props, seed = {}) {
     }, 15_000)
   }
 
-  const mount = () => {
+  const mount = (context) => {
+    mentions.mount?.(context)
     void (async () => {
       if (requests.disposed()) return
       await load()
@@ -244,17 +313,17 @@ export function createChatterView(runtime, props, seed = {}) {
 
   const view = () => {
     const data = page()
-    return html`<section data-ui="chatter" data-state=${status()} aria-label=${labels.title}>
+    return html`<section data-kv-design-system data-ui="chatter" data-state=${status()} aria-label=${labels.title}>
       <div data-ui="chatter-kinds" role="toolbar" aria-label=${labels.title}>
-        <button data-ui="chatter-kind" data-kind="comment" data-active=${composerKind() === 'comment'} data-control="action" data-variant="secondary" data-size="compact" type="button" aria-pressed=${composerKind() === 'comment'} on:click=${() => composerKind.set(composerKind() === 'comment' ? null : 'comment')} disabled=${busy()}>${labels.comment}</button>
-        <button data-ui="chatter-kind" data-kind="note" data-active=${composerKind() === 'note'} data-control="action" data-variant="secondary" data-size="compact" type="button" aria-pressed=${composerKind() === 'note'} on:click=${() => composerKind.set(composerKind() === 'note' ? null : 'note')} disabled=${busy()}>${labels.note}</button>
+        <button data-ui="chatter-kind" data-kind="comment" data-active=${composerKind() === 'comment'} data-control="action" data-variant="secondary" data-size="compact" type="button" aria-pressed=${composerKind() === 'comment'} on:click=${() => composerKind.set(composerKind() === 'comment' ? null : 'comment')} disabled=${busy() || data.canFollow === false}>${labels.comment}</button>
+        <button data-ui="chatter-kind" data-kind="note" data-active=${composerKind() === 'note'} data-control="action" data-variant="secondary" data-size="compact" type="button" aria-pressed=${composerKind() === 'note'} on:click=${() => composerKind.set(composerKind() === 'note' ? null : 'note')} disabled=${busy() || data.canFollow === false}>${labels.note}</button>
       </div>
       <header data-ui="chatter-head">
         <div data-ui="chatter-heading">
           <h2 data-ui="chatter-title">${labels.title}</h2>
           <span data-ui="chatter-followers">${data.followers.length} ${labels.followers}</span>
         </div>
-        <button data-ui="chatter-follow" data-control="action" data-variant="secondary" data-size="compact" type="button" on:click=${toggleFollow} disabled=${busy()}>
+        <button data-ui="chatter-follow" data-control="action" data-variant="secondary" data-size="compact" type="button" on:click=${toggleFollow} disabled=${busy() || data.canFollow === false}>
           ${data.following ? labels.unfollow : labels.follow}
         </button>
       </header>
@@ -262,7 +331,9 @@ export function createChatterView(runtime, props, seed = {}) {
         composerKind()
           ? html`<form data-ui="chatter-composer" on:submit=${post}>
         <input type="hidden" name="kind" value=${composerKind()} autocomplete="off">
-        <textarea data-ui="chatter-body" name="body" placeholder=${labels.placeholder} required disabled=${busy()}></textarea>
+        ${TextArea({ id: `chatter-${props.resId}-body`, name: 'body', label: labels.comment, placeholder: labels.placeholder, required: true, disabled: busy(), rows: 4 })}
+        ${mentions.view()}
+        ${composerKind() === 'note' ? Checkbox({ id: `chatter-${props.resId}-external`, name: 'confirmExternalMentions', label: labels.externalConfirm, value: 'true', submitValue: 'true' }) : ''}
         <div data-ui="chatter-compose-actions">
           <label data-ui="chatter-attachment">${labels.attachment}<input data-ui="form-control" type="file" name="attachment" autocomplete="off" disabled=${busy()}></label>
           <div>
@@ -322,33 +393,58 @@ export function createChatterView(runtime, props, seed = {}) {
     mount,
     dispose: () => {
       if (pollTimer !== null) clearTimeout(pollTimer)
+      mentions.dispose?.()
       requests.dispose()
     },
   }
 }
 
-export function createInboxIndicatorView(runtime, props, initialCount = 0) {
+/** @param {unknown} runtime @param {Record<string, unknown>} props @param {number|null} initialCount */
+export function createInboxIndicatorView(runtime, props, initialCount = null) {
   const { html, signal } = runtime
   const labels = labelsOf(props)
   const count = signal(initialCount)
+  const failed = signal(false)
   const requests = requestScope()
+  let timer = null
   const load = async () => {
     try {
       const result = await callApi(requests.fetch, 'mail.countUnread', {})
       count.set(Number(result.count ?? 0))
+      failed.set(false)
     } catch {
-      if (requests.disposed()) return
-      count.set(0)
+      if (!requests.disposed()) {
+        count.set(null)
+        failed.set(true)
+      }
     }
   }
+  const refresh = () => void load()
+  const poll = () => {
+    if (requests.disposed()) return
+    timer = setTimeout(async () => {
+      if (document.visibilityState === 'visible') await load()
+      poll()
+    }, 15_000)
+  }
   return {
-    view: () => html`<a data-ui="mail-indicator" href="/admin/inbox" title=${labels.inbox} aria-label=${labels.inbox}>
-    <svg data-ui="mail-indicator-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3v-3.8A4 4 0 0 1 1 15V7a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4Z" />
-    </svg>
-    ${count() > 0 ? html`<span data-ui="mail-indicator-count">${count()}</span>` : ''}
-  </a>`,
-    mount: () => void load(),
-    dispose: requests.dispose,
+    view: () => html`<a data-ui="mail-indicator" data-state=${failed() ? 'error' : count() === null ? 'loading' : 'ready'} href=${String(props.lang).startsWith('en') ? '/admin/inbox?lang=en' : '/admin/inbox'} title=${failed() ? labels.unavailable : labels.inbox} aria-label=${failed() ? labels.unavailable : labels.inbox}>
+      <svg data-ui="mail-indicator-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3v-3.8A4 4 0 0 1 1 15V7a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4Z" /></svg>
+      ${failed() ? html`<span data-ui="mail-indicator-count">!</span>` : count() > 0 ? html`<span data-ui="mail-indicator-count">${count()}</span>` : ''}
+    </a>`,
+    mount: () => {
+      refresh()
+      poll()
+      window.addEventListener('online', refresh)
+      window.addEventListener('ket:mail-changed', refresh)
+    },
+    dispose: () => {
+      if (timer !== null) clearTimeout(timer)
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', refresh)
+        window.removeEventListener('ket:mail-changed', refresh)
+      }
+      requests.dispose()
+    },
   }
 }

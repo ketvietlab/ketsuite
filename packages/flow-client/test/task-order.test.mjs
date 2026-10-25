@@ -3,7 +3,7 @@ setFlowLocale('vi')
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createFixtureSession } from '../atlas/store.mjs'
-import { orderedTasks } from '@ketvietlab/flow-client/task-order.mjs'
+import { orderedTasks, taskGroups } from '@ketvietlab/flow-client/task-order.mjs'
 const move = (f, id, targetId, field, value, position = 'before', extra = {}) =>
   f.call('flow.issue.reorder', {
     id,
@@ -201,4 +201,47 @@ test('multi-drag checks write permission for every selected task, not just the g
   assert.equal(result.ok, false)
   assert.equal(result.errors[0].code, 'forbidden')
   assert.deepEqual(d.tasks, before)
+})
+
+test('bounded catalogs never hide loaded tasks from status or sprint groups', () => {
+  const data = {
+    projects: [{ id: 'p', taskStatusIds: ['first'] }],
+    columns: [{ id: 'first', label: 'First', kind: 'todo', color: 'neutral' }],
+    sprints: [{ title: 'First sprint', projectId: 'p' }],
+    tasks: [
+      {
+        id: 'P-1',
+        projectId: 'p',
+        status: 'last',
+        sprint: 'Last sprint',
+        statusDefinition: { id: 'last', label: 'Review', kind: 'review', color: 'yellow' },
+      },
+      { id: 'P-2', projectId: 'p', status: 'last', sprint: 'Last sprint' },
+      { id: 'P-3', projectId: 'p', status: 'deleted', archived: true, sprint: 'Archived sprint' },
+      { id: 'X-1', projectId: 'x', status: 'external', sprint: 'Other sprint' },
+      {
+        id: 'P-4',
+        projectId: 'p',
+        status: 'missing',
+        statusDefinition: { id: 'stale', label: 'Wrong label' },
+      },
+    ],
+  }
+  assert.deepEqual(taskGroups(data, 'status', 'p'), [
+    { id: 'first', label: 'First', kind: 'todo', color: 'neutral' },
+    { id: 'last', label: 'Review', kind: 'review', color: 'yellow' },
+    { id: 'missing', label: 'missing', kind: undefined, color: undefined },
+  ])
+  assert.deepEqual(
+    taskGroups(data, 'sprint', 'p').map((group) => group.id),
+    ['Backlog', 'First sprint', 'Last sprint'],
+  )
+  const global = taskGroups(data, 'status').map((group) => group.id)
+  for (const task of data.tasks.filter((task) => !task.archived)) assert.ok(global.includes(task.status))
+  assert.equal(global.includes('deleted'), false)
+  assert.deepEqual(
+    data.columns.map((column) => column.id),
+    ['first'],
+    'display fallback never changes mutation options',
+  )
 })

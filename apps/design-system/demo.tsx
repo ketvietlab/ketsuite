@@ -4,7 +4,7 @@ import { html, renderIsland, renderToString, trustedMarkup } from '@ketvietlab/k
 import type { JSXChild } from '@ketvietlab/ketjs-view'
 import type { RouteResult } from '@ketvietlab/ketjs'
 import { placeholderApplications } from '@ketvietlab/ketsuite/ui'
-import { icon } from '@ketvietlab/ketsuite/ui'
+import { formatMoney, icon } from '@ketvietlab/ketsuite/ui'
 import {
   ActionGroup,
   AppNavigation,
@@ -34,6 +34,7 @@ import {
   Progress,
   RecordForm,
   RecordPage,
+  ResourceList,
   Section,
   Stack,
   Surface,
@@ -263,6 +264,9 @@ const seed = (): Order[] =>
 const productOf = (order: Order) => products.find((product) => product.id === order.product)!
 const total = (order: Order) => productOf(order).price * order.quantity
 const money = (value: number) => `${new Intl.NumberFormat('vi-VN').format(value)} ₫`
+// Overview figures are read at a glance, like the real sales overview: "85,7 Tr ₫".
+// Tables and records keep every đồng because that is where amounts are reconciled.
+const moneyShort = (value: number) => formatMoney({ locale: 'vi' }, value, 'VND', { compact: true })
 const redirect = (href: string) => withHeaders(text('', { status: 303 }), { location: href })
 
 const shellMessages = {
@@ -1116,7 +1120,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
                     items={[
                       <Metric
                         label="Giá trị đơn hàng"
-                        value={money(orders.reduce((sum, order) => sum + total(order), 0))}
+                        value={moneyShort(orders.reduce((sum, order) => sum + total(order), 0))}
                         detail={`${orders.length} đơn hàng`}
                         href={href({ view: 'orders' })}
                       />,
@@ -1185,7 +1189,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
                         {stages.map((stage, i) => (
                           <div class="demo-bar-row">
                             <span>{stageLabel[stage]}</span>
-                            <strong>{money(sums[i])}</strong>
+                            <strong>{moneyShort(sums[i])}</strong>
                             <div class="demo-bar-track">
                               <div data-tone={stage} style={`width:${(sums[i] / max) * 100}%`} />
                             </div>
@@ -1215,20 +1219,18 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
                       <Surface
                         title="Ưu tiên hôm nay"
                         body={
-                          <Stack
-                            items={orders
-                              .filter((order) => order.priority && order.stage !== 'done')
-                              .map((order) => (
-                                <ContentCard
-                                  title={`${order.id} · ${customerName(order.customer)}`}
-                                  summary={
-                                    order.note ||
-                                    `Chuẩn bị ${order.quantity} gói cho lịch giao ${order.date.split('-').reverse().join('/')}`
-                                  }
-                                  href={recordHref(order)}
-                                  meta={stateBadge(order)}
-                                />
-                              ))}
+                          // Rows inside the panel, not cards: a card would draw a second frame in it.
+                          <ResourceList
+                            label="Ưu tiên hôm nay"
+                            rows={orders.filter((order) => order.priority && order.stage !== 'done')}
+                            id={(order) => order.id}
+                            href={recordHref}
+                            primary={(order) => `${order.id} · ${customerName(order.customer)}`}
+                            secondary={(order) =>
+                              order.note ||
+                              `Chuẩn bị ${order.quantity} gói cho lịch giao ${order.date.split('-').reverse().join('/')}`
+                            }
+                            meta={stateBadge}
                           />
                         }
                       />,

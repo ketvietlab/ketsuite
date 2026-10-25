@@ -2,6 +2,7 @@
 // Only identity, navigation and access metadata crosses into the enhancement
 // runtime. Tasks, document bodies and paid feature data stay in the CSR read.
 import { flowExtensions } from './extensions.mjs'
+import { teamIdsOf } from './access-model.mjs'
 const pick = (record, keys) =>
   Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]))
 export function flowShellData(data) {
@@ -10,11 +11,12 @@ export function flowShellData(data) {
   const metadata = {
     company: pick(data.company, ['id', 'name']),
     companies: (data.companies ?? []).map((x) => pick(x, ['id', 'name'])),
-    user: pick(user, ['id', 'name', 'avatarUrl']),
+    user: pick(user, ['id', 'name', 'avatarUrl', 'teamIds']),
     members: (data.members ?? [])
       .filter((x) => x.id === user.id)
       .map((x) => pick(x, ['id', 'role', 'status'])),
     capabilities: data.capabilities,
+    invitationDelivery: data.invitationDelivery,
     context: data.context,
     problem: data.problem,
     workspaces: data.workspaces?.map((x) => pick(x, ['id', 'companyId', 'title', 'archived'])),
@@ -35,13 +37,12 @@ export function flowShellData(data) {
       pick(x, ['id', 'projectId', 'title', 'query', 'status', 'archived']),
     ),
     inbox: (data.inbox ?? []).map((x) => ({ read: x.read })),
+    inboxUnreadCount: data.inboxUnreadCount,
     pages: (data.pages ?? []).map((x) => pick(x, ['id', 'projectId'])),
     grants: (data.grants ?? []).map((x) =>
       pick(x, ['scope', 'targetId', 'role', 'subjectType', 'subjectId']),
     ),
-    teams: (data.teams ?? [])
-      .filter((x) => x.memberIds.includes(user.id))
-      .map((x) => ({ id: x.id, memberIds: [user.id] })),
+    teams: teamIdsOf(data, user.id).map((id) => ({ id, title: data.teams?.find((t) => t.id === id)?.title })),
     tasks: [],
     columns: [],
     tags: [],

@@ -22,7 +22,7 @@ const partner = process.env.KET_BENCH_PARTNER_MODULE
   ? (await import(pathToFileURL(process.env.KET_BENCH_PARTNER_MODULE).href)).default
   : shippedPartner
 const modules = [address, partner]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'bench', branch: 'main', branches: null }
 const adapter = postgresAdapter(url)
 const call = (name: string, args: Record<string, unknown>) => callFn(name, args, { adapter, manifest, scope })

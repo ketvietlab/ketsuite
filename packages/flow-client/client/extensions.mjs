@@ -46,6 +46,7 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
 /**
  * @typedef {object} FlowExtensionRoute
  * @property {string} title
+ * @property {(data:any) => boolean} [available] Authorized route availability supplied by its server projection.
  * @property {string} [group]
  * @property {string} pattern
  * @property {'personal' | 'workspace' | 'project'} [scope]
@@ -60,6 +61,9 @@ import { personalRoutes, workspaceRoutes, managementTabs } from './navigation.mj
  * @property {Record<string, FlowExtensionRoute>} [routes] Pages.
  * @property {Record<string, { title: string, group?: string, back: string, size?: string }>} [forms] Modal routes.
  * @property {Record<string, string>} [errors] API error code → message key.
+ * @property {(name: string, input: any, data: any) => any} [prepareCommand] Capture this extension's versions before transport.
+ * @property {(name: string, input: any) => { name: string, input: any } | undefined} [resolveCommand] Finite typed command adapter.
+ * @property {(name: string, input: any) => { name: string, input: any } | undefined} [atlasCommand] Fixture-only reverse transport adapter.
  * @property {(data: any) => { id: string, title: string, description: string, icon: string, route: string }[]} [commands]
  * @property {() => Record<string,string>} [searchLabels] Localized labels for extension-owned search groups.
  * @property {(data: any) => Record<string,unknown>} [shellData] Authorized navigation metadata only, never business records or core-field overrides.
@@ -104,6 +108,7 @@ export function registerFlowExtension(extension) {
           return route.tab.label ?? route.title
         },
         icon: route.tab.icon,
+        available: route.available,
       }
       tabs.splice(at < 0 ? tabs.length : at + 1, 0, tab)
     }

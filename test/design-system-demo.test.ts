@@ -204,6 +204,29 @@ test('sales demo: overview columns use the same grouped surface hierarchy', () =
   )
   assert.match(html, /data-ui="surface"[\s\S]*data-ui="surface-title"[\s\S]*?Ưu tiên hôm nay/)
   assert.doesNotMatch(html, /data-ui="section-title">Ưu tiên hôm nay/)
+  // Its orders are rows inside the panel: a card there would draw a second frame.
+  const priority = html.slice(html.indexOf('Ưu tiên hôm nay'), html.indexOf('Cập nhật vận hành'))
+  assert.match(priority, /data-ui="resource-list"/)
+  assert.doesNotMatch(priority, /data-ui="content-card"/)
+})
+
+test('submenu demo: overview figures are abbreviated while order rows keep every đồng', () => {
+  const routes = createDemo2Routes()
+  const read = (view: string) =>
+    String(routes['/demo2'](new URL(`http://localhost/demo2?view=${view}&theme=light`)).body)
+      .replace(/<!--k\[?-->/gu, '')
+      .replace(/\s/gu, ' ')
+  const overview = read('overview')
+  const exact = /\d{1,3}(?:\.\d{3}){2,} ₫/u
+  const figure = overview.match(
+    /data-ui="metric-label">Giá trị đơn hàng<\/p><p data-ui="metric-value">([^<]+)</u,
+  )
+  assert.ok(figure, 'the order value metric renders')
+  assert.match(figure[1], /^\d+(?:,\d)? Tr ₫$/u)
+  const bars = [...overview.matchAll(/class="demo-bar-row"><span>[^<]+<\/span><strong>([^<]+)</gu)]
+  assert.ok(bars.length > 0, 'the value-by-status bars render')
+  for (const [, amount] of bars) assert.doesNotMatch(amount, exact)
+  assert.match(read('orders'), exact)
 })
 
 test('sales demo: collection paging belongs to ListChrome above the table', () => {

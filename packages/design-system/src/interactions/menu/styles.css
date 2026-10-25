@@ -28,6 +28,18 @@
     padding: 0 var(--kv-space-2);
   }
 
+  /* A bare hit area: the trigger content draws its own face. */
+  :where([data-kv-design-system]) [data-ui="menu"][data-trigger="plain"] [data-ui="menu-trigger"] {
+    display: flex;
+    min-height: 0;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+  }
+
   :where([data-kv-design-system]) [data-ui="menu"][data-active="true"] [data-ui="menu-trigger"] {
     border-color: var(--kv-color-accent);
     background: var(--kv-color-accent-soft);

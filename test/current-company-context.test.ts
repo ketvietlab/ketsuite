@@ -5,6 +5,7 @@ import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { currentCompanyContext } from '../packages/ketsuite/src/modules/backend/current-company.ts'
 const app = defineDeployment({
   name: 'current_company_contract',
+  companies: true,
   modules: [
     defineModule({
       name: 'probe',

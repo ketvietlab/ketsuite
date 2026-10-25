@@ -48,6 +48,13 @@ test('record refresh: the shell re-fetches the page behind a saved record', asyn
   assert.equal(fetched.length, 1, 'a record page has no collection behind it')
 })
 
+test('record refresh: a closing modal has the shell read the collection without the record', async (t) => {
+  const { fetched, announce } = shell(t)
+  announce({ kind: 'product.uom', ids: ['u1'], href: 'http://ket.local/admin/product/uoms' })
+  await settled()
+  assert.deepEqual(fetched, ['http://ket.local/admin/product/uoms'])
+})
+
 test('record refresh: a collection island that reads itself again leaves the page alone', async (t) => {
   const { doc, fetched, announce } = shell(t)
   // The island listens after the shell, as one mounted by a later navigation does.

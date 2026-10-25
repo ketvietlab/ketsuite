@@ -13,6 +13,7 @@ import { ketsuite } from '../apps/ketsuite/deployment.ts'
 const scope: Scope = { company: 'default', companies: ['default'], branches: null }
 const posSyncDeployment = defineDeployment({
   name: 'pos_sync_test',
+  companies: true,
   modules: ketsuite.modules,
   headless: true,
   serve: {},

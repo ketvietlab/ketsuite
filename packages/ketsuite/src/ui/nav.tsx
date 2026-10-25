@@ -66,6 +66,8 @@ export type Indicator = {
 
 export type SidebarOptions = {
   menu: MenuNode[]
+  /** The rail app whose menu this is; the sidebar header names it. Sales by default. */
+  app?: string
   /** Authorized open-work counts, keyed by menu node ID; zero/invalid values hide the badge. */
   counts?: Readonly<Record<string, number>>
   /**
@@ -214,7 +216,7 @@ export const sidebarMain = (_: Translator, options: SidebarOptions): TemplateRes
       id={NAVIGATION_ID}
       label={_('backend.nav.sections')}
       externalTrigger
-      identity={_('backend.apps.sales')}
+      identity={_(`backend.apps.${options.app ?? 'sales'}`)}
       tools={{
         searchLabel: _('backend.apps.searchMenu'),
         searchPlaceholder: _('backend.nav.search'),

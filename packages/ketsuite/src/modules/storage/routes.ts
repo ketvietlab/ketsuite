@@ -25,6 +25,10 @@ export type UploadDefaults = {
   resField?: string
   public?: boolean
   maxBytes?: number
+  /** Domain validation of parsed scalar fields, before attachment persistence. */
+  onFields?: (fields: Readonly<Record<string, string>>) => void | Promise<void>
+  /** An authorized domain route may persist only the attachment assembled by this receiver. */
+  persistAttachment?: (input: Row) => Promise<Attachment>
   /** Trusted domain bridge: persists a durable lease before writing object bytes. */
   staged?: {
     key(company: string, id: string, checksum: string): string
@@ -103,6 +107,7 @@ export const receiveAttachment = async (
         }
       } else fields[part.name] = await field(part)
     }
+    await defaults.onFields?.(fields)
     if (!uploadPart) throw new KetError({ code: 'E_UPLOAD_FILE', message: 'multipart request has no file' })
     const scope = await ctx.scopeOf(url, req)
     if (!scope.company) throw new KetError({ code: 'E_UPLOAD_SCOPE', message: 'upload requires a company' })
@@ -132,26 +137,24 @@ export const receiveAttachment = async (
     await storage.put(key, source.body, { type: uploadPart.type, size: uploadPart.size })
     if (defaults.staged) return defaults.staged.complete(id)
     const isPublic = defaults.public ?? (fields.public === 'true' || fields.public === '1')
-    return (await ctx.call(
-      'storage.createAttachment',
-      {
-        id,
-        name: fields.name || uploadPart.filename,
-        ...(defaults.resModel || fields.resModel ? { resModel: defaults.resModel ?? fields.resModel } : {}),
-        ...(defaults.resId || fields.resId ? { resId: defaults.resId ?? fields.resId } : {}),
-        ...(defaults.resField || fields.resField ? { resField: defaults.resField ?? fields.resField } : {}),
-        kind: 'stored',
-        storeKey: key,
-        mimetype: uploadPart.type,
-        size: uploadPart.size,
-        checksum: uploadPart.checksum,
-        public: isPublic,
-        ...(isPublic && storage.public ? { publishCopy: true } : {}),
-        createdAt: new Date().toISOString(),
-      },
-      url,
-      req,
-    )) as Attachment
+    const persist =
+      defaults.persistAttachment ??
+      (async (input: Row) => (await ctx.call('storage.createAttachment', input, url, req)) as Attachment)
+    return persist({
+      id,
+      name: fields.name || uploadPart.filename,
+      ...(defaults.resModel || fields.resModel ? { resModel: defaults.resModel ?? fields.resModel } : {}),
+      ...(defaults.resId || fields.resId ? { resId: defaults.resId ?? fields.resId } : {}),
+      ...(defaults.resField || fields.resField ? { resField: defaults.resField ?? fields.resField } : {}),
+      kind: 'stored',
+      storeKey: key,
+      mimetype: uploadPart.type,
+      size: uploadPart.size,
+      checksum: uploadPart.checksum,
+      public: isPublic,
+      ...(isPublic && storage.public ? { publishCopy: true } : {}),
+      createdAt: new Date().toISOString(),
+    })
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

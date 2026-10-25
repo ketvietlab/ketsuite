@@ -1,3 +1,5 @@
+import { dateKeyIn } from './calendar.ts'
+import { readRecord } from './functions/command.ts'
 import { asc, defineFn, desc, eq, from } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import {
@@ -7,6 +9,7 @@ import {
   decimalSign,
   multiplyDecimals,
   negateDecimalText,
+  subtractDecimals,
 } from '../account/money.ts'
 import { appendContentChange } from './content.ts'
 import { occupancyDates } from './inventory.ts'
@@ -27,8 +30,7 @@ const success = (id: unknown, extra: Record<string, unknown> = {}) => ({
 })
 const failure = (...errors: Issue[]) => ({ ok: false, errors })
 const text = (value: unknown): string => String(value ?? '').trim()
-const one = async (ctx: Ctx, model: string, id: unknown): Promise<Row | null> =>
-  (await ctx.db.select(model, { id }))[0] ?? null
+const one = readRecord
 const date = (value: unknown): Date | null => {
   const parsed = new Date(String(value ?? ''))
   return Number.isFinite(parsed.getTime()) ? parsed : null
@@ -92,9 +94,10 @@ const productDetails = async (
  * source key is the idempotency boundary shared by manual and recurring service
  * materialisation.
  */
-export const postCharge = async (
+const postChargeOperation = async (
   ctx: Ctx,
   args: Record<string, unknown>,
+  inTransaction: boolean,
 ): Promise<Record<string, unknown>> => {
   const existing = await one(ctx, 'hospitality_core.Charge', args.id)
   if (existing)
@@ -176,7 +179,7 @@ export const postCharge = async (
   if (errors.length || !folio) return failure(...errors)
 
   try {
-    return await ctx.tx(async (tx) => {
+    const persist = async (tx: Ctx) => {
       const inserted = await tx.db.insertIfAbsent('hospitality_core.Charge', {
         id: args.id,
         folioId: args.folioId,
@@ -222,12 +225,18 @@ export const postCharge = async (
         if ('dryRun' in changed || changed.matched) return success(args.id, { amount, existing: false })
       }
       throw new ChargePostingConflict()
-    })
+    }
+    return inTransaction ? await persist(ctx) : await ctx.tx(persist)
   } catch (error) {
     if (error instanceof ChargePostingConflict) return failure(issue('folioId', 'transition_conflict'))
     throw error
   }
 }
+
+export const postCharge = (ctx: Ctx, args: Record<string, unknown>) => postChargeOperation(ctx, args, false)
+/** The caller must roll back its transaction when the result is not ok. */
+export const postChargeInTransaction = (ctx: Ctx, args: Record<string, unknown>) =>
+  postChargeOperation(ctx, args, true)
 
 /** The folio moved while a cancellation was being settled against it. */
 export class FolioConflict extends Error {
@@ -246,6 +255,7 @@ export type CancellationSettlement = {
   stayId?: unknown
   /** The penalty in the folio's currency. `'0'` for a free cancellation. */
   fee: string
+  retainedRoomAmount?: string
   /** Stable, so a replayed cancellation rewrites the penalty instead of adding one. */
   chargeId: string
   sourceKey: string
@@ -279,32 +289,86 @@ export const settleCancelledFolio = async (ctx: Ctx, spec: CancellationSettlemen
   const owed = compareDecimals(spec.fee, '0') > 0
   const C = ctx.table('hospitality_core.Charge')
   const active = await ctx.db.all(from(C).where(eq(C.folioId, spec.folioId), eq(C.state, 'active')))
-  // Nothing on this folio was consumed — a cancellation is refused once anyone
-  // has checked in — so the room nights and extras booked against it are void
-  // and the penalty is all that stands.
+  const originalFolio = await one(ctx, 'hospitality_core.Folio', spec.folioId)
+  const property = originalFolio
+    ? await one(ctx, 'hospitality_core.Property', originalFolio.propertyId)
+    : null
+  const openDay = String(
+    property?.businessDate ?? dateKeyIn(new Date(spec.at), String(property?.timezone ?? 'UTC')),
+  )
   for (const charge of active) {
     if (String(charge.id) === spec.chargeId) continue
-    await ctx.db.update('hospitality_core.Charge', { id: charge.id }, { state: 'void' })
+    const day = String(
+      charge.serviceDate ??
+        dateKeyIn(new Date(String(charge.occurredAt)), String(property?.timezone ?? 'UTC')),
+    )
+    if (day < openDay) {
+      await ctx.db.insertIfAbsent('hospitality_core.Charge', {
+        id: `${spec.chargeId}:reverse:${charge.id}`,
+        folioId: spec.folioId,
+        stayId: spec.stayId ?? null,
+        description: `${spec.kind ?? 'cancellation'}:${spec.reason}`,
+        type: charge.type,
+        fulfillmentKind: 'none',
+        quantity: '1',
+        unitPrice: negateDecimalText(String(charge.amount)),
+        amount: negateDecimalText(String(charge.amount)),
+        occurredAt: spec.at,
+        serviceDate: openDay,
+        sourceKey: `${spec.sourceKey}:reverse:${charge.id}`,
+        state: 'active',
+        adjustsChargeId: charge.id,
+        adjustmentReason: spec.reason,
+      })
+    } else
+      await ctx.db.update(
+        'hospitality_core.Charge',
+        { id: charge.id },
+        { state: 'void', voidedAt: spec.at, voidReason: spec.reason },
+      )
   }
+  const retained = spec.retainedRoomAmount ?? '0'
+  if (compareDecimals(retained, '0') > 0)
+    await ctx.db.insertIfAbsent('hospitality_core.Charge', {
+      id: `${spec.chargeId}:held-room`,
+      folioId: spec.folioId,
+      stayId: spec.stayId ?? null,
+      description: `held_room:${spec.reason}`,
+      type: 'room',
+      fulfillmentKind: 'none',
+      quantity: '1',
+      unitPrice: retained,
+      amount: retained,
+      occurredAt: spec.at,
+      serviceDate: openDay,
+      sourceKey: `${spec.sourceKey}:held-room`,
+      state: 'active',
+    })
+  const penalty = subtractDecimals(spec.fee, retained)
   const existing = await one(ctx, 'hospitality_core.Charge', spec.chargeId)
-  if (!owed && existing)
-    await ctx.db.update('hospitality_core.Charge', { id: spec.chargeId }, { state: 'void' })
-  if (owed) {
+  if (compareDecimals(penalty, '0') > 0) {
     const values = {
       folioId: spec.folioId,
       stayId: spec.stayId ?? null,
       description: `${spec.kind ?? 'cancellation'}:${spec.reason}`,
       type: 'cancellation',
+      fulfillmentKind: 'none',
       quantity: '1',
-      unitPrice: spec.fee,
-      amount: spec.fee,
+      unitPrice: penalty,
+      amount: penalty,
       occurredAt: spec.at,
+      serviceDate: openDay,
       sourceKey: spec.sourceKey,
       state: 'active',
     }
     if (existing) await ctx.db.update('hospitality_core.Charge', { id: spec.chargeId }, values)
     else await ctx.db.insert('hospitality_core.Charge', { id: spec.chargeId, ...values })
-  }
+  } else if (existing)
+    await ctx.db.update(
+      'hospitality_core.Charge',
+      { id: spec.chargeId },
+      { state: 'void', voidedAt: spec.at, voidReason: spec.reason },
+    )
   const folio = await one(ctx, 'hospitality_core.Folio', spec.folioId)
   const claim = await ctx.db.compareAndSet(
     'hospitality_core.Folio',
@@ -382,6 +446,140 @@ const withProductNames = async (ctx: Ctx, rows: Row[]): Promise<Row[]> => {
   })
 }
 
+const saveExtraLineService = async (ctx: Ctx, args: Row): Promise<Row> => {
+  const existing = await one(ctx, 'hospitality_core.ExtraLine', args.id)
+  if (existing) {
+    const charges = await ctx.db.select('hospitality_core.Charge', { extraLineId: existing.id })
+    if (charges.length) {
+      const changed =
+        (args.reservationId != null && args.reservationId !== existing.reservationId) ||
+        (args.stayId != null && args.stayId !== existing.stayId) ||
+        (args.productId != null && args.productId !== existing.productId) ||
+        (args.uomId != null && args.uomId !== existing.uomId) ||
+        (args.description != null && text(args.description) !== existing.description) ||
+        (args.chargeType != null && args.chargeType !== existing.chargeType) ||
+        (args.fulfillmentKind != null && args.fulfillmentKind !== existing.fulfillmentKind) ||
+        (args.quantity != null && compareDecimals(String(args.quantity), String(existing.quantity)) !== 0) ||
+        (args.unitPrice != null &&
+          compareDecimals(String(args.unitPrice), String(existing.unitPrice)) !== 0) ||
+        (args.recurrence != null && args.recurrence !== existing.recurrence) ||
+        (args.active != null && args.active !== existing.active)
+      return changed
+        ? failure(issue('id', 'extra_line_materialized'))
+        : success(existing.id, { existing: true })
+    }
+  }
+  const targetCount = (args.reservationId ? 1 : 0) + (args.stayId ? 1 : 0)
+  const reservation = args.reservationId
+    ? await one(ctx, 'hospitality_core.Reservation', args.reservationId)
+    : null
+  const stay = args.stayId ? await one(ctx, 'hospitality_core.Stay', args.stayId) : null
+  const target = reservation ?? stay
+  const folio = target ? await one(ctx, 'hospitality_core.Folio', target.folioId) : null
+  const product = await productDetails(ctx, args.productId, args.uomId)
+  const recurrence = String(args.recurrence ?? 'once')
+  const chargeType = String(args.chargeType ?? 'service')
+  const fulfillmentKind = String(args.fulfillmentKind ?? 'none')
+  const quantity = canonicalDecimalText(String(args.quantity ?? '1'))
+  const unitPrice = canonicalDecimalText(String(args.unitPrice ?? product.template?.listPrice))
+  const errors: Issue[] = []
+  if (target && args.propertyId && target.propertyId !== args.propertyId)
+    errors.push(issue('target', 'property_mismatch'))
+  if (targetCount !== 1) errors.push(issue('reservationId', 'extra_line_target'))
+  if (args.reservationId && !reservation) errors.push(issue('reservationId', 'reservation_missing'))
+  if (args.stayId && !stay) errors.push(issue('stayId', 'stay_missing'))
+  if (target?.state === 'cancelled' || target?.state === 'no_show')
+    errors.push(issue('reservationId', 'extra_line_target_cancelled'))
+  if (!folio) errors.push(issue('folioId', 'folio_missing'))
+  else if (folio.state !== 'open') errors.push(issue('folioId', 'folio_not_open'))
+  if (!product.product) errors.push(issue('productId', 'product_missing'))
+  else if (!product.template) errors.push(issue('productId', 'product_template_missing'))
+  else if (
+    product.product.active !== true ||
+    product.template.active !== true ||
+    product.template.saleOk !== true
+  )
+    errors.push(issue('productId', 'product_not_saleable'))
+  if (args.uomId && !product.validUom) errors.push(issue('uomId', 'product_uom_mismatch'))
+  if (!includes(CHARGE_TYPES, chargeType)) errors.push(issue('chargeType', 'charge_type'))
+  if (!includes(CHARGE_FULFILLMENT_KINDS, fulfillmentKind))
+    errors.push(issue('fulfillmentKind', 'charge_fulfillment_kind'))
+  if (chargeType === 'minibar') {
+    if (product.template?.type !== 'goods') errors.push(issue('productId', 'minibar_goods_required'))
+    if (fulfillmentKind !== 'external_stock')
+      errors.push(issue('fulfillmentKind', 'minibar_fulfillment_required'))
+  }
+  if (!includes(EXTRA_RECURRENCES, recurrence)) errors.push(issue('recurrence', 'extra_recurrence'))
+  if (compareDecimals(quantity, '0') <= 0) errors.push(issue('quantity', 'positive'))
+  if (compareDecimals(unitPrice, '0') < 0) errors.push(issue('unitPrice', 'non_negative'))
+  if (errors.length || !target || !folio || !product.template) return failure(...errors)
+  const timestamp = new Date().toISOString()
+  const values = {
+    id: args.id,
+    reservationId: reservation?.id ?? null,
+    stayId: stay?.id ?? null,
+    folioId: target.folioId,
+    propertyId: target.propertyId,
+    productId: args.productId,
+    uomId: args.uomId ?? product.template.uomId ?? null,
+    description: text(args.description) || String(product.template.name),
+    chargeType,
+    fulfillmentKind,
+    quantity,
+    unitPrice,
+    recurrence,
+    active: args.active ?? true,
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  }
+  if (existing) {
+    const { id: _id, createdAt: _createdAt, ...patch } = values
+    await ctx.db.update('hospitality_core.ExtraLine', { id: args.id }, patch)
+  } else await ctx.db.insert('hospitality_core.ExtraLine', values)
+  return success(args.id, { existing: !!existing })
+}
+
+/** Prepare only stock-backed goods at the catalogue price. The caller owns the command transaction and version claims. */
+export const prepareHospitalityStockExtraLine = async (
+  ctx: Ctx,
+  args: { id: string; stayId: string; productId: string; quantity: string; serviceDate: string },
+): Promise<Row> => {
+  if (!ctx.actor || !ctx.scope.company) return failure(issue('stayId', 'stay_missing'))
+  const stay = await one(ctx, 'hospitality_core.Stay', args.stayId)
+  const property = stay ? await one(ctx, 'hospitality_core.Property', stay.propertyId) : null
+  if (
+    !stay ||
+    !property ||
+    property.companyId !== ctx.scope.company ||
+    (ctx.scope.branches && !ctx.scope.branches.includes(String(property.branchId)))
+  )
+    return failure(issue('stayId', 'stay_missing'))
+  if (stay.state !== 'checked_in') return failure(issue('stayId', 'stay_state'))
+  if (property.closingDate || (property.businessDate && args.serviceDate < String(property.businessDate)))
+    return failure(issue('serviceDate', 'business_date_locked'))
+  const from = dateKeyIn(new Date(String(stay.checkIn)), String(property.timezone))
+  const to = dateKeyIn(new Date(String(stay.checkOut)), String(property.timezone))
+  if (args.serviceDate < from || args.serviceDate > to) return failure(issue('serviceDate', 'date'))
+  const quantity = canonicalDecimalText(args.quantity)
+  if (!Number.isSafeInteger(Number(quantity)) || Number(quantity) < 1 || Number(quantity) > 99)
+    return failure(issue('quantity', 'positive'))
+  const product = await productDetails(ctx, args.productId)
+  if (product.template?.type !== 'goods' || !product.template.uomId)
+    return failure(issue('productId', 'minibar_goods_required'))
+  return saveExtraLineService(ctx, {
+    id: args.id,
+    stayId: stay.id,
+    propertyId: property.id,
+    productId: args.productId,
+    uomId: product.template.uomId,
+    quantity,
+    unitPrice: product.template.listPrice,
+    chargeType: 'minibar',
+    fulfillmentKind: 'external_stock',
+    recurrence: 'once',
+  })
+}
+
 export const services: Record<string, FnSpec> = {
   listServiceProducts: defineFn({
     input: {},
@@ -433,6 +631,8 @@ export const services: Record<string, FnSpec> = {
       id: 'id',
       propertyId: 'id',
       chargeType: 'text',
+      basis: 'text?',
+      included: 'bool?',
       name: 'text',
       amount: 'decimal',
       description: 'text?',
@@ -457,6 +657,8 @@ export const services: Record<string, FnSpec> = {
         errors.push(issue('chargeType', 'property_charge_type'))
       if (!text(args.name)) errors.push(issue('name', 'required'))
       if (compareDecimals(amount, '0') < 0) errors.push(issue('amount', 'non_negative'))
+      if (!['per_night', 'per_stay', 'per_person', 'per_room'].includes(String(args.basis ?? 'per_stay')))
+        errors.push(issue('basis', 'property_charge_basis'))
       const C = ctx.table('hospitality_core.PropertyCharge')
       const duplicate = (
         await ctx.db.all(from(C).where(eq(C.propertyId, args.propertyId), eq(C.chargeType, args.chargeType)))
@@ -468,6 +670,8 @@ export const services: Record<string, FnSpec> = {
           id: args.id,
           propertyId: args.propertyId,
           chargeType: args.chargeType,
+          basis: args.basis ?? 'per_stay',
+          included: args.included ?? false,
           name: text(args.name),
           amount,
           description: text(args.description) || null,
@@ -517,6 +721,7 @@ export const services: Record<string, FnSpec> = {
   saveExtraLine: defineFn({
     input: {
       id: 'id',
+      propertyId: 'id?',
       reservationId: 'id?',
       stayId: 'id?',
       productId: 'id',
@@ -544,97 +749,7 @@ export const services: Record<string, FnSpec> = {
     ],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const existing = await one(ctx, 'hospitality_core.ExtraLine', args.id)
-      if (existing) {
-        const charges = await ctx.db.select('hospitality_core.Charge', { extraLineId: existing.id })
-        if (charges.length) {
-          const changed =
-            (args.reservationId != null && args.reservationId !== existing.reservationId) ||
-            (args.stayId != null && args.stayId !== existing.stayId) ||
-            (args.productId != null && args.productId !== existing.productId) ||
-            (args.uomId != null && args.uomId !== existing.uomId) ||
-            (args.description != null && text(args.description) !== existing.description) ||
-            (args.chargeType != null && args.chargeType !== existing.chargeType) ||
-            (args.fulfillmentKind != null && args.fulfillmentKind !== existing.fulfillmentKind) ||
-            (args.quantity != null &&
-              compareDecimals(String(args.quantity), String(existing.quantity)) !== 0) ||
-            (args.unitPrice != null &&
-              compareDecimals(String(args.unitPrice), String(existing.unitPrice)) !== 0) ||
-            (args.recurrence != null && args.recurrence !== existing.recurrence) ||
-            (args.active != null && args.active !== existing.active)
-          return changed
-            ? failure(issue('id', 'extra_line_materialized'))
-            : success(existing.id, { existing: true })
-        }
-      }
-      const targetCount = (args.reservationId ? 1 : 0) + (args.stayId ? 1 : 0)
-      const reservation = args.reservationId
-        ? await one(ctx, 'hospitality_core.Reservation', args.reservationId)
-        : null
-      const stay = args.stayId ? await one(ctx, 'hospitality_core.Stay', args.stayId) : null
-      const target = reservation ?? stay
-      const folio = target ? await one(ctx, 'hospitality_core.Folio', target.folioId) : null
-      const product = await productDetails(ctx, args.productId, args.uomId)
-      const recurrence = String(args.recurrence ?? 'once')
-      const chargeType = String(args.chargeType ?? 'service')
-      const fulfillmentKind = String(args.fulfillmentKind ?? 'none')
-      const quantity = canonicalDecimalText(String(args.quantity ?? '1'))
-      const unitPrice = canonicalDecimalText(String(args.unitPrice ?? product.template?.listPrice))
-      const errors: Issue[] = []
-      if (targetCount !== 1) errors.push(issue('reservationId', 'extra_line_target'))
-      if (args.reservationId && !reservation) errors.push(issue('reservationId', 'reservation_missing'))
-      if (args.stayId && !stay) errors.push(issue('stayId', 'stay_missing'))
-      if (target?.state === 'cancelled' || target?.state === 'no_show')
-        errors.push(issue('reservationId', 'extra_line_target_cancelled'))
-      if (!folio) errors.push(issue('folioId', 'folio_missing'))
-      else if (folio.state !== 'open') errors.push(issue('folioId', 'folio_not_open'))
-      if (!product.product) errors.push(issue('productId', 'product_missing'))
-      else if (!product.template) errors.push(issue('productId', 'product_template_missing'))
-      else if (
-        product.product.active !== true ||
-        product.template.active !== true ||
-        product.template.saleOk !== true
-      )
-        errors.push(issue('productId', 'product_not_saleable'))
-      if (args.uomId && !product.validUom) errors.push(issue('uomId', 'product_uom_mismatch'))
-      if (!includes(CHARGE_TYPES, chargeType)) errors.push(issue('chargeType', 'charge_type'))
-      if (!includes(CHARGE_FULFILLMENT_KINDS, fulfillmentKind))
-        errors.push(issue('fulfillmentKind', 'charge_fulfillment_kind'))
-      if (chargeType === 'minibar') {
-        if (product.template?.type !== 'goods') errors.push(issue('productId', 'minibar_goods_required'))
-        if (fulfillmentKind !== 'external_stock')
-          errors.push(issue('fulfillmentKind', 'minibar_fulfillment_required'))
-      }
-      if (!includes(EXTRA_RECURRENCES, recurrence)) errors.push(issue('recurrence', 'extra_recurrence'))
-      if (compareDecimals(quantity, '0') <= 0) errors.push(issue('quantity', 'positive'))
-      if (compareDecimals(unitPrice, '0') < 0) errors.push(issue('unitPrice', 'non_negative'))
-      if (errors.length || !target || !folio || !product.template) return failure(...errors)
-      const timestamp = new Date().toISOString()
-      const values = {
-        id: args.id,
-        reservationId: reservation?.id ?? null,
-        stayId: stay?.id ?? null,
-        folioId: target.folioId,
-        propertyId: target.propertyId,
-        productId: args.productId,
-        uomId: args.uomId ?? product.template.uomId ?? null,
-        description: text(args.description) || String(product.template.name),
-        chargeType,
-        fulfillmentKind,
-        quantity,
-        unitPrice,
-        recurrence,
-        active: args.active ?? true,
-        createdAt: existing?.createdAt ?? timestamp,
-        updatedAt: timestamp,
-      }
-      if (existing) {
-        const { id: _id, createdAt: _createdAt, ...patch } = values
-        await ctx.db.update('hospitality_core.ExtraLine', { id: args.id }, patch)
-      } else await ctx.db.insert('hospitality_core.ExtraLine', values)
-      return success(args.id, { existing: !!existing })
-    },
+    handler: saveExtraLineService,
   }),
 
   materializeExtraLine: defineFn({

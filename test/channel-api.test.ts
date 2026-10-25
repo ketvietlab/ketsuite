@@ -18,7 +18,10 @@ test('channel api: reserved prefixes reject bypasses and accept published contri
     name: 'bypass',
     routes: { '/api/customer/v1/orders': route() },
   })
-  assert.throws(() => compose([owner, bypass]), /inside the prefix reserved by "channel_api"/)
+  assert.throws(
+    () => compose([owner, bypass], { companies: true }),
+    /inside the prefix reserved by "channel_api"/,
+  )
 
   const extension = defineModule({
     name: 'extension',
@@ -32,7 +35,7 @@ test('channel api: reserved prefixes reject bypasses and accept published contri
       },
     },
   })
-  const manifest = compose([owner, extension])
+  const manifest = compose([owner, extension], { companies: true })
   assert.equal(manifest.routes['/api/customer/v1/orders']?.through, 'channel_api')
   assert.equal(manifest.routes['/api/customer/v1/orders']?.by, 'extension')
 })
@@ -44,11 +47,11 @@ test('channel api: extension version skew fails at compose time', () => {
     depends: ['channel_api'],
     compatible: { channel_api: '^1' },
   })
-  assert.throws(() => compose([owner, extension]), /requires "channel_api" \^1/)
+  assert.throws(() => compose([owner, extension], { companies: true }), /requires "channel_api" \^1/)
 })
 
 test('channel api: OpenAPI is generated from composed route contracts', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const document = openApiDocument(manifest, 'customer')
   assert.equal(document.openapi, '3.1.0')
   assert.ok(document.paths['/bootstrap'])
@@ -64,7 +67,7 @@ test('channel api: OpenAPI is generated from composed route contracts', () => {
 })
 
 test('channel api: the staff document names both credential presentations', () => {
-  const document = openApiDocument(compose(ketsuite.modules, { headless: true }), 'staff')
+  const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), 'staff')
   assert.deepEqual(document.components.securitySchemes, {
     staffBearer: { type: 'http', scheme: 'bearer' },
     staffCookie: { type: 'apiKey', in: 'cookie', name: 'ket_session' },
@@ -79,7 +82,7 @@ test('channel api: the staff document names both credential presentations', () =
 })
 
 test('channel api: staff sales mutations publish replay and concurrency headers', () => {
-  const document = openApiDocument(compose(ketsuite.modules, { headless: true }), 'staff')
+  const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), 'staff')
   for (const [path, method] of [
     ['/sales/orders/{id}/update', 'put'],
     ['/sales/orders/{id}/confirm', 'post'],
@@ -103,7 +106,7 @@ test('channel api: staff sales mutations publish replay and concurrency headers'
 })
 
 test('channel api: staff purchasing mutations publish replay and concurrency headers', () => {
-  const document = openApiDocument(compose(ketsuite.modules, { headless: true }), 'staff')
+  const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), 'staff')
   const mutations = [
     ['/purchasing/orders/create', 'post', false],
     ['/purchasing/orders/{id}/update', 'put', true],
@@ -135,7 +138,7 @@ test('channel api: staff purchasing mutations publish replay and concurrency hea
 })
 
 test('channel api: core and attendance staff responses publish concrete client models', () => {
-  const document = openApiDocument(compose(ketsuite.modules, { headless: true }), 'staff')
+  const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), 'staff')
   const dataSchema = (path: string, method: 'get' | 'post', status: string) => {
     const operation = document.paths[path]?.[method] as Record<string, unknown>
     const responses = operation.responses as Record<string, Record<string, unknown>>
@@ -179,7 +182,7 @@ test('channel api: core and attendance staff responses publish concrete client m
 })
 
 test('channel api: warehouse completion and hospitality responses publish concrete client models', () => {
-  const document = openApiDocument(compose(ketsuite.modules, { headless: true }), 'staff')
+  const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), 'staff')
   const cases = [
     ['/warehouse/pickings/{id}/complete', 'post'],
     ['/hospitality/context', 'get'],
@@ -230,7 +233,7 @@ test('channel api: POS routes publish Bearer auth and receive server-resolved de
     ]),
   })
 
-  const document = openApiDocument(compose([owner, pos]), 'pos')
+  const document = openApiDocument(compose([owner, pos], { companies: true }), 'pos')
   assert.deepEqual(document.components.securitySchemes, {
     posBearer: { type: 'http', scheme: 'bearer' },
     operatorBearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
@@ -239,7 +242,7 @@ test('channel api: POS routes publish Bearer auth and receive server-resolved de
 })
 
 test('channel api: POS publishes revisioned shift and cart commands', () => {
-  const document = openApiDocument(compose(ketsuite.modules, { headless: true }), 'pos')
+  const document = openApiDocument(compose(ketsuite.modules, { headless: true, companies: true }), 'pos')
   const expected = [
     ['/shifts', 'post', 'pos.shifts.create'],
     ['/shifts/{id}', 'get', 'pos.shifts.get'],
@@ -390,7 +393,7 @@ test('channel api: POS publishes revisioned shift and cart commands', () => {
   const withoutAdapter = openApiDocument(
     compose(
       ketsuite.modules.filter((module) => !['loyalty_pos', 'loyalty_backend'].includes(module.name)),
-      { headless: true },
+      { headless: true, companies: true },
     ),
     'pos',
   )
@@ -416,10 +419,9 @@ test('channel api: a POS enrollment route can publish the upstream operator cred
       }),
     ]),
   })
-  const operation = openApiDocument(compose([owner, enrollment]), 'pos').paths['/devices']?.post as Record<
-    string,
-    unknown
-  >
+  const operation = openApiDocument(compose([owner, enrollment], { companies: true }), 'pos').paths[
+    '/devices'
+  ]?.post as Record<string, unknown>
   assert.deepEqual(operation.security, [{ operatorBearer: [] }])
 })
 
@@ -458,7 +460,7 @@ test('idempotency: the same caller key with a different body is a conflict', asy
       },
     },
   })
-  const manifest = compose([command])
+  const manifest = compose([command], { companies: true })
   const db = sqliteAdapter()
   await db.open()
   await migrateOne(db, manifest)

@@ -11,11 +11,17 @@ Design guidance is maintained only in [Két Design System](https://github.com/ke
 Install it with `npx @ketvietlab/ket-design-system-skill@latest`. This page documents
 APIs and runtime delivery; it does not define a competing visual rulebook.
 
-The package includes Inter 4.1 variable fonts (normal and italic, weights 100–900),
-including Vietnamese glyphs, under the SIL Open Font License. The font files and
-license live in `packages/design-system/src/foundations/fonts/`; their upstream
-source is pinned in that directory's README. `tokens.css` registers these fonts,
-so consumers do not depend on fonts installed on the user's operating system.
+The interface typeface is KÉT Sans (Light 300, Regular 400, Medium 500, Bold 700),
+Két Việt's own font: free to use and embed, but not open source and not MIT; the
+KÉT Sans Font License forbids modifying or redistributing the font files. Medium is
+registered for `500 600`, so text set at 600 uses Medium rather than falling through
+to Bold. KÉT Sans has no italic yet; the browser slants the upright faces. The package
+also includes Inter 4.1 variable fonts (normal and italic, weights 100–900) under the
+SIL Open Font License, and `--kv-font-sans` names Inter after KÉT Sans for the
+characters KÉT Sans does not draw. The font files and licenses live in
+`packages/design-system/src/foundations/fonts/`; their sources are pinned in that
+directory's README. `tokens.css` registers these fonts, so consumers do not depend
+on fonts installed on the user's operating system.
 The built `styles.css` embeds WOFF2 data URLs, keeping the stylesheet relocatable
 when KetJS serves it at a content-addressed URL, with no third-party font request.
 Consumers with a Content Security Policy must permit `data:` in `font-src`.
@@ -67,9 +73,13 @@ application still owns the open state and the region's id. Omitting both keeps t
 
 ## Inventory contract
 
-`npm run design:inventory` regenerates the inventory from the public and compatibility entry points.
-`npm run design:inventory:check` fails when the committed snapshot no longer matches source. The normal
-verification pipeline runs this check before building.
+The inventory is derived from the public and compatibility entry points and is not committed:
+`npm run build` and `npm run check` write it to
+`packages/design-system/src/catalogue/inventory.generated.{ts,json}` (ignored by Git), and the package
+publishes it as `@ketvietlab/design-system/catalogue/inventory.json`. It counts tests, consumers and CSS
+lines, so a committed copy changed on almost every branch and made them conflict.
+`npm run design:inventory` writes it on its own; `npm run design:inventory:check` fails when a public or
+compatibility export has no policy entry. The commit hook and the verification pipeline run that check.
 
 Classification policy lives in
 `packages/design-system/src/catalogue/inventory-policy.json`. A source module must have an owner,
@@ -426,7 +436,7 @@ image space across a page only when at least one visible record has an image.
 `AppShell` requires an `applications` configuration: translated navigation and
 new-tab labels, optional `helpLabel` and `settings: { id, label, items }`, `activeId`, and items with `id`, `label`, Lucide `icon` and optional `href`. Without a destination, supply `unavailableLabel`; the icon exposes its status with `aria-disabled` and has no navigation action.
 Its `AppSwitcher` is a 48px graphite rail to the left of the primary navigation,
-with hover/focus names and an active indicator. Every enabled app link opens a new tab. When `helpLabel` is supplied, a question-mark footer button emits
+with hover/focus names and an active indicator. Every enabled app link opens a new tab, except an item with `sameTab: true`: an app served inside this same shell, which reloads the current tab (`data-ket-reload`). When `helpLabel` is supplied, a question-mark footer button emits
 `ket:screen-help-request` with `detail.trigger`; guide drawers and their content
 are screen-owned through the public `HelpDrawer` contract below. Below it, the settings
 gear opens a shared `Menu` on click/touch or keyboard, never hover. The menu opens
@@ -435,7 +445,7 @@ the settings menu before closing mobile navigation. Hosts own its translated
 entries and destinations; the demo uses placeholder entries.
 On mobile it appears only when the application menu opens, inside the drawer's
 focus boundary. The shell and rail remain SSR chrome during menu navigation.
-KetSuite owns destination URLs. Backend frames and Website Studio use `suiteApplications` with the deployment's permission-filtered menu: Kinh doanh/Sales and Website open permitted routes; Accounting, Flow, Phone and Chat are coming soon without URLs. Accounting and the duplicate Website destination are hidden from the main menu; Website remains in the app rail. Administration links move into the rail's settings menu, and help is hidden until guides are ready. `placeholderApplications` remains a catalogue sample. Hosts can override actual entries through `Frame.applications`; browser consumers import the pure adapter from `@ketvietlab/ketsuite/ui/application-switcher`.
+KetSuite owns destination URLs. Backend frames and Website Studio use `suiteApplications` with the deployment's permission-filtered menu: Kinh doanh/Sales and Website open permitted routes; Phone opens the first permitted entry of the `phone` menu root in the same tab when a module supplies one, and its screens call `adminPage`/`frameOf` with `app: 'phone'` (the frame sets `Frame.app`, the rail and the menu) so the rail, sidebar name and sidebar menu follow it, rather than assembling a frame of their own; Accounting, Flow and Chat are coming soon without URLs. Accounting and the duplicate Website destination are hidden from the main menu; Website remains in the app rail. Administration links move into the rail's settings menu, and help is hidden until guides are ready. `placeholderApplications` remains a catalogue sample. Hosts can override actual entries through `Frame.applications`; browser consumers import the pure adapter from `@ketvietlab/ketsuite/ui/application-switcher`.
 
 Consumer contract checks should load only the current deployment's composition and permitted menu, covering app availability, backend frames and Website bootstrap/shell integration. Use the same shared registry for every deployment without changing its Website preset; keep consumer-specific runners and module resolution in the consumer repository. Verify menu navigation on authenticated application routes with the KetJS document runtime and every placed island client available. A static shell fixture cannot prove fragment navigation: it has placeholder content and follows native links as full document loads. Navigation responses carry replaceable slots and omit `AppShell`; the outer SSR chrome remains mounted.
 
@@ -518,7 +528,7 @@ scroll locally, preserving legible diagram text instead of shrinking it to fit.
 All ecosystem Mermaid diagrams use the DS runtime's `createMermaidTheme` with
 `readMermaidPalette`, plus the shared `configureMermaidLoader`/interaction lifetime.
 The host supplies a pinned, lazy Mermaid bundle; DS owns theme and rendering policy.
-Inter 13px, 1.25px connectors, 6px node corners and resolved semantic DS colors form
+The interface font (`--kv-font-sans`, KÉT Sans) at 13px, 1.25px connectors, 6px node corners and resolved semantic DS colors form
 the common style in both themes. Use `kv-accent`, `kv-positive`, `kv-warning` and
 `kv-danger` classes to convey state. Notes use the warning surface; diagram families
 share explicit text, surface, border, connector and chart colors. Theme changes

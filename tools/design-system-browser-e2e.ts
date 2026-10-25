@@ -64,12 +64,12 @@ class Cdp {
   }
 }
 
-const waitFor = async (check: () => Promise<boolean>, message: string): Promise<void> => {
+const waitFor = async (check: () => Promise<boolean>, message: string | (() => string)): Promise<void> => {
   for (let attempt = 0; attempt < 300; attempt++) {
     if (await check().catch(() => false)) return
     await delay(50)
   }
-  throw new Error(message)
+  throw new Error(typeof message === 'function' ? message() : message)
 }
 
 const evaluate = async <Value>(cdp: Cdp, expression: string): Promise<Value> => {
@@ -126,11 +126,11 @@ const results: Json[] = []
 try {
   await waitFor(
     async () => (await fetch(`http://127.0.0.1:${appPort}/_ket/health`)).ok,
-    `Design-system app failed to start: ${diagnostics}`,
+    () => `Design-system app failed to start: ${diagnostics}`,
   )
   await waitFor(
     async () => (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok,
-    `Chrome failed to start: ${diagnostics}`,
+    () => `Chrome failed to start (exit code ${String(browser.exitCode)}): ${diagnostics}`,
   )
   const targetResponse = await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank`, {
     method: 'PUT',
@@ -356,7 +356,14 @@ try {
             body: [getComputedStyle(root).fontSize, getComputedStyle(root).lineHeight].map(parseFloat),
             input: geometry(root.querySelector('[data-ui="field-control"]')),
             searchInput: geometry(root.querySelector('[data-ui="search-bar"] input[type="search"]')),
-            nativeInputs: [...document.querySelectorAll('[data-layering-case="canvas-surface"] [data-ui="field-control"]')].map(geometry),
+            // An embedded input (the date control) draws no frame of its own: its height and
+            // radius are the date control's, its type and inset the input's.
+            nativeInputs: [...document.querySelectorAll('[data-layering-case="canvas-surface"] [data-ui="field-control"]')].map(el => {
+              const frame = el.dataset.appearance === 'embedded' ? el.closest('[data-ui="date-field-control"]') : el;
+              const [height, , , , , radius] = geometry(frame);
+              const [, fontSize, lineHeight, paddingTop, paddingRight] = geometry(el);
+              return [height, fontSize, lineHeight, paddingTop, paddingRight, radius];
+            }),
             buttons: [...root.querySelectorAll('[data-ui="action"]:not([data-size="compact"]):not([data-icon-only="true"])')].map(geometry),
             compact: geometry(root.querySelector('[data-size="compact"]')),
             iconHeight: root.querySelector('[data-icon-only="true"]').getBoundingClientRect().height,
@@ -480,13 +487,14 @@ try {
     assert.deepEqual(
       layering.rhythm,
       {
-        gutter: '24px',
-        groups: '16px',
+        // One --kv-layout-gap sets the shell inset and the gap between groups.
+        gutter: '12px',
+        groups: '12px',
         row: '40',
         formRows: '16px',
         formColumns: '24px', // Két form policy; the Polaris reference fixture remains 12px.
         surface: '16px',
-        table: '16px',
+        table: '0px', // A titled table's rows run edge to edge.
         heading: '8px',
         modal: '16px',
       },
@@ -807,7 +815,9 @@ try {
       assert.ok(Math.abs(Number(menu.plainUnusedWidth)) < 1, 'Absent slots must not consume label width')
       assert.equal(menu.countGap, 10)
       assert.equal(menu.childAlignment, 0)
-      assert.equal(menu.nestedIndent, 20)
+      // A branch without an icon puts its guide under its label; children start past the
+      // 1px guide and one 8px item inset.
+      assert.equal(menu.nestedIndent, 9)
       assert.equal(menu.wrapped, true)
       assert.equal(menu.clipped, false)
       assert.equal(menu.iconBefore, 20)
@@ -1016,7 +1026,9 @@ try {
               locationHeight: document.querySelector('[data-ui="app-main"] [data-ui="app-location-bar"]')?.getBoundingClientRect().height,
               globalSearch: Boolean(document.querySelector('[data-ui="app-location-bar"] [data-ui="global-search-trigger"]')),
               accountMenu: Boolean(document.querySelector('[data-ui="app-location-bar"] #demo2-account-panel')),
-              brandImages: navigation?.querySelectorAll('[data-ui="navigation-header"] [data-ui="app-brand"] img').length,
+              // The mark sits on the graphite rail, in its dark image only; the sidebar header names the app.
+              brandImages: document.querySelectorAll('[data-ui="app-switcher-brand"] [data-ui="app-brand"][data-variant="mark"] img').length,
+              headerBrand: navigation?.querySelectorAll('[data-ui="navigation-header"] [data-ui="app-brand"]').length,
               sidebarTools: navigation?.querySelector('.demo-navigation-footer') !== null,
               topLevelMetrics: crmTrigger instanceof HTMLElement ? (() => {
                 const styles = getComputedStyle(crmTrigger)
@@ -1053,7 +1065,8 @@ try {
         assert.equal(submenuAudit.locationHeight, 48)
         assert.equal(submenuAudit.globalSearch, true)
         assert.equal(submenuAudit.accountMenu, true)
-        assert.equal(submenuAudit.brandImages, 2)
+        assert.equal(submenuAudit.brandImages, 1)
+        assert.equal(submenuAudit.headerBrand, 0)
         assert.equal(submenuAudit.sidebarTools, false)
         assert.deepEqual(submenuAudit.topLevelMetrics, {
           height: viewport.mobile ? 44 : 30,

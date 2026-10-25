@@ -5,7 +5,7 @@ import { ketsuite } from '../apps/ketsuite/deployment.ts'
 import { userModalMessages } from '../packages/ketsuite/src/modules/user/modal-messages.ts'
 
 test('user record refusals resolve to business guidance in Vietnamese and English', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   for (const lang of ['vi', 'en']) {
     const messages = userModalMessages({ manifest }, lang)
     for (const code of [

@@ -7,6 +7,45 @@ import { html, renderToStaticString } from '@ketvietlab/ketjs-view'
 import * as ui from '../src/index.mjs'
 import { FlowEvidenceValue, FlowHint } from '../src/workspace.mjs'
 
+test('date inputs compose the public DS calendar and retain one ISO form value', () => {
+  const props = {
+    id: 'deadline',
+    name: 'due',
+    label: 'Hạn hoàn thành',
+    type: 'date',
+    value: '2026-10-11',
+    min: '2026-10-01',
+    max: '2026-10-31',
+    required: true,
+    error: 'Chọn ngày hợp lệ',
+  }
+  const output = renderToStaticString(ui.FlowInput(props))
+  assert.match(output, /data-kv-design-system/)
+  assert.match(output, /data-ui="date-picker"/)
+  assert.match(output, /data-date-value="2026-10-11"/)
+  assert.equal((output.match(/<input/g) ?? []).length, 1)
+  assert.match(output, /type="date"[^>]*name="due"[^>]*value="2026-10-11"/)
+  assert.match(output, /min="2026-10-01"[^>]*max="2026-10-31"/)
+  assert.match(output, /aria-invalid="true"/)
+  assert.match(output, /aria-describedby="deadline-error"/)
+  assert.match(output, /aria-controls="deadline-calendar"/)
+  assert.match(output, /popover="auto" role="dialog"/)
+  assert.match(output, /aria-label="Chọn ngày: Hạn hoàn thành"/)
+  assert.equal((output.match(/<label/g) ?? []).length, 1)
+  for (const state of [{ disabled: true }, { readOnly: true }]) {
+    const locked = renderToStaticString(ui.FlowInput({ ...props, ...state }))
+    assert.match(locked, /<button[^>]*name="kv-date-open"[^>]*disabled/)
+  }
+  setFlowLocale('ja')
+  try {
+    const japanese = renderToStaticString(ui.FlowInput(props))
+    assert.match(japanese, /data-date-locale="ja"/)
+    assert.match(japanese, /今日/)
+  } finally {
+    setFlowLocale('vi')
+  }
+})
+
 test('standalone selection uses a native label and field composition never nests labels', async () => {
   const { FlowCheckboxField } = await import('../src/workspace.mjs')
   const output = renderToStaticString(
@@ -129,6 +168,25 @@ test('textarea and select field errors are visible and associated with the nativ
     assert.ok(output.includes(`id="${id}-error" data-flow="field-error"`))
   }
 })
+
+test('select field IDs scope labels and errors without changing the submitted name', async () => {
+  const { FlowSelectField } = await import('../src/workspace.mjs')
+  const output = renderToStaticString(
+    FlowSelectField({
+      id: 'record-owner',
+      name: 'owner',
+      label: 'Record owner',
+      value: '',
+      options: [],
+      error: 'Choose an owner',
+    }),
+  )
+  assert.match(output, /for="record-owner"/)
+  assert.match(output, /id="record-owner"[^>]*name="owner"/)
+  assert.match(output, /aria-describedby="record-owner-error"/)
+  assert.match(output, /id="record-owner-error"/)
+  assert.doesNotMatch(output, /id="owner"|for="owner"|aria-describedby="owner-error"/)
+})
 test('input and textarea names remain their labels while errors are separate descriptions', async () => {
   const { FlowTextarea } = await import('../src/workspace.mjs')
   for (const view of [
@@ -243,14 +301,15 @@ test('dialog is native and has a unique associated heading', () => {
   assert.doesNotMatch(output, / open[=> ]/)
 })
 
-test('package publishes only built output; components have no Suite dependency or shared hooks', async () => {
+test('package publishes built output and delegates date presentation to the public DS adapter', async () => {
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(manifest.license, 'MIT')
   assert.ok(Object.values(manifest.exports).every((entry) => JSON.stringify(entry).includes('./dist/')))
   const source = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8')
-  assert.doesNotMatch(source, /data-ui=|from ['"].*(?:ketsuite|design-system)/)
+  assert.doesNotMatch(source, /data-ui=|from ['"].*ketsuite/)
+  assert.match(source, /import \{ DatePicker \} from '@ketvietlab\/design-system\/date-picker'/)
   const components = Object.keys(ui).filter((name) => name.startsWith('Flow'))
-  assert.equal(components.length, 25)
+  assert.equal(components.length, 26)
   const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.doesNotMatch(css, /:root|\[data-kv-design-system\]/)
   // Every rule that styles an element must explicitly opt into the Flow root.
@@ -981,4 +1040,24 @@ test('a divided stack separates settings rows with one hairline and stays plain 
     /\[data-flow="stack"\]\[data-divided\] > \* \+ \* \{\s*border-top: 1px solid var\(--flow-border\);/,
     'the hairline sits between rows, not above the first one',
   )
+})
+
+test('compact select retains a named native form control and a noninteractive caret', () => {
+  const output = renderToStaticString(
+    ui.FlowSelect({
+      label: 'Group tasks',
+      name: 'group',
+      size: 'sm',
+      value: 'status',
+      disabled: true,
+      options: [{ value: 'status', label: 'Status' }],
+    }),
+  )
+  assert.match(output, /<select[^>]+data-size="sm"/)
+  assert.match(output, /name="group"/)
+  assert.match(output, /aria-label="Group tasks"/)
+  assert.match(output, /value="status" selected/)
+  assert.match(output, /data-flow="select-caret" aria-hidden="true"/)
+  assert.equal((output.match(/<select/g) ?? []).length, 1)
+  assert.doesNotMatch(output, /role="button"|tabindex/)
 })

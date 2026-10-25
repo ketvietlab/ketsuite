@@ -16,6 +16,63 @@ const USER_BACKEND_DIR = join(ROOT, 'packages/ketsuite/src/modules/user_backend'
 const PRODUCT_BACKEND_DIR = join(ROOT, 'packages/ketsuite/src/modules/product_backend')
 const entries = [
   {
+    source: join(UI_CLIENT_DIR, 'communication-collections.tsx'),
+    output: join(UI_CLIENT_DIR, 'communication-collections-bundle.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/screens/charge-rule-modal.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/client/charge-rule-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/desk-booking-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/desk-booking-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/folio-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/folio-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/reservation-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/reservation-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/cleaning-task-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/cleaning-task-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/service-unit.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/service-unit.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/plan/room-plan.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/room-plan.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/collection.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/reservation-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/reservation-book.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/stay-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/stay-book.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/folio-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/folio-book.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/collections/billing-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/client/billing-book.mjs'),
+  },
+
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/catalogue-modal.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/catalogue-modal.mjs'),
+  },
+  {
     source: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/modal/pricelist-view.tsx'),
     output: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/client/vendor-pricelist-modal.mjs'),
   },
@@ -66,6 +123,10 @@ const entries = [
   {
     source: join(UI_CLIENT_DIR, 'mail-entry.mjs'),
     output: join(UI_CLIENT_DIR, 'mail-bundle.mjs'),
+  },
+  {
+    source: join(UI_CLIENT_DIR, 'activity-entry.mjs'),
+    output: join(UI_CLIENT_DIR, 'activity-bundle.mjs'),
   },
   // The CRM sales screens: one island draws each of them whole.
   {

@@ -54,7 +54,11 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
       source = join(packages, name)
     await cp(source, target, {
       recursive: true,
-      filter: (path) => !['node_modules', 'vendor'].includes(path.split('/').at(-1)),
+      // browser-bundle.test writes and removes a contract file in dist while files run in parallel.
+      filter: (path) => {
+        const name = path.split('/').at(-1)
+        return !['node_modules', 'vendor'].includes(name) && !name.startsWith('.browser-contract-')
+      },
     })
     await mkdir(join(target, 'node_modules'))
     const { createRequire } = await import('node:module')
@@ -62,7 +66,13 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
     const manifest = JSON.parse(
       await (await import('node:fs/promises')).readFile(join(source, 'package.json'), 'utf8'),
     )
-    for (const name of [...Object.keys(manifest.dependencies), ...Object.keys(manifest.devDependencies)]) {
+    // Atlas is a host like KetSuite, and vendors KetSuite's live document editor;
+    // the kit itself never depends on the suite.
+    for (const name of [
+      ...Object.keys(manifest.dependencies),
+      ...Object.keys(manifest.devDependencies),
+      '@ketvietlab/ketsuite',
+    ]) {
       const { dirname } = await import('node:path')
       let base = dirname(require.resolve(name))
       const fs = await import('node:fs')

@@ -12,6 +12,7 @@ import {
   sqliteAdapter,
   navigablePage,
   isNavigationRequest,
+  multipart,
 } from '@ketvietlab/ketjs'
 import { createFlowWorkspace, routes } from '@ketvietlab/flow-client/workspace.mjs'
 import { setFlowLocale, normalizeFlowLocale } from '@ketvietlab/flow-client/i18n.mjs'
@@ -19,6 +20,7 @@ import { flowShellData } from '@ketvietlab/flow-client/shell-model.mjs'
 import { atlasShellRequest, atlasShellProps } from './shell-request.mjs'
 import { createOrganizationSession } from './organization-store.mjs'
 import { fixtureResponse } from './fixture-response.mjs'
+import { atlasFlowCommand } from '@ketvietlab/flow-client/command-contract.mjs'
 import { BLANK_OWNER, blankStages } from './blank-organization.mjs'
 import { todayDate } from '@ketvietlab/flow-client/timeline.mjs'
 import { notFoundPage } from './not-found-page.mjs'
@@ -29,6 +31,7 @@ const ui = dirname(fileURLToPath(import.meta.resolve('@ketvietlab/flow-ui')))
 const vendor = fileURLToPath(new URL('./vendor/', import.meta.url))
 const view = dirname(fileURLToPath(import.meta.resolve('@ketvietlab/ketjs-view')))
 const tokens = fileURLToPath(import.meta.resolve('@ketvietlab/design-system/tokens.css'))
+const designSystem = dirname(fileURLToPath(import.meta.resolve('@ketvietlab/design-system')))
 // Seeded dates follow the browser's calendar (the client computes "overdue" from
 // the real date), so the mock never ages into "everything is overdue".
 const atlasToday = () => todayDate('Asia/Ho_Chi_Minh')
@@ -108,18 +111,19 @@ export async function startAtlasServer({
     '.woff2': 'font/woff2',
     '.png': 'image/png',
   }
-  const stylesheets = `<link rel="icon" type="image/png" href="/flow-client/brand/logo-flow-light-160.png"><link rel="stylesheet" href="/design-system/tokens.css"><link rel="stylesheet" href="/flow-ui/styles.css">${extraStyles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}<link rel="stylesheet" href="/flow-client/brand/brand.css">`
+  const stylesheets = `<link rel="icon" type="image/png" href="/flow-client/brand/logo-flow-light-160.png"><link rel="stylesheet" href="/design-system/tokens.css"><link rel="stylesheet" href="/design-system/styles.css"><link rel="stylesheet" href="/flow-ui/styles.css">${extraStyles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}<link rel="stylesheet" href="/flow-client/brand/brand.css">`
   const imports = {
-    '@ketvietlab/ketsuite/livedoc': '/flow-live-doc.mjs',
     '@ketvietlab/ketjs-view/jsx-runtime': '/_ket/view/jsx-runtime.js',
     '@ketvietlab/ketjs': '/flow-ketjs-i18n.mjs',
     '@ketvietlab/ketjs-view': '/_ket/view/index.js',
-    '@ketvietlab/flow-ui': '/flow-ui/index.mjs',
+    '@ketvietlab/design-system/date-picker': '/flow-client/vendor/date-picker.mjs',
+    '@ketvietlab/design-system/date-picker/runtime': '/flow-client/vendor/date-picker-runtime.mjs',
+    '@ketvietlab/flow-ui': '/flow-client/workspace.browser.mjs',
     '@ketvietlab/flow-ui/documents': '/flow-ui/documents.mjs',
-    '@ketvietlab/flow-ui/workspace': '/flow-ui/workspace.mjs',
+    '@ketvietlab/flow-ui/workspace': '/flow-client/workspace.browser.mjs',
     '@ketvietlab/flow-ui/i18n': '/flow-ui/i18n.mjs',
-    '@ketvietlab/flow-ui/runtime': '/flow-ui/runtime.mjs',
-    '@ketvietlab/flow-client': '/flow-client/workspace.mjs',
+    '@ketvietlab/flow-ui/runtime': '/flow-client/workspace.browser.mjs',
+    '@ketvietlab/flow-client': '/flow-client/workspace.browser.mjs',
     '@ketvietlab/flow-client/api': '/flow-client/api.mjs',
     '@ketvietlab/flow-client/': '/flow-client/',
     ...extraImports,
@@ -127,6 +131,7 @@ export async function startAtlasServer({
   const mounts = [
     ['/_ket/view/', view],
     ['/flow-ui/', ui],
+    ['/design-system/', designSystem],
     ...extraMounts,
     ['/flow-client/', resolve(root, 'dist')],
     ['/atlas/', resolve(root, 'atlas')],
@@ -206,7 +211,7 @@ export async function startAtlasServer({
     .slice(0, 16)
   const runtimeAdapter = sqliteAdapter(':memory:')
   const framework = await createKetServer({
-    manifest: compose([]),
+    manifest: compose([], { companies: true }),
     adapter: runtimeAdapter,
     buildId,
     islandClients: { 'flow.workspace': { src: entry, export: 'createAtlasWorkspace' } },
@@ -238,7 +243,19 @@ export async function startAtlasServer({
         )
       }
       if (path === '/__atlas/ready') return json(res, 200, { ok: true })
-      if (path === '/_ket/upload' && req.method === 'POST') {
+      if (path === '/flow/context' && req.method === 'POST') {
+        const chunks = []
+        let size = 0
+        for await (const chunk of req) {
+          size += chunk.length
+          if (size > 4096) return json(res, 413, { ok: false })
+          chunks.push(chunk)
+        }
+        const value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        const allowed = typeof value.companyId === 'string' && value.companyId.length > 0
+        return json(res, allowed ? 200 : 403, { ok: Boolean(allowed) })
+      }
+      if (['/_ket/upload', '/flow/uploads'].includes(path) && req.method === 'POST') {
         const session = req.headers['x-flow-fixture']
         if (!sessions.has(session))
           return json(res, 403, {
@@ -248,13 +265,29 @@ export async function startAtlasServer({
           })
         const chunks = []
         let size = 0
-        for await (const chunk of req) {
+        let fileType, fileName
+        const source = String(req.headers['content-type']).startsWith('multipart/form-data')
+          ? (async function* () {
+              for await (const part of multipart(req, String(req.headers['content-type']), {
+                maxBytes: MAX_UPLOAD + 16384,
+                maxParts: 4,
+              })) {
+                if (part.filename !== undefined) {
+                  if (fileName !== undefined) throw new Error('One file per upload')
+                  fileName = part.filename
+                  fileType = part.type
+                  yield* part.body
+                }
+              }
+            })()
+          : req
+        for await (const chunk of source) {
           size += chunk.length
           if (size > MAX_UPLOAD)
             return json(res, 413, { ok: false, code: 'tooLarge', message: 'Tệp vượt quá 25 MB.' })
           chunks.push(chunk)
         }
-        const type = String(req.headers['content-type'] ?? '')
+        const type = String(fileType ?? req.headers['content-type'] ?? '')
           .split(';')[0]
           .trim()
           .toLowerCase()
@@ -262,6 +295,7 @@ export async function startAtlasServer({
         try {
           name = decodeURIComponent(String(req.headers['x-file-name'] ?? 'file')).slice(0, 255) || 'file'
         } catch {}
+        if (fileName) name = fileName.slice(0, 255)
         return json(res, 200, {
           ok: true,
           uploadId: storeUpload({
@@ -302,8 +336,7 @@ export async function startAtlasServer({
           return
         }
         await new Promise((r) => setTimeout(r, 120))
-        const name = path.slice('/_ket/fn/'.length),
-          input = JSON.parse(body || '{}')
+        const { name, input } = atlasFlowCommand(path.slice('/_ket/fn/'.length), JSON.parse(body || '{}'))
         // The client never dictates stored bytes: size and type come from the upload itself.
         if (name === 'flow.entity.save' && input.collection === 'files' && Array.isArray(input.files)) {
           for (const file of input.files) {

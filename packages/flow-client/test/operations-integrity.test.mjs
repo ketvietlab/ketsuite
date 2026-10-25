@@ -3,6 +3,7 @@ import test from 'node:test'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
 import { operationsCommand } from '../atlas/operations-store.mjs'
 import { mutationFeedback } from '../dist/mutation-feedback.mjs'
+import { prepareFlowCommand } from '../dist/command-contract.mjs'
 
 const read = (s) => s.call('flow.workspace.bootstrap', { companyId: 'demo', workspaceId: 'product' }).value
 let sequence = 0
@@ -19,7 +20,7 @@ const run = (s, action, args = {}) =>
 const form = {
   title: 'Tiếp nhận',
   access: 'project',
-  assignee: 'Mai Anh',
+  assigneeId: 'mai',
   publish: true,
   fields: [{ label: 'Số lượng', type: 'number', required: true }],
   priority: 'normal',
@@ -42,11 +43,11 @@ test('malformed form definitions and inactive recipients are refused atomically 
     { fields: [{ label: 'A', type: 'text', required: 'false' }] },
     { priority: 'invalid' },
     { publish: 'false' },
-    { assignee: 'Missing' },
+    { assigneeId: 'missing' },
   ])
     unchanged(s, 'form.save', { ...form, ...patch })
   s.sessions.get('demo').data.members.find((m) => m.id === 'bao').status = 'revoked'
-  unchanged(s, 'form.save', { ...form, assignee: 'Trần Quốc Bảo' })
+  unchanged(s, 'form.save', { ...form, assigneeId: 'bao' })
   const result = run(s, 'form.save', { ...form, title: '  Tiếp nhận  ' })
   assert.ok(result.id)
   assert.equal(read(s).forms.find((f) => f.id === result.id).title, 'Tiếp nhận')
@@ -234,4 +235,33 @@ test('inbox batches refuse foreign/missing targets before changing any read flag
   })
   assert.equal(result.value.ok, false)
   assert.deepEqual(d, before)
+})
+
+test('a favourite, preferences and read notifications are personal: they hold no shared revision', () => {
+  const s = createOrganizationSession()
+  const held = read(s),
+    d = s.sessions.get('demo').data
+  const own = d.inbox.find((n) => !n.read && (n.recipientId ?? d.user.id) === d.user.id)
+  const personal = (name, input) =>
+    s.call(name, { companyId: 'demo', idempotencyKey: 'personal-' + ++sequence, ...input }).value
+  // No revision is sent, and none is moved for anyone else.
+  for (const [name, input] of [
+    ['flow.operations.command', { action: 'preferences.save', notifications: 'none' }],
+    ['flow.operations.command', { action: 'inbox.read', ids: [own.id] }],
+    ['flow.organization.command', { action: 'project.favorite', id: 'core' }],
+  ]) {
+    const prepared = prepareFlowCommand(name, input, held)
+    assert.equal('expectedRevision' in prepared, false, input.action)
+    assert.notEqual(personal(name, prepared).ok, false, input.action)
+  }
+  assert.equal(read(s).operationsRevision, held.operationsRevision)
+  assert.equal(read(s).organizationRevision, held.organizationRevision)
+  // A command prepared before them still applies.
+  const shared = prepareFlowCommand(
+    'flow.operations.command',
+    { action: 'form.save', projectId: 'core', ...form },
+    held,
+  )
+  assert.equal(shared.expectedRevision, held.operationsRevision)
+  assert.notEqual(personal('flow.operations.command', shared).ok, false)
 })

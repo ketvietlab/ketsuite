@@ -11,6 +11,7 @@ import {
 } from '@ketvietlab/ketjs'
 import type { Ctx, RouteEntry, ServeContext, Route } from '@ketvietlab/ketjs'
 import { ketsuite } from '../apps/ketsuite/deployment.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 /**
  * A request with no session is a stranger, not an unrestricted caller.
@@ -145,15 +146,18 @@ test('routes: signing in opens what was closed', async () => {
 // ── the declaration, at the level it is declared ─────────────────────────────
 
 test('declaration: a function is closed unless it says otherwise', () => {
-  const m = compose([
-    defineModule({
-      name: 'd',
-      functions: {
-        shut: { effects: [], handler: () => null },
-        open: { anonymous: true, effects: [], handler: () => null },
-      },
-    }),
-  ])
+  const m = compose(
+    [
+      defineModule({
+        name: 'd',
+        functions: {
+          shut: { effects: [], handler: () => null },
+          open: { anonymous: true, effects: [], handler: () => null },
+        },
+      }),
+    ],
+    { companies: true },
+  )
   assert.equal(m.functions['d.shut']!.anonymous, false)
   assert.equal(m.functions['d.open']!.anonymous, true)
 })
@@ -163,20 +167,23 @@ test('declaration: so is a route, and the terse form is the closed one', () => {
     (_ctx: ServeContext): Route =>
     async () =>
       text('x')
-  const m = compose([
-    defineModule({
-      name: 'r',
-      routes: {
-        '/shut': handler,
-        '/open': { anonymous: true, handler } satisfies RouteEntry,
-      },
-    }),
-  ])
+  const m = compose(
+    [
+      defineModule({
+        name: 'r',
+        routes: {
+          '/shut': handler,
+          '/open': { anonymous: true, handler } satisfies RouteEntry,
+        },
+      }),
+    ],
+    { companies: true },
+  )
   assert.equal(m.routes['/shut']!.anonymous, false, 'a default of open is a default nobody notices')
   assert.equal(m.routes['/open']!.anonymous, true)
 })
 
-test('declaration: an app with no sessions is unaffected, since there is no login to be outside of', async () => {
+test('declaration: an app with no sessions is unaffected in development, since there is no login to be outside of', async () => {
   const solo = defineModule({
     name: 'solo',
     models: { Thing: { scope: 'shared', fields: { id: 'id' } } },
@@ -188,8 +195,17 @@ test('declaration: an app with no sessions is unaffected, since there is no logi
           json(await ctx.call('solo.list', {}, url, req)),
     },
   })
-  const app = defineDeployment({ name: 'nologin', modules: [solo], headless: true, serve: {} })
-  const b = await bootDeployment(app, { env: { KET_LOG: 'null', KET_SQLITE: ':memory:' }, port: 0 })
+  const app = defineDeployment({
+    name: 'nologin',
+    companies: true,
+    modules: [solo],
+    headless: true,
+    serve: {},
+  })
+  const b = await bootDeployment(app, {
+    env: { KET_LOG: 'null', KET_DEV: '1', KET_SQLITE: ':memory:' },
+    port: 0,
+  })
   assert.equal((await fetch(`http://127.0.0.1:${b.port}/things`)).status, 200)
   await b.close()
 })
@@ -209,9 +225,11 @@ test('routes: anonymous policy also applies to dynamic paths', async () => {
   })
   const app = defineDeployment({
     name: 'route_access',
+    companies: true,
     modules: [catalog],
     headless: true,
     serve: {
+      permissions: everyFunction,
       sessions: { secret: 'test-only', anonymous: { company: 'public' } },
     },
   })

@@ -141,9 +141,9 @@ test('authorization schema preserves legacy rows through the explicit scope-inde
     depends: ['partner', 'company'],
     models: legacyModels,
   })
-  const legacyManifest = compose([address, partner, company, legacyUser])
+  const legacyManifest = compose([address, partner, company, legacyUser], { companies: true })
   const currentModules = [address, partner, company, user]
-  const currentManifest = compose(currentModules)
+  const currentManifest = compose(currentModules, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   t.after(() => adapter.close())

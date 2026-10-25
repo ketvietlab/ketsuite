@@ -302,6 +302,7 @@ test('staff inventory channel completes the eight-operation module with one vers
   const options = await e2e.client.json<Envelope<Row>>('/api/staff/v1/inventory/products/management/options')
   assert.ok((options.data.uoms as Row[]).some((item) => item.id === 'unit'))
   assert.ok((options.data.locations as Row[]).some((item) => item.id === 'wh:stock'))
+  assert.equal(options.data.costVisible, true)
 
   const draft = inventoryDraft('Nước ép xoài')
   assert.equal(
@@ -436,4 +437,62 @@ test('staff inventory channel completes the eight-operation module with one vers
   const survivor = await e2e.client.json<Envelope<Row>>(`/api/staff/v1/inventory/products/${pristineId}`)
   assert.equal(survivor.data.id, pristineId)
   assert.equal((survivor.data.availableActions as string[]).includes('delete'), false)
+})
+
+test('staff inventory channel hides the cost from a viewer who may not read it, and keeps it on save', async (t) => {
+  const e2e = await boot(t)
+  const scope = { company: 'acme', branches: null }
+  await e2e.fixture.call('product.setCost', { productId: 'mango', standardPrice: '45000' }, { scope })
+  await e2e.fixture.call(
+    'user.revokeFunction',
+    { roleId: 'inventory-reader', fnKey: 'product.listVariantCosts' },
+    { scope },
+  )
+  await e2e.client.login({ login: 'inventory-user', password: 'correct horse battery' })
+  const csrf = (await e2e.client.json<Envelope<{ csrfToken: string }>>('/api/staff/v1/bootstrap')).data
+    .csrfToken
+
+  const options = await e2e.client.json<Envelope<Row>>('/api/staff/v1/inventory/products/management/options')
+  assert.equal(options.data.costVisible, false)
+  const page = await e2e.client.json<Envelope<{ items: Row[] }>>('/api/staff/v1/inventory/products?limit=50')
+  assert.ok(page.data.items.length > 0)
+  assert.ok(page.data.items.every((item) => item.cost === null))
+
+  const detail = (await e2e.client.json<Envelope<Row>>('/api/staff/v1/inventory/products/mango')).data
+  assert.equal(detail.cost, null)
+  const body = {
+    name: 'Xoài Cát Hoà Lộc',
+    kind: detail.kind,
+    uomId: 'unit',
+    categoryId: detail.categoryId,
+    salePrice: (detail.salePrice as Row).amount,
+    channels: detail.channels,
+    tracking: detail.tracking,
+    sku: detail.sku,
+    barcode: detail.barcode,
+    expectedVersion: detail.version,
+  }
+  const withCost = await e2e.client.request('/api/staff/v1/inventory/products/mango/update', {
+    method: 'PUT',
+    headers: mutationHeaders(csrf, 'inventory-hidden-cost-1', String(detail.version)),
+    body: JSON.stringify({ ...body, cost: '0' }),
+  })
+  assert.equal(withCost.status, 422)
+  assert.ok(((await withCost.json()) as { error: { fieldErrors: Row } }).error.fieldErrors.cost)
+
+  const saved = await e2e.client.request('/api/staff/v1/inventory/products/mango/update', {
+    method: 'PUT',
+    headers: mutationHeaders(csrf, 'inventory-hidden-cost-2', String(detail.version)),
+    body: JSON.stringify(body),
+  })
+  assert.equal(saved.status, 200)
+  const updated = ((await saved.json()) as Envelope<Row>).data
+  assert.equal(updated.name, 'Xoài Cát Hoà Lộc')
+  assert.equal(updated.cost, null)
+  const costs = await e2e.fixture.call<Row[]>(
+    'product.listVariantCosts',
+    { productIds: ['mango'] },
+    { scope },
+  )
+  assert.equal(Number((costs.value as Row[])[0]!.standardPrice), 45000)
 })

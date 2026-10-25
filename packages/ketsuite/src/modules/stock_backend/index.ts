@@ -8,6 +8,8 @@ export default defineModule({
   version: '0.1.0',
   // The product list's stock column answers through product_backend's read.
   depends: ['stock', 'backend', 'product_backend'],
+  // Authorization reads the user module's grants.
+  optional: ['user'],
   assets: new URL('./client/', import.meta.url),
   islands,
   functions,

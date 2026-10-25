@@ -411,6 +411,14 @@ disables tracking; nonempty values must match `GTM-[A-Z0-9]{4,20}`. Save applies
 republishing entries. Native pages load the container only for visitors on the configured site host,
 outside preview and staff sessions. Container triggers govern events and device conditions.
 
+`sites.visitConsent` (boolean) and `sites.visitConsentNotice` (text, at most 2000 characters) are
+saved by the same Settings resource; omitted values keep the stored ones. Enabling requires a
+notice. The server keeps `visitConsentVersion`, raised whenever the notice text changes, so earlier
+agreements stop counting. While enabled, visitor pages carry a consent bar and the same-origin
+`/_ket/asset/website_backend/visit.mjs` script; the Google Tag Manager loader waits for agreement.
+The script posts to `POST /_website/visit` and `POST /_website/visit/{id}/events` (same origin,
+JSON, no staff session); see the website documentation for the stored data and retention.
+
 
 ### Object Storage ownership — 2026-09-30
 

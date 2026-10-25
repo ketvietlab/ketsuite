@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
-import { countingHost, mount, type HostNode } from '@ketvietlab/ketjs-view'
-import { createRelationSelectView } from '@ketvietlab/design-system'
+import { countingHost, mount, renderToString, type HostNode } from '@ketvietlab/ketjs-view'
+import { type RelationManager, createRelationSelectView } from '@ketvietlab/design-system'
 import { relationSelectDemoConfig } from '../packages/design-system/src/interactions/relation-select/demo.ts'
 
 const byUi = (node: HostNode, ui: string): HostNode[] => [
@@ -13,7 +13,7 @@ const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve()
 }
 
-const picker = (t: TestContext) => {
+const picker = (t: TestContext, requestQuery?: string, manager: Partial<RelationManager> = {}) => {
   class Input {
     value = ''
   }
@@ -21,11 +21,20 @@ const picker = (t: TestContext) => {
   const previousInput = globals.HTMLInputElement
   const previousFetch = globalThis.fetch
   globals.HTMLInputElement = Input
-  const requests: { input: Record<string, unknown>; signal: AbortSignal; resolve: (r: Response) => void }[] =
-    []
+  const requests: {
+    url: string
+    input: Record<string, unknown>
+    signal: AbortSignal
+    resolve: (r: Response) => void
+  }[] = []
   globalThis.fetch = ((_url: string, init: RequestInit) =>
     new Promise<Response>((resolve) => {
-      requests.push({ input: JSON.parse(String(init.body)), signal: init.signal as AbortSignal, resolve })
+      requests.push({
+        url: String(_url),
+        input: JSON.parse(String(init.body)),
+        signal: init.signal as AbortSignal,
+        resolve,
+      })
     })) as typeof fetch
   const controller = createRelationSelectView({
     id: 'remote-customer',
@@ -33,7 +42,13 @@ const picker = (t: TestContext) => {
       ...relationSelectDemoConfig,
       value: null,
       options: [{ value: 'primed', label: 'Primed customer' }],
-      manager: { listFunction: 'partner.listPartners', descriptionField: 'phone', searchInDropdown: true },
+      manager: {
+        requestQuery,
+        listFunction: 'partner.listPartners',
+        descriptionField: 'phone',
+        searchInDropdown: true,
+        ...manager,
+      },
     },
   })
   const host = countingHost(),
@@ -49,6 +64,7 @@ const picker = (t: TestContext) => {
   })
   return {
     root,
+    controller,
     requests,
     click: (ui: string) => host.fire(byUi(root, ui)[0]!, 'click'),
     search: (query: string) => {
@@ -149,4 +165,117 @@ test('relation picker: a record learned after the props survives the re-mount a 
     byUi(root, 'relation-option').some((option) => /Learned customer/.test(textOf(option))),
     'the list offers the learned record again',
   )
+})
+
+test('relation picker: remote reads retain the application tenant branch and locale context', async (t) => {
+  const ui = picker(t, 'company=hotel&branch=front&lang=vi')
+  ui.click('relation-trigger')
+  await flush()
+  assert.ok(ui.requests.length)
+  for (const request of ui.requests) assert.match(request.url, /\?company=hotel&branch=front&lang=vi$/)
+})
+
+test('relation picker: an unprimed selected id remains a native submitted value while its label resolves', () => {
+  const controller = createRelationSelectView({
+    id: 'existing-selection',
+    config: {
+      ...relationSelectDemoConfig,
+      value: 'remote-selected',
+      options: [],
+      manager: {
+        listFunction: 'hospitality_core.lookupRoomTypes',
+        resolveParam: 'id',
+        listInput: { propertyId: 'hotel' },
+      },
+    },
+  })
+  const markup = renderToString(controller.view())
+  assert.match(markup, /value="remote-selected"[^>]*selected/)
+  assert.match(markup, /Loading/)
+  controller.dispose?.()
+})
+
+test('relation picker: changing a parent cancels reads, clears the child and sends the new form value', async (t) => {
+  const p = picker(t, undefined, {
+    listInput: { property: 'hotel' },
+    listInputFields: { warehouseId: 'warehouse' },
+  })
+  const globals = globalThis as unknown as Record<string, unknown>,
+    previousDocument = globals.document,
+    previousWindow = globals.window,
+    previousElement = globals.HTMLElement,
+    previousCancel = globals.cancelAnimationFrame,
+    previousSelect = globals.HTMLSelectElement
+  globals.document = new EventTarget()
+  globals.window = new EventTarget()
+  globals.HTMLElement = class {}
+  globals.cancelAnimationFrame = () => undefined
+  globals.HTMLSelectElement = class {}
+  const lifetime = new AbortController(),
+    parent = { value: 'one' },
+    unrelated = { value: 'Keep this draft' }
+  const form = Object.assign(new EventTarget(), {
+    elements: { namedItem: (name: string) => (name === 'warehouse' ? parent : unrelated) },
+  })
+  p.controller.mount?.({
+    root: { closest: () => form, querySelectorAll: () => [] } as unknown as Parameters<
+      NonNullable<typeof p.controller.mount>
+    >[0]['root'],
+    lifetime: lifetime.signal,
+  })
+  t.after(() => {
+    lifetime.abort()
+    if (previousElement === undefined) delete globals.HTMLElement
+    else globals.HTMLElement = previousElement
+    if (previousCancel === undefined) delete globals.cancelAnimationFrame
+    else globals.cancelAnimationFrame = previousCancel
+    if (previousWindow === undefined) delete globals.window
+    else globals.window = previousWindow
+    if (previousDocument === undefined) delete globals.document
+    else globals.document = previousDocument
+    if (previousSelect === undefined) delete globals.HTMLSelectElement
+    else globals.HTMLSelectElement = previousSelect
+  })
+  p.click('relation-trigger')
+  assert.equal(p.requests[0].input.warehouseId, 'one')
+  await p.respond(0, [{ id: 'child-one', name: 'Old location' }])
+  p.click('relation-option')
+  await flush()
+  assert.match(textOf(byUi(p.root, 'relation-native')[0]), /Old location/)
+  p.click('relation-trigger')
+  parent.value = 'two'
+  form.dispatchEvent(new Event('change'))
+  await flush()
+  assert.equal(p.requests[1].signal.aborted, true)
+  assert.doesNotMatch(textOf(byUi(p.root, 'relation-native')[0]), /Old location/)
+  assert.equal(unrelated.value, 'Keep this draft')
+  p.click('relation-trigger')
+  assert.equal(p.requests[2].input.warehouseId, 'two')
+  assert.equal(p.requests[2].input.property, 'hotel')
+  await p.respond(1, [{ id: 'late', name: 'Stale location' }])
+  await p.respond(2, [{ id: 'child-two', name: 'New location' }])
+  assert.doesNotMatch(textOf(p.root), /Stale location/)
+  assert.match(textOf(p.root), /New location/)
+  parent.value = ''
+  form.dispatchEvent(new Event('input'))
+  await flush()
+  assert.equal(String(byUi(p.root, 'relation-trigger')[0].attrs?.disabled), 'true')
+})
+
+test('relation picker: field validation targets the visible trigger and its error text', () => {
+  const controller = createRelationSelectView({
+    id: 'validated-location',
+    config: {
+      ...relationSelectDemoConfig,
+      triggerId: 'location-field',
+      invalid: true,
+      describedBy: 'location-field-error',
+    },
+  })
+  const markup = renderToString(controller.view())
+  assert.match(
+    markup,
+    /<button[^>]*data-ui="relation-trigger"[^>]*id="location-field"[^>]*aria-invalid="true"[^>]*aria-describedby="location-field-error"/,
+  )
+  controller.dispose?.()
 })

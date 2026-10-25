@@ -16,6 +16,7 @@ import {
 import { address } from '@ketvietlab/ketsuite'
 import { deliveryEnvelope, queueTemplate } from '../packages/ketsuite/src/modules/mail_transport/index.ts'
 import { renderTemplate } from '../packages/ketsuite/src/modules/mail_transport/template.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const bridgeEffects = [
   'read:mail_transport.Template',
@@ -31,6 +32,42 @@ const fixtureBridge = defineModule({
   name: 'mail_transport_fixture',
   depends: ['mail_transport'],
   functions: {
+    simulateReceiptCrash: {
+      effects: [
+        'write:mail.Notification',
+        'write:mail_transport.DeliveryNotification',
+        'enqueue:mail_transport.deliver',
+      ],
+      handler: async (ctx: Ctx) => {
+        for (const state of ['ready', 'failed']) {
+          const id = `recovery-${state}`
+          await ctx.db.insert('mail.Notification', {
+            id,
+            messageId: 'message:test',
+            recipientPartnerId: 'p-attendee',
+            channel: 'email',
+            state,
+            createdAt: '2026-08-20T00:00:00.000Z',
+          })
+          await ctx.db.insert('mail_transport.DeliveryNotification', {
+            id: `binding:${id}`,
+            deliveryId: 'd-crash',
+            notificationId: id,
+          })
+        }
+        await ctx.jobs.enqueue('mail_transport.deliver', { deliveryId: 'd-crash', version: 1 })
+        return { ok: true }
+      },
+    } satisfies FnSpec,
+    snapshot: {
+      input: { id: 'id' },
+      output: { delivery: 'json' },
+      exposure: 'internal',
+      effects: ['read:mail_transport.Delivery'],
+      handler: async (ctx: Ctx, args) => ({
+        delivery: (await ctx.db.select('mail_transport.Delivery', { id: args.id }))[0],
+      }),
+    } satisfies FnSpec,
     seedNotification: {
       effects: ['write:mail.Thread', 'write:mail.Message', 'write:mail.Notification', 'read:partner.Partner'],
       handler: (ctx: Ctx) =>
@@ -157,10 +194,12 @@ test('mail transport: transactional snapshots survive edits, retries, accepted-c
   })
   const app = defineDeployment({
     name: 'mail_transport_e2e',
+    companies: true,
     modules: [address, partner, company, storage, user, mail, mailTransport, fixtureBridge],
     headless: true,
     worker: { queues: { mail: 1 } },
     serve: {
+      permissions: everyFunction,
       openTransport: () => provider,
       sessions: { anonymous: { company: 'acme' } },
     },
@@ -199,12 +238,17 @@ test('mail transport: transactional snapshots survive edits, retries, accepted-c
       asAdmin,
     )
 
-    const before = await e2e.fixture.call<{ deliveries: Row[] }>(
+    const _before = await e2e.fixture.call<{ deliveries: Row[] }>(
       'mail_transport.listOutbox',
       { limit: 100 },
       asAdmin,
     )
-    const crash = before.value.deliveries.find((row) => row.id === 'd-crash')!
+    const snapshot = await e2e.fixture.call<{ delivery: Row }>(
+      'mail_transport_fixture.snapshot',
+      { id: 'd-crash' },
+      asAdmin,
+    )
+    const crash = snapshot.value.delivery
     await provider.send(deliveryEnvelope(crash))
 
     await assert.rejects(
@@ -239,13 +283,13 @@ test('mail transport: transactional snapshots survive edits, retries, accepted-c
     )
     const byId = new Map(outbox.value.deliveries.map((row) => [String(row.id), row]))
     assert.equal(byId.get('d-snapshot')?.state, 'sent')
-    assert.equal(byId.get('d-snapshot')?.subject, 'Xin chào <script>old</script>')
-    assert.match(String(byId.get('d-snapshot')?.html), /&lt;script&gt;old&lt;\/script&gt;/)
+    assert.equal(Object.hasOwn(byId.get('d-snapshot')!, 'subject'), false)
+    assert.equal(Object.hasOwn(byId.get('d-snapshot')!, 'html'), false)
     assert.equal(byId.get('d-retry')?.state, 'sent')
     assert.equal(byId.get('d-retry')?.attempts, 2)
     assert.equal(byId.get('d-failed')?.state, 'failed')
     assert.equal(byId.get('d-failed')?.attempts, 5)
-    assert.match(String(byId.get('d-failed')?.lastError), /mailbox rejected/)
+    assert.equal(byId.get('d-failed')?.failureCode, 'E_MAIL_DELIVERY_FAILED')
     assert.equal(byId.get('d-crash')?.state, 'sent')
     assert.equal(byId.has('d-rollback'), false)
 
@@ -262,6 +306,25 @@ test('mail transport: transactional snapshots survive edits, retries, accepted-c
     )
     assert.ok(logs.some((entry) => entry.event === 'retrying'))
     assert.ok(logs.some((entry) => entry.event === 'discarded'))
+
+    await e2e.fixture.call('mail_transport_fixture.simulateReceiptCrash', {}, asAdmin)
+    const recoveryWorker = await bootWorker(app, { env: e2e.env })
+    try {
+      assert.equal(await recoveryWorker.drain(), 1)
+    } finally {
+      await recoveryWorker.close()
+    }
+    const recovered = await e2e.adapter!.all(
+      "SELECT id, state FROM mail_notification WHERE id LIKE 'recovery-%' ORDER BY id",
+    )
+    assert.deepEqual(
+      recovered.map((row) => [row.id, row.state]),
+      [
+        ['recovery-failed', 'failed'],
+        ['recovery-ready', 'sent'],
+      ],
+    )
+    assert.equal(provider.attempts('mail:d-crash:v1'), 2, 'receipt recovery must not send again')
 
     const providerEvent = {
       id: 'provider-event:bounce-1',
@@ -313,10 +376,12 @@ test('calendar email producer creates one immutable RSVP delivery per attendee',
   const provider = memoryTransport({ now: () => new Date('2026-08-20T12:00:00.000Z') })
   const app = defineDeployment({
     name: 'calendar_mail_transport_e2e',
+    companies: true,
     modules: [address, partner, company, storage, user, mail, mailTransport, calendar, calendarMailTransport],
     headless: true,
     worker: { queues: { default: 1, mail: 1 } },
     serve: {
+      permissions: everyFunction,
       openTransport: () => provider,
       sessions: { anonymous: { company: 'acme' } },
     },
@@ -329,6 +394,7 @@ test('calendar email producer creates one immutable RSVP delivery per attendee',
       {
         id: 'template:calendar',
         name: 'Calendar invitation',
+        publicOrigin: 'https://suite.example.test',
         fromAddress: 'calendar@acme.test',
         subjectTemplate: 'Lời mời: {{ event.name }}',
         textTemplate: '{{ attendee.name }} — {{ event.when }} — {{ attendee.rsvpUrl }}',
@@ -353,6 +419,15 @@ test('calendar email producer creates one immutable RSVP delivery per attendee',
       },
       asAdmin,
     )
+    for (const baseUrl of ['https://attacker.example', 'invalid'])
+      await assert.rejects(
+        e2e.fixture.call(
+          'calendar_mail_transport.sendInvitations',
+          { eventId: 'event:1', templateId: 'template:calendar', baseUrl },
+          asAdmin,
+        ),
+        { code: 'E_CALENDAR_MAIL_URL' },
+      )
     const produced = await e2e.fixture.call<{ deliveryIds: string[] }>(
       'calendar_mail_transport.sendInvitations',
       { eventId: 'event:1', templateId: 'template:calendar', baseUrl: 'https://suite.example.test' },

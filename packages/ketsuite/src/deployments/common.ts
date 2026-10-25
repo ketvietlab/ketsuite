@@ -16,10 +16,21 @@ import type {
   ServeSpec,
 } from '@ketvietlab/ketjs'
 import * as suite from '../index.ts'
+import { suiteMail } from './mail-targets.ts'
+import type { MailTarget } from './mail-targets.ts'
 import backend from '../modules/backend/index.ts'
 import { renderStudioPublic, websiteAnonymousScope } from '../modules/website_backend/studio/public.ts'
 
 export const staffChannelModules = [suite.channelApi, suite.hr, suite.attendance, suite.accountStaffChannel]
+
+/** The records the shared business modules post to, so their notifications reach the inbox. */
+export const commonMailTargets: MailTarget[] = [
+  'partner.Partner',
+  'product.Template',
+  'stock.Picking',
+  'sale.Order',
+  'calendar.Event',
+]
 
 export const commonBusinessModules = [
   suite.website,
@@ -37,7 +48,7 @@ export const commonBusinessModules = [
   suite.user,
   suite.oauth,
   suite.storage,
-  suite.mail,
+  suiteMail(commonMailTargets),
   suite.mailStaffChannel,
   suite.mailBackend,
   suite.mailTransport,

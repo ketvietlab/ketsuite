@@ -1,6 +1,6 @@
 {
   "name": "@ketvietlab/ketspec",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "Spec: an API reference and try-it console for OpenAPI 3 documents, built on the Két design system.",
   "type": "module",
   "license": "MIT",
@@ -42,8 +42,8 @@
     "./assets/mark.svg": "./dist/assets/mark.svg"
   },
   "dependencies": {
-    "@ketvietlab/design-system": "0.1.41",
-    "@ketvietlab/ketjs-view": "0.5.0"
+    "@ketvietlab/design-system": "0.1.42",
+    "@ketvietlab/ketjs-view": "0.6.1"
   },
   "publishConfig": {
     "access": "public",

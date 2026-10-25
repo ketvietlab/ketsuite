@@ -188,6 +188,10 @@ Role claim ngoài không trở thành Role/Grant cục bộ. Không lưu token t
   hoạt động cùng root branch; email verified mặc định là bắt buộc.
 - User tự tạo luôn là `internal`, không phải superuser, password null, chỉ nhận root
   branch của company cấu hình và Role mặc định nếu quản trị viên chọn rõ ràng.
+- User do chính provider tạo (`oauth:<code>:…`) thuộc về provider: mỗi lần đăng nhập
+  cập nhật `name` theo claim `name` và `email` theo email đã xác minh. Email chưa xác minh
+  hoặc claim thiếu không ghi đè giá trị cũ. User do quản trị viên tạo rồi link giữ nguyên
+  hồ sơ của họ.
 - Provider claim không bao giờ trở thành KetSuite function permission. Permission
   vẫn chỉ đến từ ordinary Role/Grant rows.
 
@@ -201,6 +205,10 @@ Role claim ngoài không trở thành Role/Grant cục bộ. Không lưu token t
 - danh sách/link/unlink external identity;
 - self-service provider chooser từ Profile;
 - nút OIDC trên `/login` chỉ khi có provider active;
+- `loginScreen(_, { password: false })` cho deployment chỉ đăng nhập qua identity provider:
+  thẻ giữ tiêu đề, lỗi (`unavailable` khi provider chưa sẵn sàng) và link provider, không
+  có ô nhập hay form POST. Deployment tự đóng route mật khẩu của mình (ví dụ KétView);
+  mặc định `password` vẫn là `true`;
 - empty/error/permission states và message catalogue Việt/Anh.
 
 Không tải logo từ provider, do đó màn hình login không phát request ảnh ngoài hoặc
@@ -281,3 +289,11 @@ KET_BENCH_PG=postgres://... npm run bench:oauth
 PostgreSQL và máy chạy để xác nhận module mới không thêm lookup OAuth vào mỗi
 request. Benchmark phải chạy lại ngay trước commit; kết quả cụ thể của lần nghiệm
 thu được ghi trong PR để không biến số đo máy phát triển thành capacity claim.
+
+## Registration entry
+
+`/auth/oauth/{code}/start?prompt=create` requests the OIDC registration extension
+from a provider that supports it. Only `create` is forwarded, only for login mode;
+other caller-supplied prompts are ignored. PKCE, state, nonce and the configured
+provider/return-path validation are unchanged. Provisioning still requires the
+provider's explicit policy; the query does not grant roles or enable registration.

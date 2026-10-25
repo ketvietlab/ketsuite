@@ -2,6 +2,11 @@
 
 Public server-rendered components for dense operational applications.
 
+Interface typography uses KÉT Sans Optical 1.0 with automatic optical sizing:
+reading sizes keep Text spacing, while larger text uses tighter spacing. Medium
+still serves weights 500 and 600; Inter remains the missing-character fallback.
+See [font provenance and validation limits](src/foundations/fonts/README.md).
+
 The package depends only on `@ketvietlab/ketjs-view`. It does not know about
 KetSuite routes, translators, models, functions, sessions, or deployments.
 
@@ -24,6 +29,12 @@ import {
 Load `@ketvietlab/design-system/styles.css` and put `data-kv-design-system` on the
 application root. Components own their markup and `data-ui` hooks; applications
 provide business data and translated labels.
+
+Client compositions of `createRelationSelectView` can call `getSelectedValues()` to obtain
+an isolated array of selected opaque IDs, including IDs containing commas. Use this method
+for JSON commands instead of parsing the legacy native CSV value. Native form reset restores
+the configured initial selection, including forms inserted after mounting the picker.
+The disposable runtime removes its form listener.
 
 ### Scoped source build
 
@@ -128,7 +139,9 @@ entry. Its `primitive-harness`, `primitive-section`, `primitive-section-head`,
 `primitive-row`, `primitive-caption`, and `primitive-sample` hooks own only the
 comparison layout. Component internals use the same production CSS as consumers.
 Notices keep their icon beside the copy and move actions beneath it when the
-notice itself is narrow. Action icons, spinners and tag remove links do not shrink;
+notice itself is narrow. A notice whose `message` is empty is its title alone: the
+colon after the title and the empty message line are not shown, so a whole sentence can
+be the title. Action icons, spinners and tag remove links do not shrink;
 long tags wrap and progress percentages remain intact.
 Select keeps the native picker and keyboard behaviour. Its field-owned chevron
 has a token-based inset, reserves space for long values, follows disabled colour,
@@ -166,7 +179,8 @@ The Lucide glyphs `layout-dashboard`, `target`, `users`, `wallet`, `route`, `rad
 `flask-conical`, `shield-check`, `sliders-horizontal`, `scale`, `plug`, `receipt`, `history`, `pause`, `play`, `undo-2`, `zap`,
 `download`, `refresh-cw`, `credit-card` and `file-text` name
 navigation destinations and commands in operational apps; `trending-up` and `trending-down` belong to
-`Metric.change`. Copy new glyphs from Lucide with their 24px geometry rather than drawing look-alikes.
+`Metric.change`. `arrow-down-left` and `arrow-up-right` mark money coming in and going out, such as receivables and
+payables. Copy new glyphs from Lucide with their 24px geometry rather than drawing look-alikes.
 
 ### Date pickers
 
@@ -177,7 +191,7 @@ in the asset recipe; the Upload catalogue demonstrates the composition.
 
 Open `/dates` for the focused Vietnamese playground (`states=1` expands validation/access examples), or the `date-time` specimen
 under `/components/form-controls`. `DatePicker` keeps its native date input. `DateRangePicker` combines one read-only range display with a calendar icon inside the same frame as DatePicker. Two hidden boundaries retain the existing names and ISO values. The runtime enforces required, min/max and step; read-only, disabled, help and field errors remain supported. Submission stays `YYYY-MM-DD`.
-`DateTimePicker` and `TimePicker` retain their native local-time controls.
+`DateTimePicker` and `TimePicker` retain their native local-time controls. `Field.locale` sets the calendar language (`vi`/`en`) when Field dispatches to a date or datetime picker. Compound datetime parts follow later disabled/read-only updates and dispose their observer with the field.
 
 Load `/runtime/auto.js` alongside the stylesheet, or call
 `attachDesignSystemInteractions(root)` from `/runtime` and dispose its returned
@@ -188,6 +202,7 @@ In CSR islands, DateRangePicker synchronizes its read-only display when the save
 boundary attributes change, including Back/Forward and refreshed results. This
 does not emit another filter decision. Its shared runtime releases the observer
 when the picker is removed or disposed.
+Single-date CSR refreshes also synchronize the saved value without emitting an input/change decision. `onInput`, `onChange` and `onBlur` are native Field callbacks, shared by DatePicker. Focused consumers can import the public `./date-picker` and `./date-picker/runtime` exports instead of the complete component/runtime entry.
 Server views never read the clock or access the DOM.
 
 ```tsx
@@ -220,7 +235,7 @@ selection; scrolling preserves the draft and month navigation recenters that win
 with fixed commands, a scrolling month list, safe-area insets, contained focus,
 and an inert, scroll-locked background. Desktop calendars remain anchored non-modal
 popups. The native top-layer popup avoids ancestor clipping.
-`locale="vi"` is the default (`en` is also supported); `weekStartsOn` accepts 0 or 1
+`locale="vi"` is the default (`en` and `ja` are also supported); `weekStartsOn` accepts 0 or 1
 (Monday by default). `calendarLabels` overrides commands, status and preset labels;
 it does not change the browser's native date-input formatting.
 
@@ -232,6 +247,13 @@ The `date-picker` / `date-range` hooks own composition; `date-inputs`,
 `date-calendar-status` own the popup. `data-selected`, `data-in-range`,
 `aria-current="date"` and native disabled states define calendar styling; consumers
 compose the public components rather than targeting their descendants.
+
+The default single-day calendar commits its ISO value and closes when a day is
+chosen, before a containing form can submit. `applyOnClose={false}` keeps the
+explicit Apply/Cancel flow. Automatic filter submission requires an explicit
+`method="get"` on the form; CSR command forms do not submit merely because their
+omitted HTML method defaults to GET. Reassigning the same supplied date during an
+unrelated render preserves the native draft.
 
 ### Popups close on an outside click and on Escape
 
@@ -280,6 +302,15 @@ Specimen: `code-block` under Status.
 
 ### Collections are client islands
 
+Use `ListChrome.commands` for a command form that needs the full collection width.
+The `actions` slot remains an inline toolbar; command fields use the standard inline field layout.
+
+Record contexts and commands preserve company, companies, branch, branches and locale from the active URL. `RelationManager.requestQuery` carries the application’s encoded RPC context for picker reads and writes; a picker never infers tenant ownership from an option. RelationSelect keeps these parameters while its search input changes. `resolveParam` names a parameter for resolving a selected id absent from primed options; the native value remains selected while its label loads. The same lookup must check ownership for both search and id reads.
+
+
+`KetTable.maxBlockSize` accepts the collection runtime’s available viewport budget. The table owns vertical scrolling and sticky headings; omitting it preserves intrinsic page scrolling. SSR omits the budget until the disposable runtime measures the mounted collection and its footer. The catalogue includes a bounded loading table.
+
+
 `ListChrome.filterMenus` composes native `Menu` choices and `DateRangePicker` with
 `variant="filter"`. The slot caps its group to the available panel width, so the
 controls wrap inside an opened phone disclosure. Do not put `FormGrid` here: it
@@ -325,6 +356,11 @@ this way; an existing server-rendered list moves to it when it is next changed.
   backend shell does not re-fetch the content slot behind it (see `record-modal.md`, Collection).
   The Back that closes the modal lands on the query already on screen (or already being read
   after the save) and reads nothing; Back onto a page that failed reads it again.
+- **Sorting.** Prefer `KetTable.columns[].sortHref`/`sortLabel` and `sort` for
+  URL-backed column sorting. Do not duplicate those choices in `ListChrome.sort`.
+  `responsive: 'stack'` keeps sortable column headers visible above phone summaries;
+  `data-has-sort` on the table and `data-sortable` on its headers expose this state.
+  The collection owns allowed directions, page reset and its default business order.
 - **Network.** Each read aborts the previous one and a late answer is ignored. Recent queries
   are cached (about 20): Back shows its page at once and reads it again behind it. A read
   slower than about 150ms dims the rows on screen (`data-dimmed`, `aria-busy`) instead of
@@ -352,8 +388,9 @@ this way; an existing server-rendered list moves to it when it is next changed.
 - **Accessibility.** Focus stays on the control that changed. `PagerBar` renders a step that
   reaches the first or last page as the same element, a disabled link (`role="link"`,
   `aria-disabled="true"`, `tabindex="-1"`, no `href`), so the focus on it outlasts the island's
-  render instead of falling to the page. A polite live region announces
-  the result range ("1–25 of 2,696") and nothing else; a failure notice announces itself and
+  render instead of falling to the page. `PagerPage` also accepts a nullable `href` and an
+  optional stable `id` for first/last destinations; it keeps its anchor while disabled.
+  Supply distinct IDs when labels repeat. A polite live region announces the result range ("1–25 of 2,696") and nothing else; a failure notice announces itself and
   the live region does not repeat it. A sortable header's accessible name says what the link
   does ("Arrival, sort earliest first").
 - **Table.** The results island renders `KetTable` in its server form (`columns[].cell`,
@@ -391,6 +428,16 @@ add a click listener to make it openable.
   view such as a tape chart, a timeline or a board: a summary, the two or three commands people
   take there, and the way to the record's page. A peek never replaces the page for editing
   the whole record.
+- **Master-detail workspace** (`WorkspacePage` with `master`) when people work through a
+  queue one item at a time and go straight to the next: bank lines to match, invoices to map.
+  `master` holds the queue, usually a `ResourceList` whose `currentId` marks the open item
+  (`aria-current`, the selected fill and a leading bar); `body` works on that item, and
+  `masterLabel` names the queue region. The two sit side by side while the detail keeps at
+  least 60% of the width and the 38rem a table needs, and wrap, master first, when it would
+  not: the split follows the room the app navigation (and a docked Peek) leaves, not a
+  viewport breakpoint. The master frames and scrolls itself; the page body's gap separates
+  the two once. Each item keeps its own URL (`?id=` or a record
+  route), so a link to one item still opens it inside the queue.
 
 Whichever presentation is chosen:
 
@@ -465,6 +512,22 @@ Accent-coloured text (links, a module's mark) uses `--kv-accent-text`, not `--kv
 dark theme `--kv-accent` is a fill colour and reads at 3.4:1 as text on a panel; `--kv-accent-text`
 takes a lighter step (about 8:1) and keeps the light theme's accent unchanged. `Link` uses it too.
 
+### Embedded page
+
+`EmbeddedPage({ src, title })` shows a page served by another site as the whole screen, edge to
+edge below the shell's top bar: for example the introduction of an app the company has not bought.
+It renders a section with a visually hidden level-one heading (`title`) and one iframe named by the
+same title. The main column holding it becomes a viewport-high flex column and the page grows into
+what the location bar leaves (that bar is taller on touch screens than `--kv-app-topbar-height`), so
+the suite's document does not scroll and the frame scrolls inside. The page is the main column's child
+or grandchild; the backend content slot passes the height on and drops its padding when it holds an
+embedded page directly, and the screen passes `topbar: false`, since the embedded page carries its own
+heading. The frame is
+sandboxed (`allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox`,
+never top navigation) and sends `strict-origin-when-cross-origin` referrers. The host chooses and
+validates the URL: another origin, over https. The embedded site must allow framing by the suite's
+origin (`frame-ancestors`); a refused frame shows the browser's own error. Specimen `embedded-page`.
+
 ### Peek beside a spatial view
 
 `Peek` is a non-modal summary of one record docked beside the view it came from, inside a
@@ -532,6 +595,54 @@ choosing what to do; a list opens its records as a page or a modal instead.
   so the reference resolves in every state; the `Peek` inside takes the same `id` as the stem
   of its title and close ids and carries no id of its own.
 
+### Docks for tasks beside the page
+
+`Dock` is a non-modal panel for a task that runs while the reader keeps working on the page: a
+phone call, and later a chat conversation. `DockRegion` is the page's one place for docks, at the
+bottom end of the viewport. Several channels share the region; each owns its own `Dock`. The
+newest dock is last, at the end edge, and older ones line up before it.
+
+```tsx
+<DockRegion
+  docks={[
+    <Dock
+      id="call-dock"
+      eyebrow="On a call · Line 0901 234 501"   // what the panel is doing: announced on change
+      title="Alex Morgan"
+      status={[<Text>04:12</Text>, <Badge label="Recording" tone="danger" />]} // not announced
+      toggle={{ collapseLabel: 'Collapse call', expandLabel: 'Expand call' }}
+      collapsed={collapsed}                    // the owner flips it when `call-dock-toggle` is pressed
+      body={<CallNotes />}
+      actions={<ActionGroup actions={[mute, hold, endCall]} />}
+    />,
+  ]}
+/>
+```
+
+- **Not a dialog.** A dock has no backdrop, takes no focus and does not make the page inert. It is
+  a labelled region (`section` named by its title). The heading (eyebrow and title) is a polite
+  live region, so a state change such as an answered call is announced. The status beside it,
+  such as a timer, is outside that region and is not announced.
+- **Collapse.** With a `body` and `toggle`, the head gets a collapse control,
+  `<id>-toggle`, which names the body with `aria-controls`. A collapsed dock keeps its head and
+  actions, so a call can still be ended. Without a body there is nothing to collapse.
+- **Attention.** `tone="attention"` puts a second ring around a dock that waits for the reader,
+  such as a ringing call. The eyebrow says why, so colour is not the only cue.
+- **Layers and the page.** A call runs across dialogs: the region sits on `--kv-layer-dock`, over
+  the page, its menus and its dialogs, and under toasts. A client dialog does not make the region
+  inert, and every dialog keeps `--kv-dock-reserve` free at the bottom so its own actions stay
+  clear of a collapsed dock. While the region holds a dock, `app-main` keeps the same scroll room
+  under its last row. Toasts move to the top end, under the topbar, whatever the size or number of
+  docks. The region shows only while it holds a dock, so an island can keep an empty region in the
+  page. A dialog's focus loop stays inside the dialog: a keyboard user reaches the dock once it
+  closes.
+- **Phone.** Below 48rem the region spans the bottom edge as a sheet, capped at 70% of the
+  viewport, with docks one above the other. The owner keeps one of them expanded at a time.
+- **Owner.** Calls, timers, media and network belong to the product's island. The dock only
+  renders state. Render one `DockRegion` per page, inside the design system scope. A product that
+  must keep a call through navigation keeps the region outside the content it replaces, using
+  fragment navigation.
+
 ### Option groups
 
 `checkbox-group` and `radio` fields (`CheckboxGroup`, `RadioGroup`, or `RecordForm`
@@ -597,6 +708,15 @@ fields or a generic `Grid`:
 - `FormGrid` does not render a `<form>`; the enclosing form owns submission.
   `RecordForm.columns={3}` remains the choice for a single form without
   sections.
+- Close such a form with `FormActions`, the record form's own action row
+  (divider, end alignment, `ActionGroup`), rather than a `Stack` or `Inline`
+  of buttons. Put the primary command first: Enter submits a native form's
+  first submit button. A step back in a multi-step form is a submit `Button`
+  with `formNoValidate`, so a required field the current step has not filled
+  does not stop it; the server still validates whatever is submitted.
+- On a page, such a form sits inside a titled `Surface` (one per step of a
+  multi-step form), never on the page canvas; the record's place among the
+  steps is a `StagePath` in `RecordPage.path`.
 
 ### Facts and the rail on a record page
 
@@ -633,6 +753,10 @@ what blocks the record (unpaid balance, missing guarantee, unassigned room) in t
 
 ### Relation pickers
 
+When used inside `Field`, pass its ID as `config.triggerId`, its validation state as `invalid` and help/error IDs as `describedBy`. These apply to the visible keyboard trigger, so the label and refused-submit focus target remain accessible.
+
+`manager.listInputFields` binds required RPC input names to native field names in the same form (for example `{ warehouseId: 'warehouse' }`). The picker stays disabled until all parents are set. A parent change aborts outstanding reads, clears the dependent selection and results, and preserves unrelated form fields. Inputs are read again for each query; server authorization and validation remain mandatory. No callbacks are serialized.
+
 `RelationSelect` (`createRelationSelectView`/`relationSelect`) is a live client
 island, unlike the rest of the package's progressively enhanced controls: it owns
 its own state and calls `/_ket/fn/<name>` itself through `RelationSelectConfig.manager`
@@ -650,6 +774,13 @@ queries abort the previous read and late responses are ignored. Selected values
 remain available to the native form. Omit this option for a local picker; the
 manager's **More** dialog remains available in both modes.
 
+Every read sends the typed query and a row limit beside the manager's `listInput`
+and bound fields, as `search` and `limit` unless `searchParam`/`limitParam` rename
+them. The list function declares both as optional inputs: KetJS refuses an input a
+function does not declare (`E_INVALID_INPUT`), which leaves the picker on its error
+state. Match without accents or case where the database collation does not fold
+Vietnamese letters (`company.listBranches` is one such function).
+
 A record a manager picker creates in its **More** dialog, renames there, or picks from
 server results joins its options for the rest of the page, keyed by `listFunction`. A
 record form re-mounts its islands from props written before that record existed; the
@@ -663,6 +794,11 @@ nothing to browse. Opening the trigger moves focus to the search field, so typin
 filters straight away. A record form mounts every relation field (customer,
 salesperson, warehouse, SKU) as this picker island rather than a plain `<select>`,
 including the add row of an inline line editor.
+
+A disabled picker (`config.disabled` or `callbacks.disabled`) disables its trigger
+and draws it as a disabled field control does: the same stroke, fill, ink and
+`not-allowed` cursor. A value locked by the record's state (a recorded asset's
+source document, say) must not look like an open choice beside a disabled select.
 
 Its option rows (`relation-option`, `relation-dialog-row`) show the current
 selection as a trailing mark on the label's own line, never on a line of its own
@@ -783,11 +919,12 @@ registry. It lists current public exports, the KetSuite compatibility kit, and
 the planned component catalog with ownership, maturity, Wave, evidence posture,
 and promotion decisions. Filters are URL-owned and work without client JavaScript.
 
-Regenerate and verify its source snapshot with:
+The registry reads `src/catalogue/inventory.generated.{ts,json}`, which `npm run build` and
+`npm run check` derive from source. They are ignored by Git, so branches never conflict on them. Check
+that every export has a policy entry, and the governance contract, with:
 
 ```bash
-# Run from: ketjs/
-npm run design:inventory
+# Run from: ketsuite/
 npm run design:inventory:check
 npm run design:governance:check
 ```
@@ -811,9 +948,13 @@ the demo has no connection to production records, email or delivery services.
 
 Every `AppShell` requires an `applications` configuration and renders one
 `AppSwitcher` before the primary sidebar. Hosts provide the translated navigation
-label, new-tab label, optional screen-help label, optional `settings: { id, label, items }` or `settings: { id, label, href, current? }` (see Settings directory), active app ID, and `{ id, label, icon, href?, unavailableLabel? }` items. Omit a destination for a coming-soon or unavailable app: the icon stays focusable for its name/status, with `aria-disabled` and no link action. The public
+label, new-tab label, optional screen-help label, optional `settings: { id, label, items }` or `settings: { id, label, href, current? }` (see Settings directory), active app ID, and `{ id, label, icon, href?, sameTab?, unavailableLabel? }` items. Omit a destination for a coming-soon or unavailable app: the icon stays focusable for its name/status, with `aria-disabled` and no link action. The public
 component owns the 48px graphite rail, 18px Lucide icons, hover/focus names, active
-indicator and native `target="_blank"` links with `noopener noreferrer`. Desktop
+indicator and native `target="_blank"` links with `noopener noreferrer`. An item with
+`sameTab: true` is an app the host serves inside this same shell: it opens in the current tab,
+its name carries no new-tab suffix, and it sits under `data-ket-reload` so the framework loads a
+new document rather than swapping a navigation fragment (the rail and the sidebar change with the
+app, and the rail is never part of a fragment). Desktop
 items are 36px; mobile items have a 44px touch target. On mobile the rail is hidden
 until the application menu opens; the shared runtime moves the same SSR node into
 the drawer, keeping it within the dialog's Tab loop, and restores it for desktop
@@ -845,7 +986,7 @@ clamped inside the viewport/drawer. It opens on click/touch or keyboard, never
 on hover. Escape dismisses the menu before the mobile navigation drawer; outside
 click and selection dismiss it too. Hosts supply translated settings entries.
 
-KetSuite's production `suiteApplications` projects the deployment's permission-filtered menu into Kinh doanh/Sales and Website destinations, plus disabled Accounting, Flow, Phone and Chat entries. Backend frames and Website Studio share the same registry. Accounting and the duplicate Website destination leave the main menu; Website stays in the rail. Administration moves to the rail's click-only settings menu, retaining permitted links. Help is omitted until screen guides are ready. The browser-safe adapter is also exported from `@ketvietlab/ketsuite/ui/application-switcher`.
+KetSuite's production `suiteApplications` projects the deployment's permission-filtered menu into Kinh doanh/Sales and Website destinations, plus disabled Accounting, Flow and Chat entries. Phone takes its destination from a `phone` menu root when a module supplies one (otherwise it stays coming soon) and opens with `sameTab`: its screens live in this same shell. A screen of such an app asks `adminPage`/`frameOf` for `app: 'phone'`, which sets `Frame.app`; the shell then lights that rail item, names the sidebar after it and fills the sidebar with that menu root alone, while the Sales menu (`suiteMainMenu`) leaves the root out. Backend frames and Website Studio share the same registry. Accounting and the duplicate Website destination leave the main menu; Website stays in the rail. Administration moves to the rail's click-only settings menu, retaining permitted links. Help is omitted until screen guides are ready. The browser-safe adapter is also exported from `@ketvietlab/ketsuite/ui/application-switcher`.
 
 The catalogue's `placeholderApplications` supplies Sales, Stay, Website, Flow and
 Accounting examples; hash destinations are placeholders, not a deployment URL
@@ -926,6 +1067,16 @@ in a `Stack` (a name over its detail) ends each line in its own ellipsis. A link
 directly in the cell is bounded and truncated itself and draws its focus ring inset, so the
 clip never hides focus. Cells holding a `Menu` or popover stay unclipped, the row link's
 overlay belongs to the row, and stacked rows wrap instead. Give long subjects `wrap: true`.
+
+An outline (the indicators of a financial statement or a tax return) stays one `KetTable` with
+the same columns on every row. The server form's `rowLevel(row)` gives a row's depth: the row
+gets `data-level` and `--kt-row-level`, and its subject cell (the first cell, or the one after
+the selection cell) indents one `--kv-space-4` step per level, capped at 4. `rowEmphasis(row)`
+returns `'group'` for a row heading the rows below it or `'total'` for a row adding them up:
+both read semibold and a total gets a `--kv-border-strong` rule above it; any other value is
+dropped. A level of 0 or null and no emphasis render the row as before. Stacked rows on a phone
+drop the indent and the rule and keep the weight. Product code does not indent with spaces or
+padding of its own; see `test/design-system-ket-table-outline.test.tsx`.
 
 `rowHref` provides one keyboard link per row, including the full row pointer target.
 The link wraps the first column's cell and takes its text as its name, so the first column
@@ -1054,7 +1205,11 @@ Client-read record pages own `tab`, `dialog` and `dialogId` in browser history a
 retain their list trail. Record commands retain an idempotency intent across an
 uncertain response; changed input receives another intent, and success clears it.
 `recordChanged` exposes captured parent edits to a child decision; a posting
-confirmation must require saving those edits first. Runtime effects remain in the
+confirmation must require saving those edits first. Each read of the record
+(the re-read after a command, a refresh, a cached first frame) drops the
+baselines of fields no capture holds, in the same batch as the new data, so
+`draft()` seeds them from the record as read now; a value just saved therefore
+never counts as an edit. Runtime effects remain in the
 island. Static SSR shell props never carry business data, rights or field options.
 Peer Sections inside one Surface or modal use `Stack({ divided: true })`; its
 existing token hairline is mandatory, including in CSR presenters.
@@ -1064,6 +1219,19 @@ existing token hairline is mandatory, including in CSR presenters.
 Use `CardGrid` with `minimum="wide"` for long currency metrics. Metric owns a bounded text column and wraps long labels and exact values; consumers do not truncate financial totals or override metric descendants. Specimen: `metric-exact-long-value`; focused producer checks and mutations: `design/account/producer-contracts.test.mjs` and `tools/design/verify-account-producer-mutations.mjs`.
 
 A metric that opens what it counts (a queue, a filtered collection) passes `href`: the whole card is that link, focusable and named by its label and value. Do not add a separate "View list" button under the number. Inside a titled `Surface` a group of metrics is plain figures without `href`, so one card never holds several competing links.
+
+### Side-by-side cards follow the room they have
+
+`Grid` collapses to one column only below the 48rem viewport, so beside an open sidebar at 768px a
+`columns={2}` grid gives each card about 14rem: a `BarChart` track shrinks to nothing and a list wraps
+every line. Pass `minimum` (`compact` 12rem, `default` 17rem, `wide` 23rem, the `CardGrid` widths):
+the grid keeps at most `columns` but drops one whenever a column would be narrower than the minimum,
+measured on the grid itself rather than the viewport. Without `minimum` the fixed columns are unchanged.
+Dashboard pairs (a work queue beside closing checks, two aging charts) use `columns={2} minimum="wide"`.
+Specimen: `Columns by room` in the layout rhythm primitives.
+
+A `BarChart` shares one label and one value column across its rows from 48rem, so every track starts
+and ends on one line however wide each printed value is.
 
 ### Change against a period and series over time
 
@@ -1080,6 +1248,18 @@ the default top to include it. `labelEvery` prints every n-th period label, coun
 one; `tick` supplies short axis text. The scale starts at zero; negative values draw as zero. The plot is
 11rem high with a 3.5rem axis gutter, and columns tighten their gap below a 32rem chart width. Specimen:
 `column-chart`.
+
+`QrCode` draws a QR code a phone can scan: a bank-transfer request on an invoice, a link, a pairing
+code. The package encodes it itself (QR Model 2, byte mode over UTF-8, versions 1 to 40, levels
+`L`/`M`/`Q`/`H`, default `M`) and renders one server-side `<svg role="img">` named by `label`, so it
+prints, scales and needs no script or dependency. The symbol is always black on a white plate with its
+four-module quiet zone, in both themes and in print, because scanners need that contrast; do not tint it.
+Whatever a person needs to read without scanning (the account, the amount, the reference) goes in
+`caption`, never only in the code. `size` is `small` (7.5rem), `default` (10rem) or `large` (13rem) and
+never exceeds its container. Text too long for version 40 throws a `RangeError`, so callers bound what
+they encode. The consumer builds the payload (for example an EMVCo merchant-presented string); the
+component does not interpret it. Specimen: `qr-code`; test: `test/design-system-qr-code.test.tsx` reads
+symbols back from the standard's tables.
 
 ### Sidebar island slot height
 
@@ -1119,6 +1299,13 @@ visible bounds, and opens above when more room is available. Resize updates the
 measurement; closing/disposal clears it. The native disclosure remains available
 without JavaScript. See `test/design-system-menu-fit.test.ts`.
 
+`Menu` takes `triggerAppearance="plain"` when its `trigger` content draws the
+face itself, such as an avatar or a tile matching the plain tiles beside it.
+The trigger keeps its name, disclosure semantics, focus ring and panel but
+drops the button frame, padding and fill, also at `size="compact"`. Style the
+trigger content, never `[data-ui="menu-trigger"]`. See
+`test/design-system-menu-trigger.test.tsx`.
+
 Keyboard navigation skips hidden and disabled Menu choices after filtering.
 A disabled trigger blocks activation and navigation keys while preserving Tab
 and Escape. See `test/design-system-menu-keyboard.test.ts`.
@@ -1140,6 +1327,15 @@ guide; content-slot navigation resolves replacement guides at request time.
 navigation. Pair it with a screen-owned `HelpDrawer`; the existing runtime owns
 `ket:screen-help-request`, association, Escape and focus return. It reuses the
 same hook and geometry as `AppSwitcher.helpLabel`, without adding a second rail.
+Standalone apps that already own their other interactions can attach the same
+Help producer with `attachHelpDrawers(root)` from
+`@ketvietlab/design-system/help/runtime`. It includes the trigger bridge,
+Escape/focus and disposal; do not also attach the full runtime to the same root.
+Hosts with an existing navigation implementation may pass `beforeOpen(trigger)`
+as the second argument. Close the host's compact navigation there and return its
+visible toggle for focus restoration. The DS runtime continues to own the dialog,
+scroll lock, Escape and modal focus boundary. Keep the trigger and drawer inside
+the host's `data-kv-design-system` style scope.
 
 In the Suite shell a List or Workspace page puts no Help trigger in its header: the rail's
 `AppSwitcher.helpLabel` is that screen's trigger, passed only when the screen has a guide, and the
@@ -1196,7 +1392,7 @@ Mermaid presentation belongs to the public DS runtime, including uses outside
 help drawers. `createMermaidTheme` and `readMermaidPalette` are exported from
 `@ketvietlab/design-system/runtime`; every app must use this configuration rather
 than creating a local theme. It resolves the current DS tokens to hex colors,
-including alpha and light/dark aliases, uses Inter 13px, 1.25px flow/sequence strokes,
+including alpha and light/dark aliases, uses the interface font (`--kv-font-sans`, KÉT Sans) at 13px, 1.25px flow/sequence strokes,
 12px rectangular node corners and rounded connectors. Process nodes use the accent
 surface; connectors stay muted. Explicit accent/positive/warning/danger classes
 (`kv-accent`, `kv-positive`, `kv-warning`, `kv-danger`) work on rectangles,
@@ -1280,3 +1476,34 @@ catalogue renderer with `node tools/build-design-system-mermaid.mjs` when iterat
 ### RelationSelect field validation
 
 `RelationSelectConfig` optionally accepts `triggerId`, `invalid` and `describedBy`. Compose these with a public Field: use its ID as `triggerId`, set `invalid` when the server returns a field error, and associate `describedBy` with the Field error ID. The visible trigger owns `aria-invalid` and keyboard error focus; the off-tab native select retains submission and required validation. Existing configurations may omit all three properties.
+
+### Server field errors after a fetch submit
+
+A form that posts with `fetch` learns about a field error only after the page has rendered,
+so it cannot pass `error` to `Field`. Do not call `setCustomValidity`/`reportValidity` for
+it: the browser bubble covers the help text, disappears on the next click and leaves nothing
+for a screen reader to find again. Call `showFieldError(control, message)` from
+`@ketvietlab/design-system` with the control the server named (for a checkbox or radio
+group, any of its inputs). It adds the same `field-error` markup `Field` renders with
+`error`, after the help, sets `data-invalid` on the Field and `aria-invalid` plus the error
+ID in `aria-describedby` on the control (on the group and every choice for an option group),
+and focuses the control; pass `{ focus: false }` when another error already took focus.
+A second call replaces the message. The next `input` or `change` inside that Field removes
+it and restores the attributes it found; the returned function and
+`clearFieldError(control)` remove it earlier, including an error the Field was rendered with.
+A check that answers while the person is still typing (an email someone already uses) passes
+`{ focus: false, announce: true }`: focus stays in the field, and the message is an alert that
+is read out when it appears.
+A control outside a `Field` is a no-op, so say that message elsewhere (a toast or a Notice).
+
+### Record changes and client collections
+
+The shared KetSuite record runtime emits cancelable `ket:records-changed`. A mounted paged collection claims the event in capture phase and refreshes its read, preserving list query and focus. The backend shell remains the fallback for server-rendered collections. Closing a record through its own history entry does not navigate the collection. See [the record runtime contract](../../docs/src/content/docs/ketsuite/record-modal.md).
+
+`RecordForm.submitDisabled` disables only its visible submit button. Fields remain editable and validation feedback remains available, so a domain prerequisite does not turn the draft into a disabled form. The server must still validate that prerequisite. Specimen: `record-form-submit-blocked`.
+
+Record consumers preserve domain refusal `messageKey` alongside field/code. The Suite runtime translates the message key before the code, retaining a generic fallback when neither is known; field identity and focus remain unchanged. See the Suite record-modal documentation.
+
+### Full-page native drafts
+
+`RecordForm.unsavedPrompt` opts a full-page native form into the KetSuite host draft guard; `initialDraft` marks values retained after a refused submission. The host compares submitted controls (including relation/date hidden values) to the mounted baseline. Modified forms confirm before links, other forms and history traversal; reload/close uses the browser unload prompt. Submitting the guarded form proceeds normally. A declined history traversal restores the draft URL as a history entry and keeps the mounted fields. Modal forms keep their existing modal owner. This requires the KetSuite backend runtime.

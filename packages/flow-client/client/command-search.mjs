@@ -97,7 +97,8 @@ export function commandResults(data, query, { workspaceId, recent = [], extra = 
         p.title,
         workspace(p.workspaceId),
         'folder',
-        'board',
+        // A project opens on its default view, as from the sidebar.
+        p.defaultView === 'project-issues' ? 'project-issues' : 'board',
         { project: p.id, workspace: p.workspaceId },
         `${p.code ?? ''} ${p.description ?? ''} ${p.outcome ?? ''}`,
       ),
@@ -205,20 +206,23 @@ export function commandResults(data, query, { workspaceId, recent = [], extra = 
                 ),
               ),
           ],
-          [
-            'views',
-            tr('flow.ui.saved.views'),
-            (data.views ?? [])
-              .filter((v) => !v.archived)
-              .map((v) =>
-                result(`view:${v.id}`, v.title, project(v.projectId)?.title, 'list', 'all-issues', {
-                  project: v.projectId,
-                  view: v.id,
-                }),
-              ),
-          ],
         ]
       : []),
+    // A saved view opens as the saved views screen opens it: the project list with its filter.
+    [
+      'views',
+      tr('flow.ui.saved.views'),
+      (data.views ?? [])
+        .filter((v) => !v.archived)
+        .map((v) =>
+          result(`view:${v.id}`, v.title, project(v.projectId)?.title, 'list', 'project-issues', {
+            project: v.projectId,
+            view: v.id,
+            q: v.query ?? '',
+            status: v.status ?? 'all',
+          }),
+        ),
+    ],
     [
       'files',
       tr('flow.ui.attachments'),

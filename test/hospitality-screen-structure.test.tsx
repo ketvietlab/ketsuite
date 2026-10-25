@@ -5,6 +5,13 @@ import type { Translator } from '@ketvietlab/ketjs'
 import { renderToString } from '@ketvietlab/ketjs-view'
 import * as billingScreens from '../packages/ketsuite/src/modules/hospitality_billing/screens/index.ts'
 import { ListScreenFrame as BillingListFrame } from '../packages/ketsuite/src/modules/hospitality_billing/screens/page-frame.tsx'
+import { islands } from '../packages/ketsuite/src/modules/hospitality_core/islands.ts'
+import { islands as billingIslands } from '../packages/ketsuite/src/modules/hospitality_billing/islands.ts'
+import { billingBookNext } from '../packages/ketsuite/src/modules/hospitality_billing/collections/billing-book.tsx'
+import { billingBookQuery } from '../packages/ketsuite/src/modules/hospitality_billing/billing-book-query.ts'
+import { chargeRuleModalDefinition } from '../packages/ketsuite/src/modules/hospitality_billing/screens/charge-rule-modal.tsx'
+import type { ChargeRuleModalData } from '../packages/ketsuite/src/modules/hospitality_billing/screens/charge-rule-modal.tsx'
+import type { RecordModalContext } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 import * as coreScreens from '../packages/ketsuite/src/modules/hospitality_core/screens/index.ts'
 import { propertiesScreen } from '../packages/ketsuite/src/modules/hospitality_core/screens/properties.tsx'
 import { roomTypesScreen } from '../packages/ketsuite/src/modules/hospitality_core/screens/room-types.tsx'
@@ -22,10 +29,11 @@ translate.resolves = () => true
 test('Hospitality exports one focused module for every routed renderer', () => {
   const routedScreens = (screens: Record<string, unknown>) =>
     Object.keys(screens).filter((name) => /^[a-z].*Screen$/.test(name))
-  // 32 since the departure check got its own module rather than growing the
-  // reservation screen a fourth job.
-  assert.equal(routedScreens(coreScreens).length, 32)
-  assert.equal(routedScreens(billingScreens).length, 2)
+  // 33 since the reservation book got its island page beside the reservation
+  // screen that still owns the native create modal; 34 with the in-house list's, 35 with the folio register's.
+  assert.equal(routedScreens(coreScreens).length, 35)
+  // 3 with the billing book's island page beside the old billing and charge rule screens.
+  assert.equal(routedScreens(billingScreens).length, 3)
 })
 
 test('Hospitality collection and form adapters use public page contracts', () => {
@@ -33,6 +41,43 @@ test('Hospitality collection and form adapters use public page contracts', () =>
   assert.match(renderToString(CoreListFrame(props)), /data-ui="list-page"/)
   assert.match(renderToString(CoreFormFrame(props)), /data-ui="form-page"/)
   assert.match(renderToString(BillingListFrame(props)), /data-ui="list-page"/)
+})
+
+test('Hospitality folio renders its financial workspace and native dialog only once', () => {
+  const folio = {
+    id: 'folio',
+    code: 'F-001',
+    propertyId: 'property',
+    partnerId: 'guest',
+    state: 'open',
+    amountTotal: '0',
+    version: 1,
+    openedAt: '2026-10-13T07:00:00Z',
+    charges: [],
+    stays: [],
+  }
+  const financial = (
+    <section id="financial-workspace">
+      <form id="financial-command">
+        <input id="financial-amount" name="amount" />
+      </form>
+    </section>
+  )
+  const html = renderToString(
+    coreScreens.folioDetailScreen(
+      translate,
+      folio,
+      'en',
+      'Asia/Ho_Chi_Minh',
+      {},
+      'charge-id',
+      null,
+      [],
+      financial,
+    ),
+  )
+  for (const id of ['financial-workspace', 'financial-command', 'financial-amount'])
+    assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) ?? []).length, 1, `${id} must have one owner`)
 })
 
 test('Hospitality billing blockers link directly to their repair surfaces and suppress invoice actions', () => {
@@ -487,64 +532,638 @@ test('the front desk offers the shift its work and a read-only viewer only the r
   assert.match(departuresOnly, /hospitality_core\.reservation\.action\.checkOut/)
 })
 
-test('the tape chart says which week it is showing and what its colours mean', () => {
-  const stay = (id: string, roomId: string | null, state: string, start: string, end: string) => ({
+test('the front desk handover names each event by its own message, never by a raw key', () => {
+  const queue = { rows: [], total: 0, guests: 0, page: 1, pages: 1 }
+  const event = (id: string, action: string) => ({
     id,
-    stayId: `${id}:stay`,
-    roomId,
-    guest: 'Nguyễn An',
-    provider: 'direct',
-    state,
-    start,
-    end,
+    action,
+    occurredAt: '2026-09-05T03:00:00.000Z',
+    actorName: 'Lễ tân',
+    code: id.toUpperCase(),
   })
-  const chart = {
-    timezone: 'UTC',
-    from: '2026-09-05T00:00:00.000Z',
-    to: '2026-09-12T00:00:00.000Z',
-    rooms: [
+  const today = {
+    day: '2026-09-05',
+    arrivals: [],
+    departures: [],
+    overdue: [],
+    inHouse: [],
+    queues: {
+      configured: true,
+      propertyId: 'hotel',
+      timezone: 'Asia/Ho_Chi_Minh',
+      day: '2026-09-05',
+      arrivals: queue,
+      departures: queue,
+      overdue: queue,
+      inHouse: queue,
+      activity: {
+        total: 3,
+        rows: [event('a', 'checkIn'), event('b', 'room-cleaned'), event('c', 'unheard')],
+      },
+    },
+  }
+  const html = renderToString(
+    coreScreens.frontDeskScreen(
+      translate,
+      today,
+      { checkIn: false, checkOut: false },
+      'vi',
+      'Asia/Ho_Chi_Minh',
+      {} as never,
+    ),
+  )
+  assert.match(html, /hospitality_core\.screen\.frontDesk\.event\.checkIn/)
+  assert.match(html, /hospitality_core\.screen\.frontDesk\.event\.room-cleaned/)
+  // An action the desk has no words for reads as a general update, not as its key.
+  assert.match(html, /hospitality_core\.screen\.frontDesk\.event\.other/)
+  assert.doesNotMatch(html, /event\.unheard/)
+})
+
+test('the room plan renders only its frame and leaves rooms, stays and money to its islands', () => {
+  const plan = {
+    property: { id: 'hotel', name: 'Hotel', timezone: 'Asia/Ho_Chi_Minh', businessDate: '2026-09-04' },
+    properties: [
+      { id: 'hotel', name: 'Hotel' },
+      { id: 'resort', name: 'Resort' },
+    ],
+    types: [{ id: 'deluxe', code: 'DLX', name: 'Deluxe' }],
+    floors: [{ id: 'floor-2', name: 'Tầng 2' }],
+  }
+  const may = {
+    book: true,
+    walkIn: true,
+    checkIn: true,
+    checkout: true,
+    move: true,
+    amend: true,
+    deposit: true,
+    guarantee: true,
+    payment: true,
+    folio: true,
+    room: true,
+    balance: true,
+  }
+  const render = (search: string, allowed = may) =>
+    renderToString(
+      coreScreens.roomPlanScreen(
+        translate,
+        {
+          url: new URL(`https://suite.test/admin/hospitality/tape-chart?company=c1&${search}`),
+          locale: 'vi',
+          plan,
+          may: allowed,
+        },
+        {} as never,
+      ),
+    )
+  const propsOf = (markup: string) =>
+    JSON.parse(
+      markup
+        .match(/data-props="([^"]+)"/)![1]!
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&'),
+    )
+  const page = render('peek=booking-1&type=deluxe&days=7&from=-3')
+  const props = propsOf(page)
+  // Three islands of one plan, each one the browser can hydrate; the server sends the frame, never the rooms or stays.
+  const rendered = [...page.matchAll(/data-island="(hospitality\.room-plan[^"]*)"/g)].map((match) => match[1])
+  assert.deepEqual(rendered.sort(), [
+    'hospitality.room-plan-controls',
+    'hospitality.room-plan-grid',
+    'hospitality.room-plan-peek',
+  ])
+  for (const name of rendered) assert.ok(name in islands, `${name} must be a registered island`)
+  assert.equal(props.source, '/_ket/fn/hospitality_core.getTapeChart?company=c1')
+  assert.equal(props.peekSource, '/_ket/fn/hospitality_core.getRoomPlanPeek?company=c1')
+  assert.equal(props.dueSource, '/_ket/fn/hospitality_billing.getFolioDue?company=c1')
+  assert.equal(props.nights.length, 42)
+  assert.deepEqual(props.nights[14], {
+    night: 0,
+    weekday: 'T6',
+    short: '04/09',
+    long: '04/09/2026',
+    weekend: false,
+    saturday: false,
+  })
+  assert.equal(props.request.from, '2026-08-20T17:00:00.000Z')
+  assert.equal(props.request.to, '2026-10-01T17:00:00.000Z')
+  assert.deepEqual(props.query, {
+    from: -3,
+    days: 7,
+    floor: null,
+    type: 'deluxe',
+    view: 'all',
+    q: '',
+    peek: 'booking-1',
+  })
+  assert.equal(props.links.reservation, '/admin/hospitality/reservations/{id}?company=c1')
+  assert.equal(props.properties[1].href, '/admin/hospitality/tape-chart?company=c1&property=resort')
+  assert.equal('rooms' in props || 'events' in props, false)
+  assert.match(page, /tape-new-booking/)
+  assert.match(page, /walkIn=1/)
+  assert.match(page, /hospitality_core\.roomPlan\.legend\.booked/)
+
+  // Looking at the plan is not permission to book, take money or see it.
+  const reader = render('', {
+    ...may,
+    book: false,
+    walkIn: false,
+    payment: false,
+    balance: false,
+    deposit: false,
+  })
+  const readerProps = propsOf(reader)
+  assert.doesNotMatch(reader, /tape-new-booking|walkIn=1/)
+  assert.equal(readerProps.dueSource, null)
+  assert.equal(readerProps.may.payment, false)
+  assert.equal(readerProps.may.deposit, false)
+
+  // A company without a property it may plan gets a start state, not an empty grid.
+  const none = renderToString(
+    coreScreens.roomPlanScreen(
+      translate,
       {
-        id: 'r301',
-        code: '301',
-        name: 'Phòng 301',
-        propertyId: 'hotel',
-        roomTypeId: 'deluxe',
-        status: 'available',
-        capacity: 2,
-        active: true,
-        roomType: { name: 'Deluxe' },
+        url: new URL('https://suite.test/admin/hospitality/tape-chart'),
+        locale: 'vi',
+        plan: { ...plan, property: null, properties: [] },
+        may,
+      },
+      {} as never,
+    ),
+  )
+  assert.match(none, /hospitality_core\.roomPlan\.noPropertyTitle/)
+  assert.doesNotMatch(none, /room-plan-controls/)
+})
+
+test('the reservation book renders only its frame and leaves bookings, counts and pages to its islands', () => {
+  const properties = [
+    { id: 'hotel', name: 'Hotel', businessDate: '2026-09-04' },
+    { id: 'resort', name: 'Resort', businessDate: '2026-09-03' },
+  ]
+  const render = (search: string, may = { book: true, walkIn: true }, allowed = true) =>
+    renderToString(
+      coreScreens.reservationBookScreen(
+        translate,
+        {
+          url: new URL(`https://suite.test/admin/hospitality/reservations?company=c1&lang=vi&${search}`),
+          locale: 'vi',
+          allowed,
+          properties,
+          may,
+        },
+        {} as never,
+      ),
+    )
+  const propsOf = (markup: string) =>
+    JSON.parse(
+      markup
+        .match(/data-props="([^"]+)"/)![1]!
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&'),
+    )
+  const page = render('property=resort&status=in-house&q=101&page=2')
+  // Three islands of one book, each one the browser can hydrate; the server sends the frame, never the bookings.
+  const rendered = [...page.matchAll(/data-island="(hospitality\.[^"]*)"/g)].map((match) => match[1]!)
+  assert.deepEqual(rendered.sort(), [
+    'hospitality.reservations-controls',
+    'hospitality.reservations-footer',
+    'hospitality.reservations-results',
+  ])
+  for (const name of rendered) assert.ok(name in islands, `${name} must be a registered island`)
+  const props = propsOf(page)
+  assert.equal(props.source, '/_ket/fn/hospitality_core.searchReservations?company=c1&lang=vi')
+  // The URL is the query: an old status link lands, and the resort's own today opens its window.
+  assert.deepEqual(props.query, {
+    propertyId: 'resort',
+    from: '2026-09-03',
+    days: 14,
+    status: 'in_house',
+    source: null,
+    view: 'all',
+    q: '101',
+    sort: 'relevance',
+    page: 2,
+    pageSize: 25,
+  })
+  assert.equal('rows' in props || 'counts' in props || 'total' in props, false)
+  assert.equal(props.createHref, '/admin/hospitality/reservations/new?company=c1&lang=vi&propertyId=resort')
+  assert.match(page, /id="hospitality-reservations-create"/)
+  assert.match(page, /walkIn=1&amp;propertyId=resort/)
+  assert.match(page, /hospitality_core\.reservationBook\.searchPlaceholder/)
+  assert.doesNotMatch(page, /hospitality\.collection-(controls|results|footer)/)
+
+  // A reader without the book, or a company without a property, still gets the page and its frame.
+  const empty = renderToString(
+    coreScreens.reservationBookScreen(
+      translate,
+      {
+        url: new URL('https://suite.test/admin/hospitality/reservations?from=2026-09-01'),
+        locale: 'en',
+        allowed: false,
+        properties: [],
+        may: { book: false, walkIn: false },
+      },
+      {} as never,
+    ),
+  )
+  assert.equal(propsOf(empty).query.from, '2026-09-01')
+  const nowhere = renderToString(
+    coreScreens.reservationBookScreen(
+      translate,
+      {
+        url: new URL('https://suite.test/admin/hospitality/reservations'),
+        locale: 'en',
+        allowed: false,
+        properties: [],
+        may: { book: false, walkIn: false },
+      },
+      {} as never,
+    ),
+  )
+  assert.equal(propsOf(nowhere).query.from, null)
+  assert.match(nowhere, /data-island="hospitality\.reservations-controls"/)
+
+  // Reading the book is not permission to book or to take a walk-in.
+  const reader = render('', { book: false, walkIn: false })
+  assert.doesNotMatch(reader, /hospitality-reservations-create|walkIn=1/)
+  assert.equal(propsOf(reader).createHref, null)
+  assert.equal(propsOf(render('', { book: false, walkIn: false }, false)).allowed, false)
+})
+
+test('the in-house list renders only its frame and reads its rows, and their dues, in the browser', () => {
+  const properties = [
+    { id: 'hotel', name: 'Hotel', businessDate: '2026-09-04' },
+    { id: 'resort', name: 'Resort', businessDate: '2026-09-03' },
+  ]
+  const render = (search: string, may = { dues: true, arrivals: true, walkIn: true }, allowed = true) =>
+    renderToString(
+      coreScreens.stayBookScreen(
+        translate,
+        {
+          url: new URL(`https://suite.test/admin/hospitality/stays?company=c1&lang=vi&${search}`),
+          locale: 'vi',
+          allowed,
+          properties,
+          may,
+        },
+        {} as never,
+      ),
+    )
+  const propsOf = (markup: string) =>
+    JSON.parse(
+      markup
+        .match(/data-props="([^"]+)"/)![1]!
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&'),
+    )
+  const page = render('property=resort&view=owing&sort=-balance&q=101&page=2')
+  // Three islands of one list, each one the browser can hydrate; the server sends the frame, never the guests.
+  const rendered = [...page.matchAll(/data-island="(hospitality\.[^"]*)"/g)].map((match) => match[1]!)
+  assert.deepEqual(rendered.sort(), [
+    'hospitality.stays-controls',
+    'hospitality.stays-footer',
+    'hospitality.stays-results',
+  ])
+  for (const name of rendered) assert.ok(name in islands, `${name} must be a registered island`)
+  const props = propsOf(page)
+  assert.equal(props.source, '/_ket/fn/hospitality_core.searchStays?company=c1&lang=vi')
+  assert.equal(props.dueSource, '/_ket/fn/hospitality_billing.getStayDues?company=c1&lang=vi')
+  // The URL is the query: the facet and sorts the list no longer has land on the whole house by room.
+  assert.deepEqual(props.query, {
+    propertyId: 'resort',
+    view: 'all',
+    q: '101',
+    sort: 'room',
+    page: 2,
+    pageSize: 25,
+  })
+  assert.equal('rows' in props || 'counts' in props || 'total' in props, false)
+  // A row names its guest's tier in words, not by its id.
+  assert.equal(props.words['tier.gold_elite'], 'hospitality_core.reservation.benefits.tier.gold_elite')
+  assert.equal(
+    props.arrivalsHref,
+    '/admin/hospitality/reservations?company=c1&lang=vi&status=arriving&property=resort',
+  )
+  assert.match(page, /hospitality_core\.stayBook\.searchPlaceholder/)
+  // A reader of billing gets the balance column; its amounts come later, row by row. (The header's text node, not
+  // the words the islands carry in their props.)
+  const balanceHeader = /-->hospitality_core\.stayBook\.column\.balance</
+  assert.match(page, balanceHeader)
+  assert.doesNotMatch(page, /hospitality\.collection-(controls|results|footer)/)
+
+  // Reading the house is not reading what it owes, nor the reservation book.
+  const desk = render('', { dues: false, arrivals: false, walkIn: false })
+  assert.deepEqual([propsOf(desk).dueSource, propsOf(desk).arrivalsHref], [null, null])
+  assert.doesNotMatch(desk, balanceHeader)
+  // A walk-in starts at the property shown, for one who may take it.
+  assert.match(
+    page,
+    /id="hospitality-stays-walk-in"[^>]*walkIn=1&amp;propertyId=resort|walkIn=1&amp;propertyId=resort[^>]*id="hospitality-stays-walk-in"/,
+  )
+  assert.doesNotMatch(desk, /hospitality-stays-walk-in/)
+  assert.match(desk, /-->hospitality_core\.stayBook\.column\.departure</)
+  // A reader without the list still gets the page, with its notice instead of rows.
+  const denied = render('', { dues: false, arrivals: false, walkIn: false }, false)
+  assert.equal(propsOf(denied).allowed, false)
+  assert.match(denied, /hospitality_core\.stayBook\.denied/)
+})
+
+test('the folio register renders only its frame and reads its rows, their dues and invoices, in the browser', () => {
+  const properties = [
+    { id: 'hotel', name: 'Hotel' },
+    { id: 'resort', name: 'Resort' },
+  ]
+  const render = (search: string, may = { dues: true, stays: true }, allowed = true) =>
+    renderToString(
+      coreScreens.folioBookScreen(
+        translate,
+        {
+          url: new URL(`https://suite.test/admin/hospitality/folios?company=c1&lang=vi&${search}`),
+          locale: 'vi',
+          allowed,
+          properties,
+          may,
+        },
+        {} as never,
+      ),
+    )
+  const propsOf = (markup: string) =>
+    JSON.parse(
+      markup
+        .match(/data-props="([^"]+)"/)![1]!
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&'),
+    )
+  const page = render('property=resort&view=owing&sort=-balance&q=PC-1&page=2')
+  // Three islands of one list, each one the browser can hydrate; the server sends the frame, never a folio.
+  const rendered = [...page.matchAll(/data-island="(hospitality\.[^"]*)"/g)].map((match) => match[1]!)
+  assert.deepEqual(rendered.sort(), [
+    'hospitality.folios-controls',
+    'hospitality.folios-footer',
+    'hospitality.folios-results',
+  ])
+  for (const name of rendered) assert.ok(name in islands, `${name} must be a registered island`)
+  const props = propsOf(page)
+  assert.equal(props.source, '/_ket/fn/hospitality_core.searchFolios?company=c1&lang=vi')
+  assert.equal(props.dueSource, '/_ket/fn/hospitality_billing.getFolioDues?company=c1&lang=vi')
+  assert.equal(props.staysHref, '/admin/hospitality/stays?company=c1&lang=vi')
+  // The URL is the query: the facet and sorts the register no longer has land on every folio, opened last first.
+  assert.deepEqual(props.query, {
+    propertyId: 'resort',
+    view: 'all',
+    q: 'PC-1',
+    sort: '-opened',
+    page: 2,
+    pageSize: 25,
+  })
+  assert.equal('rows' in props || 'counts' in props || 'total' in props, false)
+  assert.equal(props.words['view.closed'], 'hospitality_core.folioBook.view.closed')
+  assert.equal(props.words.invoiceVoid, 'hospitality_core.folioBook.invoiceVoid')
+  // A reader of billing gets the balance and invoice columns; their values come later, row by row.
+  const moneyHeaders = [
+    /-->hospitality_core\.folioBook\.column\.balance</,
+    /-->hospitality_core\.folioBook\.column\.invoice</,
+  ]
+  for (const header of moneyHeaders) assert.match(page, header)
+  assert.match(page, /-->hospitality_core\.folioBook\.column\.total</)
+  assert.doesNotMatch(page, /hospitality\.collection-(controls|results|footer)/)
+  // Reading the register is not reading what it owes, nor the guests in house.
+  const desk = render('', { dues: false, stays: false })
+  assert.deepEqual([propsOf(desk).dueSource, propsOf(desk).staysHref], [null, null])
+  for (const header of moneyHeaders) assert.doesNotMatch(desk, header)
+  // A reader without the register still gets the page, with its notice instead of rows.
+  const denied = render('', { dues: false, stays: false }, false)
+  assert.equal(propsOf(denied).allowed, false)
+  assert.match(denied, /hospitality_core\.folioBook\.denied/)
+})
+
+test('the billing book renders only its frame and reads its work of a period in the browser', () => {
+  const properties = [
+    { id: 'hotel', name: 'Hotel' },
+    { id: 'resort', name: 'Resort' },
+  ]
+  const render = (
+    search: string,
+    may = { rule: true, invoice: true, payment: true, folios: true },
+    allowed = true,
+  ) =>
+    renderToString(
+      billingScreens.billingBookScreen(
+        translate,
+        {
+          url: new URL(`https://suite.test/admin/hospitality/billing?company=c1&lang=vi&${search}`),
+          locale: 'vi',
+          allowed,
+          properties,
+          may,
+        },
+        {} as never,
+      ),
+    )
+  const propsOf = (markup: string) =>
+    JSON.parse(
+      markup
+        .match(/data-props="([^"]+)"/)![1]!
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&'),
+    )
+  const page = render(
+    'property=resort&period=30&view=owing&sort=-balance&q=PC-1&page=2&record=hospitality.billingRule%3Aminibar',
+  )
+  // Three islands of one list, each one the browser can hydrate; the server sends the frame, never a folio.
+  const rendered = [...page.matchAll(/data-island="(hospitality\.[^"]*)"/g)].map((match) => match[1]!)
+  assert.deepEqual(rendered.sort(), [
+    'hospitality.billing-controls',
+    'hospitality.billing-footer',
+    'hospitality.billing-results',
+  ])
+  for (const name of rendered) assert.ok(name in billingIslands, `${name} must be a registered island`)
+  const props = propsOf(page)
+  assert.equal(props.source, '/_ket/fn/hospitality_billing.searchBilling?company=c1&lang=vi')
+  assert.equal(props.path, '/admin/hospitality/billing?company=c1&lang=vi')
+  assert.equal(props.foliosHref, '/admin/hospitality/folios?company=c1&lang=vi')
+  assert.deepEqual(props.may, { rule: true, invoice: true, payment: true })
+  // The URL is the query; the rule a row opens over the list is the record modal's, not the list's.
+  assert.deepEqual(props.query, {
+    propertyId: 'resort',
+    period: 30,
+    view: 'owing',
+    q: 'PC-1',
+    sort: '-balance',
+    page: 2,
+    pageSize: 25,
+  })
+  assert.equal('rows' in props || 'counts' in props || 'total' in props, false)
+  assert.equal(props.words['period.90'], 'hospitality_billing.billingBook.period.90')
+  assert.equal(props.words['billing.unverified'], 'hospitality_billing.billingBook.billing.unverified')
+  assert.equal(props.words['next.payment'], 'hospitality_billing.billingBook.next.payment')
+  for (const column of ['folio', 'state', 'total', 'invoice', 'balance', 'next'])
+    assert.match(page, new RegExp(`-->hospitality_billing\\.billingBook\\.column\\.${column}<`), column)
+  // The period menu offers the three periods and no "every period".
+  assert.match(page, /hospitality_billing\.billingBook\.period\.30/)
+  assert.doesNotMatch(page, /period=7\b/)
+  assert.doesNotMatch(page, /hospitality\.collection-(controls|results|footer)/)
+  // A reader who may not take the next steps or read the register gets neither.
+  const reader = render('', { rule: false, invoice: false, payment: false, folios: false })
+  assert.deepEqual(
+    [propsOf(reader).may, propsOf(reader).foliosHref],
+    [{ rule: false, invoice: false, payment: false }, null],
+  )
+  // A reader without billing still gets the page, with its notice instead of rows.
+  const denied = render('', { rule: false, invoice: false, payment: false, folios: false }, false)
+  assert.equal(propsOf(denied).allowed, false)
+  assert.match(denied, /hospitality_billing\.billingBook\.denied/)
+})
+
+test('a billing row offers its next step only to a reader who may take it, with the way back to its row', () => {
+  const props = (may: { rule: boolean; invoice: boolean; payment: boolean }) =>
+    ({
+      key: 'billing',
+      id: 'hospitality-billing',
+      source: '/_ket/fn/hospitality_billing.searchBilling?company=c1',
+      path: '/admin/hospitality/billing?company=c1&lang=vi',
+      recordPath: '/admin/hospitality/folios',
+      foliosHref: null,
+      lang: 'vi',
+      allowed: true,
+      may,
+      properties: [{ id: 'hotel', name: 'Hotel' }],
+      query: billingBookQuery({}, []),
+      words: {},
+    }) as Parameters<typeof billingBookNext>[0]
+  const query = billingBookQuery({ period: 30, view: 'owing' }, [])
+  const row = (next: 'rule' | 'invoice' | 'payment' | 'view', rule: string | null = null) =>
+    ({
+      id: 'f 1',
+      code: 'PC-1',
+      guest: 'An',
+      property: { id: 'hotel' },
+      state: 'closed',
+      billing: 'owing',
+      total: { amount: '100', currency: 'VND' },
+      invoice: null,
+      due: null,
+      next,
+      rule,
+      closed: null,
+    }) as Parameters<typeof billingBookNext>[2]
+  const back = encodeURIComponent(
+    '/admin/hospitality/billing?company=c1&lang=vi&period=30&view=owing#row=f%201',
+  )
+  const folio = (dialog = '') =>
+    `/admin/hospitality/folios/f%201?company=c1${dialog}&lang=vi&returnTo=${back}`
+  const all = props({ rule: true, invoice: true, payment: true })
+  assert.deepEqual(billingBookNext(all, query, row('rule', 'minibar')), {
+    label: 'next.rule',
+    href: '/admin/hospitality/billing?company=c1&lang=vi&period=30&view=owing&record=hospitality.billingRule%3Aminibar',
+  })
+  assert.deepEqual(billingBookNext(all, query, row('invoice')), {
+    label: 'next.invoice',
+    href: folio('&dialog=invoice'),
+  })
+  assert.deepEqual(billingBookNext(all, query, row('payment')), {
+    label: 'next.payment',
+    href: folio('&dialog=payment'),
+  })
+  assert.deepEqual(billingBookNext(all, query, row('view')), { label: 'next.view', href: folio() })
+  // A step the reader may not take opens the folio instead.
+  const none = props({ rule: false, invoice: false, payment: false })
+  for (const next of ['rule', 'invoice', 'payment'] as const)
+    assert.deepEqual(
+      billingBookNext(none, query, row(next, 'minibar')),
+      { label: 'next.view', href: folio() },
+      next,
+    )
+})
+
+test('a billing rule asks one tax question, says whether it is set up and keeps who changed it', () => {
+  // HOS-DEC-034: account, tax treatment, then the tax and where it posts, or the reason for no tax; never both.
+  const context = (
+    record: Record<string, unknown>,
+    canSave = true,
+  ): RecordModalContext<ChargeRuleModalData> => ({
+    kind: 'hospitality.billingRule',
+    id: String(record.chargeType),
+    creating: false,
+    tab: '',
+    data: { record, canSave, choices: {}, chargeTypes: ['room', 'spa'], commandKey: 'key', locale: 'vi' },
+    t: (key) => key,
+    fieldError: () => null,
+    draft: (_name, fallback = '') => fallback,
+    draftChecked: (_name, _value, fallback = false) => fallback,
+    outcome: () => null,
+    busy: false,
+    dialog: null,
+    href: () => '',
+    state: (_key, fallback = '') => fallback,
+  })
+  const view = (record: Record<string, unknown>, canSave = true) => {
+    const c = context({ chargeType: 'room', version: 1, history: [], ...record }, canSave)
+    return {
+      body: renderToString(<>{chargeRuleModalDefinition.body?.(c)}</>),
+      status: renderToString(<>{chargeRuleModalDefinition.status?.(c)}</>),
+      actions: renderToString(<>{chargeRuleModalDefinition.actions?.(c)}</>),
+    }
+  }
+  // Fields in order, by the control each label names (relation pickers are islands with no SSR `name`).
+  const names = (html: string) =>
+    [...html.matchAll(/<label\b[^>]*for="hospitality\.billingRule-([^"]+)"/g)].map(([, name]) => name)
+  const taxed = view({ taxId: 'vat8', incomeAccountId: 'revenue' })
+  assert.deepEqual(names(taxed.body), ['type', 'incomeAccountId', 'tax-mode', 'taxId', 'taxAccountId'])
+  // The tax question is a select like the charge type beside it, so the field draws the same chevron.
+  assert.match(
+    taxed.body,
+    /data-ui="field" data-kind="select"[^>]*>(?:(?!data-ui="field")[\s\S])*for="hospitality\.billingRule-tax-mode"/,
+  )
+  assert.match(taxed.body, /hospitality_billing\.ruleRecord\.section/)
+  assert.match(taxed.status, /data-tone="positive"[^>]*>[\s\S]*collection\.state\.ready/)
+  const exempt = view({ taxExempt: true, taxExemptReason: 'Bồi thường hủy phòng' })
+  assert.deepEqual(names(exempt.body), ['type', 'incomeAccountId', 'tax-mode', 'reason'])
+  assert.match(exempt.status, /collection\.state\.ready/)
+  // An exemption without its reason, or no tax answer at all, is not set up.
+  for (const record of [{ taxExempt: true, taxExemptReason: '' }, {}])
+    assert.match(view(record).status, /data-tone="warning"[^>]*>[\s\S]*collection\.state\.incomplete/)
+  // A rule moves money on invoices, so it keeps who created and changed it.
+  const history = view({
+    taxId: 'vat8',
+    history: [
+      {
+        occurredAt: '2026-10-02T08:20:00Z',
+        actorName: 'Lan',
+        before: { taxId: null },
+        after: { taxExempt: false },
+      },
+      {
+        occurredAt: '2026-09-12T02:05:00Z',
+        actorId: null,
+        before: null,
+        after: { taxExempt: true, taxExemptReason: 'X' },
       },
     ],
-    events: [
-      stay('in-house', 'r301', 'checked_in', '2026-09-05T07:00:00.000Z', '2026-09-07T05:00:00.000Z'),
-      stay('waiting', null, 'draft', '2026-09-08T07:00:00.000Z', '2026-09-09T05:00:00.000Z'),
-    ],
-  }
-  const render = (may: { book: boolean }) =>
-    renderToString(coreScreens.tapeChartScreen(translate, chart as never, may, 'vi', {} as never))
-
-  const board = render({ book: true })
-  // The week, not just seven unlabelled columns.
-  assert.match(board, /05\/09\/2026 – 11\/09\/2026/)
-  // And a way to reach another one, which the route accepted all along.
-  assert.match(board, /from=2026-08-29/)
-  assert.match(board, /from=2026-09-12/)
-  assert.match(board, /hospitality_core\.screen\.tapeChart\.availability/)
-  assert.match(board, /reservations\?create=1/)
-  assert.match(board, /hospitality_core\.reservation\.action\.new/)
-  // A key to exactly the two states on this board, and to nothing else.
-  assert.match(board, /hospitality_core\.stayState\.draft/)
-  assert.match(board, /hospitality_core\.stayState\.checked_in/)
-  assert.doesNotMatch(board, /hospitality_core\.stayState\.cancelled/)
-  assert.doesNotMatch(board, /hospitality_core\.stayState\.no_show/)
-  // The board looks draggable and is not; the key says so.
-  assert.match(board, /hospitality_core\.screen\.tapeChart\.legendHint/)
-
-  // Looking at the week is not permission to book into it.
-  const readOnly = render({ book: false })
-  assert.doesNotMatch(readOnly, /reservations\?create=1/)
-  assert.match(readOnly, /05\/09\/2026 – 11\/09\/2026/)
-  assert.match(readOnly, /hospitality_core\.stayState\.checked_in/)
+  }).body
+  assert.match(history, /data-ui="activity-timeline"/)
+  assert.match(history, /Lan[\s\S]*ruleRecord\.changed[\s\S]*ruleRecord\.system[\s\S]*ruleRecord\.created/)
+  assert.doesNotMatch(view({ taxId: 'vat8' }).body, /ruleRecord\.history/)
+  // Cancel closes it for everyone; only a reader who may configure saves.
+  assert.match(taxed.actions, /data-record-close[\s\S]*ruleRecord\.cancel[\s\S]*ruleRecord\.save/)
+  const readOnly = view({ taxId: 'vat8' }, false).actions
+  assert.match(readOnly, /ruleRecord\.cancel/)
+  assert.doesNotMatch(readOnly, /ruleRecord\.save/)
 })
 
 test('a reservation row says how long the stay is, in the unit it is sold by', () => {

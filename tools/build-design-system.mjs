@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { buildDesignSystemStyles } from './build-design-system-styles.mjs'
 import { buildDesignSystemAtlasRuntime } from './build-design-system-atlas-runtime.mjs'
+import { writeDesignSystemInventory } from './design-system-inventory.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const stage = join(root, `.design-system-build-${process.pid}`)
@@ -24,6 +25,8 @@ const copyAssets = (source, destination) => {
   }
 }
 try {
+  // The catalogue imports the inventory, which is generated and not committed.
+  writeDesignSystemInventory()
   await buildDesignSystemAtlasRuntime()
   const result = spawnSync(
     join(root, 'node_modules/.bin/tsc'),

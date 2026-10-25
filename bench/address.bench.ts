@@ -19,7 +19,7 @@ const url = process.env.KET_BENCH_PG
 if (!url) throw new Error('set KET_BENCH_PG to an explicit PostgreSQL benchmark database')
 
 const modules = [address, partner]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'bench', branch: 'main', branches: null }
 const adapter = postgresAdapter(url, { max: 4 })
 const call = (name: string, input: Record<string, unknown> = {}) =>

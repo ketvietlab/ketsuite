@@ -53,7 +53,7 @@ test('product media: ready gallery exposes native, storage-neutral actions', () 
 
 test('product media: metadata is ordered and primary is unique per target', async () => {
   const modules = [address, partner, company, storage, uom, product, productMedia]
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
@@ -129,17 +129,10 @@ test('product media: metadata is ordered and primary is unique per target', asyn
 
 test('product media: backend retains named integration joints and Product stays headless', async () => {
   const backend = (await import('@ketvietlab/ketsuite/backend')).default
-  const manifest = compose([
-    address,
-    partner,
-    company,
-    storage,
-    uom,
-    product,
-    productMedia,
-    backend,
-    productBackend,
-  ])
+  const manifest = compose(
+    [address, partner, company, storage, uom, product, productMedia, backend, productBackend],
+    { companies: true },
+  )
   assert.deepEqual(manifest.joints['product_backend:template.media']!.props, { templateId: 'id' })
   assert.deepEqual(manifest.joints['product_backend:variant.media']!.props, { productId: 'id' })
   assert.deepEqual(manifest.joints['product_backend:media.upload']!.props, {
@@ -154,7 +147,7 @@ test('product media: backend retains named integration joints and Product stays 
 
 test('product media: re-attaching the same image keeps it primary', async () => {
   const modules = [address, partner, company, storage, uom, product, productMedia]
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
