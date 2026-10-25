@@ -1,6 +1,8 @@
 import type { ModelDef } from '@ketvietlab/ketjs'
+import { importModels } from './import-models.ts'
 
 export const models: Record<string, ModelDef> = {
+  ...importModels,
   Team: {
     scope: 'company',
     fields: {
@@ -87,11 +89,32 @@ export const models: Record<string, ModelDef> = {
       fold: 'bool',
       active: 'bool',
       version: 'int?',
+      /** The win probability a record takes when it enters this stage; null keeps the record's own. */
+      probability: 'decimal?',
+      /** Days a record may stay in this stage before the pipeline flags it as stale; null or 0 never. */
+      staleDays: 'int?',
     },
     indexes: {
       code: { fields: ['companyId', 'code'], unique: true },
       team_sequence: { fields: ['companyId', 'teamId', 'active', 'sequence'] },
     },
+  },
+  /**
+   * Why a record was lost, as the company names it. `code` files it under one of the report's fixed
+   * buckets (`LOST_REASON_CODES`); a reason without one reports as "other".
+   */
+  LostReason: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      name: 'text',
+      code: 'text?',
+      requiresNote: 'bool',
+      sequence: 'int',
+      active: 'bool',
+      version: 'int?',
+    },
+    indexes: { sequence: { fields: ['companyId', 'active', 'sequence'] } },
   },
   Tag: {
     scope: 'company',
@@ -105,6 +128,10 @@ export const models: Record<string, ModelDef> = {
       kind: 'text',
       /** Immutable acquisition kind; null identifies legacy records. */
       originKind: 'text?',
+      /** Typed operational source; absent on manually created and legacy cases. */
+      sourceKind: 'text?',
+      waitingFor: 'text?',
+      nextContactAt: 'datetime?',
       name: 'text',
       partnerId: 'ref:partner.Partner?',
       contactName: 'text?',
@@ -142,8 +169,15 @@ export const models: Record<string, ModelDef> = {
       closedTeamId: 'ref:crm.Team?',
       /** Distinguishes a recorded unassigned close from missing legacy history. */
       closedOwnershipRecordedAt: 'datetime?',
+      /** When the record entered its current stage; null on records older than this field. */
+      stageEnteredAt: 'datetime?',
+      /** The open stage a won or lost record closed from, so reopening returns it there. */
+      closedFromStageId: 'ref:crm.Stage?',
+      /** The contact agreed to be contacted; email from the record needs it. Null is not given. */
+      contactConsent: 'bool?',
     },
     indexes: {
+      source_work: { fields: ['companyId', 'kind', 'sourceKind', 'assigneeUserId', 'terminalState'] },
       pipeline: { fields: ['companyId', 'kind', 'active', 'stageId', 'priority'] },
       assignee: { fields: ['companyId', 'assigneeUserId', 'active', 'updatedAt'] },
       partner: { fields: ['companyId', 'partnerId', 'active'] },
@@ -153,7 +187,7 @@ export const models: Record<string, ModelDef> = {
   },
   CaseTag: {
     scope: 'company',
-    fields: { id: 'id', caseId: 'ref:crm.Case', tagId: 'ref:crm.Tag' },
+    fields: { id: 'id', caseId: 'ref:crm.Case', tagId: 'ref:crm.Tag', createdAt: 'datetime?' },
     indexes: { identity: { fields: ['companyId', 'caseId', 'tagId'], unique: true } },
   },
   SalesDetail: {
@@ -168,6 +202,8 @@ export const models: Record<string, ModelDef> = {
       forecastCategory: 'text',
       lostReason: 'text?',
       lostReasonCode: 'text?',
+      /** The configured reason a lost record gave; `lostReason` keeps its note. */
+      lostReasonId: 'ref:crm.LostReason?',
       sourceLeadId: 'ref:crm.Case?',
     },
     indexes: { case: { fields: ['companyId', 'caseId'], unique: true } },
@@ -194,6 +230,10 @@ export const models: Record<string, ModelDef> = {
       actorUserId: 'ref:user.User?',
       authorPartnerId: 'ref:partner.Partner?',
       visibility: 'text',
+      // An email to the customer carries its channel, its direction and its subject; a note carries none.
+      channel: 'text?',
+      direction: 'text?',
+      subject: 'text?',
       body: 'text',
       createdAt: 'datetime',
     },

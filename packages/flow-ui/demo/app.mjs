@@ -15,13 +15,16 @@ import {
   FlowProgress,
   FlowEmpty,
   FlowDialog,
+  FlowConfirmDialog,
   FlowTaskRow,
   FlowTaskCard,
   FlowShell,
   FLOW_STATUSES,
+  setFlowLiveDocEditor,
 } from '../src/index.mjs'
 import {
   FlowCatalogEditor,
+  FlowTable,
   FlowDateField,
   FlowUserPicker,
   FlowChoiceField,
@@ -43,6 +46,7 @@ import {
   FlowScopeMenu,
   FlowUserMenu,
   FlowSpotlight,
+  FlowGlobalSearch,
   FlowFormGrid,
   FlowSetupForm,
   FlowTimeline,
@@ -60,11 +64,14 @@ import {
   FlowTextarea,
   FlowAtlasViewport,
   FlowAtlasWelcome,
+  FlowEntryPage,
 } from '../src/workspace.mjs'
-import { FlowDocTree } from '../src/documents.mjs'
+import { FlowDocTree, FlowDocEditor } from '../src/documents.mjs'
 import { attachFlowUI } from '../src/runtime.mjs'
 import { initialTasks } from './fixtures.mjs'
 
+// The demo serves KetSuite's editor build at /live-doc.mjs (tools/build-i18n.mjs).
+setFlowLiveDocEditor('/live-doc.mjs')
 const container = document.querySelector('#flow-demo')
 const root = createRoot(domHost(), container)
 const runtime = attachFlowUI(container)
@@ -85,6 +92,9 @@ const demoUserOptions = [
   { id: 'linh', name: 'Nguyễn Thị Phương Linh', email: 'linh@example.test' },
   { id: 'minh', name: 'Đặng Hoàng Minh', email: 'minh@example.test' },
 ]
+let demoGlobalQuery = '',
+  demoGlobalOpen = false,
+  demoGlobalActive = ''
 let demoChoiceStatus = 'review',
   demoChoicePriority = 'high'
 let demoTags = ['design']
@@ -119,6 +129,8 @@ let selected = new Set(),
   toast = '',
   toastTone = 'success',
   toastTimer
+let inlineToastVisible = true
+let responsiveTaskError = false
 let sampleDocs = [
   { id: 'root', title: 'Tài liệu dự án', parentId: null },
   { id: 'a', title: 'Hướng dẫn', parentId: 'root' },
@@ -239,69 +251,61 @@ const sectionHeading = (id, title, detail) =>
     <span>${detail}</span>
   </div>`
 const table = (rows, interactive = true) =>
-  html`<div class="demo-table-wrap">
-    <table class="demo-table" aria-label="Danh sách công việc">
-      <thead>
-        <tr>
-          <th>
-            ${
-              interactive
-                ? FlowCheckbox({
-                    label: 'Chọn tất cả công việc đang hiển thị',
-                    checked: rows.length > 0 && rows.every((t) => selected.has(t.id)),
-                    onChange: () => {
-                      selected = rows.every((t) => selected.has(t.id))
-                        ? new Set()
-                        : new Set(rows.map((t) => t.id))
-                      paint()
-                    },
-                  })
-                : null
-            }
-          </th>
-          <th>Công việc</th>
-          <th>Trạng thái</th>
-          <th>Ưu tiên</th>
-          <th>Phụ trách</th>
-          <th>Hạn</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${renderList(rows, (task) =>
-          FlowTaskRow({
-            task,
-            selected: selected.has(task.id),
-            dragCount: selected.has(task.id) ? rows.filter((t) => selected.has(t.id)).length : 1,
-            onSelect: () => {
-              selected.has(task.id) ? selected.delete(task.id) : selected.add(task.id)
+  FlowTable({
+    layout: 'tasks',
+    label: 'Danh sách công việc',
+    columns: [
+      interactive
+        ? FlowCheckbox({
+            target: 'standalone',
+            label: 'Chọn tất cả công việc đang hiển thị',
+            checked: rows.length > 0 && rows.every((t) => selected.has(t.id)),
+            onChange: () => {
+              selected = rows.every((t) => selected.has(t.id)) ? new Set() : new Set(rows.map((t) => t.id))
               paint()
             },
-            onDropTask: (id, position) => {
-              const ids = selected.has(id)
-                ? new Set(rows.filter((t) => selected.has(t.id)).map((t) => t.id))
-                : new Set([id])
-              const moving = tasks.filter((t) => ids.has(t.id))
-              if (!moving.length || ids.has(task.id)) return
-              tasks = tasks.filter((t) => !ids.has(t.id))
-              tasks.splice(
-                tasks.findIndex((t) => t.id === task.id) + (position === 'after' ? 1 : 0),
-                0,
-                ...moving,
-              )
-              localStorage.setItem(storageKey, JSON.stringify(tasks))
-              paint()
-            },
-            onOpen: () => openTask(task),
-          }),
-        )}
-      </tbody>
-    </table>
-  </div>`
+          })
+        : null,
+      'Công việc',
+      'Trạng thái',
+      'Ưu tiên',
+      'Phụ trách',
+      'Hạn',
+    ],
+    children: renderList(rows, (task) =>
+      FlowTaskRow({
+        task,
+        selected: selected.has(task.id),
+        dragCount: selected.has(task.id) ? rows.filter((t) => selected.has(t.id)).length : 1,
+        onSelect: () => {
+          selected.has(task.id) ? selected.delete(task.id) : selected.add(task.id)
+          paint()
+        },
+        onDropTask: (id, position) => {
+          const ids = selected.has(id)
+            ? new Set(rows.filter((t) => selected.has(t.id)).map((t) => t.id))
+            : new Set([id])
+          const moving = tasks.filter((t) => ids.has(t.id))
+          if (!moving.length || ids.has(task.id)) return
+          tasks = tasks.filter((t) => !ids.has(t.id))
+          tasks.splice(
+            tasks.findIndex((t) => t.id === task.id) + (position === 'after' ? 1 : 0),
+            0,
+            ...moving,
+          )
+          localStorage.setItem(storageKey, JSON.stringify(tasks))
+          paint()
+        },
+        onOpen: () => openTask(task),
+      }),
+    ),
+  })
 
 let scopeDemoTab = 'overview'
 let spotlightOpen = false,
   spotlightQuery = '',
-  spotlightActive = ''
+  spotlightActive = '',
+  spotlightState = ''
 function library() {
   return html` <div class="demo-hero">
       <div>
@@ -434,8 +438,9 @@ function library() {
       )}
       ${specimen(
         'Thao tác cuối biểu mẫu',
-        'FlowStack · FlowInline align=end',
+        'FlowStack inset=page · FlowInline align=end',
         FlowStack({
+          inset: 'page',
           children: html`${FlowTextarea({ id: 'sample-comment', label: 'Bình luận', placeholder: 'Viết phản hồi…' })}${FlowButton({ label: 'Gửi bình luận', variant: 'primary', onClick: () => notify('Đã gửi bình luận mẫu.') })}${FlowInline({ align: 'end', children: html`${FlowButton({ label: 'Hủy', onClick: () => notify('Đã hủy thao tác mẫu.') })}${FlowButton({ label: 'Lưu thay đổi', variant: 'primary', onClick: () => notify('Đã lưu thay đổi mẫu.') })}` })}`,
         }),
       )}
@@ -444,6 +449,7 @@ function library() {
         'FlowPropertyFields · nhãn 13px / giá trị 14px',
         FlowPropertyFields({
           children: html`${FlowSelectField({
+            id: 'property-sample-assignee',
             name: 'sample-property-assignee',
             label: 'Người phụ trách',
             icon: 'user',
@@ -500,6 +506,7 @@ function library() {
         'FlowScopeMenu',
         FlowScopeMenu({
           label: 'Công cụ dự án',
+          align: 'start',
           items: [
             { label: 'Tự động hóa', onClick: () => notify('Tự động hóa của dự án hiện tại') },
             { label: 'Biểu mẫu tiếp nhận', onClick: () => notify('Biểu mẫu của dự án hiện tại') },
@@ -544,6 +551,116 @@ function library() {
         }),
       )}
       ${specimen(
+        'Tìm mọi thứ',
+        'FlowGlobalSearch · một combobox, kết quả không modal',
+        FlowGlobalSearch({
+          id: 'demo-global-search',
+          query: demoGlobalQuery,
+          open: demoGlobalOpen,
+          activeId: demoGlobalActive,
+          groups: [
+            {
+              id: 'tasks',
+              label: 'Công việc',
+              items: tasks
+                .filter((t) => t.title.toLowerCase().includes(demoGlobalQuery.toLowerCase()))
+                .slice(0, 6)
+                .map((t) => ({ id: t.id, title: t.title, description: t.project, icon: 'list' })),
+            },
+          ],
+          onQuery: (value) => {
+            demoGlobalQuery = value
+            demoGlobalOpen = true
+            paint()
+          },
+          onOpen: () => {
+            demoGlobalOpen = true
+            paint()
+          },
+          onClose: () => {
+            demoGlobalOpen = false
+            paint()
+          },
+          onActive: (id) => {
+            demoGlobalActive = id
+            paint()
+          },
+          onSelect: (id) => {
+            demoGlobalOpen = false
+            notify(`Đã chọn ${id}`)
+            paint()
+          },
+          onRetry: () => paint(),
+        }),
+      )}
+      ${specimen(
+        'Cấu trúc tài liệu',
+        'FlowDocEditor · tiêu đề nằm trong nội dung, không có form tạo',
+        FlowDocEditor({
+          title: 'Untitle',
+          titleInContent: true,
+          blocks: [],
+          subtitle: 'Ứng dụng sở hữu tên và tự lưu',
+          onTitle() {},
+          onText() {},
+          onFocus() {},
+          onBlur() {},
+          onCheck() {},
+          children: FlowLiveDoc({
+            toolbar: 'floating',
+            surface: 'plain',
+            hideLabel: true,
+            id: 'demo-note',
+            label: 'Nội dung',
+            blocks: [{ id: 'title', type: 'h1', text: 'Untitle' }],
+            onChange() {},
+          }),
+        }),
+      )}
+      ${specimen(
+        'Tìm mọi thứ',
+        'FlowGlobalSearch · một combobox, kết quả không modal',
+        FlowGlobalSearch({
+          id: 'demo-global-search',
+          query: demoGlobalQuery,
+          open: demoGlobalOpen,
+          activeId: demoGlobalActive,
+          groups: [
+            {
+              id: 'tasks',
+              label: 'Công việc',
+              items: tasks
+                .filter((t) => t.title.toLowerCase().includes(demoGlobalQuery.toLowerCase()))
+                .slice(0, 6)
+                .map((t) => ({ id: t.id, title: t.title, description: t.project, icon: 'list' })),
+            },
+          ],
+          onQuery: (value) => {
+            demoGlobalQuery = value
+            demoGlobalOpen = true
+            paint()
+          },
+          onOpen: () => {
+            demoGlobalOpen = true
+            paint()
+          },
+          onClose: () => {
+            demoGlobalOpen = false
+            paint()
+          },
+          onActive: (id) => {
+            demoGlobalActive = id
+            paint()
+          },
+          onSelect: (id) => {
+            demoGlobalOpen = false
+            notify(`Đã chọn ${id}`)
+            paint()
+          },
+          onRetry: () => paint(),
+        }),
+      )}
+      ${specimen(
         'Cấu trúc tài liệu',
         'FlowDocTree · kéo giữa các mục cùng cấp',
         FlowDocTree({
@@ -569,17 +686,54 @@ function library() {
       ${specimen(
         'Spotlight',
         'FlowSpotlight · tìm kiếm và bàn phím',
-        FlowButton({
+        html`${FlowButton({
           label: 'Mở Spotlight',
           onClick: () => {
             spotlightOpen = true
             spotlightQuery = ''
             spotlightActive = ''
+            spotlightState = ''
             paint()
           },
-        }),
+        })}${FlowButton({
+          label: 'Spotlight · đang tải',
+          onClick: () => {
+            spotlightOpen = true
+            spotlightState = 'loading'
+            paint()
+          },
+        })}${FlowButton({
+          label: 'Spotlight · lỗi và thử lại',
+          onClick: () => {
+            spotlightOpen = true
+            spotlightState = 'error'
+            paint()
+          },
+        })}`,
       )}
       ${specimen('Thuộc tính task trên tablet', 'FlowRecordLayout · popover dưới 1200px', FlowButton({ label: 'Mở modal task responsive', onClick: () => runtime.open('flow-responsive-task') }))}
+      ${specimen(
+        'Thiết lập trong shell',
+        'FlowEntryPage · embedded',
+        FlowEntryPage({
+          embedded: true,
+          brand: 'Flow',
+          title: 'Thiết lập Workspace',
+          description: 'Shell sở hữu landmark chính và chiều cao; card giữ form native.',
+          onSubmit: (e) => {
+            e.preventDefault()
+            notify('Đã gửi form minh họa.')
+          },
+          children: FlowInput({
+            id: 'demo-entry-workspace',
+            label: 'Tên Workspace',
+            value: 'Sản phẩm',
+            required: true,
+          }),
+          actions: FlowButton({ label: 'Tiếp tục', type: 'submit', variant: 'primary' }),
+        }),
+        true,
+      )}
       ${specimen('Khối thông báo canh giữa', 'FlowSection · width=reading', FlowSection({ title: 'Cập nhật dành cho bạn', width: 'reading', children: FlowNotice({ title: 'Bạn được giao công việc mới', message: 'Rà soát nội dung phát hành.', tone: 'yellow', action: FlowButton({ label: 'Mở', onClick: () => notify('Mở thông báo mẫu.') }) }) }))}
       ${specimen(
         'Tìm kiếm & lựa chọn',
@@ -608,13 +762,14 @@ function library() {
                 paint()
               },
             })}${FlowCheckbox({
+              target: 'standalone',
               label: 'Thông báo khi có cập nhật',
               checked: sampleChecked,
               onChange: () => {
                 sampleChecked = !sampleChecked
                 paint()
               },
-            })}<span class="demo-caption">Thông báo cập nhật</span>${FlowCheckbox({ label: 'Chọn tất cả · chọn một phần', checked: false, indeterminate: true })}
+            })}<span class="demo-caption">Thông báo cập nhật</span>${FlowCheckbox({ target: 'standalone', label: 'Chọn tất cả · chọn một phần', checked: false, indeterminate: true })}
           </div>
           <p class="demo-caption">
             ${sampleQuery ? `Từ khóa: ${sampleQuery}` : `Đã chọn chế độ ${sampleView === 'list' ? 'danh sách' : 'bảng'}.`}
@@ -648,7 +803,7 @@ function library() {
       </div>
     </section>
     <div class="demo-grid" style="margin-top:var(--kv-space-5)">
-      ${specimen('Thẻ công việc', 'FlowTaskCard', FlowTaskCard({ task: tasks[0], onOpen: () => openTask(tasks[0]) }))}
+      ${specimen('Thẻ công việc', 'FlowTaskCard', FlowTaskCard({ task: tasks[0], statusHint: tr('flow.ui.awaiting.review'), onOpen: () => openTask(tasks[0]) }))}
       ${specimen(
         'Nhãn & tiến độ',
         'FlowTag · FlowTagPicker · FlowProgress',
@@ -715,6 +870,28 @@ function library() {
     ${specimen('Thông tin phạm vi không viền', 'FlowListItem · plain', FlowListItem({ variant: 'plain', title: 'Vận hành', description: 'Quản lý thông tin, thành viên và Team của Workspace.', actions: FlowInline({ children: html`${FlowButton({ label: 'Thông tin Workspace', icon: 'settings', variant: 'ghost', size: 'sm' })}${FlowButton({ label: 'Thành viên', icon: 'user', variant: 'ghost', size: 'sm' })}` }) }))}
     ${specimen('Phản hồi thao tác', 'FlowToast', FlowInline({ children: html`${FlowButton({ label: 'Thành công', onClick: () => notify('Đã lưu thay đổi.') })}${FlowButton({ label: 'Lỗi có thể thử lại', onClick: () => notify('Kết nối gián đoạn. Thay đổi chưa được lưu.', 'error') })}${FlowButton({ label: 'Cảnh báo', onClick: () => notify('Kết quả chưa đầy đủ. Hãy thu hẹp bộ lọc.', 'warning') })}` }))}
     ${specimen(
+      'Feedback dành chỗ trong dialog',
+      'FlowToast · placement: inline',
+      inlineToastVisible
+        ? FlowToast({
+            placement: 'inline',
+            tone: 'error',
+            title: 'Kiểm tra thông tin',
+            message: 'Tên là bắt buộc. Nội dung đang nhập được giữ lại.',
+            onClose: () => {
+              inlineToastVisible = false
+              paint()
+            },
+          })
+        : FlowButton({
+            label: 'Hiện lại feedback',
+            onClick: () => {
+              inlineToastVisible = true
+              paint()
+            },
+          }),
+    )}
+    ${specimen(
       'Chọn nhiều người · Sidebar & list',
       'FlowUserPicker',
       FlowStack({
@@ -775,6 +952,40 @@ function library() {
       }),
     )}
     ${specimen(
+      'Lựa chọn có tìm kiếm và phân trang',
+      'FlowChoiceField · remote query / more',
+      FlowChoiceField({
+        id: 'demo-paged-choice',
+        label: 'Dự án',
+        value: 'outside',
+        selected: { label: 'Dự án đã chọn', content: 'Dự án đã chọn' },
+        options: [{ value: 'one', label: 'Dự án 1', content: 'Dự án 1' }],
+        remote: { query: '', loading: false, onQuery() {}, onRetry() {}, onMore() {} },
+        onChange() {},
+      }),
+    )}
+    ${specimen(
+      'Trạng thái tải từ máy chủ',
+      'FlowChoiceField · remote loading / retry',
+      FlowInline({
+        children: html`${FlowChoiceField({
+          id: 'demo-status-loading',
+          label: 'Đang tải trạng thái',
+          value: '',
+          options: [],
+          remote: { loading: true, onRetry() {} },
+          onChange() {},
+        })}${FlowChoiceField({
+          id: 'demo-status-error',
+          label: 'Thử lại trạng thái',
+          value: '',
+          options: [],
+          remote: { loading: false, error: 'Không tải được bộ trạng thái', onRetry() {} },
+          onChange() {},
+        })}`,
+      }),
+    )}
+    ${specimen(
       'Chỉnh nhanh trong danh sách',
       'FlowChoiceField · sm / FlowDateField',
       FlowInline({
@@ -831,6 +1042,7 @@ function library() {
     ${sectionHeading('feedback', '04 — Trạng thái & hội thoại', 'Đủ hướng dẫn để bước tiếp')}
     <div class="demo-grid">
       ${specimen('Khi chưa có công việc', 'FlowEmpty', FlowEmpty({ title: 'Bắt đầu từ một việc nhỏ', description: 'Tạo công việc đầu tiên để cả nhóm biết điều gì cần làm tiếp theo.', action: FlowButton({ label: 'Tạo công việc', icon: 'plus', onClick: () => runtime.open('flow-create') }) }))}
+      ${specimen('Tiêu đề khi trang chưa mở được', 'FlowEmpty · titleLevel: 1', FlowEmpty({ titleLevel: 1, title: 'Không thể mở Flow', description: 'Kết nối tạm thời gián đoạn. Thử lại khi kết nối được phục hồi.' }))}
       ${specimen(
         'Hội thoại tập trung',
         'FlowDialog',
@@ -841,7 +1053,7 @@ function library() {
             Giữ ngữ cảnh phía sau. Tab để di chuyển, Escape để đóng và trở lại đúng nơi vừa mở.
           </p>
           <div class="demo-row">
-            ${FlowButton({ label: 'Thử tạo công việc', variant: 'primary', icon: 'plus', onClick: () => runtime.open('flow-create') })}${FlowButton({ label: 'Thử xác nhận', onClick: () => runtime.open('flow-reset') })}
+            ${FlowButton({ label: 'Thử tạo công việc', variant: 'primary', icon: 'plus', onClick: () => runtime.open('flow-create') })}${FlowButton({ label: 'Thử xác nhận', onClick: () => runtime.open('flow-reset') })}${FlowButton({ label: 'Hội thoại rộng', onClick: () => runtime.open('flow-wide-example') })}
           </div>`,
       )}
     </div>`
@@ -880,6 +1092,7 @@ function workspace() {
           },
         })}
         ${FlowSelect({
+          size: 'sm',
           label: 'Lọc trạng thái',
           value: status,
           options: [{ value: 'all', label: 'Mọi trạng thái' }, ...statusOptions],
@@ -972,9 +1185,20 @@ function workspace() {
 function dialogs() {
   const task = tasks.find((t) => t.id === detailId) ?? tasks[0]
   return html`${FlowDialog({
+    id: 'flow-wide-example',
+    title: 'Hội thoại rộng · FlowDialog',
+    size: 'wide',
+    body: FlowFormGrid({
+      children: html`${FlowInput({ id: 'wide-title', label: 'Tên bản ghi', value: 'Ví dụ catalogue' })}${FlowTextarea({ id: 'wide-reason', name: 'reason', label: 'Lý do', error: 'Thông báo lỗi thuộc component trường nhập' })}`,
+    }),
+    footer: FlowButton({
+      label: 'Đóng',
+      onClick: () => document.getElementById('flow-wide-example').close(),
+    }),
+  })}${FlowDialog({
     id: 'flow-create',
     title: 'Tạo công việc',
-    body: html`<form class="demo-form" on:submit=${submitTask}>
+    body: html`<form id="flow-demo-create-form" class="demo-form" on:submit=${submitTask}>
       ${FlowInput({ id: 'task-title', label: 'Tên công việc', placeholder: 'Cần làm gì tiếp theo?', required: true, onInput: (e) => e.target.setCustomValidity('') })}
       <div class="demo-form-row">
         <label
@@ -986,10 +1210,14 @@ function dialogs() {
         >
       </div>
       <p class="demo-caption">Dự án: Flow · Trải nghiệm sản phẩm</p>
-      <div class="demo-form-actions">
-        ${FlowButton({ label: 'Tạo công việc', variant: 'primary', type: 'submit', icon: 'plus' })}
-      </div>
     </form>`,
+    footer: FlowButton({
+      label: 'Tạo công việc',
+      variant: 'primary',
+      type: 'submit',
+      form: 'flow-demo-create-form',
+      icon: 'plus',
+    }),
   })}
   ${FlowDialog({
     id: 'flow-detail',
@@ -1051,6 +1279,12 @@ function dialogs() {
           query: spotlightQuery,
           activeId: spotlightActive,
           scope: 'Két Việt',
+          loading: spotlightState === 'loading',
+          error: spotlightState === 'error' ? 'Không kết nối được. Thử lại để giữ câu tìm kiếm.' : '',
+          onRetry: () => {
+            spotlightState = ''
+            paint()
+          },
           groups: [
             {
               id: 'tasks',
@@ -1062,6 +1296,7 @@ function dialogs() {
             },
           ],
           onQuery: (value) => {
+            spotlightState = ''
             spotlightQuery = value
             spotlightActive = ''
             paint()
@@ -1095,32 +1330,37 @@ function dialogs() {
         }),
       }),
       aside: FlowPropertyFields({
-        children: html`${FlowSelectField({ name: 'demo-responsive-status', label: 'Trạng thái', icon: 'status', value: 'open', options: statusOptions })}${FlowSelectField({ name: 'demo-responsive-priority', label: 'Ưu tiên', icon: 'flag', value: 'normal', options: priorityOptions })}${FlowInput({ id: 'demo-responsive-due', label: 'Hạn hoàn thành', type: 'date', value: '2026-09-24' })}`,
+        children: html`${FlowSelectField({ name: 'demo-responsive-status', label: 'Trạng thái', icon: 'status', value: 'open', options: statusOptions })}${FlowSelectField({ name: 'demo-responsive-priority', label: 'Ưu tiên', icon: 'flag', value: 'normal', options: priorityOptions })}${FlowInput({ id: 'demo-responsive-due', label: 'Hạn hoàn thành', type: 'date', value: '2026-09-24', error: responsiveTaskError ? 'Hạn hoàn thành phải sau ngày bắt đầu.' : undefined })}`,
       }),
     }),
+    footer: FlowButton({
+      label: 'Minh họa lỗi trường từ server',
+      onClick: () => {
+        responsiveTaskError = true
+        paint()
+        queueMicrotask(() => runtime.focusInvalid(document.getElementById('flow-responsive-task')))
+      },
+    }),
   })}
-  ${FlowDialog({
+  ${FlowConfirmDialog({
     id: 'flow-reset',
     title: 'Khôi phục dữ liệu mẫu?',
-    body: html`<p>
-      Các chỉnh sửa trong demo sẽ được thay bằng bộ công việc ban đầu. Dự án thật không bị ảnh
-      hưởng.
-    </p>`,
-    footer: html`<button data-flow="button" data-flow-close type="button">Giữ thay đổi</button
-      >${FlowButton({
-        label: 'Khôi phục dữ liệu mẫu',
-        variant: 'danger',
-        onClick: () => {
-          tasks = structuredClone(initialTasks)
-          selected.clear()
-          query = ''
-          status = 'all'
-          detailId = tasks[0].id
-          persist()
-          document.getElementById('flow-reset').close()
-          notify('Đã khôi phục dữ liệu mẫu.')
-        },
-      })}`,
+    message: 'Các chỉnh sửa trong demo sẽ được thay bằng bộ công việc ban đầu.',
+    details: FlowHint({ children: 'Dự án thật không bị ảnh hưởng.' }),
+    autoOpen: false,
+    cancelLabel: 'Giữ thay đổi',
+    confirmLabel: 'Khôi phục dữ liệu mẫu',
+    onCancel: () => document.getElementById('flow-reset').close(),
+    onConfirm: () => {
+      tasks = structuredClone(initialTasks)
+      selected.clear()
+      query = ''
+      status = 'all'
+      detailId = tasks[0].id
+      persist()
+      document.getElementById('flow-reset').close()
+      notify('Đã khôi phục dữ liệu mẫu.')
+    },
   })}`
 }
 

@@ -8,6 +8,9 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
   if (props.type === 'textarea')
     return (
       <textarea
+        on:input={props.onInput}
+        on:change={props.onChange}
+        on:blur={props.onBlur}
         data-ui="field-control"
         data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
         id={props.id}
@@ -26,9 +29,22 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
         {String(props.value ?? '')}
       </textarea>
     )
-  if (props.type === 'select')
+  if (props.type === 'select') {
+    const options = props.options ?? []
+    const chosen = String(props.value ?? '')
+    const matched = options.some((option) => option.value === chosen)
+    // When the value matches no option, mark the placeholder or else the first option: that is what a
+    // server-rendered select shows, while a client render inserts options last to first and would
+    // otherwise leave the last one showing.
+    const fallback =
+      matched || props.placeholder
+        ? null
+        : (options.find((option) => option.disabled !== true)?.value ?? null)
     return (
       <select
+        on:input={props.onInput}
+        on:change={props.onChange}
+        on:blur={props.onBlur}
         data-ui="field-control"
         data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
         id={props.id}
@@ -39,21 +55,17 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
         aria-describedby={describedBy}
       >
         {props.placeholder && (
-          <option
-            value=""
-            disabled={props.required === true}
-            selected={props.value == null || props.value === ''}
-          >
+          <option value="" disabled={props.required === true} selected={!matched}>
             {props.placeholder}
           </option>
         )}
         {each(
-          props.options ?? [],
+          options,
           (option) => option.value,
           (option) => (
             <option
               value={option.value}
-              selected={String(props.value ?? '') === option.value}
+              selected={chosen === option.value || fallback === option.value}
               disabled={option.disabled === true}
             >
               {option.label}
@@ -62,9 +74,13 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
         )}
       </select>
     )
+  }
   return (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-checked is emitted only for the checkbox branch.
     <input
+      on:input={props.onInput}
+      on:change={props.onChange}
+      on:blur={props.onBlur}
       data-ui="field-control"
       data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
       id={props.id}

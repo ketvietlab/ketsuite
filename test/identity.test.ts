@@ -16,7 +16,7 @@ const mods = [address, partner, company, user]
 const SCOPE: Scope = { company: 'c1' }
 
 async function boot(): Promise<{ adapter: Adapter; manifest: Manifest }> {
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
@@ -227,7 +227,7 @@ test('terms: the same shared party carries different terms per legal entity', as
 })
 
 test('terms: the segment is a real table, not an EAV side table', () => {
-  const schema = schemaFromManifest(compose(mods))
+  const schema = schemaFromManifest(compose(mods, { companies: true }))
   const cols = Object.keys(schema.tables['partner_company_terms']!.columns).sort()
   assert.ok(cols.includes('creditLimit'), 'a typed column, visible to SQL')
   assert.ok(cols.includes('note'), 'core terms contain only domain-neutral fields')
@@ -394,7 +394,7 @@ test('user: changing a password takes the old one, even for your own account', a
 })
 
 test('user: minting a login is not an agent tool', () => {
-  const m = compose(mods)
+  const m = compose(mods, { companies: true })
   assert.equal(
     m.functions['user.createUser']!.agent,
     false,

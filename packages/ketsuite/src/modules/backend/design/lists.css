@@ -821,12 +821,22 @@
     overflow-x: auto;
   }
 
+  /* An operational page runs to the pane's edges, also when a client island draws it. */
   [data-ui="content"]:has(
     > :is(
         [data-ui="list-page"][data-variant="operational"],
         [data-ui="form-page"][data-variant="operational"],
         [data-ui="dashboard-page"][data-variant="operational"],
-        [data-ui="board-page"][data-variant="operational"]
+        [data-ui="board-page"][data-variant="operational"],
+        [data-ui="record-page"][data-variant="operational"]
+      ),
+    > [data-ket-island]
+      > :is(
+        [data-ui="list-page"][data-variant="operational"],
+        [data-ui="form-page"][data-variant="operational"],
+        [data-ui="dashboard-page"][data-variant="operational"],
+        [data-ui="board-page"][data-variant="operational"],
+        [data-ui="record-page"][data-variant="operational"]
       )
   ) {
     padding: 0;
@@ -834,6 +844,15 @@
 
   [data-ui="content"]:has(> [data-ui="record-workspace"]) {
     padding: 1.375rem 1.75rem 3rem;
+  }
+
+  /* An embedded page is the whole screen: the slot passes the main column's remaining height to it. */
+  [data-ui="content"]:has(> [data-ui="embedded-page"]) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0;
   }
 
   /* Screens that are reading rather than scanning keep their measure. */
@@ -1291,7 +1310,6 @@
   }
 
   [data-ui="empty-message"],
-  [data-ui="empty-hint"],
   [data-ui="error-code"],
   [data-ui="error-message"],
   [data-ui="error-hint"] {
@@ -1302,11 +1320,6 @@
     color: var(--admin-ink);
     font-size: var(--admin-size-base);
     font-weight: 700;
-  }
-
-  [data-ui="empty-hint"] {
-    color: var(--admin-ink-secondary);
-    font-size: 0.875rem;
   }
 
   [data-ui="error"] {

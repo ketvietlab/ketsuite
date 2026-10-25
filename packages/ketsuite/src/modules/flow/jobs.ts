@@ -21,7 +21,7 @@
 
 import { defineJob, deleteFrom, eq, from, inArray } from '@ketvietlab/ketjs'
 import type { JobContext, JobSpec } from '@ketvietlab/ketjs'
-import { purgeThreadEffects, purgeThreads, threadsFor } from '../mail/operations.ts'
+import { purgeThreadEffects, purgeThreads, threadsFor } from '../mail/collaboration.ts'
 import { purgeAttachmentEffects, purgeAttachments } from '../storage/jobs.ts'
 
 /**

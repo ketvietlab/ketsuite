@@ -550,7 +550,8 @@ export const functions: Record<string, FnSpec> = {
       uomId: 'id',
       categoryId: 'id?',
       salePrice: 'decimal',
-      cost: 'decimal',
+      // Absent leaves the cost as it is, and a new product without one has no cost yet.
+      cost: 'decimal?',
       saleOk: 'bool',
       purchaseOk: 'bool',
       pointOfSale: 'bool',
@@ -660,15 +661,17 @@ export const functions: Record<string, FnSpec> = {
             )
             await tx.db.update('product.Product', { id: product.id }, { defaultCode: sku, barcode })
           }
-          const costId = companyKey(tx, args.id)
-          const existingCost = (await tx.db.select('product.Cost', { id: costId }))[0]
-          if (existingCost) await tx.db.update('product.Cost', { id: costId }, { standardPrice: args.cost })
-          else
-            await tx.db.insert('product.Cost', {
-              id: costId,
-              productId: args.id,
-              standardPrice: args.cost,
-            })
+          if (args.cost != null) {
+            const costId = companyKey(tx, args.id)
+            const existingCost = (await tx.db.select('product.Cost', { id: costId }))[0]
+            if (existingCost) await tx.db.update('product.Cost', { id: costId }, { standardPrice: args.cost })
+            else
+              await tx.db.insert('product.Cost', {
+                id: costId,
+                productId: args.id,
+                standardPrice: args.cost,
+              })
+          }
           await tx.db.update('uom.Unit', { id: args.uomId }, { locked: true })
         })
       } catch (error) {
@@ -2270,6 +2273,7 @@ functions.validatePicking = defineFn({
   input: { id: 'id', backorder: 'text?' },
   output: { ok: 'bool', id: 'id?', backorderId: 'id?', errors: 'json?' },
   effects: functions.completePicking!.effects,
+  idempotent: true,
   agent: true,
   handler: async (ctx, args) => {
     const picking = (await ours(ctx, 'stock.Picking', { id: args.id }))[0]

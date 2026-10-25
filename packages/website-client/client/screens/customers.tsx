@@ -1,3 +1,4 @@
+import { ListPage, ModalSheet } from '../page-regions.tsx'
 // The sign-in accounts of a site's customers. An account belongs to a partner of the company; staff
 // issue one, close or reopen it and give it a new password. A password the system makes up is shown
 // once, in the account it was made for, and never read back.
@@ -8,8 +9,6 @@ import {
   FilterBar,
   Grid,
   LinkButton,
-  ListPage,
-  ModalSheet,
   Notice,
   SearchBar,
   Section,

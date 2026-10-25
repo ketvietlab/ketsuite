@@ -167,6 +167,7 @@ const boot = async (t: TestContext) => {
   const e2e = await createTestDeployment(
     defineDeployment({
       name: 'channel_probe',
+      companies: true,
       headless: true,
       modules: [probe],
       serve: {},
@@ -330,6 +331,21 @@ test('channel facade: the published request schema is the one the server enforce
   const fields = (await read(malformed)).error?.fieldErrors ?? {}
   assert.deepEqual(Object.keys(fields).sort(), ['age', 'displayName', 'email', 'tags.0'].sort())
   assert.equal(fields.email?.messageKey, 'channel_api.error.fieldInvalid')
+
+  // Sending nothing is an empty object, held to the same schema; content of
+  // another type is still refused.
+  const bodiless = await e2e.client.request('/api/customer/v1/probe/profile', { method: 'POST' })
+  assert.equal(bodiless.status, 422)
+  assert.equal(
+    (await read(bodiless)).error?.fieldErrors.displayName?.messageKey,
+    'channel_api.error.fieldRequired',
+  )
+  const text = await e2e.client.request('/api/customer/v1/probe/profile', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain' },
+    body: '{}',
+  })
+  assert.equal(text.status, 415)
   assert.deepEqual(reached, [])
 
   const accepted = await post({

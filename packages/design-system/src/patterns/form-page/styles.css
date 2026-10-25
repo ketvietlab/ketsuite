@@ -88,7 +88,8 @@
     gap: var(--kv-space-2);
   }
 
-  :where([data-kv-design-system]) [data-ui="form-page-meta"] {
+  :where([data-kv-design-system]) [data-ui="form-page-meta"],
+  :where([data-kv-design-system]) [data-ui="form-page-path"] {
     min-width: 0;
   }
 
@@ -182,14 +183,18 @@
       padding: var(--kv-space-4) var(--kv-page-padding-x) var(--kv-space-3);
     }
 
-    :where([data-kv-design-system]) [data-ui="form-page-title-row"] {
-      grid-template-columns: minmax(0, 1fr);
-      align-items: stretch;
-      gap: var(--kv-space-3);
+    /* As on RecordPage: the identity (title, status, meta) reads as one block and the
+       commands follow it, never between the title and its status. */
+    :where([data-kv-design-system])
+      [data-ui="form-page-header"]
+      :is([data-ui="form-page-heading"], [data-ui="form-page-title-row"]) {
+      display: contents;
     }
 
-    :where([data-kv-design-system]) [data-ui="form-page-actions"] {
+    :where([data-kv-design-system]) [data-ui="form-page-header"] [data-ui="form-page-actions"] {
+      order: 1;
       justify-content: flex-start;
+      margin-top: var(--kv-space-1);
     }
 
     :where([data-kv-design-system])

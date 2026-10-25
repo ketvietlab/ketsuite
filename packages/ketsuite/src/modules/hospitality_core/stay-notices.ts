@@ -1,3 +1,4 @@
+import { readRecord, propertyAccess } from './functions/command.ts'
 import { createHash } from 'node:crypto'
 import { asc, dateTimeFormatter, defineFn, defineJob, desc, eq, from } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, JobContext, JobSpec, Row } from '@ketvietlab/ketjs'
@@ -24,8 +25,7 @@ const dateOnly = (value: unknown): string => {
   const date = value instanceof Date ? value : new Date(String(value ?? ''))
   return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : ''
 }
-const one = async (ctx: Ctx, model: string, id: unknown): Promise<Row | null> =>
-  (await ctx.db.select(model, { id }))[0] ?? null
+const one = readRecord
 const abortIfRequested = (ctx: NoticeContext): void => {
   if (ctx.signal?.aborted) throw ctx.signal.reason ?? new Error('stay notice preparation aborted')
 }
@@ -238,11 +238,16 @@ export const stayNoticeFunctions: Record<string, FnSpec> = {
   requestStayNoticeRefresh: defineFn({
     input: { stayId: 'id' },
     output: { ok: 'bool', id: 'id?', jobId: 'id?', existing: 'bool?', errors: 'json?' },
-    effects: ['read:hospitality_core.Stay', 'enqueue:hospitality_core.prepareStayNotices'],
+    effects: [
+      'read:hospitality_core.Stay',
+      'read:hospitality_core.Property',
+      'enqueue:hospitality_core.prepareStayNotices',
+    ],
     idempotent: true,
     agent: true,
     handler: async (ctx, args) => {
       const stay = await one(ctx, 'hospitality_core.Stay', args.stayId)
+      if (stay) await propertyAccess(ctx, stay.propertyId)
       if (!stay) return failure(issue('stayId', 'stay_missing'))
       if (stay.state !== 'checked_in' && stay.state !== 'checked_out')
         return failure(issue('state', 'stay_notice_stay_state'))
@@ -256,7 +261,15 @@ export const stayNoticeFunctions: Record<string, FnSpec> = {
   }),
 
   recordStayNoticeSubmission: defineFn({
-    input: { id: 'id', reason: 'text', channel: 'text', evidenceRef: 'text' },
+    input: {
+      id: 'id',
+      reason: 'text',
+      channel: 'text',
+      evidenceRef: 'text',
+      submittedAt: 'datetime?',
+      submittedLocal: 'text?',
+      submissionNote: 'text?',
+    },
     output: { ok: 'bool', id: 'id?', state: 'text?', errors: 'json?' },
     effects: [
       'read:hospitality_core.StayNotice',
@@ -279,6 +292,30 @@ export const stayNoticeFunctions: Record<string, FnSpec> = {
         return failure(issue('channel', 'stay_notice_channel'))
       const evidenceRef = text(args.evidenceRef)
       if (!evidenceRef) return failure(issue('evidenceRef', 'required'))
+      const property = await propertyAccess(ctx, notice.propertyId)
+      let submittedAt = args.submittedAt ? String(args.submittedAt) : new Date().toISOString()
+      if (args.submittedLocal) {
+        const local = String(args.submittedLocal)
+        if (
+          !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(local) ||
+          !Number.isFinite(Date.parse(`${local.slice(0, 10)}T00:00:00Z`)) ||
+          new Date(`${local.slice(0, 10)}T00:00:00Z`).toISOString().slice(0, 10) !== local.slice(0, 10)
+        )
+          return failure(issue('submittedAt', 'date'))
+        submittedAt = zonedDateTime(
+          local.slice(0, 10),
+          Number(local.slice(11, 13)),
+          Number(local.slice(14, 16)),
+          String(property.timezone),
+        ).toISOString()
+      }
+      if (!Number.isFinite(Date.parse(submittedAt)) || Date.parse(submittedAt) > Date.now())
+        return failure(issue('submittedAt', 'stay_notice_submission_time'))
+      const stay = await one(ctx, 'hospitality_core.Stay', notice.stayId)
+      if (stay && Date.parse(submittedAt) < Date.parse(String(stay.checkedInAt ?? stay.checkIn)))
+        return failure(issue('submittedAt', 'stay_notice_submission_time'))
+      if (evidenceRef.length > 200 || String(args.submissionNote ?? '').length > 2000)
+        return failure(issue('submissionNote', 'stay_notice_evidence_length'))
       const source = await submissionPackage(ctx, { ...notice, reason: args.reason })
       if (source.issues.length) return failure(issue('state', 'stay_notice_not_ready'))
       const now = new Date().toISOString()
@@ -291,7 +328,8 @@ export const stayNoticeFunctions: Record<string, FnSpec> = {
           reason: args.reason,
           submissionChannel: args.channel,
           packageHash: source.hash,
-          submittedAt: now,
+          submittedAt,
+          submissionNote: text(args.submissionNote) || null,
           submittedBy: ctx.actor,
           receiptRef: evidenceRef,
           updatedAt: now,

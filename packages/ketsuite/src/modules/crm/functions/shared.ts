@@ -13,8 +13,9 @@ import {
   n,
   normalized,
   now,
+  stageValues,
 } from '../operations.ts'
-import { LOST_REASON_CODES } from '../reporting.ts'
+import { defaultLostReasons, LOST_REASON_CODES } from '../reporting.ts'
 import type { CrmResult } from '../operations.ts'
 import { AUTHORIZATION_READ_EFFECTS } from '../../user/authorization.ts'
 
@@ -77,6 +78,7 @@ export const caseWriteEffects = [
 ] as const
 
 export const activityEffects = [
+  'read:company.Company',
   ...caseReadEffects,
   'read:activity.Type',
   'read:activity.Plan',
@@ -144,6 +146,7 @@ export async function moveToTerminal(
     expectedVersion: number
     terminal: string
     lostReasonCode?: string
+    lostReasonId?: string
     lostReason?: string
     closeReason?: string
     idempotencyKey: string
@@ -154,7 +157,9 @@ export async function moveToTerminal(
   return ctx.tx(async (tx) => {
     const held = await ensureCase(tx, input.id)
     if (!held || !(await canEditCase(tx, held))) return invalid(issue('id', 'crm.error.notFound'))
-    if (held.kind !== 'opportunity') return invalid(issue('kind', 'crm.error.leadConversion'))
+    // A lead may be lost; only an opportunity is won.
+    if (input.terminal === 'won' && held.kind !== 'opportunity')
+      return invalid(issue('kind', 'crm.error.leadConversion'))
     const stages = (await tx.db.select('crm.Stage', { active: true })).filter(
       (stage) =>
         stage.terminalState === input.terminal &&
@@ -165,7 +170,25 @@ export async function moveToTerminal(
       (a, b) => n(a.sequence) - n(b.sequence) || String(a.id).localeCompare(String(b.id)),
     )[0]
     if (!stage) return invalid(issue('stageId', 'crm.error.invalidStage'))
-    if (input.lostReasonCode && !LOST_REASON_CODES.includes(input.lostReasonCode as never))
+    // A reason picked from the company's list (or the standard one it starts from) names its bucket and may ask
+    // for a note.
+    let lostReason = input.lostReason
+    let lostReasonCode = input.lostReasonCode
+    if (input.terminal === 'lost' && input.lostReasonId) {
+      // The standard reasons stand only while the company has saved none of its own.
+      const picked =
+        (await tx.db.select('crm.LostReason', { id: input.lostReasonId }))[0] ??
+        ((await tx.db.select('crm.LostReason')).length
+          ? undefined
+          : defaultLostReasons().find((reason) => reason.id === input.lostReasonId))
+      if (!picked || picked.active === false)
+        return invalid(issue('lostReasonId', 'crm.error.invalidLostReason'))
+      if (picked.requiresNote === true && !String(input.closeReason ?? '').trim())
+        return invalid(issue('closeReason', 'crm.error.required'))
+      lostReason ||= String(picked.name)
+      lostReasonCode ||= picked.code ? String(picked.code) : undefined
+    }
+    if (lostReasonCode && !LOST_REASON_CODES.includes(lostReasonCode as never))
       return invalid(issue('lostReasonCode', 'crm.error.invalidLostReason'))
     const timestamp = now()
     const changed = await tx.db.compareAndSet(
@@ -179,6 +202,7 @@ export async function moveToTerminal(
         version: n(held.version) + 1,
         updatedAt: timestamp,
         ...closingValues(held, input.terminal, timestamp),
+        ...stageValues(held, stage, timestamp),
       },
     )
     if (!('dryRun' in changed) && !changed.matched)
@@ -189,7 +213,11 @@ export async function moveToTerminal(
         await tx.db.update(
           'crm.SalesDetail',
           { id: detail.id },
-          { lostReason: input.lostReason ?? null, lostReasonCode: input.lostReasonCode || null },
+          {
+            lostReason: lostReason ?? null,
+            lostReasonCode: lostReasonCode || null,
+            lostReasonId: input.lostReasonId || null,
+          },
         )
     }
     const event = input.terminal === 'won' ? 'won' : 'lost'
@@ -200,7 +228,7 @@ export async function moveToTerminal(
       body: `crm.timeline.${event}`,
       metadata: {
         reason: input.closeReason ?? null,
-        lostReasonCode: input.lostReasonCode ?? null,
+        lostReasonCode: lostReasonCode ?? null,
         ...closingValues(held, input.terminal, timestamp),
       },
       customerVisible: false,

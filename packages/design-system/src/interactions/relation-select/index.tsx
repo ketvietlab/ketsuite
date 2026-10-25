@@ -7,6 +7,8 @@
 
 import { each, effect, signal } from '@ketvietlab/ketjs-view'
 import type { IslandController, IslandProps, TemplateResult } from '@ketvietlab/ketjs-view'
+import { relationMenuPlacement } from './placement.ts'
+import { restoreRelationSelectionFocus } from './focus.ts'
 
 export const HOOKS = [
   'relation-select',
@@ -46,7 +48,15 @@ export type RelationEditorField = {
 
 export type RelationManager = {
   listFunction: string
+  /** Encoded same-origin RPC context (tenant, branch, locale); supplied by the application. */
+  requestQuery?: string
+  /** Resolve a selected id absent from primed options through listFunction. */
+  resolveParam?: string
+  /** Read the server while typing in the inline picker, rather than filtering only primed options. */
+  searchInDropdown?: boolean
   listInput?: Record<string, unknown>
+  /** Required RPC inputs bound to named controls in the same native form. Changing a parent clears this selection. */
+  listInputFields?: Record<string, string>
   searchParam?: string
   limitParam?: string
   limit?: number
@@ -85,6 +95,10 @@ export type RelationSelectLabels = {
 export type RelationSelectConfig = {
   name: string
   ariaLabel: string
+  /** Public field association for enhanced controls; existing callers may omit all three. */
+  triggerId?: string
+  invalid?: boolean
+  describedBy?: string | null
   value?: string | null
   /**
    * Several records under one field name, joined by a comma on the way out.
@@ -126,14 +140,22 @@ type ApiPayload = {
 const array = <Value,>(value: unknown): Value[] => (Array.isArray(value) ? (value as Value[]) : [])
 const string = (value: unknown): string => (value == null ? '' : String(value))
 
-const callApi = async (name: string, input: unknown, requestSignal?: AbortSignal): Promise<unknown> => {
-  const response = await fetch(`/_ket/fn/${encodeURIComponent(name)}`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-    signal: requestSignal,
-  })
+const callApi = async (
+  name: string,
+  input: unknown,
+  requestSignal?: AbortSignal,
+  requestQuery?: string,
+): Promise<unknown> => {
+  const response = await fetch(
+    `/_ket/fn/${encodeURIComponent(name)}${requestQuery ? `?${requestQuery.replace(/^\?/, '')}` : ''}`,
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: requestSignal,
+    },
+  )
   const payload = (await response.json()) as ApiPayload
   if (!response.ok || payload.ok === false) {
     const domainError = array<{ message?: unknown; code?: unknown }>(payload.errors)[0]
@@ -144,10 +166,31 @@ const callApi = async (name: string, input: unknown, requestSignal?: AbortSignal
   return payload.value
 }
 
+/**
+ * Records a manager picker learned after its props were written: one it created, or a
+ * search result it chose. A record form re-mounts its islands from props that predate
+ * them, so without this the choice loses its label (the native select cannot hold it)
+ * and the list loses the new record until the page reloads. Keyed by the list function,
+ * so every picker of that list on the page knows them.
+ */
+const learnedOptions = new Map<string, RelationOption[]>()
+const learnOption = (key: string, option: RelationOption): void => {
+  const held = learnedOptions.get(key) ?? []
+  learnedOptions.set(key, [...held.filter((entry) => string(entry.value) !== string(option.value)), option])
+}
+const forgetOption = (key: string, id: string): void => {
+  const held = learnedOptions.get(key)
+  if (held)
+    learnedOptions.set(
+      key,
+      held.filter((entry) => string(entry.value) !== id),
+    )
+}
+
 export function createRelationSelectView(
   props: RelationSelectIslandProps,
   callbacks: RelationSelectCallbacks = {},
-): IslandController {
+): IslandController & { getSelectedValues(): string[] } {
   const { id: islandId, config } = props
   const labels = config.labels
   const manager = config.manager
@@ -162,18 +205,35 @@ export function createRelationSelectView(
   )
   const selected = (): string => chosen()[0] ?? ''
   const isChosen = (value: unknown): boolean => chosen().includes(string(value))
-  const options = signal<RelationOption[]>(array<RelationOption>(config.options))
+  const learnedKey = manager?.listFunction ?? ''
+  const primed = array<RelationOption>(config.options)
+  const learned = learnedOptions.get(learnedKey) ?? []
+  const learnedAs = (value: unknown) => learned.find((entry) => string(entry.value) === string(value))
+  // A record renamed here keeps its new label; one created here joins the list.
+  const options = signal<RelationOption[]>([
+    ...primed.map((entry) => learnedAs(entry.value) ?? entry),
+    ...learned.filter((entry) => !primed.some((held) => string(held.value) === string(entry.value))),
+  ])
+  const unresolved = manager?.resolveParam
+    ? chosen().filter((id) => !options().some((option) => option.value === id))
+    : []
+  if (unresolved.length)
+    options.set([...options(), ...unresolved.map((value) => ({ value, label: config.labels.loading }))])
   const availableOptions = (): RelationOption[] => callbacks.options?.() ?? options()
-  const disabled = (): boolean => callbacks.disabled?.() ?? config.disabled === true
+  const dependenciesReady = signal(!Object.keys(manager?.listInputFields ?? {}).length)
+  let readListInput = (): Record<string, unknown> => ({ ...manager?.listInput })
+  const disabled = (): boolean => !dependenciesReady() || (callbacks.disabled?.() ?? config.disabled === true)
   const open = signal(false)
   const dialog = signal(false)
   const query = signal('')
   const rows = signal<RelationRow[]>([])
+  const dropdownRows = signal<{ query: string; options: RelationOption[] } | null>(null)
   const loading = signal(false)
   const error = signal('')
   const editor = signal<RelationEditor | null>(null)
   const pendingRemove = signal('')
   let activeRequest: AbortController | null = null
+  let resolveRequest: AbortController | null = null
   let searchTimer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
 
@@ -185,20 +245,27 @@ export function createRelationSelectView(
     options().find((entry) => string(entry.value) === selected())?.label ?? labels.choose
 
   const filteredOptions = (): RelationOption[] => {
+    if (manager?.searchInDropdown && dropdownRows()?.query === query().trim())
+      return dropdownRows()!.options.slice(0, 7)
+    if (manager?.searchInDropdown && query().trim()) return []
     const needle = query().trim().toLocaleLowerCase()
     const held = needle
       ? availableOptions().filter((entry) =>
           `${string(entry.label)} ${string(entry.description)}`.toLocaleLowerCase().includes(needle),
         )
       : availableOptions()
-    return callbacks.options ? held : held.slice(0, 7)
+    // Only a manager can browse past the dropdown; a local picker lists every match.
+    return callbacks.options || !manager ? held : held.slice(0, 7)
   }
 
   const choose = (value: unknown, label: unknown, description: unknown = ''): void => {
     if (disabled()) return
     const id = string(value)
-    if (!options().some((entry) => string(entry.value) === id))
-      options.set([...options(), { value: id, label: string(label), description: string(description) }])
+    if (!options().some((entry) => string(entry.value) === id)) {
+      const option = { value: id, label: string(label), description: string(description) }
+      options.set([...options(), option])
+      if (learnedKey && id) learnOption(learnedKey, option)
+    }
     if (multiple) {
       chosen.set(isChosen(id) ? chosen().filter((held) => held !== id) : [...chosen(), id])
       callbacks.onSelect?.({ value: id, label: string(label), description: string(description) })
@@ -222,21 +289,33 @@ export function createRelationSelectView(
     options().find((entry) => string(entry.value) === string(value))?.label ?? string(value)
 
   const loadRows = async (): Promise<void> => {
-    if (!manager?.listFunction) return
+    if (!manager?.listFunction || !dependenciesReady()) return
     activeRequest?.abort()
     const request = new AbortController()
     activeRequest = request
     loading.set(true)
     error.set('')
     try {
-      const input: Record<string, unknown> = { ...(manager.listInput ?? {}) }
+      const input = readListInput()
       input[manager.searchParam ?? 'search'] = query().trim()
       input[manager.limitParam ?? 'limit'] = manager.limit ?? 80
-      const value = await callApi(manager.listFunction, input, request.signal)
+      const value = await callApi(manager.listFunction, input, request.signal, manager.requestQuery)
+      if (disposed || activeRequest !== request) return
       const excluded = new Set(array<unknown>(manager.excludeIds).map(string))
-      rows.set(array<RelationRow>(value).filter((row) => !excluded.has(rowId(row))))
+      const result = array<RelationRow>(value).filter((row) => !excluded.has(rowId(row)))
+      rows.set(result)
+      if (manager.searchInDropdown)
+        dropdownRows.set({
+          query: String(input[manager.searchParam ?? 'search']),
+          options: result.map((row) => ({
+            value: rowId(row),
+            label: rowLabel(row),
+            description: rowDescription(row),
+          })),
+        })
     } catch (caught) {
-      if (disposed || (caught instanceof Error && caught.name === 'AbortError')) return
+      if (disposed || activeRequest !== request || (caught instanceof Error && caught.name === 'AbortError'))
+        return
       error.set(caught instanceof Error ? caught.message : labels.loadError)
     } finally {
       if (activeRequest === request) loading.set(false)
@@ -264,6 +343,10 @@ export function createRelationSelectView(
   const searchManager = (event: Event): void => {
     if (!(event.currentTarget instanceof HTMLInputElement)) return
     query.set(event.currentTarget.value)
+    activeRequest?.abort()
+    activeRequest = null
+    loading.set(true)
+    error.set('')
     clearTimeout(searchTimer)
     searchTimer = setTimeout(loadRows, 180)
   }
@@ -278,7 +361,7 @@ export function createRelationSelectView(
     loading.set(true)
     error.set('')
     try {
-      await callApi(manager.saveFunction, payload)
+      await callApi(manager.saveFunction, payload, undefined, manager.requestQuery)
       const label = string(payload[manager.labelField ?? 'name'])
       if (!editing?.id) {
         choose(id, label)
@@ -293,6 +376,8 @@ export function createRelationSelectView(
           string(entry.value) === id ? { ...entry, label: label || entry.label } : entry,
         ),
       )
+      const renamed = options().find((entry) => string(entry.value) === id)
+      if (learnedKey && renamed && label) learnOption(learnedKey, renamed)
       editor.set(null)
       await loadRows()
     } catch (caught) {
@@ -312,9 +397,15 @@ export function createRelationSelectView(
     loading.set(true)
     error.set('')
     try {
-      await callApi(manager.removeFunction, { ...(manager.removeDefaults ?? {}), id })
+      await callApi(
+        manager.removeFunction,
+        { ...(manager.removeDefaults ?? {}), id },
+        undefined,
+        manager.requestQuery,
+      )
       unchoose(id)
       options.set(options().filter((entry) => string(entry.value) !== id))
+      forgetOption(learnedKey, id)
       pendingRemove.set('')
       await loadRows()
     } catch (caught) {
@@ -549,6 +640,7 @@ export function createRelationSelectView(
   }
 
   return {
+    getSelectedValues: () => [...chosen()],
     view: () => (
       <div data-ui="relation-select" role="group" aria-label={config.ariaLabel} onKeydown={handleKeydown}>
         {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: the off-tab native control preserves form submission and constraint validation while the adjacent trigger is the accessible interactive control. */}
@@ -582,6 +674,9 @@ export function createRelationSelectView(
         </select>
         <button
           data-ui="relation-trigger"
+          id={config.triggerId}
+          aria-invalid={config.invalid === true ? 'true' : undefined}
+          aria-describedby={config.describedBy || undefined}
           data-empty={String(!chosen().length)}
           type="button"
           aria-haspopup="listbox"
@@ -589,7 +684,14 @@ export function createRelationSelectView(
           aria-expanded={String(open())}
           aria-controls={`${islandId}-relation-menu`}
           disabled={disabled()}
-          onClick={() => open.set(!open())}
+          onClick={(event) => {
+            open.set(!open())
+            if (open() && manager?.searchInDropdown) void loadRows()
+            // Opening is the start of a search: typing goes straight to the filter.
+            const group = (event.currentTarget as HTMLElement | null)?.parentElement
+            if (open() && typeof group?.querySelector === 'function')
+              queueMicrotask(() => group.querySelector<HTMLElement>('[data-ui="relation-search"]')?.focus())
+          }}
         >
           <span data-ui="relation-value">{multiple ? labels.choose : selectedLabel()}</span>
           <span data-ui="relation-caret" aria-hidden="true">
@@ -620,7 +722,12 @@ export function createRelationSelectView(
           </ul>
         ) : null}
         {open() ? (
-          <div data-ui="relation-menu" id={`${islandId}-relation-menu`}>
+          <div
+            data-ui="relation-menu"
+            id={`${islandId}-relation-menu`}
+            role="group"
+            aria-label={config.ariaLabel}
+          >
             <input
               data-ui="relation-search"
               type="search"
@@ -629,11 +736,30 @@ export function createRelationSelectView(
               placeholder={labels.search}
               aria-label={labels.search}
               onInput={(event) => {
-                if (event.currentTarget instanceof HTMLInputElement) query.set(event.currentTarget.value)
+                if (manager?.searchInDropdown) searchManager(event)
+                else if (event.currentTarget instanceof HTMLInputElement) query.set(event.currentTarget.value)
               }}
             />
-            <div data-ui="relation-options" role="listbox">
-              {filteredOptions().length ? (
+            <div data-ui="relation-options" role="listbox" aria-busy={loading() ? 'true' : undefined}>
+              {manager?.searchInDropdown && loading() ? (
+                <p data-ui="relation-empty" role="status">
+                  {labels.loading}
+                </p>
+              ) : manager?.searchInDropdown && error() ? (
+                <div>
+                  <p data-ui="relation-empty" role="alert">
+                    {error()}
+                  </p>
+                  <button
+                    data-ui="action"
+                    data-variant="tertiary"
+                    type="button"
+                    onClick={() => void loadRows()}
+                  >
+                    {labels.retry}
+                  </button>
+                </div>
+              ) : filteredOptions().length ? (
                 each(
                   filteredOptions(),
                   (entry) => entry.value,
@@ -655,9 +781,9 @@ export function createRelationSelectView(
                 <p data-ui="relation-empty">{labels.noRecords}</p>
               )}
             </div>
-            {manager || !callbacks.options || callbacks.onCreate ? (
+            {manager || callbacks.onCreate ? (
               <footer data-ui="relation-footer">
-                {manager || !callbacks.options ? (
+                {manager ? (
                   <button data-ui="action" data-variant="tertiary" type="button" onClick={openDialog}>
                     {labels.more}
                   </button>
@@ -696,6 +822,108 @@ export function createRelationSelectView(
     // island) re-enter this instance's own `choose()` while it was still on the
     // stack — deferring runs it only once the choice has fully settled.
     mount: ({ root, lifetime }) => {
+      if (typeof Element !== 'undefined' && root instanceof Element) {
+        const form = root.closest('form')
+        ;(form ?? root).addEventListener(
+          'reset',
+          (event) => {
+            const target = event.target
+            if (
+              target !== form &&
+              (!(target instanceof Element) ||
+                ![...root.querySelectorAll('[data-ui="relation-native"]')].some(
+                  (native) =>
+                    native instanceof HTMLSelectElement &&
+                    native.name === config.name &&
+                    target.contains(native),
+                ))
+            )
+              return
+            queueMicrotask(() => {
+              if (!disposed && !lifetime.aborted && !event.defaultPrevented)
+                chosen.set(
+                  multiple
+                    ? array<unknown>(config.values).map(string).filter(Boolean)
+                    : [string(config.value)].filter(Boolean),
+                )
+            })
+          },
+          { signal: lifetime, capture: true },
+        )
+      }
+      const bindings = Object.entries(manager?.listInputFields ?? {})
+      if (bindings.length) {
+        const form = (root as unknown as Element).closest('form')
+        readListInput = () => ({
+          ...manager?.listInput,
+          ...Object.fromEntries(
+            bindings.map(([key, name]) => {
+              const control = form?.elements.namedItem(name)
+              return [key, control && 'value' in control ? string(control.value) : '']
+            }),
+          ),
+        })
+        const dependencyValues = () => bindings.map(([key]) => string(readListInput()[key]))
+        let previous = dependencyValues()
+        dependenciesReady.set(previous.every(Boolean))
+        const changed = () => {
+          const next = dependencyValues()
+          if (next.every((value, index) => value === previous[index])) return
+          previous = next
+          activeRequest?.abort()
+          activeRequest = null
+          resolveRequest?.abort()
+          clearTimeout(searchTimer)
+          loading.set(false)
+          error.set('')
+          query.set('')
+          open.set(false)
+          dialog.set(false)
+          rows.set([])
+          dropdownRows.set(null)
+          options.set([])
+          chosen.set([])
+          dependenciesReady.set(next.every(Boolean))
+        }
+        form?.addEventListener('change', changed, { signal: lifetime })
+        form?.addEventListener('input', changed, { signal: lifetime })
+      }
+      if (unresolved.length && manager?.resolveParam) {
+        const request = new AbortController()
+        resolveRequest = request
+        lifetime.addEventListener('abort', () => request.abort(), { once: true })
+        void Promise.all(
+          unresolved.map(async (id) => {
+            const value = await callApi(
+              manager.listFunction,
+              { ...readListInput(), [manager.resolveParam!]: id, [manager.limitParam ?? 'limit']: 1 },
+              request.signal,
+              manager.requestQuery,
+            )
+            return array<RelationRow>(value).find((row) => rowId(row) === id)
+          }),
+        )
+          .then((results) => {
+            if (disposed || request.signal.aborted) return
+            const byId = new Map(
+              results.filter((row): row is RelationRow => !!row).map((row) => [rowId(row), row]),
+            )
+            options.set(
+              options().map((option) => {
+                if (!unresolved.includes(option.value)) return option
+                const row = byId.get(option.value)
+                return {
+                  value: option.value,
+                  label: row ? rowLabel(row) : labels.noRecords,
+                  description: row ? rowDescription(row) : null,
+                }
+              }),
+            )
+          })
+          .catch(() => {
+            if (!disposed && !request.signal.aborted) error.set(labels.loadError)
+          })
+      }
       let first = true
       const stop = effect(() => {
         chosen()
@@ -704,13 +932,102 @@ export function createRelationSelectView(
           return
         }
         queueMicrotask(() => {
-          if (disposed) return
+          if (disposed || lifetime.aborted) return
           const native = [...root.querySelectorAll('[data-ui="relation-native"]')][0]
           if (native instanceof HTMLSelectElement)
             native.dispatchEvent(new Event('change', { bubbles: true }))
+          if (!multiple && !open() && !dialog()) {
+            const trigger = [...root.querySelectorAll('[data-ui="relation-trigger"]')][0]
+            if (trigger instanceof HTMLElement && !disabled())
+              restoreRelationSelectionFocus<Element>(trigger, document.activeElement, document.body, popup)
+          }
         })
       })
       lifetime.addEventListener('abort', stop)
+      // Keep the popup in its island's DOM (form, theme and focus ownership),
+      // while the browser's top layer escapes any ancestor Surface clipping.
+      let popup: HTMLElement | null = null
+      let frame = 0
+      const position = () => {
+        if (disposed || lifetime.aborted || !open() || !popup?.isConnected) return
+        const trigger = [...root.querySelectorAll('[data-ui="relation-trigger"]')][0]
+        if (!(trigger instanceof HTMLElement)) return
+        const style = getComputedStyle(popup)
+        const viewport = window.visualViewport
+        popup.style.width = `${trigger.getBoundingClientRect().width}px`
+        popup.style.maxHeight = ''
+        const box = popup.getBoundingClientRect()
+        const placement = relationMenuPlacement({
+          anchor: trigger.getBoundingClientRect(),
+          width: box.width,
+          height: box.height,
+          viewport: {
+            left: viewport?.offsetLeft ?? 0,
+            top: viewport?.offsetTop ?? 0,
+            width: viewport?.width ?? window.innerWidth,
+            height: viewport?.height ?? window.innerHeight,
+          },
+          gap: parseFloat(style.scrollMarginTop),
+          inset: parseFloat(style.scrollMarginInlineStart),
+          rtl: getComputedStyle(trigger).direction === 'rtl',
+        })
+        popup.style.left = `${placement.left}px`
+        popup.style.top = `${placement.top}px`
+        popup.style.width = `${placement.width}px`
+        popup.style.maxHeight = `${placement.maxHeight}px`
+      }
+      const schedule = () => {
+        cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(position)
+      }
+      const stopPopup = effect(() => {
+        const expanded = open()
+        filteredOptions()
+        loading()
+        error()
+        queueMicrotask(() => {
+          if (disposed || lifetime.aborted) return
+          if (!expanded) {
+            if (popup?.isConnected && popup.matches(':popover-open')) popup.hidePopover()
+            popup = null
+            return
+          }
+          const menu = [...root.querySelectorAll('[data-ui="relation-menu"]')][0]
+          if (!(menu instanceof HTMLElement) || typeof menu.showPopover !== 'function') return
+          const firstOpen = popup !== menu
+          popup = menu
+          menu.setAttribute('popover', 'manual')
+          if (!menu.matches(':popover-open')) menu.showPopover()
+          position()
+          if (firstOpen) menu.querySelector<HTMLElement>('[data-ui="relation-search"]')?.focus()
+        })
+      })
+      const cleanupPopup = () => {
+        stopPopup()
+        cancelAnimationFrame(frame)
+        if (popup?.isConnected && popup.matches(':popover-open')) popup.hidePopover()
+        popup = null
+      }
+      lifetime.addEventListener('abort', cleanupPopup, { once: true })
+      window.addEventListener('resize', schedule, { signal: lifetime })
+      window.addEventListener('scroll', schedule, { capture: true, signal: lifetime })
+      window.visualViewport?.addEventListener('resize', schedule, { signal: lifetime })
+      window.visualViewport?.addEventListener('scroll', schedule, { signal: lifetime })
+      document.addEventListener(
+        'focusout',
+        (event) => {
+          if (
+            !open() ||
+            !(root instanceof Node) ||
+            !(event.target instanceof Node) ||
+            !root.contains(event.target)
+          )
+            return
+          const next = event.relatedTarget
+          if (next instanceof Node && !root.contains(next)) open.set(false)
+        },
+        { signal: lifetime },
+      )
       // The inline dropdown isn't a <details> — nothing in the shared
       // `attachDesignSystemInteractions` outside-click delegator sees it, so it
       // closes itself the same way every other popup does. The dialog already
@@ -730,6 +1047,7 @@ export function createRelationSelectView(
       disposed = true
       clearTimeout(searchTimer)
       activeRequest?.abort()
+      resolveRequest?.abort()
     },
   }
 }

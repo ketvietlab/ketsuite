@@ -76,12 +76,16 @@ class Cdp {
   }
 }
 
-const waitFor = async (check: () => Promise<boolean>, message: string, attempts = 200): Promise<void> => {
+const waitFor = async (
+  check: () => Promise<boolean>,
+  message: string | (() => string),
+  attempts = 200,
+): Promise<void> => {
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (await check().catch(() => false)) return
     await delay(50)
   }
-  throw new Error(message)
+  throw new Error(typeof message === 'function' ? message() : message)
 }
 
 // ---------------------------------------------------------------------------
@@ -363,9 +367,13 @@ const check = (name: string, detail: Json = {}) => {
 }
 
 try {
+  // Chrome is spawned just before this wait, and a cold CI runner can take more
+  // than ten seconds to bring it up. The message is built when the wait gives up,
+  // so it carries what Chrome printed by then.
   await waitFor(
     async () => (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok,
-    `Chrome failed to start: ${diagnostics}`,
+    () => `Chrome failed to start (exit code ${String(browser.exitCode)}): ${diagnostics}`,
+    600,
   )
   const target = (await (
     await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank`, { method: 'PUT' })
@@ -493,7 +501,9 @@ try {
     'main',
   )
   assert.equal(
-    await evaluate<string>(`document.querySelector('[aria-current="page"]')?.getAttribute('href')`),
+    await evaluate<string>(
+      `document.querySelector('[data-ui="navigation-item"][aria-current="page"]')?.getAttribute('href')`,
+    ),
     '/spec?theme=light&operation=listOrders',
   )
   await page.send('Runtime.evaluate', { expression: 'history.back()' })
@@ -889,9 +899,13 @@ try {
   throw error
 } finally {
   cdp?.close()
-  const exited = new Promise((resolve) => browser.once('exit', resolve))
-  browser.kill()
-  await exited
+  // A Chrome that failed to start may have exited already, and its exit event does
+  // not fire again: waiting for it here hung the run instead of reporting the failure.
+  if (browser.exitCode === null && browser.signalCode === null) {
+    const exited = new Promise((resolve) => browser.once('exit', resolve))
+    browser.kill()
+    await exited
+  }
   app.close()
   app.closeAllConnections()
   rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })

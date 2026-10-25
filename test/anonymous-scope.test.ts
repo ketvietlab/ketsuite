@@ -5,14 +5,17 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { bootDeployment, defineDeployment, json } from '@ketvietlab/ketjs'
 import { address, company, partner } from '@ketvietlab/ketsuite'
+import { everyFunction } from './helpers/permissions.ts'
 
 test('anonymous scope: the tenant names the company a request without identity reads as', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ket-anonymous-scope-'))
   const consulted: string[] = []
   const app = defineDeployment({
     name: 'anonymousscope',
+    companies: true,
     modules: [address, partner, company],
     serve: {
+      permissions: everyFunction,
       sessions: { anonymous: { company: 'default' } },
       resolveIdentity: async ({ req }) =>
         req.headers['x-test-verified-identity'] === 'linh'

@@ -16,6 +16,15 @@ export const models: Record<string, ModelDef> = {
       defaultLocale: 'text',
       theme: 'text',
       googleTagManagerId: 'text?',
+      /**
+       * Ask visitors before tracking them. When on, Google Tag Manager waits for agreement and
+       * the site records visits (ad click ids, campaign tags, pages, contact clicks) only for
+       * visitors who agreed to the notice in force.
+       */
+      visitConsent: 'bool?',
+      visitConsentNotice: 'text?',
+      /** Raised whenever the notice wording changes, so an agreement names what was shown. */
+      visitConsentVersion: 'int?',
       tokens: 'json?',
       studioStyle: 'json?',
       styleRevision: 'text?',
@@ -396,6 +405,68 @@ export const models: Record<string, ModelDef> = {
       count: 'int',
     },
     indexes: { realm_action_key: { fields: ['realmId', 'action', 'key'], unique: true } },
+  },
+  /**
+   * One browsing session of a visitor who agreed to be tracked.
+   *
+   * It exists apart from any order: most visitors who land from an ad call or message the shop
+   * instead of checking out, so the source has to live on the visit and be linked to a customer
+   * later, when staff confirm who called. The visitor key is a random value the browser keeps;
+   * only its digest is stored, and it is what a later event must present to join this visit.
+   */
+  Visit: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      siteId: 'ref:website.Site',
+      visitorDigest: 'text',
+      consentVersion: 'int',
+      /** gclid, gbraid, wbraid, fbclid, ttclid as they arrived on the landing URL. */
+      clickIds: 'json?',
+      /** utm_source, utm_medium, utm_campaign, utm_term, utm_content. */
+      utm: 'json?',
+      landingPath: 'text',
+      referrerHost: 'text?',
+      startedAt: 'datetime',
+      lastSeenAt: 'datetime',
+      expiresAt: 'datetime',
+    },
+    indexes: {
+      site_started: { fields: ['companyId', 'siteId', 'startedAt'] },
+      visitor: { fields: ['companyId', 'visitorDigest', 'startedAt'] },
+      expiry: { fields: ['companyId', 'expiresAt'] },
+    },
+  },
+  /** What the visitor did during a visit: a page or product seen, a call or chat link pressed. */
+  VisitEvent: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      visitId: 'ref:website.Visit',
+      kind: 'text',
+      path: 'text',
+      /** What the page was about, such as `product` and the product template id. */
+      subjectType: 'text?',
+      subjectId: 'text?',
+      /** For a contact click: phone, zalo, messenger or email, and where it pointed. */
+      channel: 'text?',
+      target: 'text?',
+      occurredAt: 'datetime',
+    },
+    indexes: {
+      visit_time: { fields: ['companyId', 'visitId', 'occurredAt'] },
+      contact_time: { fields: ['companyId', 'kind', 'channel', 'occurredAt'] },
+    },
+  },
+  VisitRateLimit: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      key: 'text',
+      windowStartedAt: 'datetime',
+      count: 'int',
+    },
+    indexes: { key: { fields: ['companyId', 'key'], unique: true } },
   },
   Page: {
     // Website content belongs to a legal entity, not to a branch: two branches of

@@ -36,6 +36,15 @@ const runtimeExports = [...publicIndex.matchAll(/export\s+\{([\s\S]*?)\}\s+from\
         'OWNERS',
         'attachDesignSystemInteractions',
         'attachClientModalInteractions',
+        'attachPeekInteractions',
+        'configureMermaidLoader',
+        'clearFieldError',
+        'showFieldError',
+        'readRowAnchor',
+        'rememberRowAnchor',
+        'restoreRowAnchor',
+        'rowAnchorHref',
+        'takeRowAnchor',
         'initials',
         'withQueryState',
         'datePresetIds',
@@ -125,13 +134,23 @@ for (const path of componentCss) {
 const sourceFiles = walk(root).filter(
   (path) => /\.(?:[cm]?[jt]sx?)$/u.test(path) && !path.startsWith(join(root, 'packages/design-system')),
 )
+// tokens.css is an existing public export for component kits that share only foundations;
+// runtime exports attachDesignSystemInteractions for applications that render on the client;
+// date-picker and help/runtime are the narrow entries for Flow and hosts with their own runtime.
+const publicEntries = [
+  'catalogue',
+  'contract',
+  'date-picker',
+  'date-picker/runtime',
+  'help/runtime',
+  'runtime',
+  'styles.css',
+  'tokens.css',
+]
 const invalidDeepImports = []
 for (const path of sourceFiles) {
   for (const match of read(path).matchAll(/['"]@ketvietlab\/design-system\/([^'"]+)['"]/gu)) {
-    // tokens.css is an existing public export for component kits that share only foundations;
-    // runtime exports attachDesignSystemInteractions for applications that render on the client.
-    if (!['catalogue', 'contract', 'runtime', 'styles.css', 'tokens.css'].includes(match[1]))
-      invalidDeepImports.push(`${relative(root, path)}: ${match[0]}`)
+    if (!publicEntries.includes(match[1])) invalidDeepImports.push(`${relative(root, path)}: ${match[0]}`)
   }
 }
 assert(

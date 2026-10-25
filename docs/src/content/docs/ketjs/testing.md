@@ -262,3 +262,24 @@ That uses the deployment's configured datastore. Add `--isolated` for a temporar
 - Drain jobs explicitly; do not wait with arbitrary sleeps.
 - Assert durable state or public output, not internal process timing.
 - Close every harness even when an assertion fails.
+
+## Timing and optimistic concurrency
+
+Live PostgreSQL tests must keep cooldown assertions independent of runner speed.
+Use the test clock for the policy interval while leaving database I/O real, and
+restore the clock in `finally`. Do not extend production cooldowns to make CI pass.
+
+For revisioned commands, concurrent requests can either observe the completed
+operation or lose the revision claim. Assert the exact conflict response, retry
+after the winner completes, and verify that state and revision changed only once.
+A successful retry must not hide an unrelated validation or database failure.
+
+The CI group runner limits execution to two test files at a time. Database-heavy
+HTTP fixtures must not compete with one process per advertised CPU. To reproduce
+a promotion job locally, use an isolated PostgreSQL instance and set `CI=true`,
+`DATABASE_URL`, and `KET_TEST_PG` explicitly; outside CI the group runner omits
+files that would otherwise probe a developer's shared database.
+
+Large Flow read fixtures seed their unchanged datasets in transactions. Their
+HTTP clients request `Connection: close` so lengthy fixture work does not race
+the loopback server closing an idle keep-alive socket; requests are not replayed.

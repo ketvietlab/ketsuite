@@ -1,3 +1,4 @@
+import { WorkspacePage } from '../page-regions.tsx'
 import { cancelSchedule, publishEntry, scheduledAt, scheduleTime } from './entry-publishing.tsx'
 import { builderDialog } from './builder-dialogs.tsx'
 import { builderToolbar } from './builder-toolbar.tsx'
@@ -30,7 +31,6 @@ import {
   TextArea,
   TextField,
   Tree,
-  WorkspacePage,
 } from '@ketvietlab/design-system'
 import { CommandButton, icon } from '../ui.tsx'
 import { renderLayout, walkLayout, safeImage, galleryImages } from '../renderer.tsx'
@@ -1262,6 +1262,7 @@ export function createBuilder(ctx: StudioContext): BuilderScreen {
     },
     dispose: () => {
       drag.dispose()
+      workspace.dispose()
       if (guarding) removeEventListener('beforeunload', guard)
       if (keyboardAttached) removeEventListener('keydown', keyboard)
     },

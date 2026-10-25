@@ -4,14 +4,16 @@ import { buildMenu, compose } from '@ketvietlab/ketjs'
 import { createKetsuiteDeployment } from '../packages/ketsuite/src/deployment.ts'
 
 const deployment = createKetsuiteDeployment()
-const manifest = compose([
-  ...deployment.modules,
-  ...(deployment.theme ? [deployment.theme] : []),
-  ...(deployment.themes ?? []),
-])
+const manifest = compose(
+  [...deployment.modules, ...(deployment.theme ? [deployment.theme] : []), ...(deployment.themes ?? [])],
+  { companies: true },
+)
 
+// `admin.*` headings are the blocks of the settings page the rail's gear opens.
 const configurationGroups = new Set([
+  'admin.access',
   'admin.config',
+  'admin.crm',
   'accounting.configuration',
   'hospitality.configuration',
   'pos.configGroup',
@@ -37,17 +39,19 @@ test('KétSuite sidebar is two levels except multi-screen configuration groups',
   }
 })
 
-test('Product shows templates and attributes directly, with a two-level active trail', () => {
+test('Product shows templates, attributes and units directly, with a two-level active trail', () => {
   const tree = buildMenu(manifest, { active: '/admin/product/templates' })
   const product = tree.find((node) => node.id === 'product')!
   assert.ok(product.active)
   assert.deepEqual(
     product.children.map((node) => node.id),
-    ['product.templates', 'product.attributes'],
+    ['product.templates', 'product.attributes', 'product.uoms'],
   )
   assert.equal(product.children[0]!.path, '/admin/product/templates')
   assert.ok(product.children[0]!.active)
   assert.equal(product.children[1]!.active, false)
+  assert.equal(product.children[2]!.path, '/admin/product/uoms')
+  assert.equal(product.children[2]!.active, false)
 })
 
 test('flattened Product menus retain permission filtering and search', () => {

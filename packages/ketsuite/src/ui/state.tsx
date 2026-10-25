@@ -3,6 +3,8 @@
 // Both are components rather than markup in a screen, because "empty" and "broken"
 // are the states most often written twice and styled once.
 
+import { EmptyState } from '@ketvietlab/design-system'
+import type { EmptyVisual } from '@ketvietlab/design-system'
 import { each } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 
@@ -14,11 +16,6 @@ export const HOOKS = [
   'notice-title',
   'notice-message',
   'notice-actions',
-  'empty',
-  'empty-icon',
-  'empty-message',
-  'empty-hint',
-  'empty-actions',
   'error',
   'error-code',
   'error-message',
@@ -53,22 +50,20 @@ export const notice = (o: {
   </aside>
 )
 
+/**
+ * The backend's positional adapter over the public `EmptyState`: one frame, size and illustration
+ * wherever a screen is empty. `visual` names the reason (`start`, `search`, `done`, `locked`).
+ */
 export const emptyState = (
   message: string,
   hint: string,
-  o: { icon?: JSXChild; actions?: JSXChild } = {},
-): TemplateResult => (
-  <div data-ui="empty" role="status">
-    {o.icon !== undefined && (
-      <span data-ui="empty-icon" aria-hidden="true">
-        {o.icon}
-      </span>
-    )}
-    <p data-ui="empty-message">{message}</p>
-    <p data-ui="empty-hint">{hint}</p>
-    {o.actions !== undefined && <div data-ui="empty-actions">{o.actions}</div>}
-  </div>
-)
+  o: {
+    /** @deprecated Ignored: the public illustration replaces subject icons; pass `visual` instead. */
+    icon?: JSXChild
+    actions?: JSXChild
+    visual?: EmptyVisual
+  } = {},
+): TemplateResult => <EmptyState title={message} message={hint} actions={o.actions} visual={o.visual} />
 
 export const errorState = (code: string, message: string, hint: string): TemplateResult => (
   <div data-ui="error" role="alert">

@@ -1,5 +1,5 @@
 import { defineModule } from '@ketvietlab/ketjs'
-import { functions } from './functions.ts'
+import { functions } from './functions/index.ts'
 import { jobs } from './jobs.ts'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
@@ -31,15 +31,15 @@ export default defineModule({
   },
 })
 
-export { functions, inboundInput, inboundMutationEffects, inboundOutput } from './functions.ts'
+export { functions, inboundInput, inboundMutationEffects, inboundOutput } from './functions/index.ts'
 export { jobs } from './jobs.ts'
 export {
   attachmentIdsForEvents,
   inboundPlainText,
   receiveInbound,
   tokenDigest,
-} from './operations.ts'
-export type { AliasResolver } from './operations.ts'
+} from './inbound-service.ts'
+export type { AliasResolver } from './inbound-service.ts'
 export { routes, signedInboundRoute } from './routes.ts'
 export { INBOUND_KINDS, INBOUND_STATES } from './types.ts'
 export type {

@@ -23,7 +23,7 @@ const mods = [catalog, inventory, checkout, defaultTheme]
 type Opened = { peer: WebSocketPeer; closed: Promise<[number, string]> }
 
 async function boot(routes: Parameters<typeof createKetServer>[0]['routes']) {
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   const app = await createKetServer({ manifest, adapter, routes })
@@ -217,7 +217,7 @@ test('websocket: closing the server says going-away to every open socket', async
 })
 
 test('notify: in-process delivery waits for commit and is dropped on rollback', async () => {
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   for (const sql of renderSql(planMigration(null, schemaFromManifest(manifest)), adapter))

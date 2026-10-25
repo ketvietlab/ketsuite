@@ -33,6 +33,7 @@ const manifest = compose(modules, {
   roleTemplates: {
     'test.viewer': { version: 1, labels: { vi: 'Tra cứu', en: 'Viewer' }, bundles: ['policy_probe.view'] },
   },
+  companies: true,
 })
 
 for (const dialect of ['sqlite', 'postgres'] as const)

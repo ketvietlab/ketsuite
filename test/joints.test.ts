@@ -24,7 +24,7 @@ const filler = (name: string, template: string, extra: Record<string, unknown> =
   defineModule({ name, depends: ['screen'], fills: { 'screen:card.actions': template }, ...extra })
 
 const render = (mods: Parameters<typeof compose>[0], props: Record<string, unknown> = { app: {} }) =>
-  createJoints(compose(mods)).render('screen:card.actions', props).html
+  createJoints(compose(mods, { companies: true })).render('screen:card.actions', props).html
 
 test('fill: renders into the joint it names', () => {
   assert.equal(render([owner, filler('a', `<a href="/x">Kho</a>`)]), '<a href="/x">Kho</a>')
@@ -90,7 +90,10 @@ test('fill: required props cannot be missing or null', () => {
     depends: ['optional'],
     fills: { 'optional:slot': `[{{ note }}]` },
   })
-  assert.equal(createJoints(compose([optionalOwner, optionalFill])).render('optional:slot').html, '[]')
+  assert.equal(
+    createJoints(compose([optionalOwner, optionalFill], { companies: true })).render('optional:slot').html,
+    '[]',
+  )
 })
 
 test('fill: nested callables and non-finite numbers cannot cross as data', () => {
@@ -117,11 +120,14 @@ test('fill: a singleton joint refuses ambiguous contributors at compose time', (
   })
   assert.throws(
     () =>
-      compose([
-        singleton,
-        defineModule({ name: 'left', depends: ['single'], fills: { 'single:slot': 'left' } }),
-        defineModule({ name: 'right', depends: ['single'], fills: { 'single:slot': 'right' } }),
-      ]),
+      compose(
+        [
+          singleton,
+          defineModule({ name: 'left', depends: ['single'], fills: { 'single:slot': 'left' } }),
+          defineModule({ name: 'right', depends: ['single'], fills: { 'single:slot': 'right' } }),
+        ],
+        { companies: true },
+      ),
     /accepts one fill but 2 modules fill it/,
   )
 })
@@ -149,7 +155,7 @@ test('fill: an island can render inside a first-party screen joint', () => {
     },
     fills: { 'screen:card.actions': `{% island "panel" %}` },
   })
-  const manifest = compose([owner, extension])
+  const manifest = compose([owner, extension], { companies: true })
   const markup = createJoints(manifest, { islands: { panel: extension.islands.panel!.view } }).render(
     'screen:card.actions',
     { app: { name: 'Kho' }, secret: 'no' },
@@ -160,7 +166,7 @@ test('fill: an island can render inside a first-party screen joint', () => {
 })
 
 test('fill: unknown joints fail consistently for render() and shows()', () => {
-  const joints = createJoints(compose([owner]))
+  const joints = createJoints(compose([owner], { companies: true }))
   assert.throws(() => joints.render('screen:nope'), /no composed module publishes/)
   assert.throws(() => joints.shows('screen:nope'), /no composed module publishes/)
 })
@@ -168,17 +174,20 @@ test('fill: unknown joints fail consistently for render() and shows()', () => {
 test('fill: naming a joint nobody publishes is a build error, with a suggestion', () => {
   assert.throws(
     () =>
-      compose([
-        owner,
-        defineModule({ name: 'b', depends: ['screen'], fills: { 'screen:card.action': `x` } }),
-      ]),
+      compose(
+        [owner, defineModule({ name: 'b', depends: ['screen'], fills: { 'screen:card.action': `x` } })],
+        { companies: true },
+      ),
     /no composed module publishes/,
   )
 })
 
 test('fill: filling without depending on the owner is refused', () => {
   assert.throws(
-    () => compose([owner, defineModule({ name: 'b', fills: { 'screen:card.actions': `x` } })]),
+    () =>
+      compose([owner, defineModule({ name: 'b', fills: { 'screen:card.actions': `x` } })], {
+        companies: true,
+      }),
     /does not depend on "screen"/,
   )
 })
@@ -196,32 +205,40 @@ test('omit: removes the joint, so nothing renders there at all', () => {
 
 test('omit: shows() is how a screen knows to skip its own default too', () => {
   const j = createJoints(
-    compose([owner, defineModule({ name: 'lean', depends: ['screen'], omits: ['screen:card.actions'] })]),
+    compose([owner, defineModule({ name: 'lean', depends: ['screen'], omits: ['screen:card.actions'] })], {
+      companies: true,
+    }),
   )
   assert.equal(j.shows('screen:card.actions'), false)
-  assert.equal(createJoints(compose([owner])).shows('screen:card.actions'), true)
+  assert.equal(createJoints(compose([owner], { companies: true })).shows('screen:card.actions'), true)
 })
 
 test('omit: omitting a joint nobody publishes is a build error', () => {
   assert.throws(
-    () => compose([owner, defineModule({ name: 'b', depends: ['screen'], omits: ['screen:nope'] })]),
+    () =>
+      compose([owner, defineModule({ name: 'b', depends: ['screen'], omits: ['screen:nope'] })], {
+        companies: true,
+      }),
     /no composed module publishes/,
   )
 })
 
 test('omit: omitting without depending on the owner is refused', () => {
   assert.throws(
-    () => compose([owner, defineModule({ name: 'b', omits: ['screen:card.actions'] })]),
+    () => compose([owner, defineModule({ name: 'b', omits: ['screen:card.actions'] })], { companies: true }),
     /does not depend on "screen"/,
   )
 })
 
 test('omit: a fill that will never render is recorded rather than left to be discovered', () => {
-  const m = compose([
-    owner,
-    filler('a', `<i>x</i>`),
-    defineModule({ name: 'lean', depends: ['screen'], omits: ['screen:card.actions'] }),
-  ])
+  const m = compose(
+    [
+      owner,
+      filler('a', `<i>x</i>`),
+      defineModule({ name: 'lean', depends: ['screen'], omits: ['screen:card.actions'] }),
+    ],
+    { companies: true },
+  )
   const note = m.patches.find((p) => p.target === 'screen:card.actions')
   assert.ok(note, 'nothing recorded')
   assert.match(note!.reason, /fills from a will not render/)
@@ -230,10 +247,9 @@ test('omit: a fill that will never render is recorded rather than left to be dis
 // ── in a screen ──────────────────────────────────────────────────────────────
 
 test('screen: the fill lands verbatim between the hydration markers', () => {
-  const markup = createJoints(compose([owner, filler('a', `<a href="/x">Kho</a>`)])).render(
-    'screen:card.actions',
-    { app: {} },
-  )
+  const markup = createJoints(
+    compose([owner, filler('a', `<a href="/x">Kho</a>`)], { companies: true }),
+  ).render('screen:card.actions', { app: {} })
   const out = renderToString(html`<div data-ui="fill-actions">${markup}</div>`)
   assert.equal(out, '<div data-ui="fill-actions"><!--k[--><a href="/x">Kho</a><!--k--></div>')
 })
@@ -250,19 +266,12 @@ test('bridge: a module does not depend on the admin to expose its backend', asyn
   )
   const backend = (await import('@ketvietlab/ketsuite/backend')).default
 
-  const catalogueOnly = compose([uom, product])
+  const catalogueOnly = compose([uom, product], { companies: true })
   assert.ok(catalogueOnly.modules['product'], 'a catalogue composes with no admin at all')
 
-  const both = compose([
-    address,
-    partner,
-    company,
-    storage,
-    uom,
-    product,
-    productMedia,
-    backend,
-    productBackend,
-  ])
+  const both = compose(
+    [address, partner, company, storage, uom, product, productMedia, backend, productBackend],
+    { companies: true },
+  )
   assert.ok(both.modules['product_backend'])
 })

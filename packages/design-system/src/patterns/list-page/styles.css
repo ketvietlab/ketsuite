@@ -240,3 +240,8 @@
     padding-top: var(--kv-space-2);
   }
 }
+@layer ket.app {
+  :where([data-kv-design-system]) [data-ui="list-page"][data-dimmed="true"] > [data-ui="list-page-body"] {
+    opacity: var(--kv-opacity-pending);
+  }
+}

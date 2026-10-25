@@ -6,7 +6,7 @@
 // feeds view state before anything is submitted, and a trigger that opens a dialog
 // of the same record.
 
-import { ActionGroup, Field, ImageDropZone } from '@ketvietlab/design-system'
+import { ActionGroup, Field, FormGrid, ImageDropZone } from '@ketvietlab/design-system'
 import type { FieldOption, FieldProps } from '@ketvietlab/design-system'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { RECORD_COMMAND_FIELD } from './record-modal.tsx'
@@ -51,9 +51,10 @@ export const RecordModalForm = (props: {
       <input type="hidden" name={name} value={value} autocomplete="off" />
     ))}
     {props.fields.length ? (
-      <div data-ui="form-grid" data-columns={props.columns === 3 ? '3' : undefined}>
-        {props.fields.map((item) => Field(props.columns === 1 ? { ...item, span: 'full' } : item))}
-      </div>
+      <FormGrid
+        columns={props.columns === 3 ? 3 : 2}
+        items={props.fields.map((item) => Field(props.columns === 1 ? { ...item, span: 'full' } : item))}
+      />
     ) : null}
     {props.body}
     {props.actions?.length ? <div data-ui="form-actions">{ActionGroup({ actions: props.actions })}</div> : ''}
@@ -74,6 +75,8 @@ export const recordStateSelectControl = (props: {
   required?: boolean
   disabled?: boolean
   invalid?: boolean
+  /** The field's help and error ids (`<id>-help`, `<id>-error`), read with the choice. */
+  describedBy?: string | null
 }): TemplateResult => (
   <select
     data-ui="field-control"
@@ -83,6 +86,7 @@ export const recordStateSelectControl = (props: {
     required={props.required === true}
     disabled={props.disabled === true}
     aria-invalid={props.invalid ? 'true' : null}
+    aria-describedby={props.describedBy || null}
   >
     {props.options.map((option) => (
       <option value={option.value} selected={option.value === props.value}>
@@ -105,6 +109,23 @@ export const RecordDialogTrigger = (props: {
     {props.children}
   </span>
 )
+
+/**
+ * The address of a dialog of the open record, for a control that is a link rather
+ * than a button — a whole table row (`DataTable` `rowHref`). The runtime opens the
+ * dialog in place, with `id` as `params.id`; loaded afresh, the address opens it too.
+ */
+export const recordDialogHref = (
+  context: { href: (tab: string) => string; tab: string },
+  dialog: string,
+  id?: string | null,
+): string => {
+  const url = new URL(context.href(context.tab), 'http://ket.local')
+  url.searchParams.set('dialog', dialog)
+  if (id) url.searchParams.set('dialogId', id)
+  else url.searchParams.delete('dialogId')
+  return `${url.pathname}${url.search}`
+}
 
 /** A view-state choice that preserves the current layer's form drafts. */
 export const RecordStateTrigger = (props: {

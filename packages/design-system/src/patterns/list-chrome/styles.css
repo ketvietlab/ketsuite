@@ -29,6 +29,30 @@
     align-items: center;
   }
 
+  /* A query slot (an expanded SearchFilter, two rows tall) keeps its own width, up to the search
+     filter's own cap. Views and actions end the row level with its search bar, and move under it as
+     one group where the row runs out. */
+  :where([data-kv-design-system])
+    [data-ui="list-chrome"][data-pattern="list-chrome"]
+    [data-ui="list-chrome-row"][data-row="query"][data-query="slot"] {
+    align-items: flex-start;
+  }
+
+  :where([data-kv-design-system]) [data-ui="list-chrome"][data-pattern="list-chrome"] [data-ui="list-query"] {
+    flex: 1 1 32rem;
+    min-inline-size: min(100%, 20rem);
+    max-inline-size: 48rem;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="list-chrome"][data-pattern="list-chrome"]
+    [data-ui="list-chrome-row"][data-query="slot"]
+    > [data-ui="list-chrome-row"][data-row="tail"] {
+    /* The slot takes the free width (up to its cap); the tail keeps its own and ends the row. */
+    flex: 0 1 auto;
+    margin-inline-start: auto;
+  }
+
   :where([data-kv-design-system])
     [data-ui="list-chrome"][data-pattern="list-chrome"]
     [data-ui="list-chrome-row"][data-row="filters"] {
@@ -40,7 +64,12 @@
     [data-ui="list-chrome"][data-pattern="list-chrome"]
     [data-ui="list-filter-menus"] {
     display: flex;
-    flex: none;
+    /* A filter group moves as a unit while it fits; inside a narrow canvas each
+       control wraps intact instead of widening the page beyond its shell. */
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    min-inline-size: 0;
+    max-inline-size: 100%;
     align-items: center;
     gap: var(--kv-space-2);
   }
@@ -213,10 +242,35 @@
     gap: var(--kv-space-2);
   }
 
+  /* Keep the native select and its keyboard/picker behaviour; the sort form owns the chevron,
+     drawn as Field draws its select's, so its size, inset and colour match the other controls
+     instead of the platform's arrow sitting on the border. */
   :where([data-kv-design-system])
     [data-ui="list-chrome"][data-pattern="list-chrome"]
     [data-ui="list-sort-select"] {
-    padding: 0 var(--kv-space-2);
+    grid-column: 1;
+    grid-row: 1;
+    appearance: none;
+    padding-block: 0;
+    padding-inline: var(--kv-space-2) var(--kv-space-8);
+    text-overflow: ellipsis;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="list-chrome"][data-pattern="list-chrome"]
+    [data-ui="list-sort"]::after {
+    content: "";
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: end;
+    width: var(--kv-space-1-5);
+    height: var(--kv-space-1-5);
+    margin-inline-end: var(--kv-space-3);
+    border-right: 1px solid currentcolor;
+    border-bottom: 1px solid currentcolor;
+    color: var(--kv-text-secondary);
+    transform: translateY(-25%) rotate(45deg);
+    pointer-events: none;
   }
 
   :where([data-kv-design-system])
@@ -234,6 +288,10 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--kv-space-2);
+  }
+
+  :where([data-kv-design-system]) [data-ui="list-commands"] {
+    min-width: 0;
   }
 
   :where([data-kv-design-system]) [data-ui="bulk-actions"] {
@@ -265,6 +323,12 @@
 
   :where([data-kv-design-system]) [data-ui="bulk-actions"][data-has-selection="true"] {
     color: var(--kv-text-secondary);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="list-chrome"][data-bulk-presentation="replace"]
+    > [data-ui="bulk-actions"] {
+    min-block-size: var(--kv-control-height);
   }
 
   /* The live selected-row figure the runtime rewrites as checkboxes change. */
@@ -304,7 +368,7 @@
     justify-content: flex-end;
     min-width: 14ch;
     font-variant-numeric: tabular-nums;
-    text-align: right;
+    text-align: end;
   }
 
   :where([data-kv-design-system]) [data-ui="bulk-action-list"],
@@ -447,6 +511,15 @@
       [data-ui="list-chrome"][data-pattern="list-chrome"]
       [data-ui="list-chrome-row"][data-row="tail"] {
       flex: 1 1 100%;
+    }
+
+    /* Under a query slot too: pushed to the end, a tail of its own width stood indented on its line. */
+    :where([data-kv-design-system])
+      [data-ui="list-chrome"][data-pattern="list-chrome"]
+      [data-ui="list-chrome-row"][data-query="slot"]
+      > [data-ui="list-chrome-row"][data-row="tail"] {
+      flex: 1 1 100%;
+      margin-inline-start: 0;
     }
 
     :where([data-kv-design-system])

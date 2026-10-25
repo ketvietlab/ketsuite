@@ -62,17 +62,18 @@ const source = defineModule({
 })
 
 test('report manifest composes provenance', () => {
-  const manifest = compose([source])
+  const manifest = compose([source], { companies: true })
   assert.equal(manifest.reports['orders.order']?.by, 'orders')
   assert.equal(manifest.reports['orders.order']?.source, 'orders.getPrintData')
   assert.equal(manifest.reports['orders.order']?.target, 'orders.Order')
 })
 
 test('report declarations participate in upgrade diffs', () => {
-  const before = compose([source])
-  const after = compose([
-    defineModule({ name: 'orders', models: source.models, functions: source.functions }),
-  ])
+  const before = compose([source], { companies: true })
+  const after = compose(
+    [defineModule({ name: 'orders', models: source.models, functions: source.functions })],
+    { companies: true },
+  )
   assert.equal(
     diffManifests(before, after).find((item) => item.code === 'REPORT_REMOVED')?.severity,
     'breaking',
@@ -86,7 +87,7 @@ test('report declarations reject missing and mutating sources, and themes cannot
     reports: { bad: { title: 'Bad', target: 'missing.Row', source: 'missing.nope', template: '<report />' } },
   })
   assert.throws(
-    () => compose([missing]),
+    () => compose([missing], { companies: true }),
     (error: KetError) => error.items?.some((item) => item.code === 'E_REPORT_UNKNOWN_SOURCE') === true,
   )
   assert.throws(
@@ -149,7 +150,7 @@ test('PDF renderer embeds attachment-backed PNG images without network access', 
 
 test('report templates publish immutable versions and invalidate cache metadata', async () => {
   const modules = [source, report]
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   try {
@@ -189,12 +190,19 @@ test('report HTTP route generates synchronously and reuses the 30-day cache', as
   const storageDir = join(dir, 'storage')
   const app = defineDeployment({
     name: 'reporttest',
+    companies: true,
     modules: [source, report],
     serve: { defaults: { sqliteFile, storageDir, defaultCompany: 'acme' } },
   })
   const server = await bootDeployment(app, {
     port: 0,
-    env: { KET_LOG: 'null', KET_SQLITE: sqliteFile, KET_STORAGE_DIR: storageDir, KET_COMPANY: 'acme' },
+    env: {
+      KET_LOG: 'null',
+      KET_DEV: '1',
+      KET_SQLITE: sqliteFile,
+      KET_STORAGE_DIR: storageDir,
+      KET_COMPANY: 'acme',
+    },
     log: () => {},
   })
   try {
@@ -263,7 +271,7 @@ test('report filters print an amount and a date the way a document should', () =
  */
 async function postedInvoice(moveType: 'out_invoice' | 'in_invoice') {
   const modules = [address, partner, company, uom, product, account]
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const scope = { company: 'acme', branches: null }
   const adapter = sqliteAdapter()
   await adapter.open()

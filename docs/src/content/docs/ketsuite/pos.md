@@ -94,6 +94,11 @@ one payment, one posted accounting move, and one stock picking. A separate race 
 returns against the same sold quantity and proves that only one reservation succeeds, leaving the
 remaining returnable quantity intact.
 
+The sync-command claim test also pauses one connection after its initial missing-command read,
+then lets another connection insert the same command. Sequence and idempotency checks must return
+`command_in_flight` for that identical claim, preserving one row and one attempt. A different command
+using the occupied sequence or idempotency key must still return its explicit conflict.
+
 These checks are database-level release evidence for the upstream POS transaction boundary. They do
 not cover deployment-owned provider callbacks, offline batch ingestion, or loyalty wallets; each
 owning module must supply its own PostgreSQL concurrency evidence for those paths.

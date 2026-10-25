@@ -1,6 +1,6 @@
 import { tr, flowLocaleTag } from './i18n.mjs'
 import { html, each, signal } from '@ketvietlab/ketjs-view'
-import { FlowInput, FlowButton, FlowTag } from '@ketvietlab/flow-ui'
+import { FlowInput, FlowButton, FlowTag, FlowEmpty } from '@ketvietlab/flow-ui'
 import {
   FlowDisclosure,
   FlowHint,
@@ -18,7 +18,7 @@ import {
 } from '@ketvietlab/flow-ui/workspace'
 import { setupCatalog } from './setup-catalog.mjs'
 import { projectStatuses, projectTags, taskColumns, taskTags, validateCatalog } from './project-catalogs.mjs'
-import { canManageScope, accessFor } from './access-model.mjs'
+import { canManageScope } from './access-model.mjs'
 import { SPRINT_WEEKS, DEFAULT_CADENCE, sprintCadence, nextSprint, activeSprint } from './sprint-cadence.mjs'
 import { todayDate } from './timeline.mjs'
 
@@ -55,7 +55,9 @@ export const projectStates = [
     },
   },
 ]
-export function workspaceInheritance(data, workspaceId) {
+/** What a project inheriting this Workspace opens to, from the Workspace's grant rows as
+ * `flow.grant.list` returns them (named, Teams sized). */
+export function workspaceInheritance(data, workspaceId, grants = []) {
   const workspace = data.workspaces?.find((w) => w.id === workspaceId)
   if (!workspace) return []
   const roles = {
@@ -69,14 +71,18 @@ export function workspaceInheritance(data, workspaceId) {
     workspace.access === 'internal'
       ? [{ label: tr('flow.ui.internal.organization.members'), value: tr('flow.ui.edit.excludes.guests') }]
       : []
-  for (const grant of data.grants ?? []) {
+  for (const grant of grants) {
     if (grant.scope !== 'workspace' || grant.targetId !== workspaceId) continue
     const team = grant.subjectType === 'team'
-    const subject = (team ? data.teams : data.members)?.find((x) => x.id === grant.subjectId)
-    if (!subject || subject.status === 'revoked' || subject.role === 'guest') continue
+    if (
+      !grant.subjectTitle ||
+      ['revoked', 'archived'].includes(grant.subjectStatus) ||
+      grant.subjectRole === 'guest'
+    )
+      continue
     rows.push({
-      label: team ? `Team · ${subject.title}` : subject.name,
-      value: `${roles[grant.role] ?? grant.role}${team ? tr('flow.ui.members', [subject.memberIds.filter((id) => data.members?.some((m) => m.id === id && m.status === 'active' && m.role !== 'guest')).length]) : ''}`,
+      label: team ? `Team · ${grant.subjectTitle}` : grant.subjectTitle,
+      value: `${roles[grant.role] ?? grant.role}${team ? tr('flow.ui.members', [grant.memberCount ?? 0]) : ''}`,
     })
   }
   return rows
@@ -85,18 +91,58 @@ export function createProjectSetup(ctx) {
   let draft = null
   const revision = signal(0),
     catalogError = signal(''),
-    editingCatalog = signal('')
+    editingCatalog = signal(''),
+    // How many people the project opens to comes from the server's engine, not the people window.
+    reach = signal({ key: '', total: null }),
+    // The Workspace's grants, read when an inheriting project shows them.
+    inheritance = signal({ key: '', rows: null, total: 0 })
+  let reachTicket = 0,
+    inheritanceTicket = 0
+  const readInheritance = async (key, input) => {
+    if (inheritance.peek().key === key) return
+    const ticket = ++inheritanceTicket
+    inheritance.set({ key, rows: null, total: 0 })
+    try {
+      const page = await ctx.call('flow.grant.list', { ...input, scope: 'workspace', limit: 100 })
+      if (ticket === inheritanceTicket) inheritance.set({ key, rows: page.items, total: page.total })
+    } catch {
+      if (ticket === inheritanceTicket) inheritance.set({ key, rows: null, total: 0, failed: true })
+    }
+  }
+  const readReach = async (key, read) => {
+    if (reach.peek().key === key) return
+    const ticket = ++reachTicket
+    reach.set({ key, total: null })
+    try {
+      const total = await read()
+      if (ticket === reachTicket) reach.set({ key, total })
+    } catch {
+      if (ticket === reachTicket) reach.set({ key, total: null, failed: true })
+    }
+  }
   return {
     reset() {
       draft = null
       catalogError.set('')
       editingCatalog.set('')
+      reachTicket++
+      reach.set({ key: '', total: null })
+      inheritanceTicket++
+      inheritance.set({ key: '', rows: null, total: 0 })
     },
-    view() {
+    view({ separateActions = false, layout = 'embedded' } = {}) {
       revision()
       const data = ctx.data(),
         editing = ctx.route() === 'project-profile',
         project = editing ? data.projects.find((p) => p.id === ctx.project()) : null
+      if (editing && !project) {
+        const body = FlowEmpty({
+          title: tr('flow.project.notFound'),
+          description: tr('flow.project.notFoundHelp'),
+          action: FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close }),
+        })
+        return separateActions ? { body, footer: null } : body
+      }
       const allowed =
         data.workspaces?.filter(
           (w) => !w.archived && (w.id === project?.workspaceId || canManageScope(data, 'workspace', w.id)),
@@ -133,7 +179,9 @@ export function createProjectSetup(ctx) {
           sprintCadence: ((c) => c && { ...c })(project ? sprintCadence(project) : DEFAULT_CADENCE),
         }
       const d = draft,
-        disabled = !ctx.canWrite() || ctx.busy()
+        permitted =
+          ctx.canWrite() && (editing ? canManageScope(data, 'project', project.id) : allowed.length > 0),
+        disabled = !permitted || ctx.busy()
       const input = (id, label, extra = {}) =>
         FlowInput({
           id,
@@ -187,32 +235,52 @@ export function createProjectSetup(ctx) {
           : FlowSection({ inset: 'none', title, children: stack(...children) })
       const pair = (...children) => FlowFormGrid({ children: fragment(children) })
       const w = data.workspaces?.find((w) => w.id === d.workspaceId),
-        inherited = workspaceInheritance(data, d.workspaceId)
-      const accessCount = editing
-        ? data.members.filter((m) => accessFor(data, project, m.id).role).length
-        : new Set([
-            data.user.id,
-            d.ownerId,
-            ...d.memberIds,
-            ...data.teams.filter((t) => d.teamIds.includes(t.id)).flatMap((t) => t.memberIds),
-            ...(d.access === 'workspace'
-              ? data.members
-                  .filter(
-                    (m) =>
-                      accessFor(
-                        data,
-                        {
-                          id: 'new-project',
-                          companyId: data.company.id,
-                          workspaceId: d.workspaceId,
-                          access: 'workspace',
-                        },
-                        m.id,
-                      ).role,
-                  )
-                  .map((m) => m.id)
-              : []),
-          ]).size
+        inheritanceKey = JSON.stringify([d.workspaceId, data.organizationRevision])
+      if (ctx.call && d.workspaceId && d.access === 'workspace' && inheritance.peek().key !== inheritanceKey)
+        queueMicrotask(() =>
+          readInheritance(inheritanceKey, { companyId: data.company.id, targetId: d.workspaceId }),
+        )
+      const granted = inheritance().key === inheritanceKey ? inheritance() : { rows: null },
+        inherited = granted.rows ? workspaceInheritance(data, d.workspaceId, granted.rows) : null
+      const reachKey = JSON.stringify([
+        editing ? project.id : '',
+        d.workspaceId,
+        d.access,
+        d.ownerId,
+        d.memberIds,
+        d.teamIds,
+        data.organizationRevision,
+      ])
+      if (ctx.call && d.workspaceId && reach.peek().key !== reachKey)
+        queueMicrotask(() =>
+          readReach(reachKey, async () =>
+            editing
+              ? (
+                  await ctx.call('flow.access.list', {
+                    companyId: data.company.id,
+                    scope: 'project',
+                    targetId: project.id,
+                    limit: 1,
+                  })
+                ).total
+              : (
+                  await ctx.call('flow.access.preview', {
+                    companyId: data.company.id,
+                    change: 'project-create',
+                    workspaceId: d.workspaceId,
+                    access: d.access,
+                    ownerId: d.ownerId,
+                    memberIds: d.memberIds,
+                    teamIds: d.teamIds,
+                    limit: 1,
+                  })
+                ).total,
+          ),
+        )
+      // The count is the server's; until it arrives the hint waits, and a failed count drops
+      // it rather than guessing from the people a screen loaded.
+      const known = reach().key === reachKey ? reach() : { total: null },
+        accessCount = !ctx.call || known.failed ? null : (known.total ?? '…')
       const catalogBase = (key) =>
         key === 'projectStatuses'
           ? projectStatuses(project)
@@ -366,7 +434,15 @@ export function createProjectSetup(ctx) {
             }),
           ),
         )
-      return FlowSetupForm({
+      const formId = 'flow-project-setup'
+      const actions = FlowInline({
+        align: 'end',
+        children: html`${accessCount === null ? '' : FlowHint({ children: tr('flow.ui.people.with.initial.access', [accessCount]) })}${FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close, disabled: ctx.busy() })}${FlowButton({ label: editing ? tr('flow.ui.save.profile') : tr('flow.ui.create.project'), type: 'submit', form: formId, variant: 'primary', disabled: disabled || !w, loading: ctx.busy() })}`,
+      })
+      const body = FlowSetupForm({
+        id: formId,
+        layout,
+        feedback: layout === 'page' ? ctx.feedback?.() : null,
         onSubmit: (e) => {
           e.preventDefault()
           if (disabled) return
@@ -393,8 +469,9 @@ export function createProjectSetup(ctx) {
             editing,
           )
         },
-        actions: html`${FlowHint({ children: tr('flow.ui.people.with.initial.access', [accessCount]) })}${FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close })}${FlowButton({ label: editing ? tr('flow.ui.save.profile') : tr('flow.ui.create.project'), type: 'submit', variant: 'primary', disabled: disabled || !w, loading: ctx.busy() })}`,
+        actions: separateActions ? null : actions,
         children: html`
+        ${!permitted ? FlowNotice({ title: tr('flow.ui.view.only'), message: tr(editing ? 'flow.project.manageRequired' : 'flow.project.createRequired'), tone: 'yellow' }) : null}
         ${section(
           tr('flow.ui.project.information'),
           pair(
@@ -478,9 +555,16 @@ export function createProjectSetup(ctx) {
                     : tr(
                         'flow.ui.restricted.workspace.only.the.people.and.teams.granted.access.below.can.enter',
                       ),
-                  inherited.length
-                    ? FlowProperties({ items: inherited })
-                    : tr('flow.ui.no.members.or.teams.have.been.granted.access.to.this.workspace'),
+                  inherited === null
+                    ? granted.failed
+                      ? tr('flow.project.inheritanceUnavailable')
+                      : tr('flow.project.inheritanceLoading')
+                    : inherited.length
+                      ? FlowProperties({ items: inherited })
+                      : tr('flow.ui.no.members.or.teams.have.been.granted.access.to.this.workspace'),
+                  granted.total > (granted.rows?.length ?? 0)
+                    ? tr('flow.project.inheritanceMore', [granted.total - granted.rows.length])
+                    : null,
                   tr('flow.ui.workspace.permission.changes.apply.to.this.project'),
                 ),
               })
@@ -527,6 +611,7 @@ export function createProjectSetup(ctx) {
         ${catalogError() ? FlowHint({ tone: 'red', children: catalogError() }) : null}
       `,
       })
+      return separateActions ? { body, footer: actions } : body
     },
   }
 }

@@ -66,13 +66,25 @@ test('product catalogue: uses SearchFilter and preserves a four-field group pipe
   })
   assert.equal(page.status, 200)
   const html = await page.text()
-  assert.match(html, /data-island="backend\.search-filter"/)
+  // The tab is named after the screen, in the viewer's language.
+  assert.match(html, /<title>Sản phẩm<\/title>/)
+  // The page is the frame and the list island in its loading state; rows come from the read.
+  assert.match(html, /data-island="product\.template-list"/)
   assert.match(html, /data-ui="search-filter"/)
-  assert.match(html, /data-island="backend\.ket-table"/)
-  assert.match(html, /data-ui="kt-row" data-row="tpl"/)
-  assert.match(html, /data-col="listPrice"[^>]*>[\s\S]*?100/)
-  assert.doesNotMatch(html, /data-ui="table"/)
+  assert.doesNotMatch(html, /data-ui="kt-row" data-row="tpl"/)
   assert.doesNotMatch(html, /data-ui="chrome-search"/)
+  // With stock installed and readable, stock answers the list.
+  assert.match(html, /stock_backend\.searchProductTemplates/)
+  type Group = { href: string; open: boolean; groups?: Group[]; rows?: Array<{ id: string }> }
+  type Answer = { rows: Array<{ id: string; listPrice: string }>; groups: Group[] | null }
+  const read = async (href: string) =>
+    (await call<Answer>('stock_backend.searchProductTemplates', { href })).value
+  const first = await read('/admin/product/templates?lang=vi')
+  assert.deepEqual(
+    first.rows.map((row) => row.id),
+    ['tpl'],
+  )
+  assert.equal(Number(first.rows[0]!.listPrice), 100)
 
   const href = (
     await call<{ href: string }>('product_backend.applySearchFilter', {
@@ -87,15 +99,18 @@ test('product catalogue: uses SearchFilter and preserves a four-field group pipe
   assert.equal(grouped.searchParams.get('lang'), 'vi')
   let groupHref = href
   for (let depth = 0; depth < 4; depth++) {
-    const response = await e2e.client.get(groupHref, { headers: { accept: 'text/html' } })
-    assert.equal(response.status, 200)
-    const groupHtml = await response.text()
-    const closed = groupHtml.match(/data-ui="kt-group-toggle" href="([^"]+)" aria-expanded="false"/)
+    let level = (await read(groupHref)).groups
+    for (let up = 0; up < depth; up++) level = level?.[0]?.groups ?? null
+    const closed = level?.find((group) => !group.open)
     assert.ok(closed, `grouping level ${depth + 1} must be expandable`)
-    groupHref = closed[1]!.replaceAll('&amp;', '&')
+    groupHref = closed.href
   }
-  const leaf = await e2e.client.get(groupHref, { headers: { accept: 'text/html' } })
-  assert.match(await leaf.text(), /data-ui="kt-row" data-row="tpl"/)
+  let leaf = (await read(groupHref)).groups
+  for (let up = 0; up < 3; up++) leaf = leaf?.[0]?.groups ?? null
+  assert.deepEqual(
+    leaf?.[0]?.rows?.map((row) => row.id),
+    ['tpl'],
+  )
 
   const favorite = await call<{ id: string }>('product_backend.saveSearchFavorite', {
     name: 'Nhóm sản phẩm để kiểm thử',
@@ -132,8 +147,7 @@ test('product catalogue: uses SearchFilter and preserves a four-field group pipe
     })
   ).value.href
   assert.equal(new URL(cleared, 'http://ket.local').searchParams.has('favorite'), false)
-  const clearedPage = await e2e.client.get(cleared, { headers: { accept: 'text/html' } })
-  assert.doesNotMatch(await clearedPage.text(), /data-ui="kt-group-row"/)
+  assert.equal((await read(cleared)).groups, null)
 
   const typed = (
     await call<{ href: string }>('product_backend.applySearchFilter', {
@@ -145,7 +159,10 @@ test('product catalogue: uses SearchFilter and preserves a four-field group pipe
   ).value.href
   assert.equal(new URL(typed, 'http://ket.local').searchParams.get('q'), 'Áo thun')
 
-  await call('product_backend.deleteSearchFavorite', { id: favorite.value.id })
+  // The list sends its apply input (list key and return route) with these calls, as the browser does.
+  const fromList = { listKey: 'product.templates', returnTo: favoriteHref, id: favorite.value.id }
+  await call('product_backend.setDefaultSearchFavorite', fromList)
+  await call('product_backend.deleteSearchFavorite', fromList)
   const deletedFavorite = (
     await call<{ href: string }>('product_backend.applySearchFilter', {
       returnTo: '/admin/product/templates',
@@ -256,6 +273,26 @@ test('product-stock-e2e: UoM, variants, media and pricing cross real HTTP', asyn
   const downloadedImage = await e2e.client.get(`/files/${uploadedMedia.attachmentId}`)
   assert.equal(downloadedImage.status, 200)
   assert.equal(downloadedImage.headers.get('content-type'), 'image/png')
+  // The screens read it through the product's own route, which serves product images and nothing else.
+  const productImage = await e2e.client.get(`/admin/product/images/${uploadedMedia.attachmentId}?size=thumb`)
+  assert.equal(productImage.status, 200)
+  assert.equal(productImage.headers.get('content-type'), 'image/png')
+  assert.equal(productImage.headers.get('cache-control'), 'private, no-store')
+  await call('storage.createAttachment', {
+    id: 'not-a-product-image',
+    name: 'Contract.pdf',
+    kind: 'url',
+    url: 'https://cdn.example/contract.pdf',
+    mimetype: 'application/pdf',
+    size: 0,
+    public: false,
+    createdAt: new Date().toISOString(),
+  })
+  assert.equal((await e2e.client.get('/files/not-a-product-image', { redirect: 'manual' })).status, 302)
+  assert.equal(
+    (await e2e.client.get('/admin/product/images/not-a-product-image', { redirect: 'manual' })).status,
+    404,
+  )
 
   await call('pricing.savePricelist', { id: 'retail', name: 'Bán lẻ' })
   await call('pricing.savePricelistItem', {
@@ -461,6 +498,16 @@ test('product-stock-e2e: UoM, variants, media and pricing cross real HTTP', asyn
   // template's unit tree — so the fragment carries that constraint with it.
   assert.match(variantPartialHtml, /data-island="backend\.relation-select"/)
   assert.match(variantPartialHtml, /listInput&quot;:\{&quot;rootId&quot;:&quot;unit&quot;\}/)
+  // Without `product.cost` the form has no cost field, and saving it must not
+  // write zero over the cost it never showed.
+  const withoutCost = await e2e.client.post(
+    '/admin/product/templates/tpl/variants/p1?tab=general&lang=vi',
+    new URLSearchParams({ defaultCode: 'AO-UPDATED', weight: '0.25', volume: '0.1', uomId: 'unit' }),
+    { headers: { accept: 'text/html', 'x-ket-partial': 'product-variant' } },
+  )
+  assert.equal(withoutCost.status, 200)
+  const kept = await call<{ cost: { standardPrice: string } | null }>('product.getVariant', { id: 'p1' })
+  assert.equal(Number(kept.value.cost?.standardPrice), 61.5)
 
   const attributesPage = await e2e.client.get('/admin/product/attributes?lang=vi', {
     headers: { accept: 'text/html' },

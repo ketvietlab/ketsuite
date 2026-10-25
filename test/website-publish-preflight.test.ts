@@ -42,8 +42,8 @@ const extraTheme = defineTheme({
 
 const withExtra = [address, partner, website, extra, extraTheme]
 const withoutExtra = [address, partner, website, paperTheme]
-const full: Manifest = compose(withExtra)
-const reduced: Manifest = compose(withoutExtra)
+const full: Manifest = compose(withExtra, { companies: true })
+const reduced: Manifest = compose(withoutExtra, { companies: true })
 
 const boot = async (): Promise<Adapter> => {
   const db = sqliteAdapter()

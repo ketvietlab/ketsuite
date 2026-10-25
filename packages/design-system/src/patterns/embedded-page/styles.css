@@ -1,0 +1,36 @@
+@layer ket.app {
+  /*
+   * The main column holding an embedded page becomes one viewport-high column, so the page takes
+   * whatever the location bar leaves: that bar is taller on touch screens than the top bar token.
+   * The page is the main column's child, or its grandchild through a host content slot.
+   */
+  :where([data-kv-design-system])
+  [data-ui="app-main"]:has(> [data-ui="embedded-page"], > * > [data-ui="embedded-page"]) {
+    display: flex;
+    flex-direction: column;
+    min-block-size: 100dvh;
+  }
+
+  /* A shell top bar above the main column has the token's fixed height. */
+  :where([data-kv-design-system])
+    [data-ui="app-shell"][data-has-topbar="true"]
+    > [data-ui="app-main"]:has(> [data-ui="embedded-page"], > * > [data-ui="embedded-page"]) {
+    min-block-size: calc(100dvh - var(--kv-app-topbar-height));
+  }
+
+  /* The other page scrolls inside the frame; the suite's document does not scroll. */
+  :where([data-kv-design-system]) [data-ui="embedded-page"] {
+    display: flex;
+    flex: 1 1 auto;
+    min-block-size: 24rem;
+    background: var(--kv-page-bg);
+  }
+
+  :where([data-kv-design-system]) [data-ui="embedded-page-frame"] {
+    display: block;
+    flex: 1;
+    inline-size: 100%;
+    min-inline-size: 0;
+    border: 0;
+  }
+}

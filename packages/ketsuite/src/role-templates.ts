@@ -36,11 +36,26 @@ const role = (
   bundles,
 })
 
+// What reading the product catalogue takes where its screens are composed
+// (commerce and office; hospitality has `product` without them): the list, which
+// `stock_backend.searchProductTemplates` serves once stock is installed, the
+// images, and the record's activity, which `product_mail_backend.view` reads.
+// Following and posting to it are `product_mail_backend.operate` and stay out.
+// Purchase cost is `product.cost`,
+// held only by the roles that price, buy or audit.
+const productBackendBundles = [
+  'product_backend.view',
+  'product_mail_backend.view',
+  'product_media.view',
+  'stock_backend.view',
+]
+
 const salesRepresentativeBundles = [
   'company.view',
   'partner.view',
   'pricing.view',
   'product.view',
+  ...productBackendBundles,
   'sale.quote-operate',
   'sale.view',
   'sale_backend.view',
@@ -67,12 +82,25 @@ const companyAdministratorBundles = [
   'partner.configure',
   'partner.view',
   'product.configure',
+  'product.cost',
   'product.view',
   'uom.configure',
   'uom.view',
 ]
 
-const coreAuditorBundles = ['company.view', 'partner.view', 'product.view', 'user.sensitive', 'website.view']
+// Auditors read the catalogue, its images and its costs, but not the activity:
+// following a record is a write, and an auditor changes nothing.
+const coreAuditorBundles = [
+  'company.view',
+  'partner.view',
+  'product.cost',
+  'product.view',
+  'product_backend.view',
+  'product_media.view',
+  'stock_backend.view',
+  'user.sensitive',
+  'website.view',
+]
 
 /**
  * Everyday project work. `flow.author` is apart from `flow.operate`: writing an
@@ -95,7 +123,9 @@ export const commerceRoleTemplates = {
     'Quản trị công ty',
     'Maintain company and shared master data without identity, posting, or business approval authority.',
     'Quản lý công ty và dữ liệu danh mục dùng chung; không quản trị định danh, ghi sổ hoặc duyệt nghiệp vụ.',
-    companyAdministratorBundles,
+    [...companyAdministratorBundles, ...productBackendBundles],
+    // 3: reading the product record's activity moved to product_mail_backend.view.
+    3,
   ),
   'commerce.tenant-auditor': role(
     'Tenant Auditor',
@@ -116,6 +146,7 @@ export const commerceRoleTemplates = {
       'stock.sensitive',
       'stock.view',
     ],
+    2,
   ),
   'commerce.sales-representative': role(
     'Sales Representative',
@@ -123,13 +154,24 @@ export const commerceRoleTemplates = {
     'Create and maintain quotations without confirmation, cancellation, invoicing, or administration.',
     'Tạo và cập nhật báo giá, không có quyền xác nhận, hủy, lập hóa đơn hoặc quản trị.',
     salesRepresentativeBundles,
+    // 3: reading the product record's activity moved to product_mail_backend.view.
+    3,
   ),
   'commerce.sales-manager': role(
     'Sales Manager',
     'Quản lý kinh doanh',
     'Supervise quotation lifecycle and sales reporting without identity or accounting administration.',
     'Quản lý vòng đời báo giá và báo cáo bán hàng, không quản trị định danh hoặc kế toán.',
-    [...salesRepresentativeBundles, 'sale.cancel', 'sale.confirm', 'sale.fulfillment-sync', 'sale.report'],
+    [
+      ...salesRepresentativeBundles,
+      'product.cost',
+      'sale.cancel',
+      'sale.confirm',
+      'sale.fulfillment-sync',
+      'sale.report',
+    ],
+    // 3: reading the product record's activity moved to product_mail_backend.view.
+    3,
   ),
   'commerce.purchasing-operator': role(
     'Purchasing Operator',
@@ -139,13 +181,17 @@ export const commerceRoleTemplates = {
     [
       'company.view',
       'partner.view',
+      'product.cost',
       'product.view',
+      ...productBackendBundles,
       'purchase.operate',
       'purchase.view',
       'purchase_backend.view',
       'stock.view',
       'uom.view',
     ],
+    // 3: reading the product record's activity moved to product_mail_backend.view.
+    3,
   ),
   'commerce.purchasing-manager': role(
     'Purchasing Manager',
@@ -155,7 +201,9 @@ export const commerceRoleTemplates = {
     [
       'company.view',
       'partner.view',
+      'product.cost',
       'product.view',
+      ...productBackendBundles,
       'purchase.approve',
       'purchase.configure',
       'purchase.operate',
@@ -165,13 +213,18 @@ export const commerceRoleTemplates = {
       'purchase.report',
       'purchase.view',
     ],
+    // 3: reading the product record's activity moved to product_mail_backend.view.
+    3,
   ),
   'commerce.warehouse-operator': role(
     'Warehouse Operator',
     'Nhân viên kho',
     'Perform ordinary stock movements inside the assigned scope.',
     'Thực hiện nghiệp vụ kho thông thường trong phạm vi được giao.',
-    ['company.view', 'product.view', 'stock.operate', 'stock.view', 'stock_backend.view', 'uom.view'],
+    ['company.view', 'product.view', ...productBackendBundles, 'stock.operate', 'stock.view', 'uom.view'],
+    // 3: the product record's images and activity (productBackendBundles).
+    // 4: reading the product record's activity moved to product_mail_backend.view.
+    4,
   ),
   'commerce.warehouse-manager': role(
     'Warehouse Manager',
@@ -184,11 +237,14 @@ export const commerceRoleTemplates = {
       'stock.approve',
       'stock.configure',
       'stock.operate',
-      'stock_backend.view',
+      ...productBackendBundles,
       'uom.view',
       'stock.report',
       'stock.view',
     ],
+    // 3: the product record's images and activity (productBackendBundles).
+    // 4: reading the product record's activity moved to product_mail_backend.view.
+    4,
   ),
   'commerce.pos-cashier': role(
     'POS Cashier',
@@ -227,6 +283,7 @@ export const hospitalityRoleTemplates = {
     'Maintain company and shared master data without identity, billing post, or stay approval authority.',
     'Quản lý công ty và dữ liệu danh mục dùng chung; không quản trị định danh, ghi sổ hoặc duyệt lưu trú.',
     companyAdministratorBundles,
+    2,
   ),
   'hospitality.front-desk-operator': role(
     'Front Desk Operator',
@@ -234,6 +291,7 @@ export const hospitalityRoleTemplates = {
     'Operate reservations and stays without billing post or configuration.',
     'Vận hành đặt phòng và lưu trú, không ghi sổ thanh toán hoặc cấu hình.',
     ['hospitality_core.operate', 'hospitality_core.view', 'partner.view', 'product.view'],
+    2,
   ),
   'hospitality.reservation-agent': role(
     'Reservation Agent',
@@ -256,6 +314,7 @@ export const hospitalityRoleTemplates = {
       'partner.view',
       'product.view',
     ],
+    3,
   ),
   'hospitality.billing-operator': role(
     'Hospitality Billing Operator',
@@ -334,6 +393,7 @@ export const hospitalityRoleTemplates = {
       'hospitality_core.sensitive',
       'hospitality_core.view',
     ],
+    3,
   ),
   'hospitality.auditor': role(
     'Hospitality Auditor',
@@ -363,7 +423,9 @@ export const officeRoleTemplates = {
     'Quản trị công ty',
     'Maintain company and shared master data without identity or accounting authority.',
     'Quản lý công ty và dữ liệu danh mục dùng chung; không có quyền định danh hoặc kế toán.',
-    companyAdministratorBundles,
+    [...companyAdministratorBundles, ...productBackendBundles],
+    // 3: reading the product record's activity moved to product_mail_backend.view.
+    3,
   ),
   'office.tenant-auditor': role(
     'Tenant Auditor',
@@ -386,6 +448,7 @@ export const officeRoleTemplates = {
       'stock.sensitive',
       'stock.view',
     ],
+    2,
   ),
   'office.project-contributor': role(
     'Project Contributor',

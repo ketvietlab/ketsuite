@@ -15,4 +15,10 @@ export default defineModule({
   messages,
 })
 
-export { createQuotationForCase, quotationEffects, saleFunctionsPublic } from './sale-functions.ts'
+export {
+  createQuotationForCase,
+  QUOTATION_POLICIES,
+  quotationEffects,
+  quotationPolicyOf,
+  saleFunctionsPublic,
+} from './sale-functions.ts'

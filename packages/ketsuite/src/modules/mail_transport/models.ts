@@ -9,6 +9,7 @@ export const models: Record<string, ModelDef> = {
       fromAddress: 'text',
       fromName: 'text?',
       replyTo: 'text?',
+      publicOrigin: 'text?',
       subjectTemplate: 'text',
       textTemplate: 'text',
       htmlTemplate: 'text?',

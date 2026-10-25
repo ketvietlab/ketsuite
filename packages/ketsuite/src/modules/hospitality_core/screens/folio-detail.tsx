@@ -1,3 +1,5 @@
+import { Dialog, LinkButton, RecordForm as AdjustmentForm } from '@ketvietlab/design-system'
+import { dateKeyIn } from '../calendar.ts'
 import { FormScreenFrame } from './page-frame.tsx'
 import {
   badge,
@@ -36,13 +38,91 @@ export const folioDetailScreen = (
   chargeId: string,
   status?: string | null,
   errors: readonly string[] = [],
+  financial?: TemplateResult | null,
+  currentHref?: string,
+  correction?: { allowed: boolean; businessDate: string; draft: Record<string, string | undefined> },
 ): TemplateResult => {
   const stays = folio.stays ?? []
   const charges = folio.charges ?? []
   const activeCharges = charges.filter((charge) => charge.state === 'active')
   const staysById = new Map(stays.map((stay) => [stay.id, stay]))
+  const locked = (charge: (typeof charges)[number]) =>
+    !!correction?.businessDate &&
+    String(charge.serviceDate ?? dateKeyIn(new Date(charge.occurredAt), timezone)) < correction.businessDate
+  const voidableCharges = activeCharges.filter((charge) => !locked(charge))
+  const adjustable = activeCharges.filter((charge) => !charge.adjustsChargeId && locked(charge))
+  const adjustmentHref = (id: string) => {
+    const next = new URL(
+      currentHref ?? `/admin/hospitality/folios/${encodeURIComponent(folio.id)}`,
+      'http://local.invalid',
+    )
+    next.searchParams.delete('finance')
+    next.searchParams.set('action', 'adjust')
+    next.searchParams.set('charge', id)
+    return next.pathname + next.search
+  }
+  const current = new URL(currentHref ?? '/', 'http://local.invalid'),
+    selected = adjustable.find((charge) => charge.id === current.searchParams.get('charge'))
+  const t = (key: string) => _(`hospitality_core.folio.adjust.${key}`)
+  const adjustment =
+    correction?.allowed &&
+    folio.state === 'open' &&
+    current.searchParams.get('action') === 'adjust' &&
+    selected ? (
+      <Dialog
+        id="folio-adjustment-step"
+        title={t('title')}
+        closeHref={(() => {
+          const url = new URL(current)
+          url.searchParams.delete('action')
+          url.searchParams.delete('charge')
+          return url.pathname + url.search
+        })()}
+        closeLabel={t('back')}
+        body={
+          <AdjustmentForm
+            action={adjustmentHref(selected.id)}
+            method="post"
+            submitLabel={t('save')}
+            errors={errors}
+            hidden={{
+              operation: 'adjust-charge',
+              chargeId: selected.id,
+              expectedVersion: String(folio.version),
+              requestKey: correction.draft.requestKey ?? chargeId,
+            }}
+            fields={[
+              {
+                id: 'folio-adjustment-amount',
+                name: 'amount',
+                type: 'number',
+                label: t('amount'),
+                value: correction.draft.amount ?? '',
+                step: 'any',
+                required: true,
+                help: t('amountHint'),
+                error: correction.draft._invalid?.split(',').includes('amount') ? errors[0] : undefined,
+              },
+              {
+                id: 'folio-adjustment-reason',
+                name: 'reason',
+                type: 'textarea',
+                label: t('reason'),
+                value: correction.draft.reason ?? '',
+                required: true,
+                minLength: 3,
+                maxLength: 2000,
+                error: correction.draft._invalid?.split(',').includes('reason') ? errors[0] : undefined,
+              },
+            ]}
+          />
+        }
+      />
+    ) : null
   const guest = folio.partner?.name ?? folio.partnerId
-  const action = `/admin/hospitality/folios/${encodeURIComponent(folio.id)}?lang=${encodeURIComponent(locale)}`
+  const action =
+    currentHref ??
+    `/admin/hospitality/folios/${encodeURIComponent(folio.id)}?lang=${encodeURIComponent(locale)}`
 
   return (
     <FormScreenFrame
@@ -51,11 +131,14 @@ export const folioDetailScreen = (
       frame={frame}
       body={stack([
         folioDetailFeedback(_, status, errors),
-        <Notice
-          title={_('hospitality_core.folio.notice.operational')}
-          message={_('hospitality_core.folio.notice.operationalHint')}
-          tone="info"
-        />,
+        adjustment,
+        !financial && (
+          <Notice
+            title={_('hospitality_core.folio.notice.operational')}
+            message={_('hospitality_core.folio.notice.operationalHint')}
+            tone="info"
+          />
+        ),
         <RecordWorkspace
           kicker={_('hospitality_core.folio.detail.kicker')}
           title={folio.code}
@@ -88,6 +171,7 @@ export const folioDetailScreen = (
             icon: 'chevron-left',
           })}
           body={stack([
+            financial,
             <Section
               title={_('hospitality_core.folio.section.information')}
               description={_('hospitality_core.folio.section.informationHint')}
@@ -124,7 +208,23 @@ export const folioDetailScreen = (
               body={stack([
                 charges.length
                   ? dataTable(_, {
-                      columns: folioChargeColumns(_, locale, timezone, staysById),
+                      columns: [
+                        ...folioChargeColumns(_, locale, timezone, staysById),
+                        ...(correction?.allowed && folio.state === 'open' && adjustable.length
+                          ? [
+                              {
+                                key: 'adjust',
+                                label: t('title'),
+                                cell: (charge: (typeof charges)[number]) =>
+                                  adjustable.some((row) => row.id === charge.id) ? (
+                                    <LinkButton href={adjustmentHref(charge.id)} label={t('title')} />
+                                  ) : (
+                                    ''
+                                  ),
+                              },
+                            ]
+                          : []),
+                      ],
                       rows: charges,
                       id: (charge) => charge.id,
                     })
@@ -138,7 +238,13 @@ export const folioDetailScreen = (
                     method="post"
                     submit={_('hospitality_core.folio.action.postCharge')}
                     submitVariant="secondary"
-                    hidden={{ operation: 'post-charge', id: chargeId, lang: locale }}
+                    hidden={{
+                      operation: 'post-charge',
+                      id: chargeId,
+                      lang: locale,
+                      expectedVersion: String(folio.version ?? 0),
+                      requestKey: chargeId,
+                    }}
                     fields={[
                       {
                         name: 'stayId',
@@ -185,7 +291,7 @@ export const folioDetailScreen = (
                 ) : null,
               ])}
             />,
-            activeCharges.length && folio.state === 'open' ? (
+            voidableCharges.length && folio.state === 'open' ? (
               <Section
                 title={_('hospitality_core.folio.section.correction')}
                 description={_('hospitality_core.folio.section.correctionHint')}
@@ -195,14 +301,19 @@ export const folioDetailScreen = (
                     method="post"
                     submit={_('hospitality_core.folio.action.voidCharge')}
                     submitVariant="destructive"
-                    hidden={{ operation: 'void-charge', lang: locale }}
+                    hidden={{
+                      operation: 'void-charge',
+                      lang: locale,
+                      expectedVersion: String(folio.version ?? 0),
+                      requestKey: chargeId,
+                    }}
                     fields={[
                       {
                         name: 'chargeId',
                         label: _('hospitality_core.folio.field.charge'),
                         type: 'select',
                         required: true,
-                        options: activeCharges.map((charge) => ({
+                        options: voidableCharges.map((charge) => ({
                           value: charge.id,
                           label: `${chargeDescription(_, charge)} · ${formatMoney(_, charge.amount)}`,
                         })),

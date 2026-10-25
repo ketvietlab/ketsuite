@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { compose } from '@ketvietlab/ketjs'
 import { address, paperTheme, partner, website, websiteSearch } from '@ketvietlab/ketsuite'
 
-const manifest = compose([address, partner, website, websiteSearch, paperTheme])
+const manifest = compose([address, partner, website, websiteSearch, paperTheme], { companies: true })
 const client = readFileSync('packages/ketsuite/src/modules/website_search/client/search.mjs', 'utf8')
 
 test('search box: the form points at no path of its own', () => {

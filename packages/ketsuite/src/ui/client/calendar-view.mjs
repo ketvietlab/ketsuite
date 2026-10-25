@@ -221,7 +221,7 @@ export function createCalendarView(runtime, props, seed = {}) {
       </header>
       <form data-ui="calendar-create" on:submit=${create}>
         <h3 data-ui="calendar-create-title">${labels.create}</h3>
-        <label data-ui="calendar-field">${labels.name}<input data-ui="form-control" name="name" autocomplete="off" required maxlength="500" disabled=${busy()}></label>
+        <label data-ui="calendar-field" data-span="full">${labels.name}<input data-ui="form-control" name="name" autocomplete="off" required maxlength="500" disabled=${busy()}></label>
         <label data-ui="calendar-field">${labels.start}<input data-ui="form-control" type="datetime-local" name="start" autocomplete="off" required disabled=${busy()}></label>
         <label data-ui="calendar-field">${labels.stop}<input data-ui="form-control" type="datetime-local" name="stop" autocomplete="off" required disabled=${busy()}></label>
         <label data-ui="calendar-field">${labels.location}<input data-ui="form-control" name="location" autocomplete="off" disabled=${busy()}></label>

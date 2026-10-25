@@ -1,5 +1,5 @@
+import { RecordPage, WorkspacePage } from '../page-regions.tsx'
 import {
-  RecordPage,
   DataTable,
   Surface,
   Stack,
@@ -66,14 +66,7 @@ const visitorFrame = (ctx: StudioContext, title: string, body: JSXChild) => {
           <span class="website-visitor-brand">{site.name}</span>
         )}
       </header>
-      <main class="website-visitor-main">
-        <header class="website-visitor-title">
-          <div>
-            <h1>{title}</h1>
-          </div>
-        </header>
-        {body}
-      </main>
+      <WorkspacePage title={title} body={body} />
     </div>
   )
 }

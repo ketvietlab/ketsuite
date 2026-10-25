@@ -5,6 +5,7 @@ import type { Tone } from '../../primitives/status/index.tsx'
 import { EmptyState, Notice } from '../../primitives/feedback/index.tsx'
 import { FormattedDate, FormattedMoney, FormattedNumber } from '../../record/formatted-values/index.tsx'
 import { selectionRange } from './selection.ts'
+import { Skeleton } from '../skeleton/index.tsx'
 import { BULK_CLEAR_COMMAND } from '../../patterns/list-chrome/index.tsx'
 
 export const HOOKS = [
@@ -12,6 +13,8 @@ export const HOOKS = [
   'kt-scroll',
   'kt-selection-target',
   'kt-grid',
+  'kt-colgroup',
+  'kt-placeholder',
   'kt-select-col',
   'kt-select-all',
   'kt-col',
@@ -142,6 +145,8 @@ export type KetTableLabels = {
 
 export type KetTableConfig = {
   columns: KetTableColumn[]
+  /** Fixed columns use narrow/medium/wide weights of 1/2/3, independent of row content. */
+  layout?: 'auto' | 'fixed'
   /** First page, server-rendered — ignored once `groupBy` is non-empty. */
   rows: KetTableRow[]
   total: number
@@ -174,13 +179,32 @@ export type KetTableExtensions = Record<
  */
 export type KetTableServerProps<Row> = {
   columns: Array<Omit<KetTableColumn, 'format' | 'sortable'> & { cell: (row: Row) => JSXChild }>
+  /** Keep column geometry stable across sorting, paging, grouping and loading. */
+  layout?: 'auto' | 'fixed'
   rows: readonly Row[]
   id: (row: Row) => string
+  /** What the row's checkbox calls it; without it, the leading column's plain value, then the id. */
+  rowName?: (row: Row) => string
   rowHref?: (row: Row) => string
   rowLink?: boolean
+  /**
+   * An outline, as a financial statement has: the row's depth (0 at the top). The first
+   * cell's content indents one step per level; every row keeps the same columns.
+   */
+  rowLevel?: (row: Row) => number | null
+  /** A row that heads the rows below it (`group`) or adds them up (`total`) reads stronger. */
+  rowEmphasis?: (row: Row) => KetTableRowEmphasis | null
+  /** The id of the row the reader came back to from its record page (see `rowAnchorHref`). */
+  currentRow?: string | null
+  /** A delayed collection refresh dims retained rows; the collection owns its announcement. */
+  busy?: boolean
+  /** Initial read: non-interactive placeholders with the table's column/selection geometry. */
+  loading?: { rows: number; lines?: Readonly<Record<string, 1 | 2>> }
   caption?: string | null
   tools?: JSXChild
   responsive?: 'scroll' | 'stack'
+  /** Collection-owned viewport budget. The table owns scrolling and sticky headings. */
+  maxBlockSize?: string | null
   gutter?: 'compact'
   selection?: KetTableSelection
   groups?: readonly (Omit<KetTableGroup, 'rows' | 'children' | 'href'> & {
@@ -188,13 +212,29 @@ export type KetTableServerProps<Row> = {
     rows?: readonly Row[]
     children?: KetTableServerProps<Row>['groups']
   })[]
+  /** Client composition only: keep page-local selection outside a render-pure table. */
+  selectionState?: {
+    ids: readonly string[]
+    anchor?: string | null
+    onChange: (ids: string[], anchor: string | null) => void
+  }
   sort?: KetTableSort | null
   labels: KetTableLabels
 }
 
+export type KetTableRowEmphasis = 'group' | 'total'
+
 type ServerRendering = {
+  rowName?: (row: KetTableRow) => string
+  maxBlockSize?: string | null
   rowHref?: (row: KetTableRow) => string
   rowLink?: boolean
+  rowLevel?: (row: KetTableRow) => number | null
+  rowEmphasis?: (row: KetTableRow) => KetTableRowEmphasis | null
+  currentRow?: string | null
+  busy?: boolean
+  loading?: boolean
+  selectionState?: KetTableServerProps<unknown>['selectionState']
   caption?: string | null
   tools?: JSXChild
   responsive?: 'scroll' | 'stack'
@@ -212,23 +252,41 @@ export const KetTable = <Row,>(props: KetTableServerProps<Row>): TemplateResult 
   const extensions: KetTableExtensions = Object.fromEntries(
     props.columns.map((column) => [
       column.key,
-      (_value: unknown, row: KetTableRow) => <>{column.cell(row.source as Row)}</>,
+      (_value: unknown, row: KetTableRow) =>
+        props.loading ? (
+          <span data-ui="kt-placeholder" data-lines={String(props.loading.lines?.[column.key] ?? 1)}>
+            <Skeleton
+              label={props.labels.loading}
+              lines={props.loading.lines?.[column.key] ?? 1}
+              decorative
+            />
+          </span>
+        ) : (
+          <>{column.cell(row.source as Row)}</>
+        ),
     ]),
   )
   return createKetTableView(
     {
       id: 'server-collection',
       config: {
+        layout: props.layout,
         columns: props.columns.map(({ cell: _cell, ...column }) => ({
           ...column,
+          sortHref: props.loading ? undefined : column.sortHref,
           sortable: false,
           format: { kind: 'custom', field: 'source', renderer: column.key },
         })),
-        rows: props.rows.map(wrap),
+        rows: props.loading
+          ? Array.from(
+              { length: Math.max(1, Math.min(100, Math.trunc(props.loading.rows) || 1)) },
+              (_, index) => ({ id: `loading-${index}` }),
+            )
+          : props.rows.map(wrap),
         total: props.rows.length,
         idField: 'id',
-        groupBy: props.groups?.length ? ['server'] : [],
-        groups: props.groups ? groups(props.groups) : undefined,
+        groupBy: !props.loading && props.groups?.length ? ['server'] : [],
+        groups: !props.loading && props.groups ? groups(props.groups) : undefined,
         selection: props.selection,
         sort: props.sort,
         pager: false,
@@ -237,11 +295,20 @@ export const KetTable = <Row,>(props: KetTableServerProps<Row>): TemplateResult 
     },
     extensions,
     {
-      rowHref: props.rowHref ? (row) => props.rowHref!(row.source as Row) : undefined,
+      rowName: !props.loading && props.rowName ? (row) => props.rowName!(row.source as Row) : undefined,
+      rowHref: !props.loading && props.rowHref ? (row) => props.rowHref!(row.source as Row) : undefined,
       rowLink: props.rowLink,
+      rowLevel: !props.loading && props.rowLevel ? (row) => props.rowLevel!(row.source as Row) : undefined,
+      rowEmphasis:
+        !props.loading && props.rowEmphasis ? (row) => props.rowEmphasis!(row.source as Row) : undefined,
+      currentRow: props.currentRow,
+      busy: props.busy,
+      loading: Boolean(props.loading),
+      selectionState: props.selectionState,
       caption: props.caption,
       tools: props.tools,
       responsive: props.responsive,
+      maxBlockSize: props.maxBlockSize,
       gutter: props.gutter,
     },
   ).view() as TemplateResult
@@ -332,10 +399,22 @@ export function createKetTableView(
     return current ? { sortField: current.field, sortDirection: current.direction } : {}
   }
   const idOf = (row: KetTableRow): string => string(row[config.idField])
-  const isSelected = (row: KetTableRow): boolean => selectedIds().has(idOf(row))
+  const selected = (): ReadonlySet<string> =>
+    server?.selectionState ? new Set(server.selectionState.ids) : selectedIds()
+  const setSelected = (ids: Set<string>, anchor: string | null): void => {
+    if (server?.selectionState) server.selectionState.onChange([...ids], anchor)
+    else selectedIds.set(ids)
+  }
+  const isSelected = (row: KetTableRow): boolean => selected().has(idOf(row))
   // A row is announced by its leading cell (the name the reader sees), falling back to its id.
   const rowNameOf = (row: KetTableRow): string => {
-    const lead = config.columns[0] ? row[config.columns[0].key] : undefined
+    const named = server?.rowName?.(row)
+    if (named?.trim()) return named
+    const key = config.columns[0]?.key
+    // A server-rendered row carries its record in `source`; name it by the same leading field.
+    const source =
+      row.source && typeof row.source === 'object' ? (row.source as Record<string, unknown>) : undefined
+    const lead = key ? (row[key] ?? source?.[key]) : undefined
     return typeof lead === 'string' && lead.trim()
       ? lead
       : typeof lead === 'number'
@@ -344,7 +423,7 @@ export function createKetTableView(
   }
 
   // The row a Shift-click extends from: the last row the reader toggled.
-  let selectionAnchor: string | null = null
+  let selectionAnchor: string | null = server?.selectionState?.anchor ?? null
 
   /**
    * Toggle one row, or with `extend` every visible row from the anchor to it.
@@ -353,14 +432,14 @@ export function createKetTableView(
    */
   const toggleSelect = (row: KetTableRow, extend = false): void => {
     const id = idOf(row)
-    const next = new Set(selectedIds())
+    const next = new Set(selected())
     const select = !next.has(id)
     for (const key of selectionRange(visibleRows().map(idOf), selectionAnchor, id, extend)) {
       if (select) next.add(key)
       else next.delete(key)
     }
     selectionAnchor = id
-    selectedIds.set(next)
+    setSelected(next, id)
   }
 
   const visibleRows = (): KetTableRow[] => (isGrouped() ? flattenVisibleRows(groups(), []) : rows())
@@ -378,13 +457,13 @@ export function createKetTableView(
 
   const toggleSelectAllVisible = (): void => {
     const visible = visibleRows().map(idOf)
-    const allSelected = visible.every((id) => selectedIds().has(id))
-    const next = new Set(selectedIds())
+    const allSelected = visible.every((id) => selected().has(id))
+    const next = new Set(selected())
     for (const id of visible) {
       if (allSelected) next.delete(id)
       else next.add(id)
     }
-    selectedIds.set(next)
+    setSelected(next, null)
   }
 
   const fetchFlat = async (): Promise<void> => {
@@ -570,12 +649,29 @@ export function createKetTableView(
     }
   }
 
+  const isCurrent = (row: KetTableRow): boolean =>
+    server?.currentRow != null && server.currentRow === idOf(row)
+
+  // An outline level beyond a few steps would push the subject out of its column.
+  const levelOf = (row: KetTableRow): number => {
+    const level = Math.trunc(Number(server?.rowLevel?.(row) ?? 0))
+    return Number.isFinite(level) ? Math.min(Math.max(level, 0), 4) : 0
+  }
+  const emphasisOf = (row: KetTableRow): KetTableRowEmphasis | null => {
+    const emphasis = server?.rowEmphasis?.(row)
+    return emphasis === 'group' || emphasis === 'total' ? emphasis : null
+  }
+
   const tableRow = (row: KetTableRow): TemplateResult => (
     <tr
       data-ui="kt-row"
       data-row={idOf(row)}
       data-selected={isSelected(row) ? 'true' : null}
+      data-current={isCurrent(row) ? 'true' : null}
       data-row-href={server?.rowHref?.(row)}
+      data-level={levelOf(row) ? String(levelOf(row)) : null}
+      data-emphasis={emphasisOf(row)}
+      style={levelOf(row) ? `--kt-row-level: ${levelOf(row)}` : undefined}
       tabindex={server?.rowHref && server.rowLink === false ? 0 : null}
     >
       {config.selection ? (
@@ -589,6 +685,7 @@ export function createKetTableView(
           >
             <input
               data-ui="kt-row-select"
+              disabled={server?.loading}
               type="checkbox"
               autocomplete="off"
               name={server ? `${config.selection.fieldName ?? 'selected'}.${idOf(row)}` : undefined}
@@ -616,7 +713,12 @@ export function createKetTableView(
             data-label={server?.responsive === 'stack' ? column.label : null}
           >
             {index === 0 && (config.rowHrefTemplate || (server?.rowHref && server.rowLink !== false)) ? (
-              <a data-ui="kt-row-link" data-primary="true" href={server?.rowHref?.(row) ?? rowHrefFor(row)}>
+              <a
+                data-ui="kt-row-link"
+                data-primary="true"
+                href={server?.rowHref?.(row) ?? rowHrefFor(row)}
+                aria-current={isCurrent(row) ? 'true' : null}
+              >
                 {renderCell(row, column.format)}
               </a>
             ) : (
@@ -719,6 +821,7 @@ export function createKetTableView(
         data-kind={column.kind ?? column.format.kind}
         data-priority={column.priority ?? 'secondary'}
         data-width={column.width ?? null}
+        data-sortable={column.sortHref || (column.sortable && !isGrouped()) ? 'true' : null}
         aria-sort={direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : null}
         scope="col"
       >
@@ -818,14 +921,34 @@ export function createKetTableView(
       </div>
     ) : null
 
+  const fixedColumns = config.layout === 'fixed'
+  const columnWeight = (column: KetTableColumn): number =>
+    column.width === 'wide' ? 3 : column.width === 'narrow' ? 1 : 2
+  const columnUnits = Math.max(
+    1,
+    columns.reduce((total, column) => total + columnWeight(column), 0),
+  )
+  const selectionRem = config.selection ? 2.5 : 0
+
   return {
     view: () => (
       <div
         data-ui="ket-table"
         data-server={server ? 'true' : null}
         data-responsive={server?.responsive}
+        data-has-sort={
+          columns.some((column) => column.sortHref || (column.sortable && !isGrouped())) ? 'true' : null
+        }
         data-gutter={server?.gutter}
-        data-busy={loading() ? 'true' : null}
+        data-layout={fixedColumns ? 'fixed' : null}
+        style={
+          fixedColumns
+            ? `--kt-column-units: ${columnUnits}; --kt-selection-width: ${selectionRem}rem`
+            : undefined
+        }
+        data-busy={loading() || server?.busy ? 'true' : null}
+        aria-busy={server?.loading || server?.busy ? 'true' : null}
+        data-loading={server?.loading ? 'true' : null}
       >
         {server?.tools !== undefined && <div data-ui="kt-tools">{server.tools}</div>}
         {error() ? (
@@ -844,9 +967,28 @@ export function createKetTableView(
         {(isGrouped() ? groups().length === 0 : rows().length === 0) ? (
           <EmptyState title={labels.empty} message={labels.emptyHint} />
         ) : (
-          <div data-ui="kt-scroll" tabindex="0" role="region" aria-label={labels.region ?? 'Results'}>
+          <div
+            data-ui="kt-scroll"
+            data-bounded={server?.maxBlockSize ? 'true' : null}
+            style={server?.maxBlockSize ? `max-block-size: ${server.maxBlockSize}` : undefined}
+            tabindex="0"
+            role="region"
+            aria-label={labels.region ?? 'Results'}
+          >
             <table data-ui="kt-grid">
               {server?.caption && <caption data-ui="kt-caption">{server.caption}</caption>}
+              {fixedColumns ? (
+                <colgroup data-ui="kt-colgroup">
+                  {config.selection ? <col data-ui="kt-select-col" /> : null}
+                  {columns.map((column) => {
+                    // Plain percentages: table layout treats a width that mixes a percentage with
+                    // a length as auto, which shares the width equally. The browser fits these
+                    // shares beside the fixed selection column.
+                    const share = (columnWeight(column) / columnUnits) * 100
+                    return <col data-col={column.key} style={`width: ${share}%`} />
+                  })}
+                </colgroup>
+              ) : null}
               <thead>
                 <tr>
                   {config.selection ? (
@@ -854,6 +996,8 @@ export function createKetTableView(
                       <label data-ui="kt-selection-target">
                         <input
                           data-ui="kt-select-all"
+                          form={server ? config.selection?.formId : undefined}
+                          disabled={server?.loading}
                           type="checkbox"
                           autocomplete="off"
                           checked={allVisibleSelected()}

@@ -335,6 +335,15 @@ const sameClaim = (row: Row, args: Row): boolean =>
 
 const claimOutput = (command: Row, replayed: boolean) => ({ ok: true, replayed, command })
 
+// Another connection may insert this command between the first lookup and the
+// uniqueness checks. Only the same command and claim can reuse that result.
+const occupiedClaim = (row: Row, args: Row, reason: string) => {
+  if (String(row.commandId) !== String(args.commandId) || !sameClaim(row, args)) return { ok: false, reason }
+  return row.state === 'processing'
+    ? { ok: false, reason: 'command_in_flight', retryable: true }
+    : claimOutput(row, true)
+}
+
 export const syncFunctions: Record<string, FnSpec> = {
   claimSyncCommand: defineFn({
     input: {
@@ -389,7 +398,7 @@ export const syncFunctions: Record<string, FnSpec> = {
           sequence: args.sequence,
         })
       )[0]
-      if (occupiedSequence) return { ok: false, reason: 'sequence_conflict' }
+      if (occupiedSequence) return occupiedClaim(occupiedSequence, args, 'sequence_conflict')
       const occupiedKey = (
         await ctx.db.select('pos_channel.SyncCommand', {
           deviceId: args.deviceId,
@@ -397,7 +406,7 @@ export const syncFunctions: Record<string, FnSpec> = {
           idempotencyKey: args.idempotencyKey,
         })
       )[0]
-      if (occupiedKey) return { ok: false, reason: 'idempotency_conflict' }
+      if (occupiedKey) return occupiedClaim(occupiedKey, args, 'idempotency_conflict')
 
       const leaseToken = randomUUID()
       const row = {

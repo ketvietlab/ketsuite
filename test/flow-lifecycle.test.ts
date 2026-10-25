@@ -13,12 +13,14 @@ import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { address, company, mail, partner, storage, user } from '@ketvietlab/ketsuite'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import { emptyIssueListState } from '../packages/ketsuite/src/modules/flow/search.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const app = defineDeployment({
   name: 'flow_lifecycle',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, flow],
   headless: true,
-  serve: { sessions: { anonymous: { company: 'acme' } } },
+  serve: { permissions: everyFunction, sessions: { anonymous: { company: 'acme' } } },
 })
 
 const boot = async () => {

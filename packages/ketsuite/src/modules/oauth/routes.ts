@@ -11,6 +11,7 @@ import {
 
 type Req = Parameters<Route>[1]
 type Provider = {
+  protocol: string
   id: string
   code: string
   name: string
@@ -51,6 +52,7 @@ type Verdict = {
   branches?: string[]
   defaultBranchId?: string | null
   securityVersion?: number
+  created?: boolean
   linked?: boolean
   errors?: ErrorRow[]
 }
@@ -129,7 +131,8 @@ const start =
       url,
       req,
     )) as Provider | null
-    if (!provider) return errorResponse(url, req, 'oauth.error.providerUnavailable')
+    if (!provider || provider.protocol !== 'oidc')
+      return errorResponse(url, req, 'oauth.error.providerUnavailable')
     const sessions = await ctx.sessionsOf(url, req)
     if (!sessions) return text('this deployment has not turned sessions on', { status: 501 })
     const mode = url.searchParams.get('mode') === 'link' ? 'link' : 'login'
@@ -160,7 +163,11 @@ const start =
         nonce: begun.nonce,
         codeVerifier: begun.codeVerifier,
       })
-      return redirect(location, flowCookie(provider, begun.state))
+      const authorize = new URL(location)
+      // OIDC registration extension: never forward arbitrary caller-supplied prompts.
+      if (mode === 'login' && url.searchParams.get('prompt') === 'create')
+        authorize.searchParams.set('prompt', 'create')
+      return redirect(authorize.href, flowCookie(provider, begun.state))
     } catch (error) {
       const code = error instanceof OauthProtocolError ? error.code : 'oauth.error.providerUnavailable'
       await recordFailure(ctx, url, req, provider.code, code)
@@ -178,7 +185,8 @@ const callback =
       url,
       req,
     )) as Provider | null
-    if (!provider) return errorResponse(url, req, 'oauth.error.providerUnavailable')
+    if (!provider || provider.protocol !== 'oidc')
+      return errorResponse(url, req, 'oauth.error.providerUnavailable')
     const state = url.searchParams.get('state') ?? ''
     const heldCookie = decodedCookie(parseCookies(req.headers.cookie as string | undefined)[FLOW_COOKIE])
     if (!state || !sameSecret(heldCookie, `${provider.code}.${state}`)) {
@@ -266,7 +274,9 @@ const callback =
         branch: verdict.defaultBranchId ?? null,
         securityVersion: verdict.securityVersion ?? 0,
       })
-      return redirect(safeReturnTo(claimed.returnTo ?? null), cookie)
+      const destination = new URL(safeReturnTo(claimed.returnTo ?? null), url.origin)
+      if (verdict.created) destination.searchParams.set('account_created', '1')
+      return redirect(destination.pathname + destination.search + destination.hash, cookie)
     } catch (error) {
       const reason = error instanceof OauthProtocolError ? error.code : 'oauth.error.loginFailed'
       await recordFailure(ctx, url, req, provider.code, reason)

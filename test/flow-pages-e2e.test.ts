@@ -10,12 +10,14 @@ import { sweepLive } from '../packages/ketsuite/src/modules/livedoc/sync.ts'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import livedoc from '../packages/ketsuite/src/modules/livedoc/index.ts'
 import flowBackend from '../packages/ketsuite/src/modules/flow_backend/index.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const app = defineDeployment({
   name: 'flow_pages_e2e',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, backend, livedoc, flow, flowBackend],
   headless: true,
-  serve: { sessions: { anonymous: { company: 'acme' } } },
+  serve: { permissions: everyFunction, sessions: { anonymous: { company: 'acme' } } },
 })
 
 type Client = Awaited<ReturnType<typeof createTestDeployment>>

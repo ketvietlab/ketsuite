@@ -124,7 +124,7 @@
       "category category category category category category tracking tracking tracking tracking tracking tracking"
       "description description description description description description description description description description description description"
       "default-code default-code default-code default-code default-code default-code barcode barcode barcode barcode barcode barcode"
-      "brand brand brand brand brand brand tax tax tax tax tax tax"
+      "brand brand brand brand brand brand brand brand brand brand brand brand"
       "origin origin origin origin origin origin origin origin origin origin origin origin";
     gap: var(--space-3, 12px) var(--space-4, 16px);
   }
@@ -191,11 +191,6 @@
     [data-scope="product-detail"]
     [data-ui="form-field"]:has([name="brandId"]) {
     grid-area: brand;
-  }
-  [data-ui="record-workspace"]:has(#product-detail-form)
-    [data-scope="product-detail"]
-    [data-ui="form-field"]:has([name="taxId"]) {
-    grid-area: tax;
   }
   [data-ui="record-workspace"]:has(#product-detail-form)
     [data-scope="product-detail"]
@@ -855,7 +850,7 @@
         "tracking tracking"
         "description description"
         "default-code barcode"
-        "brand tax"
+        "brand brand"
         "origin origin";
     }
   }

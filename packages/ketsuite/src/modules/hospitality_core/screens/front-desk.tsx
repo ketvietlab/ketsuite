@@ -1,3 +1,5 @@
+import { ActivityTimeline } from '@ketvietlab/design-system'
+import { hospitalityScopedHref } from './scoped-href.ts'
 import {
   badge,
   CardGrid,
@@ -6,6 +8,7 @@ import {
   dateTime,
   emptyState,
   formatDateTime,
+  formatMoney,
   type Frame,
   guestName,
   inline,
@@ -23,7 +26,52 @@ import {
   zonedMidnight,
 } from './shared.tsx'
 
+type DeskQueue = { rows: StayRow[]; total: number; guests: number; page: number; pages: number }
+export type FrontDeskData = {
+  attention?: {
+    reservationId: string
+    time: string
+    roomCode: string
+    roomStatus: string
+    task: { id: string; state: string; dueAt: string | null; assigneeName: string | null } | null
+  } | null
+  activity?: {
+    total: number
+    rows: Array<{
+      id: string
+      action: string
+      occurredAt: string
+      actorName: string | null
+      code: string | null
+    }>
+  }
+  billingSummary?: { owing: number; unknown: number }
+  summary?: {
+    departureTotal: number
+    departed: number
+    ready: number
+    blocked: number
+    unassigned: number
+    totalRooms: number
+    cleanVacant: number
+    tonightRooms: number
+    occupancyPercent: number
+  }
+  propertyName?: string | null
+  currency?: string | null
+  configured: boolean
+  propertyId: string | null
+  timezone: string
+  day: string
+  arrivals: DeskQueue
+  departures: DeskQueue
+  overdue: DeskQueue
+  inHouse: DeskQueue
+}
 export type FrontDeskToday = {
+  controls?: TemplateResult
+  queues?: FrontDeskData
+  source?: string
   /** The calendar day the screen is showing, as YYYY-MM-DD. */
   day: string
   /** Booked for today and not yet in the room. */
@@ -43,6 +91,10 @@ export type FrontDeskToday = {
  * is the same mistake the sidebar made before it separated the two.
  */
 export type FrontDeskPermissions = {
+  walkIn?: boolean
+  create?: boolean
+  housekeeping?: boolean
+  billing?: boolean
   checkIn: boolean
   checkOut: boolean
 }
@@ -67,6 +119,36 @@ const headcount = (rows: StayRow[]): number =>
  * `?date=`, so "today" can be a Tuesday in August, and nothing on the page
  * said so. The day heads the day's counts.
  */
+// One literal key per action the handover reads (`functions/front-desk-activity.ts`), so every label is
+// checked in both languages and an action the desk does not know never shows a raw key.
+const eventLabel = (_: Translator, action: string): string => {
+  switch (action) {
+    case 'createReservation':
+      return _('hospitality_core.screen.frontDesk.event.createReservation')
+    case 'planArrival':
+      return _('hospitality_core.screen.frontDesk.event.planArrival')
+    case 'holdRoom':
+      return _('hospitality_core.screen.frontDesk.event.holdRoom')
+    case 'releaseRoom':
+      return _('hospitality_core.screen.frontDesk.event.releaseRoom')
+    case 'checkIn':
+      return _('hospitality_core.screen.frontDesk.event.checkIn')
+    case 'checkOut':
+      return _('hospitality_core.screen.frontDesk.event.checkOut')
+    case 'moveRoom':
+      return _('hospitality_core.screen.frontDesk.event.moveRoom')
+    case 'room-block':
+      return _('hospitality_core.screen.frontDesk.event.room-block')
+    case 'room-reopen':
+      return _('hospitality_core.screen.frontDesk.event.room-reopen')
+    case 'room-inspect':
+      return _('hospitality_core.screen.frontDesk.event.room-inspect')
+    case 'room-cleaned':
+      return _('hospitality_core.screen.frontDesk.event.room-cleaned')
+    default:
+      return _('hospitality_core.screen.frontDesk.event.other')
+  }
+}
 const dayLabel = (day: string, locale: string, timezone: string): string =>
   formatDateTime(locale, zonedMidnight(day, timezone), {
     timeZone: timezone,
@@ -81,18 +163,32 @@ const dayLabel = (day: string, locale: string, timezone: string): string =>
  * so that is where a row sends the clerk; a stay with no reservation behind it
  * can still be opened on its own.
  */
-const workHref = (row: StayRow, locale: string): string =>
-  row.reservationId
-    ? `/admin/hospitality/reservations/${encodeURIComponent(row.reservationId)}?lang=${encodeURIComponent(locale)}`
-    : `/admin/hospitality/stays/${encodeURIComponent(row.id)}?lang=${encodeURIComponent(locale)}`
+const workHref = (row: StayRow, locale: string, source?: string): string => {
+  const path = row.reservationId
+    ? `/admin/hospitality/reservations/${encodeURIComponent(row.reservationId)}`
+    : `/admin/hospitality/stays/${encodeURIComponent(row.id)}`
+  if (!source) return `${path}?lang=${encodeURIComponent(locale)}`
+  const current = new URL(source),
+    target = new URL(path, current)
+  target.searchParams.set('lang', locale)
+  target.searchParams.set('returnTo', current.pathname + current.search)
+  return hospitalityScopedHref(current, target.pathname + target.search)
+}
 
-const codeColumn = (_: Translator, locale: string): Column<StayRow> => ({
+const arrivalHref = (row: StayRow, locale: string, source?: string): string => {
+  const target = new URL(workHref(row, locale, source), 'http://hospitality.local')
+  if (row.reservationId)
+    target.searchParams.set('dialog', row.arrivalIssue === 'unassigned' ? 'hold' : 'checkIn')
+  return target.pathname + target.search
+}
+
+const codeColumn = (_: Translator, locale: string, source?: string): Column<StayRow> => ({
   key: 'code',
   label: _('hospitality_core.col.code'),
   cell: (row) =>
     linkButton({
       label: row.code,
-      href: `/admin/hospitality/stays/${encodeURIComponent(row.id)}?lang=${encodeURIComponent(locale)}`,
+      href: workHref(row, locale, source),
       variant: 'tertiary',
       size: 'compact',
     }),
@@ -118,10 +214,7 @@ const arrivalRoomColumn = (_: Translator): Column<StayRow> => ({
   cell: (row) => {
     const held = heldRoom(row)
     if (held) return held
-    return inline([
-      row.roomType?.name ?? '—',
-      badge(_('hospitality_core.screen.frontDesk.unassigned'), 'warning', 'unassigned'),
-    ])
+    return row.roomType?.name ?? '—'
   },
 })
 
@@ -131,10 +224,11 @@ const roomColumn = (_: Translator): Column<StayRow> => ({
   cell: (row) => row.currentRoom?.name ?? row.currentRoom?.code ?? '—',
 })
 
-const actionColumn = (_: Translator, label: string, locale: string): Column<StayRow> => ({
+const actionColumn = (_: Translator, label: string, locale: string, source?: string): Column<StayRow> => ({
   key: 'action',
   label: _('hospitality_core.col.action'),
-  cell: (row) => linkButton({ label, href: workHref(row, locale), variant: 'secondary', size: 'compact' }),
+  cell: (row) =>
+    linkButton({ label, href: workHref(row, locale, source), variant: 'secondary', size: 'compact' }),
   align: 'end',
 })
 
@@ -143,19 +237,55 @@ const arrivalColumns = (
   locale: string,
   timezone: string,
   permitted: boolean,
+  source?: string,
 ): Array<Column<StayRow>> => [
-  codeColumn(_, locale),
+  codeColumn(_, locale, source),
   guestColumn(_),
   arrivalRoomColumn(_),
+  {
+    key: 'arrivalIssue',
+    label: _('hospitality_core.col.status'),
+    cell: (row) =>
+      row.arrivalIssue
+        ? badge(_(`hospitality_core.screen.frontDesk.${row.arrivalIssue}`), 'warning', row.arrivalIssue)
+        : '—',
+  },
   {
     // Not `col.checkIn`: that reads "Nhận phòng", the same words as the button
     // beside it, and the two mean different things — an hour and a job to do.
     key: 'checkIn',
     label: _('hospitality_core.col.arrivalTime'),
-    cell: (row) => dateTime(row.checkIn, locale, timezone),
+    cell: (row) =>
+      stack([
+        row.expectedArrivalTime ?? dateTime(row.checkIn, locale, timezone),
+        row.earlyArrivalRequested
+          ? badge(_('hospitality_core.reservation.arrivalPlan.early'), 'warning')
+          : null,
+      ]),
     kind: 'date',
   },
-  ...(permitted ? [actionColumn(_, _('hospitality_core.reservation.action.checkIn'), locale)] : []),
+  ...(permitted
+    ? [
+        {
+          key: 'action',
+          label: _('hospitality_core.col.action'),
+          cell: (row: StayRow) =>
+            linkButton({
+              label: _(
+                row.arrivalIssue === 'unassigned'
+                  ? 'hospitality_core.reservation.action.holdRoom'
+                  : row.arrivalIssue === 'guarantee'
+                    ? 'hospitality_core.screen.frontDesk.guaranteeCheckIn'
+                    : 'hospitality_core.reservation.action.checkIn',
+              ),
+              href: arrivalHref(row, locale, source),
+              variant: 'secondary',
+              size: 'compact',
+            }),
+          align: 'end' as const,
+        },
+      ]
+    : []),
 ]
 
 const departureColumns = (
@@ -163,17 +293,35 @@ const departureColumns = (
   locale: string,
   timezone: string,
   permitted: boolean,
+  source?: string,
+  billing = false,
+  currency?: string | null,
 ): Array<Column<StayRow>> => [
-  codeColumn(_, locale),
+  codeColumn(_, locale, source),
   guestColumn(_),
   roomColumn(_),
+  ...(billing
+    ? [
+        {
+          key: 'balance',
+          label: _('hospitality_core.screen.frontDesk.balance'),
+          cell: (row: StayRow) =>
+            row.balance == null
+              ? _('hospitality_core.screen.frontDesk.balanceUnknown')
+              : currency
+                ? formatMoney(_, row.balance, currency)
+                : _('hospitality_core.screen.frontDesk.balanceUnknown'),
+          kind: 'currency' as const,
+        },
+      ]
+    : []),
   {
     key: 'checkOut',
     label: _('hospitality_core.col.departureTime'),
     cell: (row) => dateTime(row.checkOut, locale, timezone),
     kind: 'date',
   },
-  ...(permitted ? [actionColumn(_, _('hospitality_core.reservation.action.checkOut'), locale)] : []),
+  ...(permitted ? [actionColumn(_, _('hospitality_core.reservation.action.checkOut'), locale, source)] : []),
 ]
 
 /**
@@ -195,8 +343,39 @@ export const frontDeskScreen = (
   frame: Frame,
   configured = true,
 ): TemplateResult => {
-  const nothingToday =
-    !today.arrivals.length && !today.departures.length && !today.overdue.length && !today.inHouse.length
+  const count = (key: 'arrivals' | 'departures' | 'overdue' | 'inHouse') =>
+    today.queues?.[key].total ?? today[key].length
+  const guests = (key: 'arrivals' | 'departures' | 'inHouse') =>
+    today.queues?.[key].guests ?? headcount(today[key])
+  const nothingToday = !count('arrivals') && !count('departures') && !count('overdue') && !count('inHouse')
+  const pager = (key: 'arrivals' | 'departures' | 'overdue') => {
+    const queue = today.queues?.[key]
+    if (!queue || queue.pages < 2 || !today.source) return null
+    const href = (page: number) => {
+      const next = new URL(today.source!)
+      next.searchParams.set(`${key}Page`, String(page))
+      return next.pathname + next.search
+    }
+    return inline([
+      queue.page > 1
+        ? linkButton({
+            label: _('hospitality_core.collection.previous'),
+            href: href(queue.page - 1),
+            variant: 'tertiary',
+            size: 'compact',
+          })
+        : null,
+      `${queue.page} / ${queue.pages}`,
+      queue.page < queue.pages
+        ? linkButton({
+            label: _('hospitality_core.collection.next'),
+            href: href(queue.page + 1),
+            variant: 'tertiary',
+            size: 'compact',
+          })
+        : null,
+    ])
+  }
 
   return (
     <WorkspaceScreen
@@ -204,9 +383,28 @@ export const frontDeskScreen = (
       title={_('hospitality_core.screen.frontDesk.title')}
       frame={frame}
       body={stack([
-        // Three counts of movement and one of trouble, headed by the day they
-        // count. Each says how many people that is, because a shift plans around
-        // guests rather than rows.
+        today.controls ?? null,
+        may.create && configured && today.queues?.propertyId && today.source
+          ? inline([
+              linkButton({
+                label: _('hospitality_core.deskBooking.title'),
+                href: hospitalityScopedHref(
+                  new URL(today.source),
+                  `/admin/hospitality/reservations/new?propertyId=${encodeURIComponent(today.queues.propertyId)}`,
+                ),
+              }),
+              may.checkIn && may.walkIn
+                ? linkButton({
+                    label: _('hospitality_core.deskBooking.walkInTitle'),
+                    href: hospitalityScopedHref(
+                      new URL(today.source),
+                      `/admin/hospitality/reservations/new?walkIn=1&propertyId=${encodeURIComponent(today.queues.propertyId)}`,
+                    ),
+                  })
+                : null,
+            ])
+          : null,
+        // Whole-queue movement and room-readiness totals, independent of pagination.
         <Section
           title={dayLabel(today.day, locale, timezone)}
           body={
@@ -215,39 +413,81 @@ export const frontDeskScreen = (
                 {
                   id: 'arrivals',
                   label: _('hospitality_core.metric.arrivals'),
-                  value: today.arrivals.length,
-                  detail: _('hospitality_core.screen.frontDesk.guestCount', {
-                    count: headcount(today.arrivals),
-                  }),
+                  value: count('arrivals'),
+                  detail: today.queues?.summary
+                    ? _('hospitality_core.screen.frontDesk.arrivalReadiness', today.queues.summary)
+                    : _('hospitality_core.screen.frontDesk.guestCount', { count: guests('arrivals') }),
                   tone: 'neutral' as const,
                 },
                 {
                   id: 'departures',
                   label: _('hospitality_core.metric.departures'),
-                  value: today.departures.length,
-                  detail: _('hospitality_core.screen.frontDesk.guestCount', {
-                    count: headcount(today.departures),
-                  }),
-                  tone: 'neutral' as const,
+                  value: today.queues?.summary?.departureTotal ?? count('departures'),
+                  detail: today.queues?.summary
+                    ? [
+                        _('hospitality_core.screen.frontDesk.departedCount', {
+                          count: today.queues.summary.departed,
+                        }),
+                        today.queues.billingSummary
+                          ? _('hospitality_core.screen.frontDesk.owingCount', {
+                              count: today.queues.billingSummary.owing,
+                            })
+                          : null,
+                        today.queues.billingSummary?.unknown
+                          ? _('hospitality_core.screen.frontDesk.unknownBalances', {
+                              count: today.queues.billingSummary.unknown,
+                            })
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                    : _('hospitality_core.screen.frontDesk.guestCount', { count: guests('departures') }),
+                  tone:
+                    today.queues?.billingSummary &&
+                    (today.queues.billingSummary.owing || today.queues.billingSummary.unknown)
+                      ? ('warning' as const)
+                      : ('neutral' as const),
                 },
                 {
                   id: 'in-house',
                   label: _('hospitality_core.metric.inHouse'),
-                  value: today.inHouse.length,
-                  detail: _('hospitality_core.screen.frontDesk.guestCount', {
-                    count: headcount(today.inHouse),
-                  }),
+                  value: count('inHouse'),
+                  detail: today.queues?.summary
+                    ? _('hospitality_core.screen.frontDesk.occupancy', {
+                        percent: today.queues.summary.occupancyPercent,
+                      })
+                    : _('hospitality_core.screen.frontDesk.guestCount', { count: guests('inHouse') }),
                   tone: 'neutral' as const,
                 },
-                {
-                  id: 'overdue',
-                  label: _('hospitality_core.metric.overdue'),
-                  value: today.overdue.length,
-                  detail: today.overdue.length
-                    ? _('hospitality_core.screen.frontDesk.overdueDetail')
-                    : _('hospitality_core.screen.frontDesk.overdueClear'),
-                  tone: today.overdue.length ? ('danger' as const) : ('positive' as const),
-                },
+                ...(today.queues?.summary
+                  ? [
+                      {
+                        id: 'clean-vacant',
+                        label: _('hospitality_core.screen.frontDesk.cleanVacant'),
+                        value: today.queues.summary.cleanVacant,
+                        detail: _('hospitality_core.screen.frontDesk.unassignedCount', {
+                          count: today.queues.summary.unassigned,
+                        }),
+                        tone:
+                          today.queues.summary.cleanVacant < today.queues.summary.unassigned
+                            ? ('danger' as const)
+                            : ('neutral' as const),
+                      },
+                    ]
+                  : []),
+                ...(today.queues?.summary
+                  ? []
+                  : [
+                      {
+                        id: 'overdue',
+                        label: _('hospitality_core.metric.overdue'),
+                        value: count('overdue'),
+                        detail: today.overdue.length
+                          ? _('hospitality_core.screen.frontDesk.overdueDetail')
+                          : _('hospitality_core.screen.frontDesk.overdueClear'),
+                        tone: today.overdue.length ? ('danger' as const) : ('positive' as const),
+                      },
+                    ]),
               ]}
               id={(item) => item.id}
               card={(item) => (
@@ -261,18 +501,61 @@ export const frontDeskScreen = (
         today.overdue.length ? (
           <Notice
             title={_('hospitality_core.screen.frontDesk.overdue')}
-            message={_('hospitality_core.screen.frontDesk.overdueHint', { count: today.overdue.length })}
+            message={_('hospitality_core.screen.frontDesk.overdueHint', { count: count('overdue') })}
             tone="warning"
           />
         ) : null,
         today.overdue.length
           ? dataTable(_, {
-              columns: departureColumns(_, locale, timezone, may.checkOut),
+              columns: departureColumns(
+                _,
+                locale,
+                timezone,
+                may.checkOut,
+                today.source,
+                may.billing,
+                today.queues?.currency,
+              ),
               rows: today.overdue,
               id: (row) => row.id,
               responsive: 'stack',
             })
           : null,
+        pager('overdue'),
+        today.queues?.attention ? (
+          <Notice
+            tone="warning"
+            title={_('hospitality_core.screen.frontDesk.earlyAttention', {
+              room: today.queues.attention.roomCode,
+              time: today.queues.attention.time,
+            })}
+            message={
+              today.queues.attention.task
+                ? _('hospitality_core.screen.frontDesk.earlyTask', {
+                    state: _(`hospitality_core.cleaningState.${today.queues.attention.task.state}`),
+                    staff:
+                      today.queues.attention.task.assigneeName ??
+                      _('hospitality_core.screen.frontDesk.unassignedStaff'),
+                  })
+                : _('hospitality_core.screen.frontDesk.earlyNoTask')
+            }
+            actions={
+              may.housekeeping && today.queues.attention.task
+                ? linkButton({
+                    label: _('hospitality_core.screen.frontDesk.openTask'),
+                    href: hospitalityScopedHref(
+                      new URL(
+                        today.source ?? 'http://localhost/admin/hospitality/front-desk',
+                        'http://localhost',
+                      ),
+                      `/admin/hospitality/housekeeping/tasks/${encodeURIComponent(today.queues.attention.task.id)}`,
+                    ),
+                    variant: 'secondary',
+                  })
+                : undefined
+            }
+          />
+        ) : null,
         nothingToday
           ? configured
             ? emptyState(
@@ -296,7 +579,7 @@ export const frontDeskScreen = (
             body={
               today.arrivals.length
                 ? dataTable(_, {
-                    columns: arrivalColumns(_, locale, timezone, may.checkIn),
+                    columns: arrivalColumns(_, locale, timezone, may.checkIn, today.source),
                     rows: today.arrivals,
                     id: (row) => row.id,
                     responsive: 'stack',
@@ -308,13 +591,22 @@ export const frontDeskScreen = (
             }
           />
         ),
+        pager('arrivals'),
         nothingToday ? null : (
           <Section
             title={_('hospitality_core.screen.frontDesk.departures')}
             body={
               today.departures.length
                 ? dataTable(_, {
-                    columns: departureColumns(_, locale, timezone, may.checkOut),
+                    columns: departureColumns(
+                      _,
+                      locale,
+                      timezone,
+                      may.checkOut,
+                      today.source,
+                      may.billing,
+                      today.queues?.currency,
+                    ),
                     rows: today.departures,
                     id: (row) => row.id,
                     responsive: 'stack',
@@ -326,6 +618,38 @@ export const frontDeskScreen = (
             }
           />
         ),
+        pager('departures'),
+        today.queues?.activity ? (
+          <Section
+            title={_('hospitality_core.screen.frontDesk.handover')}
+            body={stack([
+              <Notice
+                title={_('hospitality_core.screen.frontDesk.activityCount', {
+                  shown: today.queues.activity.rows.length,
+                  total: today.queues.activity.total,
+                })}
+                message={_('hospitality_core.screen.frontDesk.activityHint')}
+              />,
+              <ActivityTimeline
+                label={_('hospitality_core.screen.frontDesk.handover')}
+                emptyTitle={_('hospitality_core.screen.frontDesk.activityEmpty')}
+                emptyMessage={_('hospitality_core.screen.frontDesk.activityEmptyHint')}
+                items={today.queues.activity.rows.map((event) => ({
+                  id: event.id,
+                  actor: event.actorName ?? _('hospitality_core.screen.frontDesk.systemActor'),
+                  action: eventLabel(_, String(event.action)),
+                  detail: event.code ?? undefined,
+                  datetime: event.occurredAt,
+                  timeLabel: formatDateTime(locale, new Date(event.occurredAt), {
+                    timeZone: timezone,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }),
+                }))}
+              />,
+            ])}
+          />
+        ) : null,
       ])}
     />
   )

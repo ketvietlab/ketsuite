@@ -1,6 +1,6 @@
+import { RecordPage } from '../page-regions.tsx'
 import { signal } from '@ketvietlab/ketjs-view'
 import {
-  RecordPage,
   Surface,
   Stack,
   Grid,

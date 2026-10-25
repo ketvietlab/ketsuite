@@ -1,8 +1,51 @@
-import { defineFn, deleteFrom, eq } from '@ketvietlab/ketjs'
+import { defineFn } from '@ketvietlab/ketjs'
 import type { FnSpec, Row } from '@ketvietlab/ketjs'
-import { invalid, issue, n, normalized, stageKinds } from '../operations.ts'
+import { invalid, issue, n, normalized, seedCompanyRow, seededId, stageKinds } from '../operations.ts'
+import { defaultLostReasons, LOST_REASON_CODES } from '../reporting.ts'
 import { ASSIGNMENT_MODES, CASE_KINDS, SCORE_RULE_OPERATORS, TERMINAL_STATES } from '../types.ts'
 import { command, optionRows, saveConfiguration } from './shared.ts'
+import { importNameKey } from '../import-contract.ts'
+import { importTransaction, lockImportCompany } from '../import-policy.ts'
+
+/** A form value that was filled in: an empty field keeps what the row had. */
+const given = (value: unknown) => value != null && String(value).trim() !== ''
+/** A field a form may empty: sent empty, it clears; left out, the row keeps what it had. */
+const cleared = (args: Record<string, unknown>, existing: Row | undefined, key: string) =>
+  Object.hasOwn(args, key) ? (given(args[key]) ? args[key] : null) : (existing?.[key] ?? null)
+const stageTerminal = (args: Record<string, unknown>, existing: Row | undefined): string =>
+  TERMINAL_STATES.includes(args.terminalState as never)
+    ? String(args.terminalState)
+    : String(existing?.terminalState ?? 'open')
+
+const saveTag: NonNullable<FnSpec['handler']> = (ctx, args) =>
+  importTransaction(ctx, async (ctx) => {
+    await lockImportCompany(ctx)
+    const name = String(args.name ?? '').trim()
+    if (!name || name.length > 80) return invalid(issue('name', 'crm.error.required'))
+    const existing = (await ctx.db.select('crm.Tag', { id: args.id, companyId: ctx.scope.company }))[0]
+    const clash = (await ctx.db.select('crm.Tag', { companyId: ctx.scope.company })).find(
+      (row) => row.id !== args.id && importNameKey(row.name) === importNameKey(name),
+    )
+    if (clash) return invalid(issue('name', 'crm.error.duplicateName'))
+    const values = {
+      name,
+      color: args.color ? String(args.color) : (existing?.color ?? null),
+      active: args.active ?? existing?.active ?? true,
+    }
+    if (existing) await ctx.db.update('crm.Tag', { id: args.id }, values)
+    else await ctx.db.insert('crm.Tag', { id: args.id, ...values })
+    return { ok: true, id: args.id }
+  })
+
+const archiveTag: NonNullable<FnSpec['handler']> = (ctx, args) =>
+  importTransaction(ctx, async (ctx) => {
+    await lockImportCompany(ctx)
+    const existing = (await ctx.db.select('crm.Tag', { id: args.id, companyId: ctx.scope.company }))[0]
+    if (!existing) return invalid(issue('id', 'crm.error.notFound'))
+    await ctx.db.update('crm.Tag', { id: args.id }, { active: false })
+    // Archive hides the choice for future tagging; historical classification stays intact.
+    return { ok: true, id: args.id }
+  })
 
 export const configurationFunctions: Record<string, FnSpec> = {
   /**
@@ -57,40 +100,79 @@ export const configurationFunctions: Record<string, FnSpec> = {
   'tag.save': defineFn({
     input: { id: 'id', name: 'text', color: 'text?', active: 'bool?' },
     output: { ok: 'bool', id: 'id?', errors: 'json?' },
-    effects: ['read:crm.Tag', 'write:crm.Tag'],
+    effects: ['read:crm.Tag', 'write:crm.Tag', 'read:crm.ImportControl', 'write:crm.ImportControl'],
     idempotent: true,
     agent: true,
+    handler: saveTag,
+  }),
+
+  /**
+   * A loss reason as the company names it. Internal: the sales command route checks `crm.stage.save`, the
+   * configuration right, first. A company that has saved none reads the standard five; its first save writes
+   * them all, so the list loses none.
+   */
+  'lostReason.save': defineFn({
+    input: { values: 'json', lang: 'text?', idempotencyKey: 'text' },
+    output: { ok: 'bool', id: 'id?', version: 'int?', errors: 'json?' },
+    effects: ['read:crm.LostReason', 'write:crm.LostReason'],
+    exposure: 'internal',
+    idempotent: true,
     handler: async (ctx, args) => {
-      const name = String(args.name ?? '').trim()
+      const error = command(ctx, args.idempotencyKey)
+      if (error) return error
+      const values = (args.values && typeof args.values === 'object' ? args.values : {}) as Record<
+        string,
+        unknown
+      >
+      const name = String(values.name ?? '').trim()
       if (!name) return invalid(issue('name', 'crm.error.required'))
-      const existing = (await ctx.db.select('crm.Tag', { id: args.id }))[0]
-      const clash = (await ctx.db.select('crm.Tag', { name })).find((row) => row.id !== args.id)
-      if (clash) return invalid(issue('name', 'crm.error.duplicateName'))
-      const values = {
-        name,
-        color: args.color ? String(args.color) : (existing?.color ?? null),
-        active: args.active ?? existing?.active ?? true,
-      }
-      if (existing) await ctx.db.update('crm.Tag', { id: args.id }, values)
-      else await ctx.db.insert('crm.Tag', { id: args.id, ...values })
-      return { ok: true, id: args.id }
+      const asked = String(values.id ?? '').trim()
+      if (!asked) return invalid(issue('id', 'crm.error.required'))
+      return ctx.tx(async (tx) => {
+        if (!(await tx.db.select('crm.LostReason')).length)
+          for (const reason of defaultLostReasons(args.lang === 'en' ? 'en' : 'vi'))
+            await seedCompanyRow(tx, 'crm.LostReason', reason)
+        const id = (await seededId(tx, 'crm.LostReason', asked)) ?? asked
+        const existing = (await tx.db.select('crm.LostReason', { id }))[0]
+        const expected = values.expectedVersion == null ? null : n(values.expectedVersion)
+        if (existing && expected != null && n(existing.version) !== expected)
+          return invalid(issue('version', 'crm.error.stageConflict', { current: n(existing.version) }))
+        if ((await tx.db.select('crm.LostReason', { name })).some((row) => row.id !== id))
+          return invalid(issue('name', 'crm.error.duplicateName'))
+        const version = n(existing?.version) + 1
+        const row = {
+          name,
+          // A new reason reports as "other" unless it names its bucket; a standard one keeps its own.
+          code:
+            existing?.code ?? (LOST_REASON_CODES.includes(values.code as never) ? String(values.code) : null),
+          requiresNote: values.requiresNote ?? existing?.requiresNote ?? false,
+          sequence: n(values.sequence ?? existing?.sequence ?? 10),
+          active: values.active ?? existing?.active ?? true,
+          version,
+        }
+        if (existing?.version != null) {
+          const changed = await tx.db.compareAndSet(
+            'crm.LostReason',
+            { id },
+            { version: n(existing.version) },
+            row,
+          )
+          if (!('dryRun' in changed) && !changed.matched)
+            return invalid(issue('version', 'crm.error.stageConflict', { current: n(existing.version) }))
+        } else if (existing) await tx.db.update('crm.LostReason', { id }, row)
+        else await tx.db.insert('crm.LostReason', { id, ...row })
+        return { ok: true, id, version }
+      })
     },
   }),
 
   'tag.archive': defineFn({
     input: { id: 'id' },
     output: { ok: 'bool', id: 'id?', errors: 'json?' },
-    effects: ['read:crm.Tag', 'write:crm.Tag', 'read:crm.CaseTag', 'write:crm.CaseTag'],
+    effects: ['read:crm.Tag', 'write:crm.Tag', 'read:crm.ImportControl', 'write:crm.ImportControl'],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const existing = (await ctx.db.select('crm.Tag', { id: args.id }))[0]
-      if (!existing) return invalid(issue('id', 'crm.error.notFound'))
-      await ctx.db.update('crm.Tag', { id: args.id }, { active: false })
-      const CT = ctx.table('crm.CaseTag')
-      await ctx.db.del(deleteFrom(CT).where(eq(CT.tagId, args.id)))
-      return { ok: true, id: args.id }
-    },
+    handler: archiveTag,
   }),
 
   'team.member.list': defineFn({
@@ -183,7 +265,7 @@ export const configurationFunctions: Record<string, FnSpec> = {
       code: String(args.code ?? existing?.code ?? args.id).trim(),
       name: String(args.name ?? '').trim(),
       active: args.active ?? existing?.active ?? true,
-      leaderUserId: args.leaderUserId ?? existing?.leaderUserId ?? null,
+      leaderUserId: cleared(args, existing, 'leaderUserId'),
       assignmentMode: ASSIGNMENT_MODES.includes(args.assignmentMode as never)
         ? args.assignmentMode
         : (existing?.assignmentMode ?? 'manual'),
@@ -247,21 +329,32 @@ export const configurationFunctions: Record<string, FnSpec> = {
 
   'stage.save': saveConfiguration(
     'crm.Stage',
-    (args, existing) => ({
-      code: String(args.code ?? existing?.code ?? args.id).trim(),
-      name: String(args.name ?? '').trim(),
-      sequence: n(args.sequence ?? existing?.sequence ?? 10),
-      allowedKinds: Array.isArray(args.allowedKinds)
-        ? args.allowedKinds.map(String).filter((kind) => CASE_KINDS.includes(kind as never))
-        : (existing?.allowedKinds ?? ['lead', 'opportunity']),
-      terminalState: TERMINAL_STATES.includes(args.terminalState as never)
-        ? args.terminalState
-        : (existing?.terminalState ?? 'open'),
-      teamId: args.teamId ?? existing?.teamId ?? null,
-      fold: args.fold ?? existing?.fold ?? false,
-      active: args.active ?? existing?.active ?? true,
-    }),
-    async (ctx, args) => {
+    (args, existing) => {
+      const terminalState = stageTerminal(args, existing)
+      return {
+        code: String(args.code ?? existing?.code ?? args.id).trim(),
+        name: String(args.name ?? '').trim(),
+        sequence: n(args.sequence ?? existing?.sequence ?? 10),
+        allowedKinds: Array.isArray(args.allowedKinds)
+          ? args.allowedKinds.map(String).filter((kind) => CASE_KINDS.includes(kind as never))
+          : (existing?.allowedKinds ?? ['lead', 'opportunity']),
+        terminalState,
+        teamId: cleared(args, existing, 'teamId'),
+        fold: args.fold ?? existing?.fold ?? false,
+        active: args.active ?? existing?.active ?? true,
+        // A won stage is certain and a lost one hopeless; an open one keeps what it was given, or nothing.
+        probability:
+          terminalState === 'won'
+            ? '100'
+            : terminalState === 'lost'
+              ? '0'
+              : given(args.probability)
+                ? String(args.probability)
+                : (existing?.probability ?? null),
+        staleDays: given(args.staleDays) ? n(args.staleDays) : (existing?.staleDays ?? null),
+      }
+    },
+    async (ctx, args, existing) => {
       if (!String(args.name ?? '').trim()) return invalid(issue('name', 'crm.error.required'))
       const code = String(args.code ?? '').trim()
       if (!code) return invalid(issue('code', 'crm.error.required'))
@@ -271,9 +364,33 @@ export const configurationFunctions: Record<string, FnSpec> = {
         return invalid(issue('allowedKinds', 'crm.error.required'))
       if (args.teamId && !(await ctx.db.select('crm.Team', { id: args.teamId, active: true }))[0])
         return invalid(issue('teamId', 'crm.error.notFound'))
+      const probability = Number(args.probability)
+      if (given(args.probability) && !(probability >= 0 && probability <= 100))
+        return invalid(issue('probability', 'crm.error.outOfRange'))
+      const stale = Number(args.staleDays)
+      if (given(args.staleDays) && !(Number.isInteger(stale) && stale >= 0 && stale <= 365))
+        return invalid(issue('staleDays', 'crm.error.outOfRange'))
+      // The records in a stage must still fit it: move them before the stage stops taking their kind, team or state.
+      if (existing) {
+        const kinds = args.allowedKinds.map(String)
+        const team = cleared(args, existing, 'teamId')
+        const terminal = stageTerminal(args, existing)
+        const active = args.active ?? existing.active ?? true
+        const held = await ctx.db.select('crm.Case', { stageId: args.id, active: true })
+        if (
+          held.some(
+            (row) =>
+              !active ||
+              !kinds.includes(String(row.kind)) ||
+              (team && String(row.teamId ?? '') !== String(team)) ||
+              String(row.terminalState) !== terminal,
+          )
+        )
+          return invalid(issue('active', 'crm.error.stageInUse'))
+      }
       return null
     },
-    ['read:crm.Team'],
+    ['read:crm.Team', 'read:crm.Case'],
   ),
 
   'assignmentRule.save': saveConfiguration(
@@ -285,15 +402,16 @@ export const configurationFunctions: Record<string, FnSpec> = {
         ? args.allowedKinds.map(String)
         : (existing?.allowedKinds ?? []),
       teamId: args.teamId ?? existing?.teamId,
-      assigneeUserId: args.assigneeUserId ?? existing?.assigneeUserId ?? null,
-      utmSource: args.utmSource ?? existing?.utmSource ?? null,
-      minimumScore: args.minimumScore ?? existing?.minimumScore ?? null,
+      assigneeUserId: cleared(args, existing, 'assigneeUserId'),
+      utmSource: cleared(args, existing, 'utmSource'),
+      minimumScore: cleared(args, existing, 'minimumScore'),
       active: args.active ?? existing?.active ?? true,
     }),
-    async (ctx, args) => {
+    async (ctx, args, existing) => {
       if (!String(args.name ?? '').trim()) return invalid(issue('name', 'crm.error.required'))
-      if (!Array.isArray(args.allowedKinds) || !args.allowedKinds.length)
-        return invalid(issue('allowedKinds', 'crm.error.required'))
+      // A rule saved without its kinds keeps the ones it had.
+      const kinds = Array.isArray(args.allowedKinds) ? args.allowedKinds : existing?.allowedKinds
+      if (!Array.isArray(kinds) || !kinds.length) return invalid(issue('allowedKinds', 'crm.error.required'))
       const team = args.teamId
         ? (await ctx.db.select('crm.Team', { id: args.teamId, active: true }))[0]
         : null

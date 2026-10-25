@@ -198,15 +198,15 @@ still say otherwise; they are simply no longer required.
 
 ### Product sales tax
 
-The product form can also choose a default sales tax. That choice lives in
+A product can have a default sales tax. That choice lives in
 `account.ProductTax`, not on the shared product template: tax configuration belongs to a legal
 entity and two companies can sell the same catalogue item under different taxes. The row is unique
 per `(companyId, templateId)`. `account.getProductTax` reads the mapping and
 `account.setProductTax` creates, replaces or clears it after checking that the tax is a sales tax.
 
-`product_backend` treats this integration as optional. It renders and saves the tax control only when
-those Account functions are installed, so the Product module remains usable in a headless or
-non-accounting deployment.
+Setting it belongs to accounting, not to the product page: `product_backend` neither shows nor saves
+the tax, so saving or duplicating a product leaves the mapping as accounting set it. Until accounting
+has a screen for it, the mapping is set through `account.setProductTax`.
 
 A default is checked when it is saved, not when an invoice fails: a receivable default
 must be a receivable account, a revenue default an income account. `account.saveDefaults`
@@ -302,9 +302,5 @@ correcting and archiving a chart entry, and through reversing a posted document.
 `test/stored-value.test.ts` proves issue/expiry posting, liability-backed POS settlement,
 receivable reconciliation and retry-stable coordination with the Loyalty wallet ledger.
 
-`e2e/account_backend` drives the overview in a browser, at desktop and phone widths in
-both colour schemes and in both locales. Three of its assertions exist because nothing
-on the server can make them: that Chart.js mounted onto the canvases at all, that it
-drew them in the palette rather than in its own default black, and that a canvas — which
-has no intrinsic size — did not push the page sideways on a phone. Evidence lands under
-`artifacts/` and is not committed.
+The accounting overview has no browser suite while the accounting module is being rebuilt;
+one is written against the new module.

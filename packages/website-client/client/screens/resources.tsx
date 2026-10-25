@@ -1,3 +1,5 @@
+import { ListPage, RecordPage } from '../page-regions.tsx'
+import { createThemeLogo } from '../theme-logo.tsx'
 import { themeCards } from './theme-cards.tsx'
 import { companyThemeCommands, companyThemeSection } from './company-themes.tsx'
 import { createMenuEditor } from './menu-editor.tsx'
@@ -8,8 +10,6 @@ import {
   DataTable,
   FilterBar,
   SearchBar,
-  ListPage,
-  RecordPage,
   Surface,
   Stack,
   Grid,
@@ -241,6 +241,7 @@ export function createResourceScreens(ctx: StudioContext) {
     let current: ResourceRecord | null = null
     let pendingId: string | null = null
     let pendingDraft: { id: string; values: Record<string, unknown> } | null = null
+    const logo = kind === 'themes' ? createThemeLogo(ctx) : null
     const structuredField = kind === 'menus' ? 'items' : kind === 'form-editor' ? 'schema' : null
     const isMenu = kind === 'menus'
     const readValues = (form: FormData) => {
@@ -464,7 +465,9 @@ export function createResourceScreens(ctx: StudioContext) {
             (r) => r.id !== record.id && r.taxonomyType === 'category' && r.taxonomyId === record.taxonomyId,
           )
         }
-        return pendingDraft?.id === current.id ? { ...current, ...pendingDraft.values } : current
+        const data = pendingDraft?.id === current.id ? { ...current, ...pendingDraft.values } : current
+        logo?.load(ctx.site().id, data.id, data.revisionId ?? null, String(resourceValue(data.logo) ?? ''))
+        return data
       },
       view: (data) =>
         kind === 'form-editor' ? (
@@ -488,19 +491,21 @@ export function createResourceScreens(ctx: StudioContext) {
                     href={ctx.href('builder', { id: data.affected[0].id }, { panel: 'styles' })}
                   />
                 ) : null}
-                <CommandButton
-                  label={ctx.tr(
-                    kind === 'form-editor' && data.revisionId
-                      ? 'website.formJourney.newVersion'
-                      : 'website.action.save',
-                  )}
-                  command={`resource.${kind}.save`}
-                  type="submit"
-                  form={`resource-${kind}`}
-                  variant="primary"
-                  disabled={ctx.busy() || !ctx.can(schema.capability)}
-                />
-                {data.revisionId && !['sites', 'domains', 'seo'].includes(kind)
+                {!data.readOnly ? (
+                  <CommandButton
+                    label={ctx.tr(
+                      kind === 'form-editor' && data.revisionId
+                        ? 'website.formJourney.newVersion'
+                        : 'website.action.save',
+                    )}
+                    command={`resource.${kind}.save`}
+                    type="submit"
+                    form={`resource-${kind}`}
+                    variant="primary"
+                    disabled={ctx.busy() || !ctx.can(schema.capability)}
+                  />
+                ) : null}
+                {data.revisionId && data.archivable !== false && !['sites', 'domains', 'seo'].includes(kind)
                   ? ArchiveActions(ctx, {
                       id: `resource-${kind}-archive`,
                       title: data.title ?? title(),
@@ -520,6 +525,13 @@ export function createResourceScreens(ctx: StudioContext) {
                     body={
                       <Stack
                         items={[
+                          data.readOnly ? (
+                            <Notice
+                              title={ctx.tr('website.route.templates')}
+                              message={ctx.tr('website.resource.templates.bundled')}
+                              tone="info"
+                            />
+                          ) : null,
                           data.kind === 'themes' ? (
                             <Notice
                               title={`${ctx.tr('website.resource.version')} ${data.version ?? ''}`}
@@ -567,8 +579,10 @@ export function createResourceScreens(ctx: StudioContext) {
                                         label: ctx.tr(field.label),
                                         value: resourceValue(data[field.name]) ?? field.defaultValue ?? '',
                                         required: field.required,
-                                        disabled: !ctx.can(schema.capability),
+                                        disabled: data.readOnly || !ctx.can(schema.capability),
                                       }
+                                      if (logo && field.name === 'logo')
+                                        return logo.view(String(props.value), props.disabled)
                                       if (kind === 'sites' && field.name === 'companyId')
                                         return (
                                           <Select
@@ -658,6 +672,14 @@ export function createResourceScreens(ctx: StudioContext) {
           await ctx.refresh()
         },
         [`resource.${kind}.save`]: async (_args, form) => {
+          if (current?.readOnly)
+            throw Object.assign(new Error(ctx.tr('website.resource.templates.bundled')), {
+              code: 'validation',
+            })
+          if (logo?.busy()) {
+            ctx.notify(ctx.tr('website.taxonomy.waitUpload'), 'danger')
+            return
+          }
           const values = readValues(form!)
           const record = current!
           if (schema.fields.some((field) => field.required && !values[field.name]))
@@ -681,6 +703,7 @@ export function createResourceScreens(ctx: StudioContext) {
           await ctx.navigate(kind === 'form-editor' ? 'forms' : kind)
         },
       },
+      dispose: () => logo?.dispose(),
     } satisfies Screen<ResourceRecord>
   }
   screens['menus-edit'] = createMenuEditor(ctx)

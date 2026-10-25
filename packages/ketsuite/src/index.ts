@@ -15,7 +15,13 @@ export {
   websiteRoleTemplates,
   websiteThemeRoleTemplates,
 } from './website-role-templates.ts'
-export { DEFAULT_PHONE_REGION, normalizePhone, phoneKey, phoneSearchFragment } from './phone.ts'
+export {
+  DEFAULT_PHONE_REGION,
+  normalizePhone,
+  phoneKey,
+  phoneSearchFragment,
+  phoneSearchFragments,
+} from './phone.ts'
 export {
   customerAccessEffects,
   customerAccessForSite,
@@ -31,7 +37,7 @@ export {
 } from './modules/website/customer.ts'
 
 // website vertical
-export { default as channelApi } from './modules/channel_api/index.ts'
+export { default as channelApi, createStaffChannelApi } from './modules/channel_api/index.ts'
 export {
   CHANNEL_API_VERSION,
   authorizedChannelCapabilities,
@@ -223,11 +229,14 @@ export {
   canReadCase as crmCanReadCase,
   caseAudience as crmCaseAudience,
   caseDetail as crmCaseDetail,
+  caseReadEffects as crmCaseReadEffects,
+  caseWriteEffects as crmCaseWriteEffects,
   commandKey as crmCommandKey,
   ensureCrmDefaults,
   firstStage as crmFirstStage,
   invalid as crmInvalid,
   issue as crmIssue,
+  logInteraction as crmLogInteraction,
   n as crmNumber,
   normalized as crmNormalized,
   now as crmNow,
@@ -330,8 +339,9 @@ export {
   POS_PAYMENT_SETTLEMENT_KINDS,
   POS_SESSION_STATES,
   POS_INVOICE_STATUSES,
+  createPosSessionInTransaction,
   functions as posFunctionSpecs,
-} from './modules/pos/functions.ts'
+} from './modules/pos/functions/index.ts'
 export { default as address } from './modules/address/index.ts'
 export {
   availableCatalogs as availableAddressCatalogs,
@@ -434,6 +444,9 @@ export { default as user } from './modules/user/index.ts'
 export { default as userBackend } from './modules/user_backend/index.ts'
 export { default as oauth } from './modules/oauth/index.ts'
 export { default as oauthBackend } from './modules/oauth_backend/index.ts'
+export { mailWithTargets } from './modules/mail/index.ts'
+export type { InboxTargetPolicy } from './modules/mail/index.ts'
+export { civilDate, companyCivilDate } from './modules/company/index.ts'
 export { default as mail } from './modules/mail/index.ts'
 export { default as mailStaffChannel } from './modules/mail_staff_channel/index.ts'
 export { default as mailBackend } from './modules/mail_backend/index.ts'
@@ -464,8 +477,19 @@ export { default as livedoc } from './modules/livedoc/index.ts'
 export { documentRoutes } from './modules/livedoc/index.ts'
 export type { DocRef, DocumentOwner } from './modules/livedoc/index.ts'
 export { default as flow } from './modules/flow/index.ts'
+export { createFlowModule, createFlowMailGuard } from './modules/flow/native/index.ts'
+export {
+  backfillNativeFlowAssignmentOrder,
+  backfillNativeFlowLabelScope,
+  backfillNativeFlowDependencyScope,
+} from './modules/flow/native/migrations.ts'
+export { createFlowStorageModule } from './modules/flow/native/attachments.ts'
+export type { NativeFlowOptions, NativeServerExtension, NativeMutation } from './modules/flow/native/index.ts'
+export { createFlowWorkspaceModule } from './modules/flow_workspace/index.ts'
+export type { FlowWorkspaceDeliveryOptions } from './modules/flow_workspace/index.ts'
 export { default as flowBackend } from './modules/flow_backend/index.ts'
 export { default as flowStaffChannel } from './modules/flow_staff_channel/index.ts'
+export { createNativeFlowStaffChannel } from './modules/flow_staff_channel/native.ts'
 export { DEPENDENCY_RELATIONS, ISSUE_PRIORITIES, SPRINT_STATES } from './modules/flow/types.ts'
 export type { DependencyRelation, IssuePriority, SprintState } from './modules/flow/types.ts'
 export { hashPassword, verifyPassword, needsRehash } from './modules/user/password.ts'
@@ -527,3 +551,26 @@ export {
 } from './modules/website_backend/studio/public.ts'
 export { publicSiteOf } from './modules/website_backend/studio/public-site.ts'
 export type { PublicSite } from './modules/website_backend/studio/public-site.ts'
+
+export { mailBackendWith } from './modules/mail_backend/index.ts'
+
+export { mailTransportBackendWith } from './modules/mail_transport_backend/index.ts'
+
+export { activityBackendWith } from './modules/activity_backend/index.ts'
+
+export {
+  collectionSearchFunction,
+  readHospitalityCollectionPage,
+} from './modules/hospitality_core/functions/collection-search.ts'
+export { prepareHospitalityStockExtraLine } from './modules/hospitality_core/services.ts'
+export {
+  runCommand as runHospitalityCommand,
+  claimVersion as claimHospitalityRecordVersion,
+} from './modules/hospitality_core/functions/command.ts'
+export type { HospitalityCollectionDefinition } from './modules/hospitality_core/functions/collection-search.ts'
+export { renderHospitalityCollection } from './modules/hospitality_core/screens/collection-page.tsx'
+export type { HospitalityCollectionPageDefinition } from './modules/hospitality_core/screens/collection-page.tsx'
+
+export { hospitalityScreenHelp } from './modules/hospitality_core/screens/screen-help.tsx'
+
+export { hospitalityRecordBack } from './modules/hospitality_core/screens/scoped-href.ts'

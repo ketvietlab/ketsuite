@@ -1,17 +1,9 @@
 import { routes } from './routes.mjs'
 import { tr } from './i18n.mjs'
-import { isDone } from './project-catalogs.mjs'
 import { html, each, signal } from '@ketvietlab/ketjs-view'
+import { FlowButton, FlowInput, FlowStatus, FlowSelect, FlowEmpty, FlowTag } from '@ketvietlab/flow-ui'
 import {
-  FlowButton,
-  FlowInput,
-  FlowStatus,
-  FlowSelect,
-  FlowEmpty,
-  FlowTag,
-  FlowSearch,
-} from '@ketvietlab/flow-ui'
-import {
+  FlowChoiceField,
   FlowTagPicker,
   FlowDisclosure,
   FlowListItem,
@@ -30,166 +22,19 @@ import {
   FlowEvidenceValue,
   FlowEvidencePerson,
   FlowProperties,
+  FlowLoading,
 } from '@ketvietlab/flow-ui/workspace'
-import { accessFor, canManageScope, roleLabel } from './access-model.mjs'
+import { accessSourceLabel, canManageScope, roleLabel } from './access-model.mjs'
+import { workspaceRecordRoutes } from './navigation.mjs'
 import { createWorkspaceOverview } from './workspace-overview.mjs'
-export const organizationRoutes = {
-  organization: {
-    get title() {
-      return tr('flow.ui.organization')
-    },
-    get group() {
-      return tr('flow.ui.organization')
-    },
-    pattern: 'workspace',
-  },
-  'organization-settings': {
-    get title() {
-      return tr('flow.ui.organization.settings')
-    },
-    get group() {
-      return tr('flow.ui.organization')
-    },
-    pattern: 'workspace',
-  },
-  'organization-members': {
-    get title() {
-      return tr('flow.ui.organization.members')
-    },
-    get group() {
-      return tr('flow.ui.organization')
-    },
-    pattern: 'list',
-  },
-  teams: {
-    title: 'Team',
-    get group() {
-      return tr('flow.ui.organization')
-    },
-    pattern: 'list',
-  },
-  team: {
-    get title() {
-      return tr('flow.ui.team.members')
-    },
-    get group() {
-      return tr('flow.ui.organization')
-    },
-    pattern: 'workspace',
-  },
-  workspaces: { title: 'Workspace', group: 'Workspace', pattern: 'list' },
-  'workspace-overview': {
-    get title() {
-      return tr('flow.ui.workspace.overview')
-    },
-    group: 'Workspace',
-    pattern: 'workspace',
-  },
-  'workspace-members': {
-    get title() {
-      return tr('flow.ui.workspace.members')
-    },
-    group: 'Workspace',
-    pattern: 'workspace',
-  },
-  'project-members': {
-    get title() {
-      return tr('flow.ui.project.members')
-    },
-    get group() {
-      return tr('flow.ui.projects')
-    },
-    pattern: 'workspace',
-  },
-  permissions: {
-    get title() {
-      return tr('flow.ui.roles.and.access.sources')
-    },
-    get group() {
-      return tr('flow.ui.organization')
-    },
-    pattern: 'workspace',
-  },
-}
-export const organizationForms = {
-  'workspace-new': {
-    get title() {
-      return tr('flow.ui.create.workspace')
-    },
-    back: 'workspaces',
-  },
-  'workspace-edit': {
-    get title() {
-      return tr('flow.ui.workspace.settings')
-    },
-    back: 'workspace-overview',
-  },
-  'workspace-archive': {
-    get title() {
-      return tr('flow.ui.archive.workspace')
-    },
-    back: 'workspace-overview',
-  },
-  'member-invite': {
-    get title() {
-      return tr('flow.ui.invite.member')
-    },
-    back: 'organization-members',
-  },
-  'member-edit': {
-    get title() {
-      return tr('flow.ui.member.permissions')
-    },
-    back: 'organization-members',
-  },
-  'team-new': {
-    get title() {
-      return tr('flow.ui.create.team')
-    },
-    back: 'teams',
-  },
-  'team-edit': {
-    get title() {
-      return tr('flow.ui.edit.team')
-    },
-    back: 'teams',
-  },
-  'member-access': {
-    get title() {
-      return tr('flow.members.title')
-    },
-    back: 'workspace-members',
-  },
-  'access-grant': {
-    get title() {
-      return tr('flow.ui.grant.access')
-    },
-    back: 'workspace-members',
-  },
-  'project-move': {
-    get title() {
-      return tr('flow.ui.move.workspace')
-    },
-    back: 'settings',
-  },
-}
-for (const [key, value] of Object.entries(organizationForms))
-  organizationRoutes[key] = {
-    get title() {
-      return value.title
-    },
-    get group() {
-      return tr('flow.ui.manage')
-    },
-    pattern: 'record',
-  }
+import { createPagedOptions } from './paged-options.mjs'
+import { organizationRoutes } from './organization-routes.mjs'
+export { organizationRoutes, organizationForms } from './organization-routes.mjs'
 export function createOrganization(ctx) {
   const grantScope = signal(''),
     grantSubject = signal(''),
     accessChoice = signal(''),
     inviteRole = signal('member'),
-    memberQuery = signal(''),
-    accessQuery = signal(''),
     grantPeople = signal([]),
     workspaceAccess = signal('')
   let inviteEmail = ''
@@ -199,10 +44,393 @@ export function createOrganization(ctx) {
     previewError = signal(''),
     previewBusy = signal(false)
   let previewRequest = 0
+  // One person's access to one target comes from the server, so it holds past the people window.
+  const memberAccess = signal({ key: '', loading: false, error: null, item: null })
+  let memberAccessTicket = 0
+  const memberAccessTarget = () => {
+    const params = ctx.params(),
+      scope = params.accessScope === 'project' ? 'project' : 'workspace',
+      id = params.target ?? (scope === 'project' ? p()?.id : w()?.id)
+    return {
+      scope,
+      id,
+      key:
+        id && ctx.record()
+          ? JSON.stringify([d().company.id, scope, id, ctx.record(), d().organizationRevision])
+          : '',
+    }
+  }
+  const loadMemberAccess = async (retry = false) => {
+    const { scope, id, key } = memberAccessTarget(),
+      held = memberAccess.peek()
+    if (!key || (!retry && held.key === key && (held.loading || held.item || !held.error))) return
+    const ticket = ++memberAccessTicket
+    memberAccess.set({ key, loading: true, error: null, item: null })
+    try {
+      const page = await ctx.call('flow.access.list', {
+        companyId: d().company.id,
+        scope,
+        targetId: id,
+        memberId: ctx.record(),
+        limit: 1,
+      })
+      if (ticket === memberAccessTicket)
+        memberAccess.set({ key, loading: false, error: null, item: page.items[0] ?? null })
+    } catch (error) {
+      if (ticket !== memberAccessTicket) return
+      if (['forbidden', 'unauthenticated'].includes(error.code)) ctx.refused?.(error)
+      memberAccess.set({ key, loading: false, error, item: null })
+    }
+  }
+  // A Team's size, scopes and members are read from the server, members a page at a time.
+  const emptyTeam = {
+    key: '',
+    loading: false,
+    error: null,
+    team: null,
+    grants: [],
+    members: [],
+    total: 0,
+    cursor: null,
+  }
+  const teamDetail = signal(emptyTeam),
+    teamCandidate = signal('')
+  let teamTicket = 0
+  const teamKey = () =>
+    ctx.route?.() === 'team' && ctx.record()
+      ? JSON.stringify([d().company.id, ctx.record(), d().organizationRevision])
+      : ''
+  const loadTeam = async ({ more = false, retry = false } = {}) => {
+    const key = teamKey(),
+      id = ctx.record(),
+      held = teamDetail.peek()
+    if (!key) return
+    if (more ? held.key !== key || !held.cursor || held.loading : !retry && held.key === key) return
+    const ticket = ++teamTicket,
+      kept = held.team?.id === id ? held : { ...emptyTeam }
+    teamDetail.set({ ...kept, key, loading: true, error: null })
+    try {
+      const people = (cursor) =>
+        ctx.call('flow.member.list', {
+          companyId: d().company.id,
+          teamId: id,
+          limit: 50,
+          ...(cursor ? { cursor } : {}),
+        })
+      const [read, page] = more
+        ? [held, await people(held.cursor)]
+        : await Promise.all([ctx.call('flow.team.read', { companyId: d().company.id, id }), people()])
+      if (ticket !== teamTicket) return
+      const members = new Map((more ? held.members : []).map((m) => [m.id, m]))
+      for (const m of page.items) members.set(m.id, m)
+      teamDetail.set({
+        key,
+        loading: false,
+        error: null,
+        team: read.team,
+        grants: read.grants,
+        members: [...members.values()],
+        total: page.total,
+        cursor: page.cursor,
+      })
+    } catch (error) {
+      if (ticket !== teamTicket) return
+      if (['forbidden', 'unauthenticated'].includes(error.code)) ctx.refused?.(error)
+      teamDetail.set({ ...teamDetail.peek(), key, loading: false, error })
+    }
+  }
+  const knownCandidates = new Map()
+  // People who could join the open Team are searched on the server, not in the loaded window.
+  const candidates = ctx.call
+    ? createPagedOptions({
+        scope: () => JSON.stringify([d()?.company.id, ctx.record(), d()?.organizationRevision]),
+        refused: ctx.refused,
+        read: (input, signal) =>
+          ctx.call(
+            'flow.member.list',
+            { ...input, companyId: d().company.id, candidateForTeamId: ctx.record() },
+            { signal },
+          ),
+        accept: (items) => {
+          for (const m of items) knownCandidates.set(m.id, m)
+        },
+      })
+    : null
+  // What a form states about the whole organization (how many people or projects a choice
+  // reaches, what revoking someone removes) is read from the server, not counted in a window.
+  const facts = signal({ key: '', loading: false, error: null, value: null })
+  let factsTicket = 0
+  const factsRequest = () => {
+    const route = ctx.route?.(),
+      company = d()?.company.id,
+      params = ctx.params?.() ?? {}
+    if (!company) return null
+    const key = (...parts) => JSON.stringify([route, company, ...parts, d().organizationRevision])
+    if (route === 'workspace-new' || route === 'workspace-edit') {
+      const id = route === 'workspace-new' ? null : ctx.recordProvided?.() ? ctx.record() : (w()?.id ?? null)
+      return {
+        key: key(id),
+        read: async () => {
+          const [people, projects] = await Promise.all([
+            ctx.call('flow.member.list', { companyId: company, internal: true, limit: 1 }),
+            id
+              ? ctx.call('flow.project.options', {
+                  companyId: company,
+                  workspaceId: id,
+                  access: 'workspace',
+                  limit: 1,
+                })
+              : { total: 0 },
+          ])
+          return { members: people.total, projects: projects.total }
+        },
+      }
+    }
+    if (route === 'member-edit' && ctx.record() && manage())
+      return {
+        key: key(ctx.record()),
+        read: () => ctx.call('flow.member.impact', { companyId: company, memberId: ctx.record() }),
+      }
+    // A person preselected for a grant is named even when outside the loaded people.
+    if (route === 'access-grant' && params.user && !d().members.some((m) => m.id === params.user))
+      return {
+        key: key(params.user),
+        read: () => ctx.call('flow.member.list', { companyId: company, ids: [params.user], limit: 1 }),
+      }
+    return null
+  }
+  const loadFacts = async (retry = false) => {
+    const wanted = ctx.call ? factsRequest() : null,
+      held = facts.peek()
+    if (!wanted || (!retry && held.key === wanted.key)) return
+    const ticket = ++factsTicket
+    facts.set({ key: wanted.key, loading: true, error: null, value: null })
+    try {
+      const value = await wanted.read()
+      if (ticket === factsTicket) facts.set({ key: wanted.key, loading: false, error: null, value })
+    } catch (error) {
+      if (ticket !== factsTicket) return
+      if (['forbidden', 'unauthenticated'].includes(error.code)) ctx.refused?.(error)
+      facts.set({ key: wanted.key, loading: false, error, value: null })
+    }
+  }
+  const factsOf = () => {
+    const wanted = factsRequest(),
+      s = facts()
+    return wanted && s.key === wanted.key ? s : null
+  }
+  // A guest's project grants are read by subject, a page at a time.
+  const emptyGuest = { key: '', loading: false, error: null, items: [], total: 0, cursor: null }
+  const guestGrants = signal(emptyGuest),
+    guestProject = signal('')
+  let guestTicket = 0
+  const guestKey = () => {
+    const person = ctx.route?.() === 'member-edit' ? d()?.members.find((m) => m.id === ctx.record()) : null
+    return person?.role === 'guest' && manage()
+      ? JSON.stringify([d().company.id, person.id, d().organizationRevision])
+      : ''
+  }
+  const loadGuestGrants = async ({ more = false, retry = false } = {}) => {
+    const key = guestKey(),
+      held = guestGrants.peek()
+    if (!key || !ctx.call) return
+    if (more ? held.key !== key || !held.cursor || held.loading : !retry && held.key === key) return
+    const ticket = ++guestTicket
+    guestGrants.set(more ? { ...held, loading: true, error: null } : { ...emptyGuest, key, loading: true })
+    try {
+      const page = await ctx.call('flow.grant.list', {
+        companyId: d().company.id,
+        subjectType: 'user',
+        subjectId: ctx.record(),
+        scope: 'project',
+        limit: 50,
+        ...(more ? { cursor: held.cursor } : {}),
+      })
+      if (ticket !== guestTicket) return
+      guestGrants.set({
+        key,
+        loading: false,
+        error: null,
+        items: more ? [...held.items, ...page.items] : page.items,
+        total: page.total,
+        cursor: page.cursor,
+      })
+    } catch (error) {
+      if (ticket !== guestTicket) return
+      if (['forbidden', 'unauthenticated'].includes(error.code)) ctx.refused?.(error)
+      guestGrants.set({ ...guestGrants.peek(), key, loading: false, error })
+    }
+  }
+  // Pickers over people, Teams and projects search the server.
+  const paged = (read, accept = () => {}) =>
+    ctx.call
+      ? createPagedOptions({
+          scope: () =>
+            JSON.stringify([
+              d()?.company.id,
+              ctx.route?.(),
+              ctx.record(),
+              grantScope(),
+              grantSubject(),
+              d()?.organizationRevision,
+            ]),
+          refused: ctx.refused,
+          read,
+          accept,
+        })
+      : null
+  const remoteOf = (options) => {
+    const s = options.state()
+    return {
+      menu: { open: s.open, onToggle: (open) => (open ? void options.open() : options.close()) },
+      remote: {
+        query: s.query,
+        loading: s.loading,
+        error: s.error,
+        total: s.total,
+        onQuery: options.query,
+        onRetry: options.retry,
+        ...(s.cursor ? { onMore: options.more } : {}),
+      },
+    }
+  }
+  const knownProjects = new Map(),
+    knownSubjects = new Map()
+  const rememberProjects = (items) => {
+    for (const x of items) knownProjects.set(x.id, x)
+  }
+  const guestProjects = paged(
+    (input, signal) => ctx.call('flow.project.options', { ...input, companyId: d().company.id }, { signal }),
+    rememberProjects,
+  )
+  const grantTarget = signal('')
+  const grantTargets = paged(
+    (input, signal) =>
+      ctx.call('flow.project.options', { ...input, companyId: d().company.id, manage: true }, { signal }),
+    rememberProjects,
+  )
+  const grantKind = () => grantSubject() || (ctx.params().team ? 'team' : 'user')
+  const grantSubjects = paged(
+    (input, signal) => {
+      const scope = grantScope() || ctx.params().accessScope || 'workspace'
+      return grantKind() === 'team'
+        ? ctx.call('flow.team.list', { ...input, companyId: d().company.id }, { signal })
+        : ctx.call(
+            'flow.member.list',
+            {
+              ...input,
+              companyId: d().company.id,
+              ...(scope === 'workspace' ? { internal: true } : { active: true }),
+            },
+            { signal },
+          )
+    },
+    (items) => {
+      for (const x of items) knownSubjects.set(`${grantKind()}:${x.id}`, x)
+    },
+  )
+  // A change's effect on access is computed by the server, with the engine the change uses.
+  const impact = signal({ key: '', loading: false, error: null, items: [], total: 0, cursor: null })
+  let impactTicket = 0
+  const loadImpact = async (key, input, { more = false, force = false } = {}) => {
+    const held = impact.peek()
+    if (!key) return
+    if (more ? held.key !== key || !held.cursor || held.loading : !force && held.key === key && !held.error)
+      return
+    const ticket = ++impactTicket
+    impact.set(
+      more
+        ? { ...held, loading: true, error: null }
+        : { key, loading: true, error: null, items: [], total: 0, cursor: null },
+    )
+    try {
+      const page = await ctx.call('flow.access.preview', {
+        companyId: d().company.id,
+        ...input,
+        ...(more ? { cursor: held.cursor } : {}),
+      })
+      if (ticket !== impactTicket) return
+      impact.set({
+        key,
+        loading: false,
+        error: null,
+        items: more ? [...held.items, ...page.items] : page.items,
+        total: page.total,
+        cursor: page.cursor,
+      })
+    } catch (error) {
+      if (ticket !== impactTicket) return
+      if (['forbidden', 'unauthenticated'].includes(error.code)) ctx.refused?.(error)
+      impact.set({ ...impact.peek(), key, loading: false, error })
+    }
+  }
+  const projectImpact = () =>
+    p() && accessChoice() && accessChoice() !== p().access
+      ? {
+          key: JSON.stringify(['project-access', p().id, accessChoice(), d().organizationRevision]),
+          input: { change: 'project-access', projectId: p().id, access: accessChoice() },
+        }
+      : null
+  const workspaceImpact = () => {
+    const ws = ctx.recordProvided?.()
+      ? d().workspaces?.find((x) => x.id === ctx.record() && !x.archived)
+      : w()
+    return ws &&
+      workspaceAccess() &&
+      workspaceAccess() !== (ws.access === 'internal' ? 'internal' : 'restricted')
+      ? {
+          key: JSON.stringify(['workspace-access', ws.id, workspaceAccess(), d().organizationRevision]),
+          input: { change: 'workspace-access', workspaceId: ws.id, access: workspaceAccess() },
+        }
+      : null
+  }
+  const pendingImpact = () =>
+    ctx.route?.() === 'project-members'
+      ? projectImpact()
+      : ctx.route?.() === 'workspace-edit'
+        ? workspaceImpact()
+        : null
+  const impactList = (wanted, title) => {
+    const s = impact(),
+      retry = () => loadImpact(wanted.key, wanted.input, { force: true })
+    if (s.key !== wanted.key || (s.loading && !s.items.length))
+      return FlowLoading({ label: tr('flow.ui.preparing.preview') })
+    if (s.error && !s.items.length)
+      return stack(
+        notice(tr('flow.ui.preview.unavailable'), s.error.message, 'red'),
+        button(tr('flow.ui.try.again'), retry),
+      )
+    return stack(
+      ...s.items.map((x) =>
+        FlowListItem({
+          title: title(x),
+          description: roleLabel(x.before.role) + ' → ' + roleLabel(x.after.role),
+        }),
+      ),
+      s.total > s.items.length
+        ? FlowToolbar({
+            inset: 'none',
+            children: FlowHint({ children: tr('flow.access.previewShowing', [s.items.length, s.total]) }),
+            trailing: s.error
+              ? html`${FlowHint({ children: s.error.message })}${FlowButton({ label: tr('flow.ui.try.again'), size: 'sm', onClick: retry })}`
+              : FlowButton({
+                  label: tr('flow.access.previewMore'),
+                  size: 'sm',
+                  disabled: s.loading,
+                  onClick: () => loadImpact(wanted.key, wanted.input, { more: true }),
+                }),
+          })
+        : null,
+    )
+  }
   const overview = createWorkspaceOverview(ctx)
   const d = ctx.data,
     w = () => d().workspaces?.find((w) => w.id === ctx.workspaceId()),
     p = () => d().projects.find((p) => p.id === ctx.projectId())
+  const fieldError = (props) => props.error ?? ctx.formError?.()?.[props.name ?? props.id]
+  const input = (props) => FlowInput({ ...props, error: fieldError(props) })
+  const textarea = (props) => FlowTextarea({ ...props, error: fieldError(props) })
+  const selectField = (props) => FlowSelectField({ ...props, error: fieldError(props) })
   const stack = (...children) =>
     FlowStack({
       children: html`${each(
@@ -240,39 +468,45 @@ export function createOrganization(ctx) {
       { action, expectedRevision: d().organizationRevision, ...args },
       success,
     )
-  const form = (body, save, label = tr('flow.ui.save.changes')) =>
-    html`<form on:submit=${(e) => {
+  const confirmRun = (title, message, label, action, args, success, tone = 'danger') =>
+    ctx.confirmAction({ title, message, label, tone, action: () => run(action, args, success) })
+  const form = (
+    body,
+    save,
+    label = tr('flow.ui.save.changes'),
+    disabled = false,
+    separateActions = false,
+    showCancel = ctx.isModal?.(),
+  ) => {
+    const footer = inline(
+      showCancel
+        ? FlowButton({ label: tr('flow.ui.cancel'), onClick: ctx.close, disabled: ctx.busy() })
+        : null,
+      FlowButton({
+        label,
+        type: 'submit',
+        form: separateActions ? 'flow-organization-modal-form' : undefined,
+        variant: 'primary',
+        loading: ctx.busy(),
+        disabled: !ctx.canWrite() || disabled,
+      }),
+    )
+    const content = html`<form id=${separateActions ? 'flow-organization-modal-form' : null} on:submit=${(
+      e,
+    ) => {
       e.preventDefault()
       save(Object.fromEntries(new FormData(e.currentTarget)))
-    }}>${stack(body, inline(ctx.isModal?.() ? button(tr('flow.ui.cancel'), ctx.close) : null, FlowButton({ label, type: 'submit', variant: 'primary', loading: ctx.busy(), disabled: !ctx.canWrite() })))}</form>`
-  const select = (name, label, value, options) => FlowSelectField({ name, label, value, options })
+    }}>${stack(body, separateActions ? null : footer)}</form>`
+    return separateActions ? { body: content, footer } : content
+  }
+  const select = (name, label, value, options) => selectField({ name, label, value, options })
   const roles = [
     { value: 'viewer', label: tr('flow.ui.view.only') },
     { value: 'editor', label: tr('flow.ui.edit') },
     { value: 'admin', label: tr('flow.ui.admin') },
   ]
-  const grantLabel = (g) =>
-    g.subjectType === 'team'
-      ? `Team · ${d().teams.find((t) => t.id === g.subjectId)?.title ?? g.subjectId}`
-      : (d().members.find((m) => m.id === g.subjectId)?.name ?? g.subjectId)
   const mt = (key, args) => tr('flow.members.' + key, args)
-  const scopeTarget = (scope, id) =>
-    scope === 'project'
-      ? d().projects.find((x) => x.id === id)
-      : d().workspaces.some((x) => x.id === id)
-        ? { id: 'workspace-preview', companyId: d().company.id, workspaceId: id, access: 'workspace' }
-        : null
-  const teamsOf = (m) => d().teams.filter((t) => t.memberIds.includes(m.id))
-  /** The page's primary action lives in the shell topbar, not beside the section search. */
-  const topSearch = (key) =>
-    ['workspace-members', 'project-members'].includes(key)
-      ? FlowSearch({
-          label: tr('flow.ui.search.members'),
-          placeholder: tr('flow.ui.name.or.email'),
-          value: accessQuery(),
-          onInput: (e) => accessQuery.set(e.target.value),
-        })
-      : null
+  /** The page's primary action lives in the shell topbar; people are found through the sidebar Spotlight. */
   const topAction = (key) => {
     const scope = key === 'project-members' ? 'project' : key === 'workspace-members' ? 'workspace' : null,
       id = scope === 'project' ? p()?.id : scope ? w()?.id : null
@@ -289,17 +523,19 @@ export function createOrganization(ctx) {
   }
   const members = (scope, id) => {
     const editable = manage(scope, id),
-      target = scopeTarget(scope, id)
-    const all = target
-        ? d()
-            .members.filter((m) => m.status === 'active')
-            .map((m) => ({ m, a: accessFor(d(), target, m.id) }))
-        : [],
-      withAccess = all.filter((x) => x.a.role)
-    const query = accessQuery().trim(),
-      rows = withAccess.filter(({ m }) =>
-        (m.name + ' ' + m.email).toLocaleLowerCase().includes(query.toLocaleLowerCase()),
-      )
+      page = d().accessPage?.scope === scope && d().accessPage.targetId === id ? d().accessPage : null
+    // The server lists who can open the target and why; the bootstrap's people are only a window.
+    if (!page) {
+      const failed = ctx.accessPageFailure?.()
+      return failed
+        ? FlowNotice({
+            title: mt('unavailable'),
+            message: failed.message,
+            tone: 'red',
+            action: button(tr('flow.ui.try.again'), () => ctx.retryAccessPage?.()),
+          })
+        : FlowLoading({ label: tr('flow.ui.opening.flow') })
+    }
     const open = (m) => ctx.navigate('member-access', { id: m.id, accessScope: scope, target: id })
     const grant = nav(
       'access-grant',
@@ -318,8 +554,8 @@ export function createOrganization(ctx) {
       label: mt('member'),
       actionsLabel: mt('rowActions'),
       columns,
-      total: mt('total', [withAccess.length, all.length - withAccess.length]),
-      rows: rows.map(({ m, a }) => ({
+      total: mt('total', [page.total, page.without]),
+      rows: page.items.map((m) => ({
         id: m.id,
         onOpen: () => open(m),
         actions: FlowButton({
@@ -331,18 +567,18 @@ export function createOrganization(ctx) {
         cells: {
           member: FlowEvidencePerson({ name: m.name, meta: m.email, onOpen: () => open(m) }),
           role: FlowEvidenceValue({
-            value: FlowTag({ label: roleLabel(a.role), tone: a.role === 'admin' ? 'blue' : 'neutral' }),
+            value: FlowTag({
+              label: roleLabel(m.access.role),
+              tone: m.access.role === 'admin' ? 'blue' : 'neutral',
+            }),
           }),
           via: FlowEvidenceValue({
-            value: a.sources[0]?.label,
-            meta: a.sources.length > 1 ? mt('more', [a.sources.length - 1]) : null,
-            hint: a.sources.map((x) => x.label + ' · ' + roleLabel(x.role)).join('\n'),
+            value: m.access.sources[0] ? accessSourceLabel(m.access.sources[0]) : null,
+            meta: m.access.sources.length > 1 ? mt('more', [m.access.sources.length - 1]) : null,
+            hint: m.access.sources.map((x) => accessSourceLabel(x) + ' · ' + roleLabel(x.role)).join('\n'),
           }),
           teams: FlowEvidenceValue({
-            value:
-              teamsOf(m)
-                .map((t) => t.title)
-                .join(', ') || '—',
+            value: m.teams.map((t) => t.title).join(', ') || '—',
           }),
           org: FlowEvidenceValue({ value: roleLabel(m.role) }),
         },
@@ -361,41 +597,28 @@ export function createOrganization(ctx) {
                   { value: 'workspace', label: tr('flow.ui.inherit.workspace') },
                   { value: 'private', label: tr('flow.ui.restricted.members') },
                 ],
-                onChange: (e) => accessChoice.set(e.target.value),
+                onChange: (e) => {
+                  accessChoice.set(e.target.value)
+                  const wanted = projectImpact()
+                  if (wanted) void loadImpact(wanted.key, wanted.input)
+                },
               }),
             })
           : null,
-        !withAccess.length
+        !page.items.length
           ? FlowEmpty({
               title: mt('nobody'),
               description: mt('nobodyDetail'),
               action: editable ? grant : null,
             })
-          : rows.length
-            ? table
-            : FlowEmpty({
-                title: mt('noMatch', [query]),
-                description: mt('total', [withAccess.length, all.length - withAccess.length]),
-              }),
+          : table,
+        page.items.length ? ctx.accessPageView?.() : null,
         scope === 'project' && accessChoice() && accessChoice() !== p().access
           ? FlowDisclosure({
               title: tr('flow.ui.preview.permission.changes'),
               open: true,
               children: stack(
-                ...d()
-                  .members.filter((m) => m.status === 'active')
-                  .map((m) => ({
-                    m,
-                    before: accessFor(d(), p(), m.id),
-                    after: accessFor(d(), { ...p(), access: accessChoice() }, m.id),
-                  }))
-                  .filter((x) => x.before.role !== x.after.role)
-                  .map((x) =>
-                    FlowListItem({
-                      title: x.m.name,
-                      description: roleLabel(x.before.role) + ' → ' + roleLabel(x.after.role),
-                    }),
-                  ),
+                impactList(projectImpact(), (x) => x.name),
                 inline(
                   button(tr('flow.ui.cancel'), () => accessChoice.set('')),
                   button(
@@ -452,7 +675,7 @@ export function createOrganization(ctx) {
           notice(
             tr('flow.ui.tasks.needing.action'),
             tr('flow.ui.pending.invitations', [
-              d().invitations.filter((i) => i.status === 'pending').length,
+              d().invitationPage?.total ?? d().invitations.filter((i) => i.status === 'pending').length,
               '',
             ]),
           ),
@@ -461,7 +684,10 @@ export function createOrganization(ctx) {
             items: [
               { label: 'Workspace', value: d().workspaces.length },
               { label: tr('flow.ui.accessible.projects'), value: d().projects.length },
-              { label: 'Team', value: d().teams.length },
+              {
+                label: 'Team',
+                value: d().teamPage?.total ?? d().teams.filter((team) => !team.archived).length,
+              },
             ],
           }),
           inline(
@@ -523,18 +749,9 @@ export function createOrganization(ctx) {
         title: tr('flow.ui.members.and.invitations'),
         actions: manage() ? nav('member-invite', tr('flow.ui.invite.member'), {}, true) : null,
         children: stack(
-          FlowInput({
-            id: 'member-search',
-            label: tr('flow.ui.search.members'),
-            value: memberQuery(),
-            placeholder: tr('flow.ui.name.or.email'),
-            onInput: (e) => memberQuery.set(e.target.value),
-          }),
           FlowAccessList({
             rows: d()
-              .members.filter((m) =>
-                (m.name + ' ' + m.email).toLocaleLowerCase().includes(memberQuery().toLocaleLowerCase()),
-              )
+              .members.filter((m) => !d().memberPage || d().memberPage.loadedIds.includes(m.id))
               .map((m) => ({
                 id: m.id,
                 name: m.name,
@@ -552,26 +769,36 @@ export function createOrganization(ctx) {
                     : null,
               })),
           }),
+          ctx.memberPageView?.(),
           FlowSection({
             inset: 'none',
             title: tr('flow.ui.invitations'),
-            children: d().invitations.length
+            children: d().invitations.some((i) => i.status === 'pending')
               ? stack(
-                  ...d().invitations.map((i) =>
-                    notice(
-                      i.email,
-                      `${roleLabel(i.role)} · ${i.status === 'pending' ? tr('flow.ui.awaiting.acceptance') : tr('flow.ui.revoked')}${i.projectId ? ' · ' + d().projects.find((p) => p.id === i.projectId)?.title : ''}`,
-                      'neutral',
-                      manage() && i.status === 'pending'
-                        ? inline(
-                            button(tr('flow.ui.resend'), () => run('invitation.resend', { id: i.id })),
-                            button(tr('flow.ui.revoke.invitation'), () =>
-                              run('invitation.revoke', { id: i.id }),
-                            ),
-                          )
-                        : null,
+                  ...d()
+                    .invitations.filter((i) => i.status === 'pending')
+                    .map((i) =>
+                      notice(
+                        i.email,
+                        `${roleLabel(i.role)} · ${tr('flow.ui.awaiting.acceptance')}${i.projectId ? ' · ' + d().projects.find((p) => p.id === i.projectId)?.title : ''}`,
+                        'neutral',
+                        manage() && i.status === 'pending'
+                          ? inline(
+                              button(tr('flow.ui.resend'), () => run('invitation.resend', { id: i.id })),
+                              button(tr('flow.ui.revoke.invitation'), () =>
+                                confirmRun(
+                                  tr('flow.ui.revoke.invitation'),
+                                  tr('flow.organization.confirmInvitationRevoke', [i.email]),
+                                  tr('flow.ui.revoke.invitation'),
+                                  'invitation.revoke',
+                                  { id: i.id },
+                                ),
+                              ),
+                            )
+                          : null,
+                      ),
                     ),
-                  ),
+                  ctx.invitationPageView?.(),
                 )
               : FlowEmpty({
                   title: tr('flow.ui.no.pending.invitations'),
@@ -580,7 +807,12 @@ export function createOrganization(ctx) {
           }),
         ),
       })
-    if (key === 'teams')
+    if (key === 'teams') {
+      const directory = d().teamPage
+        ? d()
+            .teamPage.loadedIds.map((id) => d().teams.find((t) => t.id === id))
+            .filter((t) => t && !t.archived)
+        : d().teams.filter((t) => !t.archived)
       return FlowSection({
         title: tr('flow.ui.teams.groups.of.people'),
         actions: manage() ? nav('team-new', tr('flow.ui.create.team'), {}, true) : null,
@@ -589,74 +821,126 @@ export function createOrganization(ctx) {
             tr('flow.ui.teams.do.not.contain.projects'),
             tr('flow.ui.a.team.can.have.access.to.multiple.workspaces.and.projects.in.the.same.organizat'),
           ),
-          ...d().teams.map((t) =>
+          ...directory.map((t) =>
             notice(
               t.title,
-              tr('flow.ui.members.granted.scopes', [
-                t.memberIds.length,
-                d().grants.filter((g) => g.subjectType === 'team' && g.subjectId === t.id).length,
-                t.description,
-              ]),
+              tr('flow.ui.members.granted.scopes', [t.memberCount ?? 0, t.grantCount ?? 0, t.description]),
               'neutral',
               nav('team', tr('flow.ui.manage.team'), { id: t.id }),
             ),
           ),
+          ctx.teamPageView?.(),
         ),
       })
+    }
     if (key === 'team') {
-      const team = d().teams.find((t) => t.id === ctx.record())
+      const state = teamDetail(),
+        team = state.team?.id === ctx.record() ? state.team : null
+      if (!team && state.error?.code !== 'not_found' && (state.loading || !state.error))
+        return FlowLoading({ label: tr('flow.ui.opening.flow') })
+      if (!team && state.error?.code !== 'not_found')
+        return FlowEmpty({
+          title: tr('flow.ui.unable.to.open.flow'),
+          description: state.error.message,
+          action: FlowButton({ label: tr('flow.ui.try.again'), onClick: () => loadTeam({ retry: true }) }),
+        })
       if (!team)
         return FlowEmpty({
           title: tr('flow.ui.team.not.found'),
           description: tr('flow.ui.this.team.does.not.exist.or.you.cannot.view.it'),
+          action: nav('teams', organizationRoutes.teams.title),
         })
+      const scopes = state.grants,
+        picked = teamCandidate(),
+        choices = candidates?.state()
       return FlowSection({
         title: team.title,
         actions: manage() ? nav('team-edit', tr('flow.ui.edit.team'), { id: team.id }) : null,
         children: stack(
           notice(tr('flow.ui.people.in.the.organization'), team.description),
-          FlowAccessList({
-            rows: d()
-              .members.filter((m) => team.memberIds.includes(m.id))
-              .map((m) => ({
-                id: m.id,
-                name: m.name,
-                role: roleLabel(m.role),
-                sources: tr('flow.ui.team.members'),
-                actions: manage()
-                  ? button(tr('flow.ui.remove.from.team'), () =>
-                      run('team.member', { id: team.id, memberId: m.id, remove: true }),
-                    )
-                  : null,
-              })),
-          }),
-          manage()
+          state.members.length
+            ? FlowAccessList({
+                rows: state.members.map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                  role: roleLabel(m.role),
+                  sources: tr('flow.ui.team.members'),
+                  actions: manage()
+                    ? button(tr('flow.ui.remove.from.team'), () =>
+                        confirmRun(
+                          tr('flow.ui.remove.from.team'),
+                          tr('flow.organization.confirmTeamRemoval', [m.name]),
+                          tr('flow.ui.remove.from.team'),
+                          'team.member',
+                          { id: team.id, memberId: m.id, remove: true },
+                        ),
+                      )
+                    : null,
+                })),
+              })
+            : FlowHint({ children: tr('flow.teams.noMembers') }),
+          state.total > state.members.length || state.error
+            ? FlowToolbar({
+                inset: 'none',
+                children: FlowHint({
+                  children: tr('flow.teams.membersShowing', [state.members.length, state.total]),
+                }),
+                trailing: state.error
+                  ? html`${FlowHint({ children: state.error.message })}${FlowButton({ label: tr('flow.ui.try.again'), size: 'sm', onClick: () => loadTeam({ retry: true }) })}`
+                  : FlowButton({
+                      label: tr('flow.teams.membersMore'),
+                      size: 'sm',
+                      disabled: state.loading,
+                      onClick: () => loadTeam({ more: true }),
+                    }),
+              })
+            : null,
+          manage() && candidates
             ? form(
                 stack(
                   FlowHint({
                     children:
                       tr('flow.ui.new.members.will.receive.access.to') +
-                      (d()
-                        .grants.filter((g) => g.subjectType === 'team' && g.subjectId === team.id)
-                        .map(
-                          (g) =>
-                            (g.scope === 'workspace' ? d().workspaces : d().projects).find(
-                              (x) => x.id === g.targetId,
-                            )?.title,
-                        )
-                        .join(', ') || tr('flow.ui.no.scopes.granted')),
+                      (scopes.map((g) => g.targetTitle).join(', ') || tr('flow.ui.no.scopes.granted')),
                   }),
-                  select('memberId', tr('flow.ui.add.member'), '', [
-                    { value: '', label: tr('flow.ui.select.member') },
-                    ...d()
-                      .members.filter(
-                        (m) => m.role !== 'guest' && m.status === 'active' && !team.memberIds.includes(m.id),
-                      )
-                      .map((m) => ({ value: m.id, label: m.name })),
-                  ]),
+                  // The pick lives in state, not a field: a reset picker after a save is not a draft.
+                  FlowChoiceField({
+                    id: 'team-member-candidate',
+                    label: tr('flow.ui.add.member'),
+                    icon: 'user',
+                    value: picked,
+                    selected: {
+                      label: knownCandidates.get(picked)?.name ?? tr('flow.ui.select.member'),
+                      content: knownCandidates.get(picked)?.name ?? tr('flow.ui.select.member'),
+                    },
+                    options: choices.items.map((m) => ({
+                      value: m.id,
+                      label: m.name,
+                      content: m.name,
+                      description: m.email,
+                    })),
+                    menu: {
+                      open: choices.open,
+                      onToggle: (open) => (open ? void candidates.open() : candidates.close()),
+                    },
+                    remote: {
+                      query: choices.query,
+                      loading: choices.loading,
+                      error: choices.error,
+                      onQuery: candidates.query,
+                      onRetry: candidates.retry,
+                      ...(choices.cursor ? { onMore: candidates.more } : {}),
+                    },
+                    onChange: (id) => teamCandidate.set(id),
+                  }),
                 ),
-                (v) => run('team.member', { id: team.id, ...v }),
+                () =>
+                  run('team.member', { id: team.id, memberId: picked }, () => {
+                    teamCandidate.set('')
+                    candidates.close()
+                  }),
                 tr('flow.ui.add.to.team'),
+                !picked,
               )
             : null,
           FlowSection({
@@ -665,17 +949,16 @@ export function createOrganization(ctx) {
             actions: manage()
               ? nav('access-grant', tr('flow.ui.grant.team.access'), { team: team.id })
               : null,
-            children: stack(
-              ...d()
-                .grants.filter((g) => g.subjectType === 'team' && g.subjectId === team.id)
-                .map((g) =>
-                  notice(
-                    (g.scope === 'workspace' ? d().workspaces : d().projects).find((x) => x.id === g.targetId)
-                      ?.title ?? g.targetId,
-                    `${g.scope === 'workspace' ? 'Workspace' : 'Project'} · ${roleLabel(g.role)}`,
+            children: scopes.length
+              ? stack(
+                  ...scopes.map((g) =>
+                    notice(
+                      g.targetTitle,
+                      `${g.scope === 'workspace' ? 'Workspace' : tr('flow.ui.project')} · ${roleLabel(g.role)}`,
+                    ),
                   ),
-                ),
-            ),
+                )
+              : FlowHint({ children: tr('flow.teams.noScopes') }),
           }),
         ),
       })
@@ -695,7 +978,7 @@ export function createOrganization(ctx) {
           manage()
             ? form(
                 stack(
-                  FlowInput({
+                  input({
                     id: 'title',
                     label: tr('flow.ui.organization.name'),
                     value: d().company.name,
@@ -729,6 +1012,7 @@ export function createOrganization(ctx) {
                         actions: manage() ? nav('column-edit', tr('flow.ui.edit'), { id: c.id }) : null,
                       }),
                     ),
+                  ctx.catalogPageView?.('columns'),
                 ),
               }),
               FlowSection({
@@ -742,6 +1026,7 @@ export function createOrganization(ctx) {
                       actions: manage() ? nav('type-edit', tr('flow.ui.edit'), { id: t.id }) : null,
                     }),
                   ),
+                  ctx.catalogPageView?.('types'),
                 ),
               }),
               FlowSection({
@@ -755,6 +1040,7 @@ export function createOrganization(ctx) {
                       actions: manage() ? nav('field-edit', tr('flow.ui.edit'), { id: f.id }) : null,
                     }),
                   ),
+                  ctx.catalogPageView?.('fields'),
                 ),
               }),
               nav('tags', tr('flow.ui.shared.labels')),
@@ -793,16 +1079,163 @@ export function createOrganization(ctx) {
       })
     return null
   }
-  const modal = (key) => {
-    const ws = w(),
+  // What revoking a person removes, counted by the server past any loaded window.
+  const revokeImpact = () => {
+    const s = factsOf()
+    if (s?.error)
+      return [
+        notice(
+          tr('flow.ui.impact'),
+          tr('flow.organization.impactUnavailable'),
+          'yellow',
+          button(tr('flow.ui.try.again'), () => loadFacts(true)),
+        ),
+      ]
+    if (!s?.value) return [FlowLoading({ label: tr('flow.ui.preparing.preview') })]
+    const { projects, tasks } = s.value
+    return [
+      notice(
+        tr('flow.ui.impact'),
+        tr('flow.ui.access.to.projects.will.be.removed.unfinished.tasks.keep.their.assignee.and.need', [
+          projects,
+          tasks.total,
+        ]),
+        'yellow',
+      ),
+      ...tasks.items.map((t) =>
+        notice(
+          t.id,
+          t.title,
+          'neutral',
+          nav('issue', tr('flow.ui.reassign'), { id: t.id, project: t.projectId }),
+        ),
+      ),
+      tasks.total > tasks.items.length
+        ? FlowHint({ children: tr('flow.organization.impactMoreTasks', [tasks.total - tasks.items.length]) })
+        : null,
+    ]
+  }
+  // A guest's granted projects come from grant.list; a project to add is searched on the server.
+  const guestProjectsSection = (entity) => {
+    const state = guestGrants(),
+      granted = new Set(state.items.map((g) => g.targetId)),
+      picked = guestProject(),
+      choices = guestProjects?.state()
+    const title = (id) => knownProjects.get(id)?.title ?? d().projects.find((p) => p.id === id)?.title
+    return FlowSection({
+      inset: 'none',
+      title: tr('flow.ui.granted.projects'),
+      children: stack(
+        state.key !== guestKey() || (state.loading && !state.items.length)
+          ? FlowLoading({ label: tr('flow.ui.opening.flow') })
+          : null,
+        ...state.items.map((g) =>
+          FlowListItem({
+            title: g.targetTitle ?? g.targetId,
+            actions: button(tr('flow.ui.remove'), () =>
+              confirmRun(
+                g.targetTitle ?? tr('flow.ui.granted.projects'),
+                tr('flow.organization.confirmAccessRevoke'),
+                tr('flow.ui.remove'),
+                'access.revoke',
+                { id: g.id },
+              ),
+            ),
+          }),
+        ),
+        state.key === guestKey() && !state.loading && !state.error && !state.items.length
+          ? FlowHint({ children: tr('flow.organization.guestNoProjects') })
+          : null,
+        state.error || state.cursor
+          ? FlowToolbar({
+              inset: 'none',
+              children: FlowHint({
+                children: state.error
+                  ? state.error.message
+                  : tr('flow.list.showing', [state.items.length, state.total]),
+              }),
+              trailing: state.error
+                ? FlowButton({
+                    label: tr('flow.ui.try.again'),
+                    size: 'sm',
+                    onClick: () => loadGuestGrants({ retry: true }),
+                  })
+                : FlowButton({
+                    label: tr('flow.list.showMore', [
+                      Math.min(50, state.total - state.items.length),
+                      state.total - state.items.length,
+                    ]),
+                    size: 'sm',
+                    disabled: state.loading,
+                    onClick: () => loadGuestGrants({ more: true }),
+                  }),
+            })
+          : null,
+        guestProjects
+          ? form(
+              // The pick lives in state, not a field: a reset picker after a save is not a draft.
+              FlowChoiceField({
+                id: 'guest-project',
+                label: tr('flow.ui.projects'),
+                icon: 'folder',
+                value: picked,
+                selected: {
+                  label: title(picked) ?? tr('flow.ui.select.projects.for.guest'),
+                  content: title(picked) ?? tr('flow.ui.select.projects.for.guest'),
+                },
+                options: choices.items
+                  .filter((p) => !granted.has(p.id))
+                  .map((p) => ({ value: p.id, label: p.title, content: p.title, description: p.code })),
+                ...remoteOf(guestProjects),
+                onChange: (id) => guestProject.set(id),
+              }),
+              () =>
+                run(
+                  'access.grant',
+                  {
+                    scope: 'project',
+                    targetId: picked,
+                    subjectType: 'user',
+                    subjectIds: [entity.id],
+                    role: 'viewer',
+                  },
+                  () => {
+                    guestProject.set('')
+                    guestProjects.close()
+                  },
+                ),
+              tr('flow.ui.grant.permissions'),
+              !picked,
+            )
+          : null,
+      ),
+    })
+  }
+  const modalContent = (key, form, separateActions) => {
+    const ws =
+        workspaceRecordRoutes.has(key) && ctx.recordProvided?.()
+          ? d().workspaces.find((workspace) => workspace.id === ctx.record() && !workspace.archived)
+          : w(),
       project = p(),
       params = ctx.params(),
       entity = d().members.find((m) => m.id === ctx.record())
+    if (workspaceRecordRoutes.has(key) && !ws)
+      return FlowEmpty({
+        title: tr('flow.record.notFound'),
+        description: tr('flow.record.notFoundHelp'),
+        action: nav('workspaces', tr('flow.ui.workspace')),
+      })
     if (key === 'project-move') {
       if (!project || !manage('project', project.id)) return denied()
       const options = d()
         .workspaces.filter((w) => w.id !== project.workspaceId && !w.archived)
         .map((w) => ({ value: w.id, label: w.title }))
+      const invalidatePreview = () => {
+        previewRequest++
+        preview.set(null)
+        previewError.set('')
+        previewBusy.set(false)
+      }
       const read = async () => {
         const request = ++previewRequest
         preview.set(null)
@@ -821,129 +1254,187 @@ export function createOrganization(ctx) {
           if (request === previewRequest) previewBusy.set(false)
         }
       }
-      return stack(
-        notice(
-          project.title,
-          tr('flow.ui.currently.in.tasks.documents.sprints.epics.and.atlas.sources.move.with.the.proje', [
-            d().workspaces.find((w) => w.id === project.workspaceId)?.title,
-          ]),
-        ),
-        FlowSelect({
-          label: tr('flow.ui.destination.workspace'),
-          value: target(),
-          options: [{ value: '', label: tr('flow.ui.select.a.workspace.in.this.organization') }, ...options],
-          onChange: (e) => {
-            target.set(e.target.value)
-            preview.set(null)
-          },
-        }),
-        FlowCheckboxField({
-          label: tr('flow.ui.preserve.existing.access.with.direct.grants.for.affected.members'),
-          checked: preserve(),
-          onChange: (e) => {
-            preserve.set(e.target.checked)
-            preview.set(null)
-          },
-        }),
-        button(
-          previewBusy() ? tr('flow.ui.preparing.preview') : tr('flow.ui.preview.impact'),
-          read,
-          false,
-          !target() || previewBusy(),
-        ),
-        previewError() ? notice(tr('flow.ui.preview.unavailable'), previewError(), 'red') : null,
-        preview()
-          ? stack(
-              FlowHint({
-                children: tr('flow.ui.people.lose.access.gain.access.unchanged', [
-                  preview().people.filter((x) => x.change === 'loss').length,
-                  preview().people.filter((x) => x.change === 'gain').length,
-                  preview().people.filter((x) => x.change === 'same').length,
-                ]),
-              }),
-              FlowAccessList({
-                rows: [...preview().people]
-                  .sort(
-                    (a, b) =>
-                      ['loss', 'gain', 'same'].indexOf(a.change) - ['loss', 'gain', 'same'].indexOf(b.change),
-                  )
-                  .map((row) => ({
-                    id: row.id,
-                    name: row.name,
-                    role: `${roleLabel(row.before.role)} → ${roleLabel(row.after.role)}`,
-                    sources:
-                      row.after.sources.map((x) => x.label).join(' · ') ||
-                      tr('flow.ui.all.access.sources.lost'),
-                    status:
-                      row.change === 'loss'
-                        ? tr('flow.ui.reduced.lost.access')
-                        : row.change === 'gain'
-                          ? tr('flow.ui.access.added')
-                          : tr('flow.ui.unchanged'),
-                  })),
-              }),
-            )
-          : notice(
-              tr('flow.ui.preview.before.confirming'),
-              tr('flow.ui.inherited.access.is.recalculated.for.the.new.workspace.direct.and.team.grants.on'),
-            ),
-        inline(
-          button(tr('flow.ui.cancel'), ctx.close),
-          button(
-            tr('flow.ui.confirm.move'),
-            () =>
-              ctx.mutate(
-                'flow.organization.command',
-                {
-                  action: 'project.move',
-                  id: project.id,
-                  projectId: project.id,
-                  targetWorkspaceId: target(),
-                  preserve: preserve(),
-                  expectedRevision: preview().revision,
-                },
-                (value) =>
-                  ctx.navigate(
-                    'board',
-                    { project: project.id, workspace: value.workspaceId },
-                    { replace: true },
-                  ),
-              ),
-            true,
-            !preview() || previewBusy() || ctx.busy(),
+      const more = async () => {
+        const held = preview()
+        if (!held?.cursor || previewBusy()) return
+        const request = ++previewRequest
+        previewError.set('')
+        previewBusy.set(true)
+        try {
+          const value = await ctx.call('flow.project.move.preview', {
+            projectId: project.id,
+            targetWorkspaceId: target(),
+            preserve: preserve(),
+            cursor: held.cursor,
+          })
+          if (request === previewRequest) preview.set({ ...value, people: [...held.people, ...value.people] })
+        } catch (e) {
+          if (request === previewRequest) previewError.set(e.message)
+        } finally {
+          if (request === previewRequest) previewBusy.set(false)
+        }
+      }
+      return form(
+        stack(
+          notice(
+            project.title,
+            tr('flow.ui.currently.in.tasks.documents.sprints.epics.and.atlas.sources.move.with.the.proje', [
+              d().workspaces.find((w) => w.id === project.workspaceId)?.title,
+            ]),
           ),
+          selectField({
+            name: 'targetWorkspaceId',
+            label: tr('flow.ui.destination.workspace'),
+            value: target(),
+            disabled: ctx.busy(),
+            options: [
+              { value: '', label: tr('flow.ui.select.a.workspace.in.this.organization') },
+              ...options,
+            ],
+            onChange: (e) => {
+              target.set(e.target.value)
+              invalidatePreview()
+            },
+          }),
+          FlowCheckboxField({
+            name: 'preserveAccess',
+            label: tr('flow.ui.preserve.existing.access.with.direct.grants.for.affected.members'),
+            checked: preserve(),
+            disabled: ctx.busy(),
+            onChange: (e) => {
+              preserve.set(e.target.checked)
+              invalidatePreview()
+            },
+          }),
+          button(
+            previewBusy() ? tr('flow.ui.preparing.preview') : tr('flow.ui.preview.impact'),
+            read,
+            false,
+            !target() || previewBusy(),
+          ),
+          previewError() ? notice(tr('flow.ui.preview.unavailable'), previewError(), 'red') : null,
+          preview()
+            ? stack(
+                FlowHint({
+                  children: tr('flow.ui.people.lose.access.gain.access.unchanged', [
+                    preview().summary?.loss ?? preview().people.filter((x) => x.change === 'loss').length,
+                    preview().summary?.gain ?? preview().people.filter((x) => x.change === 'gain').length,
+                    preview().summary?.same ?? preview().people.filter((x) => x.change === 'same').length,
+                  ]),
+                }),
+                FlowAccessList({
+                  rows: [...preview().people]
+                    .sort(
+                      (a, b) =>
+                        ['loss', 'gain', 'same'].indexOf(a.change) -
+                        ['loss', 'gain', 'same'].indexOf(b.change),
+                    )
+                    .map((row) => ({
+                      id: row.id,
+                      name: row.name,
+                      role: `${roleLabel(row.before.role)} → ${roleLabel(row.after.role)}`,
+                      sources:
+                        row.after.sources.map(accessSourceLabel).join(' · ') ||
+                        tr('flow.ui.all.access.sources.lost'),
+                      status:
+                        row.change === 'loss'
+                          ? tr('flow.ui.reduced.lost.access')
+                          : row.change === 'gain'
+                            ? tr('flow.ui.access.added')
+                            : tr('flow.ui.unchanged'),
+                    })),
+                }),
+                preview().total > preview().people.length
+                  ? FlowToolbar({
+                      inset: 'none',
+                      children: FlowHint({
+                        children: tr('flow.access.previewShowing', [
+                          preview().people.length,
+                          preview().total,
+                        ]),
+                      }),
+                      trailing: preview().cursor
+                        ? FlowButton({
+                            label: tr('flow.access.previewMore'),
+                            size: 'sm',
+                            disabled: previewBusy(),
+                            onClick: more,
+                          })
+                        : null,
+                    })
+                  : null,
+              )
+            : notice(
+                tr('flow.ui.preview.before.confirming'),
+                tr(
+                  'flow.ui.inherited.access.is.recalculated.for.the.new.workspace.direct.and.team.grants.on',
+                ),
+              ),
         ),
+        () => {
+          if (!preview() || previewBusy() || ctx.busy()) return
+          return ctx.mutate(
+            'flow.organization.command',
+            {
+              action: 'project.move',
+              id: project.id,
+              projectId: project.id,
+              targetWorkspaceId: target(),
+              preserve: preserve(),
+              expectedRevision: preview().revision,
+            },
+            (value) =>
+              ctx.navigate('board', { project: project.id, workspace: value.workspaceId }, { replace: true }),
+          )
+        },
+        tr('flow.ui.confirm.move'),
+        !preview() || previewBusy(),
       )
     }
     if (key === 'member-access') {
-      const scope = params.accessScope === 'project' ? 'project' : 'workspace',
-        id = params.target ?? (scope === 'project' ? project?.id : ws?.id),
-        target = scopeTarget(scope, id)
-      if (!entity || !target || entity.status !== 'active')
+      const { scope, id, key: wanted } = memberAccessTarget(),
+        state = memberAccess(),
+        current = state.key === wanted
+      if (!current || state.loading) return FlowLoading({ label: tr('flow.ui.opening.flow') })
+      if (state.error)
+        return FlowEmpty({
+          title: tr('flow.ui.unable.to.open.flow'),
+          description: state.error.message,
+          action: FlowButton({ label: tr('flow.ui.try.again'), onClick: () => loadMemberAccess(true) }),
+        })
+      const entity = state.item
+      if (!entity || entity.status !== 'active')
         return FlowEmpty({ title: mt('notFound'), description: mt('notFoundDetail') })
-      const a = accessFor(d(), target, entity.id),
-        editable = manage(scope, id),
-        grantOf = (x) => d().grants.find((g) => g.id === x.grantId)
-      const source = (x) => {
-        const g = grantOf(x),
-          team = g?.subjectType === 'team' ? d().teams.find((t) => t.id === g.subjectId) : null
-        return FlowListItem({
-          title: x.label,
+      const a = entity.access,
+        editable = manage(scope, id)
+      const source = (x) =>
+        FlowListItem({
+          title: accessSourceLabel(x),
           description:
             roleLabel(x.role) +
             ' · ' +
-            (team ? mt('teamWide', [team.memberIds.length, team.title]) : g ? mt('direct') : mt('inherited')),
+            (x.teamId
+              ? mt('teamWide', [x.teamMemberCount, x.teamTitle])
+              : x.grantId
+                ? mt('direct')
+                : mt('inherited')),
           actions:
-            editable && g
+            editable && x.grantId
               ? button(
-                  team ? mt('removeTeam') : mt('removeDirect'),
-                  () => run('access.revoke', { id: g.id }),
+                  x.teamId ? mt('removeTeam') : mt('removeDirect'),
+                  () =>
+                    confirmRun(
+                      accessSourceLabel(x),
+                      tr('flow.organization.confirmAccessRevoke'),
+                      x.teamId ? mt('removeTeam') : mt('removeDirect'),
+                      'access.revoke',
+                      { id: x.grantId },
+                    ),
                   false,
                   ctx.busy(),
                 )
               : null,
         })
-      }
       return stack(
         FlowProperties({
           items: [
@@ -956,13 +1447,7 @@ export function createOrganization(ctx) {
               }),
             },
             { label: mt('orgRole'), value: roleLabel(entity.role) },
-            {
-              label: mt('teams'),
-              value:
-                teamsOf(entity)
-                  .map((t) => t.title)
-                  .join(', ') || '—',
-            },
+            { label: mt('teams'), value: entity.teams.map((t) => t.title).join(', ') || '—' },
           ],
         }),
         FlowSection({
@@ -985,43 +1470,103 @@ export function createOrganization(ctx) {
       )
     }
     if (key === 'access-grant') {
-      if (
-        !manage() &&
-        !d().workspaces.some((w) => manage('workspace', w.id)) &&
-        !d().projects.some((p) => manage('project', p.id))
-      )
+      // The actor's own admin grants say where they may grant, past any loaded project window.
+      if (!manage() && !(d().grants ?? []).some((g) => g.role === 'admin' && manage(g.scope, g.targetId)))
         return denied()
       const scope = grantScope() || params.accessScope || 'workspace',
-        subjectType = grantSubject() || (params.team ? 'team' : 'user')
-      const targets = (scope === 'workspace' ? d().workspaces : d().projects).filter((x) =>
-        manage(scope, x.id),
-      )
-      const subjects =
-        subjectType === 'team'
-          ? d().teams
-          : d().members.filter((m) => m.status === 'active' && (scope === 'project' || m.role !== 'guest'))
+        subjectType = grantKind()
+      const workspaces = d().workspaces.filter((x) => !x.archived && manage('workspace', x.id))
+      const chosen = grantPeople().length
+        ? grantPeople()
+        : params.team
+          ? [params.team]
+          : params.user && subjectType === 'user'
+            ? [params.user]
+            : []
+      const subjectTitle = (id) => {
+        const known = knownSubjects.get(`${subjectType}:${id}`)
+        if (subjectType === 'team') return known?.title ?? d().teams.find((t) => t.id === id)?.title
+        return (
+          known?.name ??
+          d().members.find((m) => m.id === id)?.name ??
+          factsOf()?.value?.items?.find((m) => m.id === id)?.name
+        )
+      }
+      const found = grantSubjects?.state().items ?? []
+      const subjects = grantSubjects
+        ? [
+            ...chosen.map((id) => ({
+              id,
+              title: subjectTitle(id) ?? tr('flow.organization.subjectLoading'),
+              color: 'blue',
+            })),
+            ...found
+              .filter((x) => !chosen.includes(x.id))
+              .map((x) => ({ id: x.id, title: x.name ?? x.title, color: 'blue' })),
+          ]
+        : (subjectType === 'team'
+            ? d().teams.filter((team) => !team.archived)
+            : d().members.filter((m) => m.status === 'active' && (scope === 'project' || m.role !== 'guest'))
+          ).map((x) => ({ id: x.id, title: x.name ?? x.title, color: 'blue' }))
+      const fixedTitle = params.target
+        ? scope === 'workspace'
+          ? d().workspaces.find((x) => x.id === params.target)?.title
+          : (d().projects.find((x) => x.id === params.target)?.title ??
+            knownProjects.get(params.target)?.title)
+        : null
+      const target = scope === 'workspace' ? '' : grantTarget()
+      const targetName = knownProjects.get(target)?.title ?? d().projects.find((x) => x.id === target)?.title
+      const restart = () => {
+        grantPeople.set([])
+        grantSubjects?.close()
+      }
       return form(
         stack(
-          FlowSelectField({
+          selectField({
             name: 'scope',
             label: tr('flow.ui.scope'),
             value: scope,
             disabled: !!params.accessScope,
             options: [
               { value: 'workspace', label: 'Workspace' },
-              { value: 'project', label: 'Project' },
+              { value: 'project', label: tr('flow.ui.project') },
             ],
-            onChange: (e) => grantScope.set(e.target.value),
+            onChange: (e) => {
+              grantScope.set(e.target.value)
+              grantTarget.set('')
+              grantTargets?.close()
+              restart()
+            },
           }),
           params.target
-            ? html`<input type="hidden" name="targetId" value=${params.target}/><input type="hidden" name="scope" value=${scope}/>${FlowHint({ children: (targets.find((x) => x.id === params.target)?.title ?? params.target) + ' · ' + (scope === 'workspace' ? 'Workspace' : tr('flow.ui.projects')) })}`
-            : select(
-                'targetId',
-                scope === 'workspace' ? 'Workspace' : 'Project',
-                targets[0]?.id,
-                targets.map((x) => ({ value: x.id, label: x.title })),
-              ),
-          FlowSelectField({
+            ? html`<input type="hidden" name="targetId" value=${params.target}/><input type="hidden" name="scope" value=${scope}/>${FlowHint({ children: (fixedTitle ?? params.target) + ' · ' + (scope === 'workspace' ? 'Workspace' : tr('flow.ui.project')) })}`
+            : scope === 'workspace' || !grantTargets
+              ? select(
+                  'targetId',
+                  scope === 'workspace' ? 'Workspace' : tr('flow.ui.project'),
+                  workspaces[0]?.id,
+                  workspaces.map((x) => ({ value: x.id, label: x.title })),
+                )
+              : // Projects the actor may grant on are searched on the server.
+                html`<input type="hidden" name="targetId" value=${target}/>${FlowChoiceField({
+                  id: 'grant-target',
+                  label: tr('flow.ui.project'),
+                  icon: 'folder',
+                  value: target,
+                  selected: {
+                    label: targetName ?? tr('flow.ui.select.project'),
+                    content: targetName ?? tr('flow.ui.select.project'),
+                  },
+                  options: (grantTargets.state().items ?? []).map((x) => ({
+                    value: x.id,
+                    label: x.title,
+                    content: x.title,
+                    description: x.code,
+                  })),
+                  ...remoteOf(grantTargets),
+                  onChange: (id) => grantTarget.set(id),
+                })}${ctx.formError()?.targetId ? html`<small id="grant-target-error" data-flow="field-error">${ctx.formError().targetId}</small>` : null}`,
+          selectField({
             name: 'subjectType',
             label: tr('flow.ui.grant.to'),
             value: subjectType,
@@ -1031,21 +1576,16 @@ export function createOrganization(ctx) {
             ],
             onChange: (e) => {
               grantSubject.set(e.target.value)
-              grantPeople.set([])
+              restart()
             },
           }),
           FlowTagPicker({
             id: 'grant-subjects',
             placeholder: subjectType === 'team' ? tr('flow.ui.select.team') : tr('flow.ui.select.member'),
             label: subjectType === 'team' ? tr('flow.ui.granted.team') : tr('flow.ui.granted.member'),
-            value: grantPeople().length
-              ? grantPeople()
-              : params.team
-                ? [params.team]
-                : params.user && subjectType === 'user'
-                  ? [params.user]
-                  : [],
-            options: subjects.map((x) => ({ id: x.id, title: x.name ?? x.title, color: 'blue' })),
+            value: chosen,
+            options: subjects,
+            ...(grantSubjects ? remoteOf(grantSubjects) : {}),
             onChange: grantPeople.set,
           }),
           select('role', tr('flow.ui.role'), 'viewer', roles),
@@ -1054,93 +1594,66 @@ export function createOrganization(ctx) {
             tr('flow.ui.guests.can.only.be.granted.specific.projects.teams.and.workspaces.are.for.intern'),
           ),
         ),
-        (v) =>
-          run(
-            'access.grant',
-            {
-              ...v,
-              subjectIds: grantPeople().length
-                ? grantPeople()
-                : params.team
-                  ? [params.team]
-                  : params.user && subjectType === 'user'
-                    ? [params.user]
-                    : [],
-            },
-            ctx.close,
-          ),
+        (v) => run('access.grant', { ...v, subjectIds: chosen }, ctx.close),
         tr('flow.ui.grant.permissions'),
+        !chosen.length || (scope === 'project' && !params.target && grantTargets && !target),
       )
     }
     if (key === 'workspace-new' || key === 'workspace-edit') {
-      if (!manage('workspace', ws?.id)) return denied()
+      if (!(key === 'workspace-new' ? manage() : manage('workspace', ws?.id))) return denied()
       return form(
         stack(
-          FlowInput({
+          input({
             id: 'title',
             label: tr('flow.ui.workspace.name'),
             value: key === 'workspace-edit' ? ws?.title : '',
             required: true,
             placeholder: tr('flow.ui.e.g.product'),
           }),
-          FlowTextarea({
+          textarea({
             id: 'description',
             label: tr('flow.ui.description'),
             value: key === 'workspace-edit' ? ws?.description : '',
           }),
-          FlowSelectField({
+          selectField({
             name: 'access',
             label: tr('flow.ui.who.can.join'),
-            value: workspaceAccess() || (key === 'workspace-edit' ? ws?.access : 'private'),
+            value:
+              workspaceAccess() ||
+              (key === 'workspace-edit' && ws?.access === 'internal' ? 'internal' : 'restricted'),
             options: [
-              { value: 'private', label: tr('flow.ui.only.granted.people.teams') },
+              { value: 'restricted', label: tr('flow.ui.only.granted.people.teams') },
               { value: 'internal', label: tr('flow.ui.internal.organization.members') },
             ],
-            onChange: (e) => workspaceAccess.set(e.target.value),
+            onChange: (e) => {
+              workspaceAccess.set(e.target.value)
+              const wanted = key === 'workspace-edit' ? workspaceImpact() : null
+              if (wanted) void loadImpact(wanted.key, wanted.input)
+            },
           }),
-          FlowHint({
-            children: tr(
-              'flow.ui.inherited.projects.will.use.workspace.permissions.internal.access.allows.organiz',
-              [
-                d().projects.filter((p) => p.workspaceId === ws?.id && p.access === 'workspace').length,
-                d().members.filter((m) => m.role !== 'guest' && m.status === 'active').length,
-              ],
-            ),
-          }),
-          key === 'workspace-edit' && workspaceAccess() && workspaceAccess() !== ws.access
+          (() => {
+            const counts = factsOf()
+            if (counts?.error)
+              return inline(
+                FlowHint({ children: tr('flow.organization.countsUnavailable') }),
+                button(tr('flow.ui.try.again'), () => loadFacts(true)),
+              )
+            return FlowHint({
+              children: counts?.value
+                ? tr(
+                    'flow.ui.inherited.projects.will.use.workspace.permissions.internal.access.allows.organiz',
+                    [counts.value.projects, counts.value.members],
+                  )
+                : tr('flow.organization.countsLoading'),
+            })
+          })(),
+          key === 'workspace-edit' &&
+            workspaceAccess() &&
+            workspaceAccess() !== (ws.access === 'internal' ? 'internal' : 'restricted')
             ? FlowDisclosure({
                 title: tr('flow.ui.permission.changes.in.inherited.projects'),
                 open: true,
-                children: stack(
-                  ...d()
-                    .projects.filter((p) => p.workspaceId === ws.id && p.access === 'workspace')
-                    .flatMap((p) =>
-                      d()
-                        .members.filter((m) => m.status === 'active')
-                        .map((m) => ({
-                          p,
-                          m,
-                          before: accessFor(d(), p, m.id),
-                          after: accessFor(
-                            {
-                              ...d(),
-                              workspaces: d().workspaces.map((w) =>
-                                w.id === ws.id ? { ...w, access: workspaceAccess() } : w,
-                              ),
-                            },
-                            p,
-                            m.id,
-                          ),
-                        }))
-                        .filter((x) => x.before.role !== x.after.role)
-                        .map((x) =>
-                          FlowListItem({
-                            title: x.m.name + ' · ' + x.p.title,
-                            description: roleLabel(x.before.role) + ' → ' + roleLabel(x.after.role),
-                          }),
-                        ),
-                    ),
-                ),
+                children: impactList(workspaceImpact(), (x) => x.name + ' · ' + x.projectTitle),
               })
             : null,
           key === 'workspace-edit' ? nav('workspace-archive', tr('flow.ui.archive.workspace')) : null,
@@ -1152,34 +1665,63 @@ export function createOrganization(ctx) {
         key === 'workspace-new' ? tr('flow.ui.create.workspace') : tr('flow.ui.save.changes'),
       )
     }
-    if (key === 'workspace-archive')
-      return manage('workspace', ws?.id)
-        ? stack(
-            notice(
-              tr('flow.ui.archive.2c4f61') + ws?.title,
-              tr('flow.ui.the.workspace.is.not.deleted.move.or.archive.all.its.projects.first'),
-              'yellow',
-            ),
-            projectCards(d().projects.filter((p) => p.workspaceId === ws?.id && !p.archived)),
-            inline(
-              button(tr('flow.ui.cancel'), ctx.close),
-              button(
-                tr('flow.ui.archive.workspace'),
-                () =>
-                  run('workspace.archive', { id: ws?.id }, () =>
-                    ctx.navigate('workspaces', {}, { replace: true }),
-                  ),
-                true,
-                ctx.busy(),
+    if (key === 'workspace-archive') {
+      if (!manage('workspace', ws?.id)) return denied()
+      const projects = d().projects.filter((project) => project.workspaceId === ws.id && !project.archived)
+      const projectCount =
+        d().context?.workspaceId === ws.id ? (d().counts?.projects ?? projects.length) : projects.length
+      const body = stack(
+        notice(
+          tr('flow.ui.archive.2c4f61') + ws?.title,
+          tr('flow.ui.the.workspace.is.not.deleted.move.or.archive.all.its.projects.first'),
+          'yellow',
+        ),
+        projectCards(projects),
+      )
+      const footer = inline(
+        button(tr('flow.ui.cancel'), ctx.close),
+        button(
+          tr('flow.ui.archive.workspace'),
+          () =>
+            run('workspace.archive', { id: ws?.id }, () => ctx.navigate('workspaces', {}, { replace: true })),
+          true,
+          ctx.busy() || projectCount > 0,
+        ),
+      )
+      return separateActions
+        ? {
+            body,
+            confirmation: {
+              message: tr('flow.ui.archive.2c4f61') + ws.title,
+              details: stack(
+                FlowHint({
+                  children: tr('flow.ui.the.workspace.is.not.deleted.move.or.archive.all.its.projects.first'),
+                }),
+                projectCount
+                  ? nav('workspace-overview', tr('flow.organization.archiveProjects', [projectCount]), {
+                      workspace: ws.id,
+                    })
+                  : null,
               ),
-            ),
-          )
-        : denied()
+              confirmDisabled: projectCount > 0,
+              onConfirm: () =>
+                run('workspace.archive', { id: ws.id }, () =>
+                  ctx.navigate('workspaces', {}, { replace: true }),
+                ),
+            },
+          }
+        : stack(body, footer)
+    }
+    if (key === 'member-invite' && d().invitationDelivery === 'unconfigured')
+      return FlowEmpty({
+        title: tr('flow.invitation.deliveryTitle'),
+        description: tr('flow.invitation.deliveryMissing'),
+      })
     if (key === 'member-invite')
       return manage()
         ? form(
             stack(
-              FlowInput({
+              input({
                 id: 'email',
                 label: 'Email',
                 type: 'email',
@@ -1190,7 +1732,7 @@ export function createOrganization(ctx) {
                   inviteEmail = e.target.value
                 },
               }),
-              FlowSelectField({
+              selectField({
                 name: 'role',
                 label: tr('flow.ui.invitee.type'),
                 value: inviteRole(),
@@ -1215,8 +1757,16 @@ export function createOrganization(ctx) {
                           ),
                   }),
               notice(
-                tr('flow.ui.prototype.invitations'),
-                tr('flow.ui.creates.a.pending.invitation.only.no.email.is.sent'),
+                tr(
+                  d().invitationDelivery === 'queued-email'
+                    ? 'flow.invitation.deliveryTitle'
+                    : 'flow.ui.prototype.invitations',
+                ),
+                tr(
+                  d().invitationDelivery === 'queued-email'
+                    ? 'flow.invitation.deliveryQueued'
+                    : 'flow.ui.creates.a.pending.invitation.only.no.email.is.sent',
+                ),
               ),
             ),
             (v) => run('member.invite', v, ctx.close),
@@ -1229,100 +1779,88 @@ export function createOrganization(ctx) {
             form(
               stack(
                 notice(entity.name, entity.email),
-                select('role', tr('flow.ui.role'), entity.role, [
-                  { value: 'member', label: tr('flow.ui.member') },
-                  { value: 'admin', label: tr('flow.ui.admin') },
-                  { value: 'guest', label: tr('flow.ui.guest') },
-                ]),
+                selectField({
+                  name: 'role',
+                  label: tr('flow.ui.role'),
+                  value: entity.role,
+                  disabled: entity.role === 'owner',
+                  options: [
+                    ...(entity.role === 'owner' ? [{ value: 'owner', label: tr('flow.ui.owner') }] : []),
+                    { value: 'member', label: tr('flow.ui.member') },
+                    { value: 'admin', label: tr('flow.ui.admin') },
+                    { value: 'guest', label: tr('flow.ui.guest') },
+                  ],
+                }),
+                entity.role === 'owner'
+                  ? FlowHint({ children: tr('flow.organization.ownerProtected') })
+                  : null,
               ),
-              (v) => run('member.update', { id: entity.id, role: v.role, revoke: false }, ctx.close),
+              (v) => run('member.update', { id: entity.id, role: v.role }, ctx.close),
               tr('flow.ui.save.role'),
+              entity.role === 'owner',
             ),
             ...(ctx.settingsSection?.(key, entity) ?? []),
-            entity.role === 'guest'
-              ? FlowSection({
-                  inset: 'none',
-                  title: tr('flow.ui.granted.projects'),
-                  children: stack(
-                    ...d()
-                      .grants.filter(
-                        (g) => g.scope === 'project' && g.subjectType === 'user' && g.subjectId === entity.id,
-                      )
-                      .map((g) =>
-                        FlowListItem({
-                          title: d().projects.find((p) => p.id === g.targetId)?.title ?? g.targetId,
-                          actions: button(tr('flow.ui.remove'), () => run('access.revoke', { id: g.id })),
-                        }),
+            entity.role === 'guest' ? guestProjectsSection(entity) : null,
+            entity.status === 'revoked'
+              ? FlowNotice({
+                  title: tr('flow.ui.access.revoked'),
+                  message: tr('flow.organization.revokedRoleHelp'),
+                  action: button(
+                    tr('flow.organization.restoreAccess'),
+                    () =>
+                      confirmRun(
+                        tr('flow.organization.restoreAccess'),
+                        tr('flow.organization.confirmMemberRestore', [entity.name, roleLabel(entity.role)]),
+                        tr('flow.organization.restoreAccess'),
+                        'member.update',
+                        { id: entity.id, role: entity.role, revoke: false },
+                        ctx.close,
+                        'primary',
                       ),
-                    form(
-                      select('targetId', tr('flow.ui.projects'), '', [
-                        { value: '', label: tr('flow.ui.select.projects.for.guest') },
-                        ...d()
-                          .projects.filter(
-                            (p) =>
-                              !d().grants.some(
-                                (g) =>
-                                  g.scope === 'project' && g.targetId === p.id && g.subjectId === entity.id,
-                              ),
-                          )
-                          .map((p) => ({ value: p.id, label: p.title })),
-                      ]),
-                      (v) =>
-                        run('access.grant', {
-                          scope: 'project',
-                          targetId: v.targetId,
-                          subjectType: 'user',
-                          subjectIds: [entity.id],
-                          role: 'viewer',
-                        }),
-                      tr('flow.ui.grant.permissions'),
-                    ),
+                    false,
+                    entity.role === 'owner' || ctx.busy(),
                   ),
                 })
-              : null,
-            FlowDisclosure({
-              title: tr('flow.ui.revoke.flow.access'),
-              children: stack(
-                notice(
-                  tr('flow.ui.impact'),
-                  tr(
-                    'flow.ui.access.to.projects.will.be.removed.unfinished.tasks.keep.their.assignee.and.need',
-                    [
-                      d().projects.filter((p) => accessFor(d(), p, entity.id).role).length,
-                      d().tasks.filter((t) => t.assignee === entity.name && !isDone(d(), t)).length,
-                    ],
-                  ),
-                  'yellow',
-                ),
-                ...d()
-                  .tasks.filter((t) => t.assignee === entity.name && !isDone(d(), t))
-                  .map((t) =>
-                    notice(
-                      t.id,
-                      t.title,
-                      'neutral',
-                      nav('issue', tr('flow.ui.reassign'), { id: t.id, project: t.projectId }),
+              : FlowDisclosure({
+                  title: tr('flow.ui.revoke.flow.access'),
+                  children: stack(
+                    ...revokeImpact(),
+                    button(
+                      tr('flow.ui.confirm.revocation'),
+                      () =>
+                        confirmRun(
+                          tr('flow.ui.revoke.flow.access'),
+                          tr('flow.organization.confirmMemberRevoke', [entity.name]),
+                          tr('flow.ui.confirm.revocation'),
+                          'member.update',
+                          { id: entity.id, role: entity.role, revoke: true },
+                          ctx.close,
+                        ),
+                      false,
+                      entity.role === 'owner' || ctx.busy(),
                     ),
                   ),
-                button(tr('flow.ui.confirm.revocation'), () =>
-                  run('member.update', { id: entity.id, role: entity.role, revoke: true }, ctx.close),
-                ),
-              ),
-            }),
+                }),
           )
         : denied()
     if (key === 'team-new' || key === 'team-edit') {
       const t = d().teams.find((t) => t.id === ctx.record())
+      if (key === 'team-edit' && (!t || t.archived))
+        return FlowEmpty({
+          title: tr('flow.ui.team.not.found'),
+          description: tr('flow.ui.this.team.does.not.exist.or.you.cannot.view.it'),
+          action: nav('teams', organizationRoutes.teams.title),
+        })
       return manage()
         ? form(
             stack(
-              FlowInput({
+              input({
                 id: 'title',
                 label: tr('flow.ui.team.name'),
                 value: key === 'team-edit' ? t?.title : '',
                 required: true,
               }),
-              FlowTextarea({
+              textarea({
                 id: 'description',
                 label: tr('flow.ui.description'),
                 value: key === 'team-edit' ? t?.description : '',
@@ -1342,13 +1880,48 @@ export function createOrganization(ctx) {
     }
     return null
   }
+  const modal = (key, { separateActions = false } = {}) => {
+    let footer = null
+    const body = modalContent(
+      key,
+      (body, save, label, disabled) => {
+        const detach = separateActions && footer === null
+        const content = form(body, save, label, disabled, detach, separateActions ? detach : ctx.isModal?.())
+        if (!detach) return content
+        footer = content.footer
+        return content.body
+      },
+      separateActions,
+    )
+    if (separateActions && body?.body) return body
+    return separateActions ? { body, footer } : body
+  }
   return {
     view,
     modal,
     topAction,
-    topSearch,
+    prepare() {
+      if (ctx.route?.() === 'workspace-overview') overview.prepare()
+      if (ctx.route?.() === 'member-access') void loadMemberAccess()
+      if (ctx.route?.() === 'team') void loadTeam()
+      void loadFacts()
+      void loadGuestGrants()
+      const wanted = pendingImpact()
+      if (wanted) void loadImpact(wanted.key, wanted.input)
+    },
+    dispose() {
+      overview.reset()
+      candidates?.dispose()
+      for (const options of [guestProjects, grantTargets, grantSubjects]) options?.dispose()
+    },
     reset() {
+      overview.reset()
       grantPeople.set([])
+      teamCandidate.set('')
+      candidates?.close()
+      guestProject.set('')
+      grantTarget.set('')
+      for (const options of [guestProjects, grantTargets, grantSubjects]) options?.close()
       workspaceAccess.set('')
       accessChoice.set('')
       inviteRole.set('member')
@@ -1358,8 +1931,13 @@ export function createOrganization(ctx) {
       previewRequest++
       preview.set(null)
       previewError.set('')
+      previewBusy.set(false)
       target.set('')
       preserve.set(false)
+      memberAccessTicket++
+      memberAccess.set({ key: '', loading: false, error: null, item: null })
+      impactTicket++
+      impact.set({ key: '', loading: false, error: null, items: [], total: 0, cursor: null })
     },
   }
 }

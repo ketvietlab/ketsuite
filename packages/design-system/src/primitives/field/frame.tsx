@@ -15,6 +15,7 @@ export type FieldFrameProps = {
   kind: string
   layout?: 'inline'
   group?: boolean
+  action?: JSXChild
 }
 
 export const describedBy = (id: string, help?: string | null, error?: string | null): string | null =>
@@ -61,7 +62,14 @@ export const FieldFrame = (props: FieldFrameProps): TemplateResult => {
           </span>
         )}
       </Label>
-      {props.control}
+      {props.action === undefined ? (
+        props.control
+      ) : (
+        <div data-ui="field-row">
+          {props.control}
+          {props.action}
+        </div>
+      )}
       <FieldMessages {...props} />
     </div>
   )

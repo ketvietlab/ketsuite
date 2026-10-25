@@ -45,9 +45,37 @@ test('LiveDoc SSR shell is inert and editor supports Japanese', () => {
   assert.match(renderToStaticString(editor.view()), /書式/)
   editor.dispose()
 })
+
+test('a note title keeps its h1 level across legacy fallback projection', () => {
+  const value = { snapshot: '', blocks: [{ id: 'title', type: 'h1', delta: [{ insert: 'Untitle' }] }] }
+  assert.equal(FlowLiveDocBlocks(FlowLiveDocLegacyBlocks(value))[0].type, 'h1')
+})
+
+test('document presentation hides only the visible field label and keeps a stable mode-scoped mount key', () => {
+  const view = renderToStaticString(
+    FlowLiveDoc({
+      id: 'note',
+      label: 'Nội dung',
+      toolbar: 'floating',
+      surface: 'plain',
+      hideLabel: true,
+      onChange: () => assert.fail('SSR change'),
+    }),
+  )
+  assert.doesNotMatch(view, /data-flow="field-label"/)
+  assert.match(view, /data-live-key="note:[^:]+:false:floating:plain"/)
+})
 test('document reading column has a moderate 1200px cap, separate from full shell', async () => {
   const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8')
   const paper = css.match(/\[data-flow="doc-paper"\]\s*\{([^}]+)\}/)[1]
   assert.match(paper, /max-width: 1200px/)
   assert.match(paper, /margin: 0 auto/)
+})
+
+test('screens without an editor never download the LiveDoc bundle', async () => {
+  const source = await readFile(new URL('../src/live-doc.mjs', import.meta.url), 'utf8')
+  // The editor is the host's: the kit never names the suite, and loads what the
+  // host named only when a live document mounts.
+  assert.doesNotMatch(source, /@ketvietlab\/ketsuite/)
+  assert.match(source, /editorModule\s*\?\s*import\(editorModule\)/)
 })

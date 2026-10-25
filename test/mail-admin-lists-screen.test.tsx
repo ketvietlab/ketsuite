@@ -11,30 +11,25 @@ translate.locale = 'en'
 translate.has = () => true
 translate.resolves = () => true
 
-test('inbox uses ListPage and a route-owned mark-read action', () => {
+test('inbox keeps the collection islands and a localized Help drawer in ListPage', () => {
   const html = renderToString(
     inboxScreen(
       translate,
       {},
       {
-        rows: [
-          {
-            id: 'message/a',
-            subject: 'Inventory changed',
-            kind: 'comment',
-            body: 'Please review the new quantity.',
-            createdAt: '2026-08-27T08:00:00.000Z',
-          },
-        ],
-        action: '/admin/inbox?lang=en',
+        controls: 'INBOX_CONTROLS',
+        results: 'INBOX_RESULTS',
+        footer: 'INBOX_FOOTER',
+        rows: [{ body: 'PRIVATE_PREFETCH_BODY' }],
       },
     ),
   )
-
   assert.match(html, /data-ui="list-page"/)
-  assert.match(html, /action="\/admin\/inbox\?lang=en"/)
-  assert.match(html, /name="action" value="read"/)
-  assert.match(html, /name="id" value="message\/a"/)
+  assert.match(html, /data-ui="help-drawer"/)
+  assert.match(html, /data-kv-design-system/, 'shared overlay and responsive styles retain their scope')
+  for (const part of ['INBOX_CONTROLS', 'INBOX_RESULTS', 'INBOX_FOOTER']) assert.ok(html.includes(part))
+  assert.ok(!html.includes('PRIVATE_PREFETCH_BODY'), 'SSR does not carry a business-data snapshot')
+  assert.ok(html.indexOf('INBOX_FOOTER') < html.indexOf('INBOX_RESULTS'), 'pager precedes results')
 })
 
 test('inbound email log uses ListPage and retains diagnostic state', () => {
@@ -64,37 +59,22 @@ test('inbound email log uses ListPage and retains diagnostic state', () => {
   assert.match(html, /Target was not found/)
 })
 
-test('outbox uses ListPage and route-owned retry and cancel actions', () => {
+test('outbox keeps island regions and Help without serializing rendered mail', () => {
   const html = renderToString(
     outboxScreen(
       translate,
       {},
       {
-        rows: [
-          {
-            id: 'delivery/failed',
-            subject: 'Failed delivery',
-            to: JSON.stringify([{ address: 'buyer@example.com' }]),
-            state: 'failed',
-            attempts: 2,
-            lastError: 'Connection refused',
-          },
-          {
-            id: 'delivery/queued',
-            subject: 'Queued delivery',
-            to: JSON.stringify([{ address: 'vendor@example.com' }]),
-            state: 'queued',
-            attempts: 0,
-            text: 'Waiting to send',
-          },
-        ],
-        action: '/admin/outbox?lang=en',
+        controls: 'OUTBOX_CONTROLS',
+        results: 'OUTBOX_RESULTS',
+        footer: 'OUTBOX_FOOTER',
+        rows: [{ text: 'PRIVATE_RESET_TOKEN' }],
       },
     ),
   )
-
   assert.match(html, /data-ui="list-page"/)
-  assert.equal((html.match(/action="\/admin\/outbox\?lang=en"/g) ?? []).length, 2)
-  assert.match(html, /name="action" value="retry"/)
-  assert.match(html, /name="action" value="cancel"/)
+  assert.match(html, /data-ui="help-drawer"/)
+  for (const part of ['OUTBOX_CONTROLS', 'OUTBOX_RESULTS', 'OUTBOX_FOOTER']) assert.ok(html.includes(part))
+  assert.ok(!html.includes('PRIVATE_RESET_TOKEN'))
+  assert.ok(html.indexOf('OUTBOX_FOOTER') < html.indexOf('OUTBOX_RESULTS'), 'pager precedes results')
 })

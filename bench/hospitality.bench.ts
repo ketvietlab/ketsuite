@@ -109,7 +109,7 @@ const benchmarkAudit = defineModule({
   },
 })
 const modules = [address, partner, company, storage, backend, uom, product, hospitalityCore, benchmarkAudit]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 registerFunctions(modules)
 
 const pgUrl = process.env.KET_BENCH_PG ?? 'postgres://dev:devpassword@127.0.0.1:5435/postgres'

@@ -13,13 +13,16 @@ import {
 } from '@ketvietlab/ketjs'
 import { company, partner, storage as storageModule } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
+import { everyFunction } from './helpers/permissions.ts'
 
+// No sign-in here: the development identity (default company, every function) needs KET_DEV=1.
 test('storage module: upload, safe download, deduplication and queued GC work end to end', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ket-storage-module-'))
   const sqliteFile = join(dir, 'app.db')
   const storageDir = join(dir, 'objects')
   const app = defineDeployment({
     name: 'storageapp',
+    companies: true,
     modules: [address, partner, company, storageModule],
     worker: { queues: { maintenance: 1 } },
     serve: {
@@ -32,7 +35,13 @@ test('storage module: upload, safe download, deduplication and queued GC work en
   try {
     server = await bootDeployment(app, {
       port: 0,
-      env: { KET_LOG: 'null', KET_SQLITE: sqliteFile, KET_STORAGE_DIR: storageDir, KET_COMPANY: 'acme' },
+      env: {
+        KET_LOG: 'null',
+        KET_DEV: '1',
+        KET_SQLITE: sqliteFile,
+        KET_STORAGE_DIR: storageDir,
+        KET_COMPANY: 'acme',
+      },
     })
     const at = `http://127.0.0.1:${server.port}`
     const upload = async () => {
@@ -94,7 +103,13 @@ test('storage module: upload, safe download, deduplication and queued GC work en
     await server.close()
     server = null
     worker = await bootWorker(app, {
-      env: { KET_LOG: 'null', KET_SQLITE: sqliteFile, KET_STORAGE_DIR: storageDir, KET_COMPANY: 'acme' },
+      env: {
+        KET_LOG: 'null',
+        KET_DEV: '1',
+        KET_SQLITE: sqliteFile,
+        KET_STORAGE_DIR: storageDir,
+        KET_COMPANY: 'acme',
+      },
       log: () => {},
     })
     assert.equal(await worker.drain(), 1)
@@ -113,8 +128,10 @@ test('storage module: a stranger sees only attachments explicitly marked public'
   const storageDir = join(dir, 'objects')
   const app = defineDeployment({
     name: 'publicfiles',
+    companies: true,
     modules: [address, partner, company, storageModule],
     serve: {
+      permissions: everyFunction,
       sessions: { anonymous: { company: 'acme' } },
       defaults: { sqliteFile, storageDir },
     },
@@ -123,6 +140,7 @@ test('storage module: a stranger sees only attachments explicitly marked public'
     port: 0,
     env: {
       KET_LOG: 'null',
+      KET_DEV: '1',
       KET_SQLITE: sqliteFile,
       KET_STORAGE_DIR: storageDir,
       KET_SECRET: 'test-only-secret',

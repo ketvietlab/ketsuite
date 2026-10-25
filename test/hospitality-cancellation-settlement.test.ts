@@ -1,3 +1,10 @@
+import { deploymentRoomFixture } from './helpers/hospitality-room-fixture.ts'
+import {
+  addCalendarDays,
+  dateKeyIn,
+  zonedDateTime,
+} from '../packages/ketsuite/src/modules/hospitality_core/calendar.ts'
+const settlementToday = dateKeyIn(new Date(), 'Asia/Ho_Chi_Minh')
 /**
  * A booking that will not happen, settled.
  *
@@ -37,6 +44,7 @@ const bridge = defineModule({
       input: { folioId: 'id', fee: 'decimal', chargeId: 'id' },
       output: { ok: 'bool' },
       effects: [
+        'read:hospitality_core.Property',
         'read:hospitality_core.Folio',
         'read:hospitality_core.Charge',
         'write:hospitality_core.Folio',
@@ -51,7 +59,7 @@ const bridge = defineModule({
             chargeId: String(args.chargeId),
             sourceKey: `ota:${String(args.folioId)}:cancellation`,
             reason: 'provider',
-            at: '2026-10-01T09:00:00.000Z',
+            at: `${addCalendarDays(settlementToday, 0)}T09:00:00.000Z`,
           }),
         )
         return { ok: true }
@@ -62,6 +70,7 @@ const bridge = defineModule({
 
 const app = defineDeployment({
   name: 'hospitality_cancellation_test',
+  companies: true,
   modules: [
     suite.website,
     suite.address,
@@ -88,7 +97,7 @@ type Fixture = Awaited<ReturnType<typeof createTestDeployment>>
 
 const boot = async (e2e: Fixture) => {
   const call = <T>(name: string, input: Record<string, unknown> = {}) =>
-    e2e.fixture.call<T>(name, input, { scope })
+    deploymentRoomFixture<T>(e2e.fixture, name, input, { scope })
 
   for (const [id, code, name, accountType] of [
     ['receivable', '131', 'Phải thu khách hàng', 'asset_receivable'],
@@ -111,13 +120,14 @@ const boot = async (e2e: Fixture) => {
   // A penalty is a percentage of money, so the company has to say in what.
   await call('company.saveCompany', { id: 'default', partnerId: 'company-partner', currency: 'VND' })
   await call('partner.savePartner', { id: 'guest', kind: 'person', name: 'Nguyễn An' })
-  await call('hospitality_core.saveProperty', {
+  const savedProperty = await call<Row>('hospitality_core.saveProperty', {
     id: 'hotel',
-    code: 'HT',
+    code: 'HTL',
     name: 'Ket Hotel',
     accommodationType: 'hotel',
     timezone: 'Asia/Ho_Chi_Minh',
   })
+  assert.equal(savedProperty.value.ok, true, JSON.stringify(savedProperty.value.errors))
   await call('hospitality_core.saveCancellationPolicy', {
     id: 'non-refundable',
     code: 'NONREF',
@@ -141,6 +151,23 @@ const boot = async (e2e: Fixture) => {
     code: '101',
     name: '101',
   })
+  await call('hospitality_core.saveRatePlan', {
+    id: 'settlement-rate',
+    propertyId: 'hotel',
+    roomTypeId: 'deluxe',
+    code: 'BAR',
+    name: 'Best rate',
+    rateType: 'nightly',
+    amount: '500',
+  })
+  const configured = await call<Row>('hospitality_core.getProperty', { id: 'hotel' })
+  const opened = await call<Row>('hospitality_core.setPropertyLifecycle', {
+    propertyId: 'hotel',
+    lifecycle: 'active',
+    expectedVersion: configured.value.version,
+    requestKey: 'settlement-open-property',
+  })
+  assert.equal(opened.value.ok, true, JSON.stringify(opened.value.errors))
   return call
 }
 
@@ -149,8 +176,8 @@ const booked = async (
   call: <T>(name: string, input?: Record<string, unknown>) => Promise<{ value: T }>,
   id: string,
   stay: { checkIn: string; checkOut: string } = {
-    checkIn: '2026-11-01T14:00:00.000Z',
-    checkOut: '2026-11-03T12:00:00.000Z',
+    checkIn: `${addCalendarDays(settlementToday, 20)}T14:00:00.000Z`,
+    checkOut: `${addCalendarDays(settlementToday, 22)}T12:00:00.000Z`,
   },
 ): Promise<string> => {
   const created = await call<Row>('hospitality_core.createReservation', {
@@ -166,6 +193,22 @@ const booked = async (
   })
   assert.equal(created.value.ok, true, JSON.stringify(created.value.errors))
   return String(created.value.folioId)
+}
+
+/** A no-show owes the policy only on a booking a guarantee secured. */
+const guaranteedByCard = async (
+  call: <T>(name: string, input?: Record<string, unknown>) => Promise<{ value: T }>,
+  id: string,
+): Promise<void> => {
+  const guaranteed = await call<Row>('hospitality_billing.setReservationGuarantee', {
+    reservationId: id,
+    kind: 'card',
+    amount: '1000',
+    reference: `authorization:${id}`,
+    expectedVersion: 1,
+    requestKey: `guarantee-${id}`,
+  })
+  assert.equal(guaranteed.value.ok, true, JSON.stringify(guaranteed.value.errors))
 }
 
 const folioState = (e2e: Fixture, folioId: string) =>
@@ -194,7 +237,7 @@ test('a cancelled booking settles the same way whoever cancelled it', async (t) 
   const cancelled = await call<Row>('hospitality_core.cancelReservation', {
     id: 'desk',
     reason: 'guest changed plans',
-    at: '2026-10-01T09:00:00.000Z',
+    at: `${addCalendarDays(settlementToday, 0)}T09:00:00.000Z`,
   })
   assert.equal(cancelled.value.ok, true, JSON.stringify(cancelled.value.errors))
   assert.equal(cancelled.value.cancellationFee, '1000')
@@ -270,7 +313,7 @@ test('a cancellation costing nothing leaves nothing behind to bill', async (t) =
   const cancelled = await call<Row>('hospitality_core.cancelReservation', {
     id: 'free',
     reason: 'guest changed plans',
-    at: '2026-10-01T09:00:00.000Z',
+    at: `${addCalendarDays(settlementToday, 0)}T09:00:00.000Z`,
   })
   assert.equal(cancelled.value.ok, true, JSON.stringify(cancelled.value.errors))
   assert.equal(cancelled.value.cancellationFee, '0')
@@ -309,7 +352,7 @@ test('a partial penalty is charged as a partial penalty, not rounded to all or n
   const cancelled = await call<Row>('hospitality_core.cancelReservation', {
     id: 'late',
     reason: 'guest changed plans',
-    at: '2026-10-31T09:00:00.000Z',
+    at: `${addCalendarDays(settlementToday, 19)}T09:00:00.000Z`,
   })
   assert.equal(cancelled.value.ok, true, JSON.stringify(cancelled.value.errors))
   assert.equal(cancelled.value.cancellationFee, '500')
@@ -348,10 +391,11 @@ test('a guest who never arrived owes the policy, not the whole stay', async (t) 
   })
 
   const folioId = await booked(call, 'absent')
+  await guaranteedByCard(call, 'absent')
   const marked = await call<Row>('hospitality_core.markNoShow', {
     id: 'absent',
     reason: 'no arrival by midnight',
-    at: '2026-11-02T00:30:00.000Z',
+    at: `${addCalendarDays(settlementToday, 21)}T00:30:00.000Z`,
   })
   assert.equal(marked.value.ok, true, JSON.stringify(marked.value.errors))
   // Half of two nights at 500, because that is what the policy says. The folio
@@ -387,10 +431,12 @@ test('a no-show on a booking that could be cancelled for free costs nothing', as
   })
 
   const folioId = await booked(call, 'absent-free')
+  // Guaranteed, so the policy alone is what makes it free.
+  await guaranteedByCard(call, 'absent-free')
   const marked = await call<Row>('hospitality_core.markNoShow', {
     id: 'absent-free',
     reason: 'no arrival by midnight',
-    at: '2026-11-02T00:30:00.000Z',
+    at: `${addCalendarDays(settlementToday, 21)}T00:30:00.000Z`,
   })
   assert.equal(marked.value.ok, true, JSON.stringify(marked.value.errors))
   assert.equal(marked.value.noShowFee, '0')
@@ -422,18 +468,37 @@ test('the night audit prices a missed arrival the same way the desk would', asyn
     cancellationPolicyId: 'strict',
   })
 
-  // In the past: a night audit refuses a date that has not happened yet.
+  // Yesterday is still open: a night audit refuses a date that has not happened
+  // yet, and closes only the property's business day.
+  const auditDate = addCalendarDays(settlementToday, -1)
+  await e2e.fixture.withTenant('', ({ adapter }) =>
+    adapter.run('UPDATE hospitality_core_property SET "businessDate" = ? WHERE id = ?', [auditDate, 'hotel']),
+  )
   const folioId = await booked(call, 'ghost', {
-    checkIn: '2026-08-01T14:00:00.000Z',
-    checkOut: '2026-08-03T12:00:00.000Z',
+    checkIn: zonedDateTime(auditDate, 14, 0, 'Asia/Ho_Chi_Minh').toISOString(),
+    checkOut: zonedDateTime(addCalendarDays(auditDate, 2), 12, 0, 'Asia/Ho_Chi_Minh').toISOString(),
   })
+  await guaranteedByCard(call, 'ghost')
   // A room was being kept for this guest, so the audit has one to let go of.
   const held = await call<Row>('hospitality_core.holdRoom', { stayId: 'ghost:stay', roomId: '101' })
   assert.equal(held.value.ok, true, JSON.stringify(held.value.errors))
+  // A guaranteed arrival is a decision the desk makes before the audit runs.
+  const booking = await call<Row>('hospitality_core.getReservation', { id: 'ghost' })
+  const decided = await call<Row>('hospitality_core.decideAuditArrival', {
+    reservationId: 'ghost',
+    auditDate,
+    choice: 'no_show',
+    expectedVersion: booking.value.version,
+    requestKey: 'ghost-no-show',
+  })
+  assert.equal(decided.value.ok, true, JSON.stringify(decided.value.errors))
 
-  const requested = await call<Row>('hospitality_core.requestNightAudit', {
+  const work = await call<Row>('hospitality_core.getNightAuditWorkbench', { propertyId: 'hotel', auditDate })
+  const requested = await call<Row>('hospitality_billing.requestNightAudit', {
     propertyId: 'hotel',
-    auditDate: '2026-08-01',
+    auditDate,
+    expectedVersion: work.value.propertyVersion,
+    requestKey: 'ghost-night-audit',
   })
   assert.equal(requested.value.ok, true, JSON.stringify(requested.value.errors))
   assert.equal(await e2e.drainJobs(), 1)

@@ -7,8 +7,33 @@ import { address } from '@ketvietlab/ketsuite'
 
 const modules = [address, partner, company, user, oauth]
 
+test('brokered providers use the broker callback and cannot auto-provision an operator', async () => {
+  const h = await boot()
+  try {
+    const values = {
+      id: 'broker',
+      code: 'broker',
+      name: 'Broker',
+      protocol: 'oidc-broker',
+      issuer: 'https://identity.example.test',
+      clientId: 'broker-client',
+      clientAuthMethod: 'none',
+      redirectUri: 'https://login.example.test/api/auth/callback',
+      autoProvision: false,
+    }
+    assert.equal((await h.call('oauth.saveProvider', values)).ok, true)
+    assert.equal((await h.call('oauth.saveProvider', { ...values, autoProvision: true })).ok, false)
+    assert.equal(
+      (await h.call('oauth.saveProvider', { ...values, redirectUri: 'https://login.example.test/other' })).ok,
+      false,
+    )
+  } finally {
+    await h.adapter.close()
+  }
+})
+
 const boot = async () => {
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
@@ -249,6 +274,79 @@ test('oauth domain: auto-provision creates a scoped non-superuser only from veri
     )
     assert.equal(finalUnlink.ok, false)
     assert.match(JSON.stringify(finalUnlink.errors), /oauth\.error\.lastLoginMethod/)
+  } finally {
+    await runtime.adapter.close()
+  }
+})
+
+test('oauth domain: accounts a provider created follow its profile; linked accounts keep theirs', async () => {
+  const runtime = await boot()
+  try {
+    await runtime.call(
+      'oauth.saveProvider',
+      { ...providerInput, autoProvision: true, defaultCompanyId: 'acme' },
+      'admin',
+    )
+    const provider = await runtime.call<Record<string, unknown>>(
+      'oauth.getProvider',
+      { id: 'provider-main' },
+      'admin',
+    )
+    const login = (subject: string, extra: Record<string, unknown>) =>
+      runtime.call<{ ok: boolean; userId: string }>('oauth.resolveLogin', {
+        providerId: 'provider-main',
+        providerUpdatedAt: provider.updatedAt,
+        mode: 'login',
+        issuer: provider.issuer,
+        subject,
+        ...extra,
+      })
+    const userOf = async (id: string) => ({
+      ...(await runtime.adapter.all('SELECT name, email FROM user_user WHERE id = ?', [id]))[0],
+    })
+
+    const created = await login('owned', {
+      email: 'first@example.test',
+      emailVerified: true,
+      displayName: 'First Name',
+    })
+    assert.equal(created.ok, true)
+    assert.deepEqual(await userOf(created.userId), { name: 'First Name', email: 'first@example.test' })
+
+    assert.equal(
+      (
+        await login('owned', {
+          email: 'second@example.test',
+          emailVerified: true,
+          displayName: 'Second Name',
+        })
+      ).ok,
+      true,
+    )
+    assert.deepEqual(await userOf(created.userId), { name: 'Second Name', email: 'second@example.test' })
+
+    // An unverified address never replaces the verified one; a missing name keeps the last one.
+    assert.equal((await login('owned', { email: 'unverified@example.test', emailVerified: false })).ok, true)
+    assert.deepEqual(await userOf(created.userId), { name: 'Second Name', email: 'second@example.test' })
+
+    // A passwordless account an administrator created and linked is still the administrator's.
+    await runtime.call('user.createUser', {
+      id: 'operator',
+      login: 'operator',
+      name: 'Operator',
+      email: 'operator@example.test',
+    })
+    await runtime.call('user.grantCompany', { id: 'operator:acme', userId: 'operator', companyId: 'acme' })
+    await runtime.call(
+      'oauth.linkIdentity',
+      { id: 'identity-operator', providerId: 'provider-main', userId: 'operator', subject: 'linked' },
+      'admin',
+    )
+    assert.equal(
+      (await login('linked', { email: 'other@example.test', emailVerified: true, displayName: 'Other' })).ok,
+      true,
+    )
+    assert.deepEqual(await userOf('operator'), { name: 'Operator', email: 'operator@example.test' })
   } finally {
     await runtime.adapter.close()
   }

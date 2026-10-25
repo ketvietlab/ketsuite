@@ -1,10 +1,6 @@
 export { attributesScreen } from './attributes.tsx'
-export {
-  productsScreen,
-  templateColumns,
-  VIEWS,
-} from './list.tsx'
-export type { MenuNode, TemplateRow, View } from './list.tsx'
+export { productsScreen } from './list.tsx'
+export type { MenuNode } from './list.tsx'
 
 export { favoriteModal, favoriteScreen } from './favorite.tsx'
 

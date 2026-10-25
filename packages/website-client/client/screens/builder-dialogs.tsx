@@ -1,13 +1,6 @@
+import { ModalSheet } from '../page-regions.tsx'
 import { EntrySchedule } from './entry-publishing.tsx'
-import {
-  ModalSheet,
-  Stack,
-  Field,
-  LinkButton,
-  Notice,
-  ActionGroup,
-  ToastRegion,
-} from '@ketvietlab/design-system'
+import { Stack, Field, LinkButton, Notice, ActionGroup, ToastRegion } from '@ketvietlab/design-system'
 import { CommandButton } from '../ui.tsx'
 import { BUILDER_PANELS, builderQuery } from './builder-tools.tsx'
 import { checkBuilderAccessibility } from '../builder-checks.ts'

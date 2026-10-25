@@ -75,7 +75,7 @@ test('Studio publishing: an unstyled site goes live as the Builder drew it, head
 
 test('Studio publishing: a storefront without the Studio keeps its theme for an unstyled site', async () => {
   const modules = [address, partner, website, paperTheme]
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const db = sqliteAdapter()
   await db.open()
   await migrateOne(db, manifest)

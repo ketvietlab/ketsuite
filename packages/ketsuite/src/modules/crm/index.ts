@@ -8,6 +8,8 @@ export default defineModule({
   name: 'crm',
   version: '0.1.0',
   depends: ['company', 'partner', 'user', 'mail', 'activity', 'calendar'],
+  // The case modal reads quotations, orders, products and warehouses when those modules are installed.
+  optional: ['crm_sale', 'product', 'sale', 'stock'],
   title: 'CRM',
   summary: 'Sales pipeline for leads and opportunities.',
   category: 'Sales',
@@ -18,13 +20,15 @@ export default defineModule({
 })
 
 export * from './types.ts'
-export { caseWriteEffects, functions } from './functions/index.ts'
+export { caseReadEffects, caseWriteEffects, functions, logInteraction } from './functions/index.ts'
+export type { InteractionInput } from './functions/index.ts'
 export {
   addCaseMessage,
   addTimeline,
   activeStage,
   actorRequired,
   applyCaseScore,
+  audienceHolds,
   canAssignCase,
   canEditCase,
   canReadCase,
@@ -39,6 +43,7 @@ export {
   gamificationProfile,
   invalid,
   issue,
+  liveSuperuser,
   n,
   normalized,
   now,
@@ -46,6 +51,7 @@ export {
   ownsKind,
   pipelineSummary,
   reassignCase,
+  rescheduleCaseActivity,
   saveCase,
   seededId,
   serializeCaseList,

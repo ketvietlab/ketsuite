@@ -13,7 +13,8 @@ import type { MenuDef } from '@ketvietlab/ketjs'
 export const menus: Record<string, MenuDef> = {
   admin: { label: 'menu.admin', icon: 'settings', sequence: 90 },
 
-  // A heading other modules hang their configuration screens on: companies,
-  // users, roles, sign-in providers, address data, print templates.
-  'admin.config': { parent: 'admin', label: 'menu.config', sequence: 90 },
+  // The system heading on the settings page: companies, sign-in providers,
+  // address data, print templates. A business module hangs its own heading,
+  // with its icon, straight on `admin`; users and roles have theirs.
+  'admin.config': { parent: 'admin', label: 'menu.config', icon: 'settings', sequence: 90 },
 }

@@ -132,6 +132,12 @@ test('flow editor: nobody else here renders nothing at all', () => {
   assert.equal(presenceHtml(undefined, 'en'), '')
 })
 
+test('flow editor: presence exposes the full escaped name to assistive technology', () => {
+  const html = presenceHtml([{ id: 'u2', name: 'Mai "QA" <team>', index: 0 }], 'en')
+  assert.match(html, /role="img" aria-label="Mai &quot;QA&quot; &lt;team&gt;"/)
+  assert.doesNotMatch(html, /aria-hidden="true"/)
+})
+
 /**
  * The colour is what lets you match the initials beside a paragraph to the chip
  * in the row without reading either, so it has to be the same colour in every

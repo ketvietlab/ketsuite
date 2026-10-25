@@ -53,7 +53,7 @@ test('product media: ready gallery exposes native, storage-neutral actions', () 
 
 test('product media: metadata is ordered and primary is unique per target', async () => {
   const modules = [address, partner, company, storage, uom, product, productMedia]
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)
@@ -103,6 +103,25 @@ test('product media: metadata is ordered and primary is unique per target', asyn
         ['m:a1', false],
       ],
     )
+
+    // The product image route serves a file only while an image of a product links it.
+    await call('storage.createAttachment', {
+      id: 'loose',
+      name: 'Contract',
+      kind: 'url',
+      url: 'https://cdn.example/contract.pdf',
+      mimetype: 'application/pdf',
+      size: 0,
+      public: false,
+      createdAt: new Date().toISOString(),
+    })
+    const linked = (await call('product_media.getMediaAttachment', { attachmentId: 'a1' })).value as {
+      attachment: { id: string; name: string } | null
+    }
+    assert.deepEqual([linked.attachment?.id, linked.attachment?.name], ['a1', 'Front'])
+    assert.deepEqual((await call('product_media.getMediaAttachment', { attachmentId: 'loose' })).value, {
+      attachment: null,
+    })
   } finally {
     await adapter.close()
   }
@@ -110,17 +129,10 @@ test('product media: metadata is ordered and primary is unique per target', asyn
 
 test('product media: backend retains named integration joints and Product stays headless', async () => {
   const backend = (await import('@ketvietlab/ketsuite/backend')).default
-  const manifest = compose([
-    address,
-    partner,
-    company,
-    storage,
-    uom,
-    product,
-    productMedia,
-    backend,
-    productBackend,
-  ])
+  const manifest = compose(
+    [address, partner, company, storage, uom, product, productMedia, backend, productBackend],
+    { companies: true },
+  )
   assert.deepEqual(manifest.joints['product_backend:template.media']!.props, { templateId: 'id' })
   assert.deepEqual(manifest.joints['product_backend:variant.media']!.props, { productId: 'id' })
   assert.deepEqual(manifest.joints['product_backend:media.upload']!.props, {
@@ -135,7 +147,7 @@ test('product media: backend retains named integration joints and Product stays 
 
 test('product media: re-attaching the same image keeps it primary', async () => {
   const modules = [address, partner, company, storage, uom, product, productMedia]
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)

@@ -97,7 +97,8 @@ test('staff notification channel pages the actor inbox and derives safe destinat
     )
   assert.deepEqual(
     bootstrap.data.capabilities.find((capability) => capability.key === 'mail.notifications'),
-    { key: 'mail.notifications', actions: ['read'] },
+    // Marking a notification read is an update of it.
+    { key: 'mail.notifications', actions: ['read', 'update'] },
   )
 
   const first = await e2e.client.json<

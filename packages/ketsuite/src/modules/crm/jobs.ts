@@ -1,5 +1,7 @@
 import type { FnSpec, JobContext, JobSpec } from '@ketvietlab/ketjs'
 import { applyCaseScore, gamificationProfile } from './operations.ts'
+import { importWriteEffects } from './import-policy.ts'
+import { runImportChunk } from './import-execution.ts'
 
 /**
  * The two derived figures the CRM keeps, kept current without anyone asking.
@@ -12,6 +14,14 @@ import { applyCaseScore, gamificationProfile } from './operations.ts'
  * edits collapses into one run.
  */
 export const jobs: Record<string, JobSpec> = {
+  importChunk: {
+    queue: 'default',
+    input: { batchId: 'id', cursor: 'int' },
+    effects: importWriteEffects.filter((effect) => effect !== 'read:storage.Attachment'),
+    idempotent: true,
+    handler: (ctx, args) =>
+      runImportChunk(ctx, { batchId: String(args.batchId), cursor: Number(args.cursor) }),
+  },
   score: {
     queue: 'default',
     input: { caseId: 'id', reason: 'text' },

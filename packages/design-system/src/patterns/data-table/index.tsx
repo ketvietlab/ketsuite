@@ -330,11 +330,12 @@ export const DataTable = <Row,>(props: DataTableProps<Row>): TemplateResult => {
     />
   )
   return props.title ? (
+    // Rows run edge to edge; an empty state keeps the panel inset so its frame never meets the card edge.
     <Surface
       title={props.title}
       description={props.description ?? null}
       actions={props.actions}
-      padding="none"
+      padding={hasRows ? 'none' : 'default'}
       body={content}
     />
   ) : (

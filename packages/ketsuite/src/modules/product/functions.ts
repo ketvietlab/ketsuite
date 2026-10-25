@@ -20,6 +20,9 @@ import { productModalContextFunctions } from './product-modal-context.ts'
 import { attributeModalContextFunctions } from './attribute-modal-context.ts'
 import { variantSetupFunctions } from './variant-setup.ts'
 import { attributeDraftFunctions } from './attribute-draft.ts'
+import { configureAttributesFunctions } from './configure-attributes.ts'
+import { duplicateTemplateFunctions } from './duplicate-template.ts'
+import { AUTHORIZATION_EFFECTS, effectiveFunctionKeys } from '../user/authorization.ts'
 import { emptyProductListState, productListSearch } from './search.ts'
 
 /**
@@ -28,6 +31,17 @@ import { emptyProductListState, productListSearch } from './search.ts'
  * flag on `ilike`, which is what puts `ESCAPE '\'` on the statement.
  */
 const wildcard = (value: unknown): string => String(value ?? '').replace(/[\\%_]/g, '\\$&')
+
+/**
+ * Purchase cost is its own bundle (`product.cost`), so a role that reads a
+ * variant does not read what it cost. An internal call has no actor and is
+ * trusted; a superuser has no function list and holds everything.
+ */
+const mayReadCost = async (ctx: Ctx): Promise<boolean> => {
+  if (!ctx.actor) return true
+  const allowed = await effectiveFunctionKeys(ctx, ctx.actor)
+  return allowed === null || allowed.includes('product.listVariantCosts')
+}
 
 /**
  * The `search` and `limit` a relation picker sends, applied in memory.
@@ -343,6 +357,41 @@ const dropProductUoms = async (
       await ctx.db.del(deleteFrom(U).where(eq(U.id, row.id)))
 }
 
+/** Spaces and dots group an HS code for reading (3304.99.30); the code is its digits. */
+const hsCodeOf = (value: unknown): string | null => {
+  const digits = String(value ?? '').replace(/[\s.]/g, '')
+  return digits === '' ? null : digits
+}
+
+/**
+ * The template values a changeset cannot judge: a compare-at price above the sale price,
+ * an HS code of 6 to 10 digits, and non-negative measures. Codes are message keys of this
+ * module, so the record page words them in the reader's language.
+ */
+const templateValueIssues = (args: Record<string, unknown>, existing: Row | undefined) => {
+  const issues: Array<{ field: string; code: string }> = []
+  const amount = (value: unknown): number | null =>
+    value === null || value === undefined || String(value).trim() === '' ? null : Number(value)
+  const listPrice = amount(args.listPrice ?? existing?.listPrice ?? 0) ?? 0
+  for (const field of ['listPrice', 'compareAtPrice'] as const) {
+    const value = amount(args[field])
+    if (value !== null && (!Number.isFinite(value) || value < 0))
+      issues.push({ field, code: 'product.error.template.money' })
+  }
+  const compareAt = amount(args.compareAtPrice)
+  if (compareAt !== null && Number.isFinite(compareAt) && compareAt <= listPrice)
+    issues.push({ field: 'compareAtPrice', code: 'product.error.template.compareAt' })
+  const hsCode = hsCodeOf(args.hsCode)
+  if (hsCode !== null && !/^\d{6,10}$/.test(hsCode))
+    issues.push({ field: 'hsCode', code: 'product.error.template.hsCode' })
+  for (const field of ['weight', 'volume'] as const) {
+    const value = amount(args[field])
+    if (value !== null && (!Number.isFinite(value) || value < 0))
+      issues.push({ field, code: 'product.error.template.measure' })
+  }
+  return issues
+}
+
 export const saveTemplateFunction = (options: { inTransaction?: boolean } = {}) =>
   defineFn({
     input: {
@@ -358,10 +407,15 @@ export const saveTemplateFunction = (options: { inTransaction?: boolean } = {}) 
       descriptionDoc: 'text?',
       expectedRevisionId: 'text?',
       listPrice: 'decimal?',
+      compareAtPrice: 'decimal?',
+      hsCode: 'text?',
       saleOk: 'bool?',
       purchaseOk: 'bool?',
       defaultCode: 'text?',
       barcode: 'text?',
+      // The default variant's measures: a product without variants is weighed as a whole.
+      weight: 'decimal?',
+      volume: 'decimal?',
     },
     output: { ok: 'bool', id: 'id?', errors: 'json?' },
     effects: [
@@ -402,6 +456,9 @@ export const saveTemplateFunction = (options: { inTransaction?: boolean } = {}) 
             { field: 'type', message: 'Không đổi loại sản phẩm đã tạo. Tạo sản phẩm mới nếu loại khác.' },
           ],
         }
+      const refused = templateValueIssues(args, existing)
+      if (refused.length) return { ok: false, errors: refused }
+      if (Object.hasOwn(args, 'hsCode')) args.hsCode = hsCodeOf(args.hsCode)
       if (args.description != null && args.summaryDoc == null)
         args.summaryDoc = JSON.stringify([
           { id: 'summary', type: 'p', delta: [{ insert: String(args.description) }] },
@@ -439,6 +496,8 @@ export const saveTemplateFunction = (options: { inTransaction?: boolean } = {}) 
           'summaryDoc',
           'descriptionDoc',
           'listPrice',
+          'compareAtPrice',
+          'hsCode',
           'saleOk',
           'purchaseOk',
         ])
@@ -469,6 +528,8 @@ export const saveTemplateFunction = (options: { inTransaction?: boolean } = {}) 
         const identity = {
           ...(Object.hasOwn(args, 'defaultCode') ? { defaultCode: args.defaultCode ?? null } : {}),
           ...(Object.hasOwn(args, 'barcode') ? { barcode: args.barcode ?? null } : {}),
+          ...(Object.hasOwn(args, 'weight') ? { weight: args.weight ?? '0' } : {}),
+          ...(Object.hasOwn(args, 'volume') ? { volume: args.volume ?? '0' } : {}),
           active: !generated,
         }
         if (defaultVariant) await tx.db.update('product.Product', { id: defaultVariant.id }, identity)
@@ -478,8 +539,8 @@ export const saveTemplateFunction = (options: { inTransaction?: boolean } = {}) 
             templateId: args.id,
             defaultCode: args.defaultCode ?? null,
             barcode: args.barcode ?? null,
-            weight: '0',
-            volume: '0',
+            weight: args.weight ?? '0',
+            volume: args.volume ?? '0',
             combinationKey: '',
             active: !generated,
           })
@@ -608,6 +669,7 @@ export const functions: Record<string, FnSpec> = {
       'read:product.TemplateAttributeLine',
       'read:product.AttributeValue',
       'read:product.Attribute',
+      ...AUTHORIZATION_EFFECTS.filter((effect) => !effect.startsWith('write:')),
     ],
     agent: true,
     handler: async (ctx, args) => {
@@ -619,13 +681,17 @@ export const functions: Record<string, FnSpec> = {
       // screen shows a sibling company's cost and unit, and saving the form
       // writes those values into this company.
       const company = ctx.scope.company
-      const costs = await ctx.db.select('product.Cost', { productId: args.id })
       const uoms = await ctx.db.select('product.ProductUom', { productId: args.id })
       const mine = (rows: Row[]): Row[] =>
         company ? rows.filter((row) => String(row.companyId) === company) : []
+      // Without `product.cost` the key is absent rather than null, so the screen
+      // can tell "not allowed" from "never set".
+      const cost = (await mayReadCost(ctx))
+        ? { cost: mine(await ctx.db.select('product.Cost', { productId: args.id }))[0] ?? null }
+        : {}
       return {
         ...product,
-        cost: mine(costs)[0] ?? null,
+        ...cost,
         // Ordered, because the variant form renders `uoms[0]` and `select` has no
         // ORDER BY of its own.
         uoms: mine(uoms).sort((a, b) => String(a.id).localeCompare(String(b.id))),
@@ -1289,6 +1355,152 @@ export const functions: Record<string, FnSpec> = {
     },
   }),
 
+  /**
+   * Take a packaging off a product: sales and purchases no longer offer the unit for
+   * it, and the barcodes its variants carried in that unit in this company go too.
+   * The unit itself stays, with its conversion, for the other products using it.
+   */
+  removeTemplateUom: defineFn({
+    input: { templateId: 'id', uomId: 'id' },
+    output: { ok: 'bool', errors: 'json?' },
+    effects: [
+      'read:product.TemplateUom',
+      'write:product.TemplateUom',
+      'read:product.Product',
+      'read:product.ProductUom',
+      'write:product.ProductUom',
+    ],
+    idempotent: true,
+    agent: true,
+    handler: async (ctx, args) => {
+      const link = (
+        await ctx.db.select('product.TemplateUom', { templateId: args.templateId, uomId: args.uomId })
+      )[0]
+      if (!link)
+        return {
+          ok: false,
+          errors: [
+            {
+              field: 'uomId',
+              code: 'product.error.packaging.notLinked',
+              message: 'đơn vị chưa gắn vào sản phẩm',
+            },
+          ],
+        }
+      const company = ctx.scope.company
+      const products = new Set(
+        (await ctx.db.select('product.Product', { templateId: args.templateId })).map((row) =>
+          String(row.id),
+        ),
+      )
+      await ctx.tx(async (tx) => {
+        const T = tx.table('product.TemplateUom')
+        await tx.db.del(deleteFrom(T).where(eq(T.id, link.id)))
+        const U = tx.table('product.ProductUom')
+        for (const row of await tx.db.select('product.ProductUom', { uomId: args.uomId }))
+          if (company && String(row.companyId) === company && products.has(String(row.productId)))
+            await tx.db.del(deleteFrom(U).where(eq(U.id, row.id)))
+      })
+      return { ok: true }
+    },
+  }),
+
+  /**
+   * A variant's barcode in each of its product's packagings, as one form shows them.
+   * An empty barcode drops that row; the packaging stays on the product. A barcode may
+   * not repeat a variant's barcode or one this company gives another packaging, since a
+   * scan has to name one product in one unit.
+   */
+  setPackagingBarcodes: defineFn({
+    input: { productId: 'id', barcodes: 'json' },
+    output: { ok: 'bool', errors: 'json?' },
+    effects: [
+      'read:product.Product',
+      'read:product.TemplateUom',
+      'read:product.ProductUom',
+      'write:product.ProductUom',
+      'read:uom.Unit',
+      'write:uom.Unit',
+    ],
+    idempotent: true,
+    agent: true,
+    handler: async (ctx, args) => {
+      const product = (await ctx.db.select('product.Product', { id: args.productId }))[0]
+      if (!product) return { ok: false, errors: [{ field: 'productId', message: 'biến thể không tồn tại' }] }
+      const company = ctx.scope.company
+      if (!company)
+        return { ok: false, errors: [{ field: 'company', message: 'cần chọn company để ghi đơn vị' }] }
+      const linked = new Set(
+        (await ctx.db.select('product.TemplateUom', { templateId: product.templateId })).map((row) =>
+          String(row.uomId),
+        ),
+      )
+      const held = (await ctx.db.select('product.ProductUom', { productId: args.productId })).filter(
+        (row) => String(row.companyId) === company,
+      )
+      const entries = Array.isArray(args.barcodes) ? (args.barcodes as Array<Record<string, unknown>>) : []
+      const wanted = new Map<string, string | null>()
+      const errors: Array<{ field: string; code: string; message: string }> = []
+      for (const [index, entry] of entries.entries()) {
+        const uomId = String(entry?.uomId ?? '')
+        const barcode =
+          typeof entry?.barcode === 'string' && entry.barcode.trim() ? entry.barcode.trim() : null
+        if (!linked.has(uomId))
+          errors.push({
+            field: `barcodes.${index}.uomId`,
+            code: 'product.error.packaging.notLinked',
+            message: 'đơn vị chưa gắn vào sản phẩm',
+          })
+        else if (barcode && [...wanted.values()].includes(barcode))
+          errors.push({
+            field: `barcodes.${index}.barcode`,
+            code: 'product.error.packaging.barcodeRepeated',
+            message: 'hai đơn vị đóng gói trùng barcode',
+          })
+        else wanted.set(uomId, barcode)
+      }
+      // The rows being rewritten here do not collide with themselves.
+      const rewritten = new Set(
+        held.filter((row) => wanted.has(String(row.uomId))).map((row) => String(row.id)),
+      )
+      for (const [index, entry] of entries.entries()) {
+        const barcode = wanted.get(String(entry?.uomId ?? ''))
+        if (!barcode || errors.some((error) => error.field.startsWith(`barcodes.${index}.`))) continue
+        if (
+          (await ctx.db.select('product.Product', { barcode })).length > 0 ||
+          (await productUomBarcodeTaken(ctx, company, barcode, rewritten))
+        )
+          errors.push({
+            field: `barcodes.${index}.barcode`,
+            code: 'product.error.packaging.barcodeTaken',
+            message: 'barcode đã được dùng',
+          })
+      }
+      if (errors.length) return { ok: false, errors }
+      await ctx.tx(async (tx) => {
+        const U = tx.table('product.ProductUom')
+        for (const [uomId, barcode] of wanted) {
+          const existing = held.find((row) => String(row.uomId) === uomId)
+          if (!barcode) {
+            if (existing) await tx.db.del(deleteFrom(U).where(eq(U.id, existing.id)))
+            continue
+          }
+          await writeProductUom(
+            tx,
+            {
+              ok: true,
+              company,
+              id: existing ? String(existing.id) : companyKey(company, args.productId, uomId),
+              existing,
+            },
+            { productId: args.productId, uomId, barcode },
+          )
+        }
+      })
+      return { ok: true }
+    },
+  }),
+
   archiveTemplate: defineFn({
     input: { id: 'id', active: 'bool', expectedRevisionId: 'text?', confirmed: 'bool?' },
     output: { id: 'id', active: 'bool' },
@@ -1344,6 +1556,7 @@ export const functions: Record<string, FnSpec> = {
       'write:product.TemplateAttributeValue',
       'write:product.ProductValue',
     ],
+    idempotent: true,
     agent: true,
     handler: async (ctx, args) => {
       const ids = [...new Set(Array.isArray(args.ids) ? args.ids.map(String).filter(Boolean) : [])]
@@ -1460,4 +1673,6 @@ export const functions: Record<string, FnSpec> = {
   ...attributeModalContextFunctions,
   ...variantSetupFunctions,
   ...attributeDraftFunctions,
+  ...configureAttributesFunctions,
+  ...duplicateTemplateFunctions,
 }

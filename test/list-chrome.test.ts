@@ -7,7 +7,7 @@ import backend from '@ketvietlab/ketsuite/backend'
 import { listChrome, PAGE_SIZE, pageOf, pager, searchOf, withParam } from '@ketvietlab/ketsuite/backend'
 import type { ListChrome } from '@ketvietlab/ketsuite/backend'
 
-const _ = translator(compose([backend], { headless: true }), 'vi')
+const _ = translator(compose([backend], { headless: true, companies: true }), 'vi')
 const at = (href: string): URL => new URL(href, 'http://x')
 const render = (c: ListChrome): string => renderToString(listChrome(_, 'Trang', c))
 

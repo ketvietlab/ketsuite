@@ -12,12 +12,14 @@ import type { Adapter, Row } from '@ketvietlab/ketjs'
 import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { address, company, mail, partner, storage, user } from '@ketvietlab/ketsuite'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const app = defineDeployment({
   name: 'flow_read_costs',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, flow],
   headless: true,
-  serve: { sessions: { anonymous: { company: 'acme' } } },
+  serve: { permissions: everyFunction, sessions: { anonymous: { company: 'acme' } } },
 })
 
 const stamp = '2026-09-05T00:00:00.000Z'
@@ -31,11 +33,14 @@ const insert = async (
   const sql = `INSERT INTO ${adapter.quoteIdent(tableNameFor(model))} (${columns
     .map((name) => adapter.quoteIdent(name))
     .join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
-  for (const row of values) await adapter.run(sql, row as never[])
+  // Seed the same large dataset in one transaction rather than one disk sync per row.
+  await adapter.tx(async (tx) => {
+    for (const row of values) await tx.run(sql, row as never[])
+  })
 }
 
 const boot = async () => {
-  const e2e = await createTestDeployment(app, { worker: false })
+  const e2e = await createTestDeployment(app, { worker: false, client: { headers: { connection: 'close' } } })
   await e2e.fixture.call('partner.savePartner', { id: 'p-company', kind: 'company', name: 'ACME' })
   await e2e.fixture.call('company.saveCompany', { id: 'acme', partnerId: 'p-company', currency: 'VND' })
   await e2e.fixture.call('user.createUser', {

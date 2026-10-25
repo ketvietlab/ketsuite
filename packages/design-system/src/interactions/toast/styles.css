@@ -9,6 +9,14 @@
     gap: var(--kv-space-2);
     pointer-events: none;
   }
+  /*
+   * A modal dialog makes the page under it inert. The page's toasts stay with the page, under the
+   * dialog and its backdrop, so a lasting one (an import's progress) never covers the dialog's actions.
+   */
+  :where([data-kv-design-system]) :where([inert]) [data-ui="toast-region"],
+  :where([data-kv-design-system]) [data-ui="toast-region"]:where([inert]) {
+    z-index: calc(var(--kv-layer-dialog) - 1);
+  }
 
   :where([data-kv-design-system]) [data-ui="toast"] {
     display: grid;
@@ -52,6 +60,17 @@
     line-height: var(--kv-line-sm);
   }
   :where([data-kv-design-system]) [data-ui="toast-actions"] {
+    min-width: 0;
+  }
+  /* Two actions beside the copy leave it a third of the toast: they take their own row under it. */
+  :where([data-kv-design-system])
+    [data-ui="toast"]:has(> [data-ui="toast-actions"] :is(a, button) ~ :is(a, button))
+    > :is([data-ui="toast-copy"], [data-ui="toast-actions"]) {
+    grid-column: 1 / -1;
+  }
+  /* Progress spans the toast below its copy and actions. */
+  :where([data-kv-design-system]) [data-ui="toast-progress"] {
+    grid-column: 1 / -1;
     min-width: 0;
   }
 

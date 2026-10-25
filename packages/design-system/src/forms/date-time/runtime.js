@@ -93,10 +93,19 @@ const enhanceDateTime = (picker) => {
   parts.hidden = false
   label?.setAttribute('for', day.id)
   innerLabel?.removeAttribute('for')
-  for (const node of parts.querySelectorAll('input,button')) {
-    if (node instanceof HTMLInputElement || node instanceof HTMLButtonElement)
-      node.disabled = input.disabled || (node instanceof HTMLButtonElement && input.readOnly)
+  const syncControls = () => {
+    validator.disabled = input.disabled
+    validator.readOnly = input.readOnly
+    for (const node of parts.querySelectorAll('input,button')) {
+      if (node instanceof HTMLInputElement || node instanceof HTMLButtonElement)
+        node.disabled = input.disabled || (node instanceof HTMLButtonElement && input.readOnly)
+      if (node instanceof HTMLInputElement) node.readOnly = input.readOnly
+    }
   }
+  syncControls()
+  // An island can lock a saved record without replacing this compound field.
+  const controlsObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(syncControls)
+  controlsObserver?.observe(input, { attributes: true, attributeFilter: ['disabled', 'readonly'] })
   for (const part of [day, time]) {
     const description = input.getAttribute('aria-describedby')
     if (description) part.setAttribute('aria-describedby', description)
@@ -138,6 +147,7 @@ const enhanceDateTime = (picker) => {
   sync()
   return () => {
     active = false
+    controlsObserver?.disconnect()
     picker.removeEventListener('input', change)
     picker.removeEventListener('change', change)
     form?.removeEventListener('reset', reset)
@@ -167,7 +177,8 @@ const enhance = (picker) => {
   const popup = panel
   const opener = trigger
   const range = picker.dataset.dateMode === 'range'
-  const locale = picker.dataset.dateLocale === 'en' ? 'en-GB' : 'vi-VN'
+  const locale =
+    picker.dataset.dateLocale === 'ja' ? 'ja-JP' : picker.dataset.dateLocale === 'en' ? 'en-GB' : 'vi-VN'
   const weekStart = Number(picker.dataset.dateWeekStart ?? 1)
   const labels = /** @type {import('./index.tsx').DatePickerLabels} */ (
     JSON.parse(picker.dataset.dateLabels ?? '{}')
@@ -211,6 +222,12 @@ const enhance = (picker) => {
   let draft = []
   const isOpen = () => popup.matches(':popover-open')
   const isMobile = () => window.innerWidth < 768
+  const submitFilter = () => {
+    const form = inputs[0].form
+    // A CSR editor often intercepts submit without a method attribute. Only an
+    // explicitly declared GET filter opts into automatic calendar submission.
+    if (form?.getAttribute('method')?.toLowerCase() === 'get') form.requestSubmit()
+  }
   /** @type {(() => void) | null} */
   let unlock = null
   const syncPresentation = () => {
@@ -491,6 +508,13 @@ const enhance = (picker) => {
       draft = range ? (draft[0] && !draft[1] ? orderedRange(draft[0], value) : [value, '']) : [value]
       focusDate = value
       render(true)
+      if (!range && autoApply) {
+        // Commit before the user can submit the containing form. Waiting for
+        // the asynchronous popover toggle could submit the previous date.
+        commit([...draft])
+        close(true)
+        submitFilter()
+      }
     } else if (target.name === 'kv-date-command') {
       if (target.value === 'cancel' || target.value === 'close') close(true)
       else if (target.value === 'apply' && valid()) {
@@ -594,8 +618,7 @@ const enhance = (picker) => {
         const changed = valid() && inputs.some((input, index) => input.value !== draft[index])
         if (changed) {
           commit([...draft])
-          const form = inputs[0].form
-          if (form?.method.toLowerCase() === 'get') form.requestSubmit()
+          submitFilter()
         } else validate()
       }
       draft = []
@@ -661,6 +684,24 @@ const enhance = (picker) => {
     })
   }
   picker.dataset.dateEnhanced = 'true'
+  // A CSR refresh can replace the saved boundaries without firing a DOM change.
+  // The read-only display may be dirty after a calendar commit, so updating its
+  // value attribute alone does not update the visible value in the browser.
+  const rangeValues = range && typeof MutationObserver !== 'undefined' ? new MutationObserver(validate) : null
+  rangeValues?.observe(picker, { attributes: true, subtree: true, attributeFilter: ['value'] })
+  let renderedValue = picker.dataset.dateValue ?? ''
+  const singleValue =
+    !range && typeof MutationObserver !== 'undefined'
+      ? new MutationObserver(() => {
+          const value = picker.dataset.dateValue ?? ''
+          // A renderer may assign the same attribute again during an unrelated
+          // update. Preserve the user's native draft until the supplied value changes.
+          if (value === renderedValue) return
+          renderedValue = value
+          if (inputs[0].value !== value) inputs[0].value = value
+        })
+      : null
+  singleValue?.observe(picker, { attributes: true, attributeFilter: ['data-date-value'] })
   validate()
   picker.addEventListener('click', click)
   picker.addEventListener('keydown', keydown)
@@ -675,6 +716,8 @@ const enhance = (picker) => {
   inputs[0].form?.addEventListener('submit', submit)
   return () => {
     disposing = true
+    rangeValues?.disconnect()
+    singleValue?.disconnect()
     close()
     delete picker.dataset.dateEnhanced
     picker.removeEventListener('click', click)

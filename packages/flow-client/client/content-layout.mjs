@@ -20,6 +20,7 @@ const groups = {
     'epic',
     'atlas',
     'settings',
+    'task-exchange',
     'project-profile',
     'project-members',
     'github',

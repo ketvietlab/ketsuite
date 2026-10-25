@@ -4,7 +4,7 @@ import { callFn, compose, migrateOne, registerFunctions, sqliteAdapter } from '@
 import type { Row } from '@ketvietlab/ketjs'
 import { compareQty, convertQty, isZero, product, roundTo, uom } from '@ketvietlab/ketsuite'
 
-const manifest = compose([uom, product], { headless: true })
+const manifest = compose([uom, product], { headless: true, companies: true })
 
 async function boot() {
   const adapter = sqliteAdapter()

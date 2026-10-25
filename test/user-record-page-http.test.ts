@@ -64,7 +64,7 @@ test('user page HTTP: a row opens the person on their own page, which arrives co
   // The server writes the frame the browser adopts: titled, bounded, on its trail.
   assert.match(html, /data-record-layer="page"/u)
   assert.match(html, /data-ui="record-page"[^>]*data-variant="operational"[^>]*data-width="default"/u)
-  assert.match(html, /<a href="\/admin\/users\?lang=vi&amp;q=Trang">/u)
+  assert.match(html, /<a\b[^>]*href="\/admin\/users\?lang=vi&amp;q=Trang"[^>]*>/u)
   const props = islandProps(html, 'user.user-page')
   assert.equal(props.id, 'trang')
   assert.equal(props.title, 'Minh Trang')

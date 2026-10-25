@@ -1,9 +1,81 @@
+import { attachDatePickers } from '@ketvietlab/design-system/date-picker/runtime'
+import { attachHelpDrawers } from '@ketvietlab/design-system/help/runtime'
 import { createRoot, domHost } from '@ketvietlab/ketjs-view'
 import { tr } from './i18n.mjs'
 import { attachTimelineDrag } from './timeline-drag.mjs'
+import { createDialogFocusReturn } from './dialog-focus.mjs'
+import { createFormErrorFocus } from './form-error-focus.mjs'
+import { icons } from './icons.mjs'
+
+/** The host's live document editor, as far as mounting it needs.
+ * @typedef {{view:()=>import('@ketvietlab/ketjs-view').TemplateResult,mountEditor:(content:HTMLElement)=>unknown,dispose:()=>void}} LiveEditor */
+
+/** Reflect the command dialog's state on server-rendered launchers without replacing their DOM.
+ * @param {ParentNode} root @param {{open:boolean,disabled:boolean,dialogId:string}} state */
+export function syncFlowSearchTrigger(root, state) {
+  const trigger = root.querySelector('[data-flow="search-trigger"]')
+  if (!trigger || typeof trigger.setAttribute !== 'function') return
+  trigger.toggleAttribute('disabled', state.disabled)
+  trigger.setAttribute('aria-expanded', String(state.open))
+  if (state.open) trigger.setAttribute('aria-controls', state.dialogId)
+  else trigger.removeAttribute('aria-controls')
+}
+
+/** Update state on the persistent SSR frame; never reconstruct its markup.
+ * @param {ParentNode} root
+ * @param {{width?:string,mode?:string,activeHref?:(href:string)=>boolean}} state */
+export function syncFlowShellNavigation(root, state) {
+  const main = root.querySelector('[data-flow="shell-main"]')
+  if (state.mode) main?.setAttribute('data-content-mode', state.mode)
+  else main?.removeAttribute('data-content-mode')
+  root.querySelector('[data-flow="content-container"]')?.setAttribute('data-width', state.width ?? 'standard')
+  if (state.activeHref)
+    for (const item of root.querySelectorAll('[data-flow-chrome="sidebar"] [data-flow="nav-item"]')) {
+      if (state.activeHref(item.getAttribute('href') ?? '')) item.setAttribute('aria-current', 'page')
+      else item.removeAttribute('aria-current')
+    }
+}
+
+/** Update the interactive theme command while preserving server chrome.
+ * @param {ParentNode} root @param {'light'|'dark'} theme */
+export function syncFlowThemeButton(root, theme) {
+  const button = root.querySelector('[data-flow-action="theme"]')
+  if (!button) return
+  const label = tr(theme === 'light' ? 'flow.ui.switch.to.dark.mode' : 'flow.ui.switch.to.light.mode')
+  button.setAttribute('aria-label', label)
+  button.setAttribute('title', label)
+  button
+    .querySelector('[data-flow="icon"] path')
+    ?.setAttribute('d', icons[theme === 'light' ? 'moon' : 'sun'])
+}
+import { createDocTreeFocusReturn } from './doc-tree-focus.mjs'
+import { attachSearchPopover } from './search-popover.mjs'
 /** Explicit and disposable; never scans unrelated Suite roots. @param {HTMLElement} root */
 export function attachFlowUI(root) {
   const controller = new AbortController()
+  const clearDatePickers = attachDatePickers(root)
+  const clearHelp =
+    typeof document !== 'undefined' && typeof window.matchMedia === 'function'
+      ? attachHelpDrawers(root, {
+          beforeOpen: () => {
+            if (!window.matchMedia('(max-width:760px)').matches) return
+            const navigation = root.querySelector('[data-flow="mobile-nav"]')
+            if (!(navigation instanceof HTMLDetailsElement) || !navigation.open) return
+            navigation.open = false
+            return navigation.querySelector('summary') ?? undefined
+          },
+        })
+      : () => {}
+  const searchPopover = attachSearchPopover(root, controller.signal)
+  const docTreeFocus = createDocTreeFocusReturn(root)
+  root.addEventListener(
+    'flow-doc-reorder',
+    (event) => {
+      const { id, completion } = /** @type {CustomEvent} */ (event).detail
+      void docTreeFocus.reorder(/** @type {HTMLElement} */ (event.target), id, completion)
+    },
+    { signal: controller.signal },
+  )
   const clearTimelineDrag = attachTimelineDrag(root, controller.signal)
   // Context disclosure is local to the Flow root, including mobile navigation.
   root.ownerDocument.addEventListener(
@@ -59,6 +131,7 @@ export function attachFlowUI(root) {
     { signal: controller.signal },
   )
   const compactRecord = window.matchMedia?.('(max-width:1199px)')
+  const formErrorFocus = createFormErrorFocus(root, () => !!compactRecord?.matches)
   /** @param {HTMLElement} panel */
   const positionRecordPanel = (panel) => {
     const dialog = panel.closest('dialog')
@@ -125,17 +198,7 @@ export function attachFlowUI(root) {
   root.addEventListener(
     'invalid',
     (event) => {
-      const field = event.target
-      if (field instanceof Element) {
-        let parent = field.parentElement
-        while (parent && parent !== root) {
-          if (parent instanceof HTMLDetailsElement) parent.open = true
-          parent = parent.parentElement
-        }
-      }
-      const panel = field instanceof HTMLElement ? field.closest('[data-flow-record-panel]') : null
-      if (compactRecord?.matches && panel instanceof HTMLElement && !panel.matches(':popover-open'))
-        panel.showPopover()
+      if (event.target instanceof Element) formErrorFocus.reveal(event.target)
     },
     { capture: true, signal: controller.signal },
   )
@@ -172,7 +235,7 @@ export function attachFlowUI(root) {
       const source = event.target.closest('[data-task-id][data-flow-task-drop="item"]')
       if (
         !(source instanceof HTMLElement) ||
-        event.target.closest('input,select,textarea,a,[contenteditable]')
+        event.target.closest('input,select,textarea,a,label,[contenteditable]')
       )
         return
       suppressClick = false
@@ -347,8 +410,7 @@ export function attachFlowUI(root) {
     },
     { signal: controller.signal },
   )
-  /** @type {WeakMap<HTMLDialogElement, HTMLElement>} */
-  const openers = new WeakMap()
+  const dialogFocus = createDialogFocusReturn(root)
   /** @type {WeakMap<Element, string>} */
   const values = new WeakMap()
   // KetJS updates attributes. Dirty native form controls also need their live
@@ -361,11 +423,11 @@ export function attachFlowUI(root) {
   /** @type {WeakMap<Element,string>} */
   const spotlightPositions = new WeakMap()
   const sync = () => {
-    root.querySelectorAll('[data-flow="scope-tabs"]').forEach((element) => {
+    root.querySelectorAll('[data-flow="scope-tabs"], [data-flow="project-views"]').forEach((element) => {
       if (!(element instanceof HTMLElement)) return
       const active = element.querySelector('[aria-current="page"]')
       if (!(active instanceof HTMLElement)) return
-      const key = active.getAttribute('href') ?? ''
+      const key = `${active.getAttribute('href') ?? active.textContent ?? ''}:${element.clientWidth}`
       if (scopeTabPositions.get(element) === key) return
       const rect = element.getBoundingClientRect(),
         target = active.getBoundingClientRect()
@@ -393,10 +455,15 @@ export function attachFlowUI(root) {
     })
     root.querySelectorAll('dialog[data-flow-route-modal]').forEach((element) => {
       if (element instanceof HTMLDialogElement && !element.open) {
-        if (document.activeElement instanceof HTMLElement) openers.set(element, document.activeElement)
+        dialogFocus.remember(element)
         element.showModal()
       }
     })
+    dialogFocus.sync(
+      [...root.querySelectorAll('dialog[open]')].filter(
+        /** @returns {element is HTMLDialogElement} */ (element) => element instanceof HTMLDialogElement,
+      ),
+    )
     root.querySelectorAll('[data-flow="spotlight-results"]').forEach((list) => {
       const active = list.querySelector('[aria-selected="true"]')
       if (active && spotlightPositions.get(list) !== active.id) {
@@ -407,7 +474,12 @@ export function attachFlowUI(root) {
     syncNavigation()
     syncRecordPanels()
     root.querySelectorAll('[data-flow="toast"][popover]').forEach((element) => {
-      if (element instanceof HTMLElement && !element.matches(':popover-open')) element.showPopover()
+      if (
+        element instanceof HTMLElement &&
+        element.hasAttribute('popover') &&
+        !element.matches(':popover-open')
+      )
+        element.showPopover()
     })
     root.querySelectorAll('[data-flow-value]').forEach((element) => {
       if (
@@ -448,7 +520,7 @@ export function attachFlowUI(root) {
   root.addEventListener(
     'close',
     (event) => {
-      if (event.target instanceof HTMLDialogElement) openers.get(event.target)?.focus()
+      if (event.target instanceof HTMLDialogElement) dialogFocus.closed(event.target)
     },
     { capture: true, signal: controller.signal },
   )
@@ -466,25 +538,50 @@ export function attachFlowUI(root) {
       el.dispatchEvent(
         new CustomEvent('flow-live-mount', {
           detail: {
-            /** @param {ReturnType<typeof import('@ketvietlab/ketsuite/livedoc').createLiveDocView>} editor @param {HTMLElement} target @param {string} label */
-            mount(editor, target, label) {
-              const viewRoot = createRoot(
-                domHost(),
-                /** @type {import("@ketvietlab/ketjs-view").HostNode} */ (/** @type {unknown} */ (target)),
-              )
-              liveEditors.set(target, {
+            /** The editor may still be loading; its slot is held so a later sync
+             * neither mounts it twice nor leaks it after the element is gone.
+             * @param {LiveEditor|Promise<LiveEditor>} pending @param {HTMLElement} target @param {string} label */
+            mount(pending, target, label) {
+              let disposed = false
+              /** @type {(() => void)|null} */
+              let release = null
+              const entry = {
                 key: target.dataset.liveKey,
                 dispose: () => {
-                  editor.dispose()
-                  viewRoot.dispose()
+                  disposed = true
+                  release?.()
                 },
-              })
-              viewRoot.render(editor.view())
-              const content = /** @type {HTMLElement} */ (
-                target.querySelector('[data-ui="flow-editor-content"]')
+              }
+              liveEditors.set(target, entry)
+              void Promise.resolve(pending).then(
+                (editor) => {
+                  if (disposed || controller.signal.aborted || liveEditors.get(target) !== entry) {
+                    editor.dispose()
+                    return
+                  }
+                  const viewRoot = createRoot(
+                    domHost(),
+                    /** @type {import("@ketvietlab/ketjs-view").HostNode} */ (
+                      /** @type {unknown} */ (target)
+                    ),
+                  )
+                  release = () => {
+                    editor.dispose()
+                    viewRoot.dispose()
+                  }
+                  viewRoot.render(editor.view())
+                  const content = /** @type {HTMLElement} */ (
+                    target.querySelector('[data-ui="flow-editor-content"]')
+                  )
+                  content.setAttribute('aria-label', label)
+                  void editor.mountEditor(content)
+                },
+                (error) => {
+                  // A failed bundle load frees the slot so the next sync can retry.
+                  if (liveEditors.get(target) === entry) liveEditors.delete(target)
+                  console.error('Flow editor failed to load:', error)
+                },
               )
-              content.setAttribute('aria-label', label)
-              void editor.mountEditor(content)
             },
           },
         }),
@@ -492,18 +589,30 @@ export function attachFlowUI(root) {
     })
   }
   return {
+    /** Reveal and focus the first server-invalid field in this Flow root.
+     * @param {ParentNode} [scope]
+     */
+    focusInvalid(scope = root) {
+      return !controller.signal.aborted && formErrorFocus.focusInvalid(scope)
+    },
     sync() {
       sync()
       syncLiveDocs()
+      searchPopover.sync()
     },
     /** @param {string} id */
     open(id) {
       const dialog = root.querySelector(`#${CSS.escape(id)}`)
       if (!(dialog instanceof HTMLDialogElement)) throw new Error(`Flow dialog missing: ${id}`)
-      if (document.activeElement instanceof HTMLElement) openers.set(dialog, document.activeElement)
+      dialogFocus.remember(dialog)
       dialog.showModal()
     },
     dispose() {
+      searchPopover.dispose()
+      clearDatePickers()
+      clearHelp()
+      docTreeFocus.dispose()
+      dialogFocus.dispose()
       for (const entry of liveEditors.values()) entry.dispose()
       liveEditors.clear()
       clearTimelineDrag()

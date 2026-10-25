@@ -11,6 +11,7 @@ import {
   FlowAvatarGroup,
 } from '@ketvietlab/flow-ui'
 import {
+  FlowChoiceField,
   FlowSection,
   FlowStack,
   FlowInline,
@@ -21,22 +22,45 @@ import {
   FlowList,
   FlowListItem,
   FlowHint,
+  FlowNotice,
   FlowCalendar,
   FlowCalendarEvent,
 } from '@ketvietlab/flow-ui/workspace'
-import { calendarPeriod, projectTasks } from './operations-model.mjs'
+import { calendarPeriod } from './operations-model.mjs'
 import { canManageScope } from './access-model.mjs'
+import { assignableSelf } from './task-assignees.mjs'
+import { createPagedOptions } from './paged-options.mjs'
 import { todayDate, shiftPeriod } from './timeline.mjs'
-export const operationRoutes = new Set(['forms', 'calendar', 'inbox', 'saved-views', 'personal-settings'])
+import { createOperationsState } from './operations-state.mjs'
+export { operationRoutes } from './operations-state.mjs'
 export function createOperations(ctx) {
   const d = ctx.data,
     editor = signal(''),
     selected = signal(''),
     formTab = signal('manage'),
-    fields = signal([]),
-    date = signal(''),
-    scale = signal('month'),
-    inboxTab = signal('unread')
+    fields = signal([])
+  const state = ctx.state ?? createOperationsState(d)
+  const { date, scale, calendarLimits, inboxTab, calendarWindow } = state
+  const inboxLoading = signal(false),
+    inboxError = signal('')
+  let inboxRequest = 0
+  const readInbox = async (filter, append = false) => {
+    const request = ++inboxRequest
+    inboxLoading.set(true)
+    inboxError.set('')
+    try {
+      const page = await ctx.loadInboxPage({ filter, ...(append ? { cursor: d().inboxPage?.cursor } : {}) })
+      if (request !== inboxRequest || ctx.screen() !== 'inbox') return
+      ctx.acceptInboxPage(page, append)
+    } catch (error) {
+      if (request === inboxRequest && error.name !== 'AbortError') {
+        ctx.inboxReadError?.(error)
+        inboxError.set(error.message)
+      }
+    } finally {
+      if (request === inboxRequest) inboxLoading.set(false)
+    }
+  }
   const stack = (...xs) =>
     FlowStack({
       children: html`${each(
@@ -67,7 +91,10 @@ export function createOperations(ctx) {
       'flow.operations.command',
       {
         action,
-        expectedRevision: d().operationsRevision,
+        // Preferences and read notifications are personal and hold no shared revision.
+        ...(['preferences.save', 'inbox.read'].includes(action)
+          ? {}
+          : { expectedRevision: d().operationsRevision }),
         workspaceId: ctx.workspaceId(),
         projectId: ctx.projectId(),
         ...args,
@@ -75,14 +102,85 @@ export function createOperations(ctx) {
       done,
     )
   const input = (id, label, value = '', type = 'text', required = false) =>
-    FlowInput({ id, label, value, type, required, disabled: !ctx.canWrite() })
+    FlowInput({ id, label, value, type, required, error: ctx.formError()?.[id], disabled: !ctx.canWrite() })
   const select = (name, label, value, options, onChange) =>
-    FlowSelectField({ name, label, value, options, onChange, disabled: !ctx.canWrite() })
+    FlowSelectField({
+      name,
+      label,
+      value,
+      options,
+      onChange,
+      error: ctx.formError()?.[name],
+      disabled: !ctx.canWrite(),
+    })
   const canManage = () => ctx.canWrite() && canManageScope(d(), 'project', ctx.projectId())
-  const users = () =>
-    d()
-      .members.filter((m) => m.status === 'active' && m.role !== 'guest')
-      .map((m) => ({ value: m.id, label: m.name }))
+  const canManageView = (view) =>
+    ctx.canWrite() &&
+    (!view.ownerId || view.ownerId === d().user.id || canManageScope(d(), 'company', d().company.id))
+  // A form's recipient is any internal person who can open the project, searched on the
+  // server; the pick is posted as `assigneeId`, never resolved from a loaded name.
+  const recipient = signal({ formId: null, id: '' }),
+    knownRecipients = new Map()
+  const recipients = ctx.call
+    ? createPagedOptions({
+        scope: () => JSON.stringify([d()?.company.id, ctx.projectId(), d()?.organizationRevision]),
+        refused: ctx.refused,
+        read: (input, signal) =>
+          ctx.call(
+            'flow.member.options',
+            { ...input, companyId: d().company.id, projectId: ctx.projectId(), internal: true },
+            { signal },
+          ),
+        accept: (items) => {
+          for (const m of items) knownRecipients.set(m.id, m)
+        },
+      })
+    : null
+  const recipientOf = (f) => {
+    const held = recipient()
+    if (held.formId === (f?.id ?? '')) return held.id
+    if (f?.assigneeId) return f.assigneeId
+    const self = d().members.find((m) => m.id === d().user.id)
+    return self?.role !== 'guest' && assignableSelf(d(), ctx.projectId()) ? d().user.id : ''
+  }
+  const recipientField = (f) => {
+    const id = recipientOf(f),
+      s = recipients?.state(),
+      error = ctx.formError()?.assigneeId ?? ctx.formError()?.assignee,
+      name =
+        knownRecipients.get(id)?.name ??
+        (f?.assigneeId === id ? f.assignee : null) ??
+        d().members.find((m) => m.id === id)?.name ??
+        tr('flow.ui.select.member')
+    return html`<input type="hidden" name="assigneeId" value=${id}/>${FlowChoiceField({
+      id: 'form-recipient',
+      label: tr('flow.ui.recipient'),
+      icon: 'user',
+      value: id,
+      selected: { label: name, content: name },
+      options: (s?.items ?? []).map((m) => ({
+        value: m.id,
+        label: m.name,
+        content: m.name,
+        description: m.email,
+      })),
+      disabled: !ctx.canWrite(),
+      ...(recipients
+        ? {
+            menu: { open: s.open, onToggle: (open) => (open ? void recipients.open() : recipients.close()) },
+            remote: {
+              query: s.query,
+              loading: s.loading,
+              error: s.error,
+              onQuery: recipients.query,
+              onRetry: recipients.retry,
+              ...(s.cursor ? { onMore: recipients.more } : {}),
+            },
+          }
+        : {}),
+      onChange: (value) => recipient.set({ formId: f?.id ?? '', id: value }),
+    })}${error ? html`<small id="form-recipient-error" data-flow="field-error">${error}</small>` : null}`
+  }
   const list = (rows, empty = tr('flow.ui.no.data.yet')) =>
     rows.length
       ? FlowList({
@@ -94,11 +192,10 @@ export function createOperations(ctx) {
         })
       : FlowEmpty({ title: empty })
   const form = (body, fn, label = tr('flow.ui.save'), cancel = () => editor.set('')) =>
-    html`<form on:submit=${(e) => {
+    html`<form on:input=${() => ctx.clearCompletedFeedback?.()} on:submit=${(e) => {
       e.preventDefault()
       fn(Object.fromEntries(new FormData(e.currentTarget)))
-    }}>${stack(body, FlowInline({ align: 'end', children: html`${cancel ? btn(tr('flow.ui.cancel'), cancel) : null}${FlowButton({ label, type: 'submit', variant: 'primary', disabled: !ctx.canWrite() || ctx.busy() })}` }))}</form>`
-  const tasks = () => projectTasks(d(), ctx.workspaceId(), ctx.projectId())
+    }}>${stack(body, FlowInline({ align: 'end', children: html`${cancel ? FlowButton({ label: tr('flow.ui.cancel'), onClick: () => ctx.requestLeave(cancel), disabled: ctx.busy() }) : null}${FlowButton({ label, type: 'submit', variant: 'primary', disabled: !ctx.canWrite(), loading: ctx.busy() })}` }))}</form>`
   const openTask = (t) => ctx.navigate('issue', { id: t.id, project: t.projectId })
   const taskRow = (t) =>
     FlowListItem({
@@ -109,17 +206,18 @@ export function createOperations(ctx) {
   const forms = () => {
     const items = d().forms.filter((f) => f.projectId === ctx.projectId()),
       f = items.find((x) => x.id === selected())
-    const edit = (f) => {
-      selected.set(f?.id ?? '')
-      fields.set(
-        structuredClone(
-          f?.fields ?? [
-            { id: 'details', label: tr('flow.ui.request.details'), type: 'textarea', required: true },
-          ],
-        ),
-      )
-      formTab.set('design')
-    }
+    const edit = (f) =>
+      ctx.requestLeave(() => {
+        selected.set(f?.id ?? '')
+        fields.set(
+          structuredClone(
+            f?.fields ?? [
+              { id: 'details', label: tr('flow.ui.request.details'), type: 'textarea', required: true },
+            ],
+          ),
+        )
+        formTab.set('design')
+      })
     return FlowSection({
       title: tr('flow.ui.intake.forms'),
       actions: btn(tr('flow.ui.create.form'), () => edit(), true, !canManage()),
@@ -135,10 +233,11 @@ export function createOperations(ctx) {
               { value: 'preview', label: tr('flow.ui.preview.submit') },
               { value: 'responses', label: tr('flow.ui.responses') },
             ],
-            onChange: (v) => {
-              if (v === 'design' && !f) edit()
-              else formTab.set(v)
-            },
+            onChange: (v) =>
+              ctx.requestLeave(() => {
+                if (v === 'design' && !f) edit()
+                else formTab.set(v)
+              }),
           }),
         }),
         formTab() === 'manage'
@@ -185,12 +284,7 @@ export function createOperations(ctx) {
                       tr('flow.ui.current.project')) +
                     tr('flow.ui.request.titles.become.task.titles'),
                 }),
-                select(
-                  'assignee',
-                  tr('flow.ui.recipient'),
-                  f?.assignee ?? d().people[0],
-                  d().people.map((p) => ({ value: p, label: p })),
-                ),
+                recipientField(f),
                 select('priority', tr('flow.ui.default.priority'), f?.priority ?? 'normal', [
                   { value: 'normal', label: tr('flow.ui.normal') },
                   { value: 'high', label: tr('flow.ui.high') },
@@ -256,14 +350,28 @@ export function createOperations(ctx) {
                 ),
                 select('publish', tr('flow.ui.status'), f?.status === 'draft' ? 'no' : 'yes', [
                   { value: 'no', label: tr('flow.ui.save.draft') },
-                  { value: 'yes', label: tr('flow.ui.publish.in.mock') },
+                  { value: 'yes', label: tr('flow.ui.publish') },
                 ]),
               ),
+              // The field rows travel as `fields`; their inputs are not arguments of the command.
               (v) =>
-                run('form.save', { ...v, id: f?.id, fields: fields(), publish: v.publish === 'yes' }, (x) => {
-                  selected.set(x.id)
-                  formTab.set('preview')
-                }),
+                run(
+                  'form.save',
+                  {
+                    id: f?.id,
+                    title: v.title,
+                    description: v.description,
+                    access: v.access,
+                    assigneeId: v.assigneeId,
+                    priority: v.priority,
+                    fields: fields(),
+                    publish: v.publish === 'yes',
+                  },
+                  (x) => {
+                    selected.set(x.id)
+                    formTab.set('preview')
+                  },
+                ),
               tr('flow.ui.save.form'),
               () => formTab.set('manage'),
             )
@@ -287,7 +395,13 @@ export function createOperations(ctx) {
                         input('request-title', tr('flow.ui.request.title'), '', 'text', true),
                         ...f.fields.map((x) =>
                           x.type === 'textarea'
-                            ? FlowTextarea({ id: 'answer-' + x.id, label: x.label, required: x.required })
+                            ? FlowTextarea({
+                                id: 'answer-' + x.id,
+                                label: x.label,
+                                required: x.required,
+                                error: ctx.formError()?.['answer-' + x.id],
+                                disabled: !ctx.canWrite(),
+                              })
                             : input(
                                 'answer-' + x.id,
                                 x.label,
@@ -332,6 +446,25 @@ export function createOperations(ctx) {
       ),
     })
   }
+  const changeCalendar = (anchor, unit = scale()) => {
+    date.set(anchor)
+    scale.set(unit)
+    calendarLimits.set({})
+    ctx.reloadCalendar?.()
+  }
+  const calendarMore = (key, total, initial) => {
+    const limit = calendarLimits()[key] ?? initial
+    return inline(
+      total > limit
+        ? btn(tr('flow.list.showMore', [Math.min(10, total - limit), total - limit]), () =>
+            calendarLimits.set({ ...calendarLimits(), [key]: limit + 10 }),
+          )
+        : null,
+      limit > initial
+        ? btn(tr('flow.ui.collapse'), () => calendarLimits.set({ ...calendarLimits(), [key]: initial }))
+        : null,
+    )
+  }
   const calendar = () => {
     const anchor = date() || todayDate(d().timezone),
       period = calendarPeriod(anchor, scale()),
@@ -340,9 +473,9 @@ export function createOperations(ctx) {
       ctx.filterbar(),
       FlowToolbar({
         children: inline(
-          btn(tr('flow.ui.previous'), () => date.set(shiftPeriod(anchor, scale(), -1))),
-          btn(tr('flow.ui.today'), () => date.set(todayDate(d().timezone))),
-          btn(tr('flow.ui.next'), () => date.set(shiftPeriod(anchor, scale(), 1))),
+          btn(tr('flow.ui.previous'), () => changeCalendar(shiftPeriod(anchor, scale(), -1))),
+          btn(tr('flow.ui.today'), () => changeCalendar(todayDate(d().timezone))),
+          btn(tr('flow.ui.next'), () => changeCalendar(shiftPeriod(anchor, scale(), 1))),
           html`<strong>${period.start} → ${period.end}</strong>`,
         ),
         trailing: FlowSegmented({
@@ -352,7 +485,7 @@ export function createOperations(ctx) {
             { value: 'week', label: tr('flow.ui.week') },
             { value: 'month', label: tr('flow.ui.month') },
           ],
-          onChange: scale.set,
+          onChange: (unit) => changeCalendar(anchor, unit),
         }),
       }),
       FlowCalendar({
@@ -367,7 +500,7 @@ export function createOperations(ctx) {
             }),
             today: day === todayDate(d().timezone),
             children: stack(
-              ...matches.slice(0, 3).map((t) =>
+              ...matches.slice(0, calendarLimits()[day] ?? 3).map((t) =>
                 FlowCalendarEvent({
                   label: t.id + ' · ' + t.title,
                   title: t.title,
@@ -376,26 +509,29 @@ export function createOperations(ctx) {
                   onClick: () => openTask(t),
                 }),
               ),
-              matches.length > 3
-                ? FlowDisclosure({
-                    title: tr('flow.ui.tasks.acec1e', [matches.length - 3]),
-                    children: stack(
-                      ...matches
-                        .slice(3)
-                        .map((t) =>
-                          FlowCalendarEvent({ label: t.id, title: t.title, onClick: () => openTask(t) }),
-                        ),
-                    ),
-                  })
-                : null,
+              matches.length > 3 ? calendarMore(day, matches.length, 3) : null,
             ),
           }
         }),
       }),
       FlowSection({
         title: tr('flow.ui.no.due.date'),
-        children: list(all.filter((t) => !t.dueDate).map(taskRow), tr('flow.ui.all.tasks.have.due.dates')),
+        children: stack(
+          list(
+            all
+              .filter((t) => !t.dueDate)
+              .slice(0, calendarLimits().undated ?? 10)
+              .map(taskRow),
+            d().collectionPage?.cursor
+              ? tr('flow.list.showing', [d().tasks.length, d().collectionPage.total])
+              : tr('flow.ui.all.tasks.have.due.dates'),
+          ),
+          all.filter((t) => !t.dueDate).length > 10
+            ? calendarMore('undated', all.filter((t) => !t.dueDate).length, 10)
+            : null,
+        ),
       }),
+      ctx.collectionMore?.(),
     )
   }
 
@@ -408,6 +544,18 @@ export function createOperations(ctx) {
           (inboxTab() === 'mentions' && n.kind === 'mention') ||
           (inboxTab() === 'action' && n.actionNeeded === true),
       )
+    const markVisible = async () => {
+      const ids = items.filter((note) => !note.read).map((note) => note.id)
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        const accepted = await ctx.mutate(
+          'flow.inbox.read',
+          { ids: ids.slice(offset, offset + 100) },
+          undefined,
+          { quiet: offset + 100 < ids.length },
+        )
+        if (!accepted) break
+      }
+    }
     const openNotification = (n, t) => {
       const open = () => ctx.navigate(n.route ?? 'issue', { id: t.id, project: t.projectId })
       if (!n.read && ctx.canWrite()) run('inbox.read', { ids: [n.id] }, open)
@@ -417,7 +565,7 @@ export function createOperations(ctx) {
       title: tr('flow.ui.notifications'),
       actions: btn(
         tr('flow.ui.mark.all.visible.as.read'),
-        () => run('inbox.read', { ids: items.map((n) => n.id) }),
+        markVisible,
         false,
         !items.some((n) => !n.read) || !ctx.canWrite(),
       ),
@@ -433,14 +581,21 @@ export function createOperations(ctx) {
               { value: 'action', label: tr('flow.ui.action.needed') },
               { value: 'all', label: tr('flow.ui.all') },
             ],
-            onChange: inboxTab.set,
+            onChange: (filter) => {
+              inboxTab.set(filter)
+              if (d().inboxPage) void readInbox(filter)
+            },
           }),
           trailing: ctx.workspaceFilter(),
         }),
         FlowHint({ children: tr('flow.today.readPolicy') }),
         list(
           items.map((n) => {
-            const t = d().tasks.find((t) => t.id === n.taskId),
+            const t =
+                d().tasks.find((t) => t.id === n.taskId) ??
+                (n.taskId && n.projectId
+                  ? { id: n.taskId, projectId: n.projectId, title: n.taskTitle ?? n.description }
+                  : null),
               actor = d().members.find((m) => m.id === n.actorId) ?? { id: 'system', name: 'Flow' }
             return FlowListItem({
               title: n.titleKey ? tr(n.titleKey) : n.title,
@@ -472,6 +627,17 @@ export function createOperations(ctx) {
           }),
           tr('flow.ui.you.re.caught.up.on.this.group'),
         ),
+        d().inboxPage?.cursor
+          ? btn(tr('flow.inbox.more'), () => readInbox(inboxTab(), true), false, inboxLoading())
+          : null,
+        inboxError()
+          ? FlowNotice({
+              title: tr('flow.ui.unable.to.open.flow'),
+              message: inboxError(),
+              tone: 'red',
+              action: btn(tr('flow.ui.try.again'), () => readInbox(inboxTab()), false, inboxLoading()),
+            })
+          : null,
       ),
     })
   }
@@ -506,12 +672,13 @@ export function createOperations(ctx) {
                 }),
                 btn(
                   tr('flow.ui.manage'),
-                  () => {
-                    selected.set(v.id)
-                    editor.set('view')
-                  },
+                  () =>
+                    ctx.requestLeave(() => {
+                      selected.set(v.id)
+                      editor.set('view')
+                    }),
                   false,
-                  !ctx.canWrite(),
+                  !canManageView(v),
                 ),
               ),
             }),
@@ -540,9 +707,16 @@ export function createOperations(ctx) {
                 ),
                 btn(
                   tr('flow.ui.archive.view'),
-                  () => run('view.save', { id: v.id, archive: true }, () => editor.set('')),
+                  () =>
+                    ctx.confirmAction({
+                      title: tr('flow.ui.archive.view'),
+                      message: tr('flow.ui.confirmArchiveView', [v.title]),
+                      label: tr('flow.ui.archive.view'),
+                      action: () =>
+                        run('view.save', { id: v.id, title: v.title, archive: true }, () => editor.set('')),
+                    }),
                   false,
-                  !ctx.canWrite(),
+                  !canManageView(v),
                 ),
               ),
             })
@@ -589,15 +763,21 @@ export function createOperations(ctx) {
       ),
     })
   return {
+    inboxFilter: inboxTab,
+    calendarWindow,
     view: (key) =>
       ({ forms, calendar, inbox, 'saved-views': views, 'personal-settings': preferences })[key](),
     reset() {
+      inboxRequest++
+      inboxLoading.set(false)
+      inboxError.set('')
       editor.set('')
       selected.set('')
       formTab.set('manage')
       fields.set([])
-      date.set('')
-      inboxTab.set('unread')
+      recipient.set({ formId: null, id: '' })
+      recipients?.close()
+      state.reset()
     },
   }
 }

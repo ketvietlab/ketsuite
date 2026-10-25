@@ -1,9 +1,32 @@
 # Website Studio browser contract
 
-The Studio is a client-rendered island. Current client calls are in `client/api.ts` and the host
+The Studio uses a server-rendered frame with independently hydrated data regions. Current client calls are in `client/api.ts` and the host
 implementation is in KetSuite's `modules/website_backend`. The former Website Atlas mock
 (`atlas/store.mjs`) and its `test/store.test.mjs` are no longer in this package. Historical fixture
 sections below describe design proposals, not callable host routes.
+
+## Native commerce hardening
+
+The native host owns 57 route descriptors (56 presenters and one catalog-template alias).
+Initial documents include site context, navigation and page identities outside `website.region`
+islands. Frame reads use the same request identity, company scope and Studio transport as data reads;
+route or site changes replace the frame, while query-only reads retain draft input.
+The catalog-template alias redirects to the native Builder with a canonical catalog-template ID.
+
+Appearance and Builder share the compact public `ImageDropZone` recipe. Uploads use the existing
+`/website/images/:siteId/logo?site=:siteId` handler with `website.Site` ownership. A pending upload
+blocks form submission; only a settled URL enters the draft. Removing a logo changes the draft,
+and saving still requires the native Site style revision. Disposal and site changes cancel uploads.
+
+Native bundled page templates are immutable module starters. `getResource` returns `readOnly: true`,
+their list exposes `creatable: false`, and editors expose no save/archive action. A Site appearance
+record returns `archivable: false`; it is not a separate archivable theme entity.
+Product editor reads include `siteId` in `product.getTemplate` so the native adapter can authorize
+and resolve the website catalog source within the selected site.
+
+Route-local Help uses public `HelpDrawer` and `MarkdownContent`, with authored Vietnamese and
+English instructions. The existing Studio UI locale remains Vietnamese. Native browser and
+focused commerce verification are tracked in the owning documentation handoff.
 
 This is a design contract, not a record of production. Each function carries a status:
 
@@ -387,6 +410,14 @@ from the mock, including generic create/update/archive support. Actor capabiliti
 disables tracking; nonempty values must match `GTM-[A-Z0-9]{4,20}`. Save applies immediately without
 republishing entries. Native pages load the container only for visitors on the configured site host,
 outside preview and staff sessions. Container triggers govern events and device conditions.
+
+`sites.visitConsent` (boolean) and `sites.visitConsentNotice` (text, at most 2000 characters) are
+saved by the same Settings resource; omitted values keep the stored ones. Enabling requires a
+notice. The server keeps `visitConsentVersion`, raised whenever the notice text changes, so earlier
+agreements stop counting. While enabled, visitor pages carry a consent bar and the same-origin
+`/_ket/asset/website_backend/visit.mjs` script; the Google Tag Manager loader waits for agreement.
+The script posts to `POST /_website/visit` and `POST /_website/visit/{id}/events` (same origin,
+JSON, no staff session); see the website documentation for the stored data and retention.
 
 
 ### Object Storage ownership — 2026-09-30

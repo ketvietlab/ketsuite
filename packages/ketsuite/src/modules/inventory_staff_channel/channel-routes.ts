@@ -26,6 +26,9 @@ const money = {
   properties: { currency: string, amount: decimal },
   required: ['currency', 'amount'],
 }
+// Purchase cost is read through `product.listVariantCosts`. A viewer who may
+// not call it gets `null` rather than a zero, and the product stays readable.
+const nullableMoney = { ...money, type: ['object', 'null'] }
 const uom = {
   type: 'object',
   additionalProperties: false,
@@ -55,7 +58,7 @@ const summary = {
     uom,
     availableQuantity: string,
     salePrice: money,
-    cost: money,
+    cost: nullableMoney,
     channels,
     hasImage: { type: 'boolean' },
   },
@@ -134,8 +137,11 @@ const managementOptions = {
     categories: { type: 'array', items: option },
     routes: { type: 'array', items: option },
     locations: { type: 'array', items: option },
+    // Whether the form shows and sends a cost. A write that carries one without
+    // it is refused, so a hidden cost is never overwritten.
+    costVisible: { type: 'boolean' },
   },
-  required: ['uoms', 'categories', 'routes', 'locations'],
+  required: ['uoms', 'categories', 'routes', 'locations', 'costVisible'],
 }
 const writeBody = (withVersion: boolean) => ({
   type: 'object',
@@ -159,7 +165,6 @@ const writeBody = (withVersion: boolean) => ({
     'uomId',
     'categoryId',
     'salePrice',
-    'cost',
     'channels',
     'tracking',
     'sku',
@@ -218,10 +223,14 @@ type Context = {
   configs: Map<string, Row>
   units: Map<string, Row>
   availability: Map<string, string>
-  costs: Map<string, string>
+  /** `null` when the viewer may not read costs. */
+  costs: Map<string, string> | null
   currency: string
   mediaTargets: Set<string>
 }
+
+const mayReadCost = (ctx: ServeContext, url: URL, req: Req): Promise<boolean> =>
+  ctx.allows('product.listVariantCosts', url, req)
 
 const contextOf = async (
   ctx: ServeContext,
@@ -238,15 +247,17 @@ const contextOf = async (
     ctx.call('stock.listProductConfigs', { templateIds }, url, req),
     ctx.call('uom.listUnits', { ids: unitIds }, url, req),
     ctx.call('stock.listProductAvailability', { productIds }, url, req),
-    ctx.call('product.listVariantCosts', { productIds }, url, req),
+    mayReadCost(ctx, url, req).then((allowed) =>
+      allowed ? ctx.call('product.listVariantCosts', { productIds }, url, req) : null,
+    ),
     ctx.call('company.getCompany', { id: companyId }, url, req),
     ctx.call('product_media.listPrimaryMedia', { templateIds, productIds }, url, req),
-  ])) as [Row[], Row[], Row[], Row[], Row, Row[]]
+  ])) as [Row[], Row[], Row[], Row[] | null, Row, Row[]]
   return {
     configs: new Map(configs.map((row) => [String(row.templateId), row])),
     units: new Map(units.map((row) => [String(row.id), row])),
     availability: new Map(availability.map((row) => [String(row.productId), String(row.available)])),
-    costs: new Map(costs.map((row) => [String(row.productId), String(row.standardPrice)])),
+    costs: costs && new Map(costs.map((row) => [String(row.productId), String(row.standardPrice)])),
     currency: String(company.currency),
     mediaTargets: new Set(
       media.flatMap((row) => [
@@ -281,7 +292,7 @@ const project = (row: Row, context: Context) => {
     uom: { id: String(unit.id), name: String(unit.name) },
     availableQuantity: context.availability.get(String(row.id)) ?? '0',
     salePrice: { currency: context.currency, amount: String(template.listPrice) },
-    cost: { currency: context.currency, amount: context.costs.get(String(row.id)) ?? '0' },
+    cost: context.costs && { currency: context.currency, amount: context.costs.get(String(row.id)) ?? '0' },
     channels: {
       sales: template.saleOk === true,
       purchase: template.purchaseOk === true,
@@ -356,6 +367,11 @@ const invalidResult = (field: string, message: string) => ({
   ok: false,
   errors: [{ field, message }],
 })
+// A cost the viewer may not read is not theirs to overwrite either.
+const hiddenCostFailure = async (ctx: ServeContext, url: URL, req: Req, body: Row) =>
+  body.cost !== undefined && !(await mayReadCost(ctx, url, req))
+    ? domainFailure(ctx, url, req, invalidResult('cost', 'cost is not visible to this viewer'))
+    : null
 const requestVersion = (req: Req, body: Row): string | null => {
   const expected = String(body.expectedVersion ?? '')
   const header = String(req.headers['if-match'] ?? '').trim()
@@ -588,6 +604,8 @@ export const channelRoutes = routesOf(
     handler: async (ctx, url, req, _params, request) => {
       const key = idempotencyKey(ctx, url, req)
       if (typeof key !== 'string') return key
+      const hidden = await hiddenCostFailure(ctx, url, req, request.body)
+      if (hidden) return hidden
       const namespace = `staff:${String(request.identity!.companyId)}:${request.identity!.userId}:stock.saveInventoryProduct.create`
       const id = commandId('staff_inv_p', namespace, key)
       const templateId = commandId('staff_inv_t', namespace, key)
@@ -612,12 +630,13 @@ export const channelRoutes = routesOf(
     capability: { key: 'inventory.products', action: 'manage' },
     responses: { '200': envelope(managementOptions) },
     handler: async (ctx, url, req) => {
-      const [units, categories, routes, locations] = (await Promise.all([
+      const [units, categories, routes, locations, costVisible] = (await Promise.all([
         ctx.call('uom.listUnits', {}, url, req),
         ctx.call('product.listCategories', { limit: 2_000 }, url, req),
         ctx.call('stock.listRoutes', {}, url, req),
         ctx.call('stock.listLocations', {}, url, req),
-      ])) as [Row[], Row[], Row[], Row[]]
+        mayReadCost(ctx, url, req),
+      ])) as [Row[], Row[], Row[], Row[], boolean]
       const options = (rows: Row[]) =>
         rows
           .map((row) => ({
@@ -635,6 +654,7 @@ export const channelRoutes = routesOf(
           locations: options(
             locations.filter((location) => ['internal', 'transit'].includes(String(location.usage))),
           ),
+          costVisible,
         },
       }
     },
@@ -687,6 +707,8 @@ export const channelRoutes = routesOf(
       if (!current) return notFound(ctx, url, req)
       const expected = requestVersion(req, request.body)
       if (!expected || expected !== current.data.version) return versionFailure(ctx, url, req)
+      const hidden = await hiddenCostFailure(ctx, url, req, request.body)
+      if (hidden) return hidden
       const namespace = `staff:${companyId}:${request.identity!.userId}:stock.saveInventoryProduct.update`
       const result = (await ctx.call(
         'stock.saveInventoryProduct',

@@ -13,7 +13,7 @@ const modules = [address, partner]
 const scope = { company: 'acme', branches: null }
 
 const boot = async (): Promise<{ adapter: Adapter; manifest: Manifest }> => {
-  const manifest = compose(modules, { headless: true })
+  const manifest = compose(modules, { headless: true, companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)

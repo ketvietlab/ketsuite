@@ -4,7 +4,7 @@ import { defineModule } from '@ketvietlab/ketjs'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
 import { views } from './views.ts'
-import { functions } from './functions.ts'
+import { functions } from './functions/index.ts'
 import { messages } from './messages.ts'
 
 export default defineModule({

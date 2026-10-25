@@ -83,6 +83,7 @@ const themeResourceData = (site: Row): Row => ({
   kind: 'themes',
   title: site.title,
   revisionId: site.styleRevision ?? 'initial',
+  archivable: false,
   ...studioStyleDefaults,
   footer: site.title,
   ...row(site.studioStyle),
@@ -829,6 +830,12 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
         const entry = seoEntries(data.entries).find((e) => e.id === input.id)
         return entry ? seoResource(entry) : fail('notFound', 'Không tìm thấy trang.')
       }
+      if (input.kind === 'templates') {
+        const template = pageTemplates.find((template) => template.id === input.id)
+        return template
+          ? { ...template, kind: 'templates', readOnly: true }
+          : fail('notFound', 'Không tìm thấy mẫu trang.')
+      }
       if (input.kind !== 'themes' || input.id !== data.site!.id)
         return fail('notFound', 'Không tìm thấy giao diện.')
       return {
@@ -957,6 +964,8 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
             title,
             defaultLocale: String(values.defaultLocale || 'vi'),
             googleTagManagerId: String(values.googleTagManagerId ?? ''),
+            visitConsent: values.visitConsent === true,
+            visitConsentNotice: String(values.visitConsentNotice ?? ''),
             theme,
           })
           if (options.defaultPreset)
@@ -991,6 +1000,10 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
           title: String(values.title ?? site.title).trim(),
           defaultLocale: String(values.defaultLocale || site.defaultLocale),
           googleTagManagerId: String(values.googleTagManagerId ?? site.googleTagManagerId ?? ''),
+          // Unedited fields keep their value, so an older Settings form cannot switch tracking off.
+          visitConsent:
+            values.visitConsent === undefined ? site.visitConsent === true : values.visitConsent === true,
+          visitConsentNotice: String(values.visitConsentNotice ?? site.visitConsentNotice ?? ''),
           theme: site.theme,
           tokens: site.tokens ?? null,
           siteGroup: site.siteGroup ?? null,
@@ -1058,7 +1071,7 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
     },
     'website_studio.listResources': async (input) => {
       const data = await snapshot(input.siteId)
-      if (input.kind === 'templates') return { rows: pageTemplates }
+      if (input.kind === 'templates') return { rows: pageTemplates, creatable: false }
       if (input.kind === 'themes') return { rows: [await themeResource(data.site!)] }
       if (input.kind === 'menus') return { rows: [await menuOf(data.site!)], creatable: false }
       if (input.kind === 'domains') return { rows: data.domains.map(domainOf) }

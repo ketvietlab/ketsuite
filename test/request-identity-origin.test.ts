@@ -5,13 +5,16 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { bootDeployment, defineDeployment, json } from '@ketvietlab/ketjs'
 import { address, company, partner } from '@ketvietlab/ketsuite'
+import { everyFunction } from './helpers/permissions.ts'
 
 test('request identity: a gateway identity says so and carries the declared sign-out path', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ket-request-identity-'))
   const app = defineDeployment({
     name: 'gatewayviewer',
+    companies: true,
     modules: [address, partner, company],
     serve: {
+      permissions: everyFunction,
       sessions: { anonymous: { company: 'acme' } },
       resolveIdentity: async ({ req }) =>
         req.headers['x-test-verified-identity'] === 'linh'

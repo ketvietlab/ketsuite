@@ -29,15 +29,17 @@ export const housekeepingRoomDetailScreen = (
   frame: Frame,
   status?: string | null,
   errors: readonly string[] = [],
+  workbench?: TemplateResult,
+  backHref?: string,
 ): TemplateResult => {
   const action = `/admin/hospitality/housekeeping/rooms/${encodeURIComponent(room.id)}?lang=${encodeURIComponent(locale)}`
   const taskQueue = `/admin/hospitality/housekeeping?property=${encodeURIComponent(room.propertyId)}&room=${encodeURIComponent(room.id)}&lang=${encodeURIComponent(locale)}`
   const location = [room.building?.name ?? room.building?.code, room.floor?.name ?? room.floor?.code]
     .filter(Boolean)
     .join(' · ')
-  const actions: TemplateResult[] = []
+  const actions: TemplateResult[] = workbench ? [workbench] : []
 
-  if (room.status === 'available' || room.status === 'dirty')
+  if (!workbench && (room.status === 'available' || room.status === 'dirty'))
     actions.push(
       <Section
         title={_('hospitality_core.housekeeping.rooms.section.service')}
@@ -74,7 +76,7 @@ export const housekeepingRoomDetailScreen = (
       />,
     )
 
-  if (room.status === 'maintenance' || room.status === 'out_of_order')
+  if (!workbench && (room.status === 'maintenance' || room.status === 'out_of_order'))
     actions.push(
       <Section
         title={_('hospitality_core.housekeeping.rooms.section.release')}
@@ -134,7 +136,9 @@ export const housekeepingRoomDetailScreen = (
           ]}
           navigation={linkButton({
             label: _('hospitality_core.housekeeping.rooms.action.back'),
-            href: `/admin/hospitality/housekeeping/rooms?property=${encodeURIComponent(room.propertyId)}&lang=${encodeURIComponent(locale)}`,
+            href:
+              backHref ??
+              `/admin/hospitality/housekeeping/rooms?property=${encodeURIComponent(room.propertyId)}&lang=${encodeURIComponent(locale)}`,
             variant: 'tertiary',
             icon: 'chevron-left',
           })}

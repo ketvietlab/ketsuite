@@ -86,6 +86,22 @@ test('creation captures description, properties, checklist, children and attachm
   f.call('flow.issue.save', { ...payload, idempotencyKey: 'create-complete' })
   assert.equal(f.data.tasks.filter((t) => t.parentId === task.id).length, 2)
 })
+test('creation excludes editor popover controls and preserves its description snapshot', () => {
+  const descriptionDoc = { version: 1, blocks: [] }
+  const payload = taskCreatePayload({
+    title: 'Draft',
+    description: 'Content',
+    descriptionDoc,
+    href: 'https://example.test/editor-only',
+    attachments: new Blob(['unused']),
+    checklist: '',
+    subtasks: '',
+  })
+  assert.equal('href' in payload, false)
+  assert.equal(payload.description, 'Content')
+  assert.equal(payload.descriptionDoc, descriptionDoc)
+  assert.deepEqual(payload.attachments, [])
+})
 test('partial autosaves keep description and use versions; status cannot bypass blockers', () => {
   const f = createFixtureSession()
   const task = f.data.tasks.find((t) => t.id === 'KV-142')

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { callFn, compose, migrateOne, registerFunctions, sqliteAdapter } from '@ketvietlab/ketjs'
 import backend from '@ketvietlab/ketsuite/backend'
 
-const manifest = compose([backend], { headless: true })
+const manifest = compose([backend], { headless: true, companies: true })
 
 test('saved search: state is actor-owned, strips navigation state and has one default per list', async () => {
   const db = sqliteAdapter()

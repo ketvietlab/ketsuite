@@ -1,7 +1,10 @@
-/** Shared runtime copy for template context responses and the template page before its read completes. */
+/**
+ * Shared runtime copy for template context responses and the template page before its read completes.
+ * On the page `recordModal.close` names the close control of its dialogs; the way back is a page action.
+ */
 export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>> = {
   vi: {
-    'recordModal.close': 'Về danh sách',
+    'recordModal.close': 'Đóng',
     'recordModal.loading': 'Đang tải…',
     'recordModal.loadFailed': 'Không đọc được sản phẩm.',
     'recordModal.notFound': 'Sản phẩm không còn tồn tại hoặc bạn không có quyền xem.',
@@ -11,10 +14,17 @@ export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>>
     'recordModal.savedTitle': 'Đã lưu',
     'recordModal.saved': 'Thay đổi đã được ghi nhận.',
     'recordModal.unsaved': 'Bỏ các thay đổi chưa lưu?',
+    'recordModal.unsavedDetail': 'Đóng lúc này sẽ mất nội dung vừa nhập.',
+    'recordModal.discard': 'Bỏ nội dung',
+    'recordModal.keepEditing': 'Tiếp tục nhập',
+    'recordModal.confirm': 'Tiếp tục',
+    'recordModal.back': 'Quay lại',
+    'recordModal.deniedTitle': 'Bạn không mở được mục này',
+    'recordModal.denied': 'Hãy nhờ quản trị viên cấp quyền.',
     'recordModal.uploadFailed': 'Không tải được tệp lên. Hãy thử lại.',
   },
   en: {
-    'recordModal.close': 'Back to list',
+    'recordModal.close': 'Close',
     'recordModal.loading': 'Loading…',
     'recordModal.loadFailed': 'The product could not be read.',
     'recordModal.notFound': 'The product is gone or you cannot see it.',
@@ -24,6 +34,13 @@ export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>>
     'recordModal.savedTitle': 'Saved',
     'recordModal.saved': 'The changes have been saved.',
     'recordModal.unsaved': 'Discard unsaved changes?',
+    'recordModal.unsavedDetail': 'Closing now loses what you typed here.',
+    'recordModal.discard': 'Discard',
+    'recordModal.keepEditing': 'Keep editing',
+    'recordModal.confirm': 'Continue',
+    'recordModal.back': 'Go back',
+    'recordModal.deniedTitle': 'You cannot open this record',
+    'recordModal.denied': 'Ask an administrator for access.',
     'recordModal.uploadFailed': 'The file could not be uploaded. Try again.',
   },
 }

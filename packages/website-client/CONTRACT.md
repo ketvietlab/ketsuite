@@ -4,7 +4,7 @@ This is the contract later agents iterate against. Change the mock only in ways 
 a change needs a new rule, change this file in the same commit and say why. The function-level contract
 is [API-CONTRACT.md](API-CONTRACT.md); the extension contract is [EXTENSIONS.md](EXTENSIONS.md).
 
-The mock follows Flow's open-core model: an MIT core with a private Pro extension, client-rendered,
+The Studio follows Flow's open-core model: an MIT core with a private Pro extension, server-framed,
 served by an Atlas host that answers `/_ket/fn` with fixture data. The old proposal in `tasks/website/`
 stays untouched as history; it is not a contract.
 
@@ -83,7 +83,7 @@ out of the mock until a later iteration adds it through the extension contract.
 
 | Decision | Why |
 | -------- | --- |
-| The Studio is client-rendered only. The server renders a loading island; `createWebsiteStudio` reads and renders in the browser. | The same source runs in Atlas and in KetSuite, like Flow. |
+| The Studio shell, navigation, topbar, page pattern and identity are SSR. Only declared data slots hydrate as `website.region` islands over one shared `createWebsiteStudio` store. | Native links retain a complete server document; reads and commands update data regions without rebuilding the shell. |
 | Clicking Website in the ERP opens the Studio in a new tab (`delegateWebsiteLaunch`). The ERP never embeds it. | The Studio is its own application with its own shell. |
 | The client never decides its edition. Without Pro nothing Pro renders: no locked buttons, no teasers. The only offer is a `Notice` in Settings from `bootstrap.offer`. | Selling happens in one quiet place; server data decides it. |
 | Route visibility is not authorization. Every capability is checked again on the server. | A hidden button is not a permission. |
@@ -250,7 +250,7 @@ Report each to ketjs. A fix there, then an override bump, removes the workaround
 | `ds-data-table-header-priority` | An operational `ListPage` hides `secondary` cells at ≤42rem. `DataTable` defaults cells to `secondary` but gives `th` no priority, so headers stay over missing cells. `responsive: 'stack'` overlaps rows inside the operational list. The same rule drops the table's 38rem minimum, so with every column kept titles break letter by letter. | Rules in `ds-gaps.css` keep the cells and the 38rem minimum, so the table scrolls. | Priority on `DataTable` headers, or move lists to `KetTable`. |
 | `ds-list-linked-cell-inset` | At ≤42rem an operational `ListPage` pads every cell 8px; a linked cell's `row-link` keeps its own 12px, so the linked title sits 12px right of its header. | Narrow-screen rule in `ds-gaps.css`: no padding on the linked cell, 8px on the link. | Give `row-link` the list's narrow cell inset. |
 | `ds-menu-trigger-icon` | An icon inside a `Menu` trigger renders unsized. | The site menu's trigger is text only. | Size icons in the trigger like `Button` does. |
-| `ds-builder-compact-identity` | WorkspacePage has no compact editor identity with back navigation and inline draft/publication states. | Builder-only header composition in ds-gaps.css. | Add a native compact editor identity, then remove this gap. |
+| `ds-builder-compact-identity` | WorkspacePage has no compact editor identity with back navigation and inline draft/publication states. | Builder-only geometry in ds-gaps.css; DS owns title typography and page inset. On narrow screens metadata, title, states and actions occupy separate rows so long catalog metadata cannot collapse the title. | Add a native compact editor identity, then remove this gap. |
 | `ds-narrow-workspace-controls` | Narrow builder panels and taxonomy upload fields retain two columns; buttons can overflow. | Container-scoped rules in `ds-gaps.css`; all builder content panels and the block inspector establish the container. A select and its chevron are pinned to the row under the label, as in `ds-form-stacked-fields`. | Container-aware field layout and wrapping action labels; remove when the pin includes them. |
 | `ds-livedoc-controls` | Public LiveDoc relies on legacy host control CSS. | Standalone control styles, hidden read-only toolbar, token mapping, taller article canvas (28–40rem desktop, 22rem mobile) and an article editor that fills the record column instead of stopping at 52rem. | Ship self-contained toolbar styling with the public editor. |
 

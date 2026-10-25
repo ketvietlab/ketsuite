@@ -225,6 +225,56 @@ export while consumers migrate, and cover scope and transaction/rollback behavio
 API before private deployments update their pin and switch consumers. A file-only refactor must not
 silently remove an existing extension contract.
 
+## Composition contracts
+
+Since KetJS 0.6, composition refuses what earlier versions let through:
+
+- **Company scope is declared.** Every KetSuite deployment sets `companies: true`, and so must any
+  deployment, `compose()` call or test deployment that includes a company- or branch-scoped model.
+  Without it composition fails with `E_COMPANIES_DISABLED`.
+- **Effects stay inside the module graph.** An effect may name the module itself, every module its
+  `depends` reach transitively, and the modules it lists in `optional`. Use `optional` for a soft
+  integration, where the other module builds on this one or only some deployments install it, and
+  let the handler decide at run time whether the integration is there. KetJS warns about any other
+  effect until 1.0, when it refuses it; KetSuite already treats the warning as a failure.
+- **Dry runs are opt-in.** Set `dryRun: true` only on a function whose handler is safe to preview.
+- **Handlers are bound when a manifest is composed.** `registerFunctions` no longer changes which
+  handler runs. To replace a handler in a test, compose a manifest from the patched module and call
+  with that manifest.
+
+`test/ketjs-deployment-contract.test.ts` composes every packaged deployment the way the runtime boots
+it and fails on any contract error or warning. Run it after adding a module, function, job or
+deployment.
+
+## Permission declarations
+
+Each public module declares its permission posture, capability bundles, function risks and
+exemptions in its own file, `packages/ketsuite/src/permission-catalogue/<module>.ts`:
+
+```ts
+// File: packages/ketsuite/src/permission-catalogue/example.ts
+import type { CatalogueSource } from './source.ts'
+
+export const permissions = {
+  posture: 'permission-bearing',
+  bundles: ['operate', 'configure'],
+  functions: {
+    createThing: ['operate', 'operate'],
+    changePolicy: ['configure', 'configure'],
+  },
+  exemptions: {},
+} satisfies CatalogueSource
+```
+
+When a module's functions change, change only that module's file. Parallel branches then touch
+different files instead of one shared catalogue. `permission-catalogue.ts` only imports each file
+and lists it in `sources`; the order there is the order of `ketsuitePermissionModuleNames`. It
+changes only when a module joins or leaves the catalogue: a new module adds its file, one import
+and one `sources` entry. A deployment that composes a module missing from the catalogue fails
+`requireCoverage`, and `test/ketsuite-permission-catalogue.test.ts` rejects entries written inline in
+`sources` and module files that are not listed. Capability labels shared by every module live in
+`permission-catalogue/capability-labels.ts`.
+
 ## Messages and public exports
 
 Ship Vietnamese and English messages together for code paths visible in either locale. Keep message
@@ -245,5 +295,6 @@ UI components belong in `@ketvietlab/ketsuite/ui`.
 - Vietnamese and English messages cover new user-visible output.
 - Focused integration and HTTP tests cover success, rejection, and scope isolation.
 - Public exports are added only for a real extension consumer.
+- Permission declarations stay in the module's own `permission-catalogue/<module>.ts`.
 - Existing descriptor fields and public extension contracts survive organizational refactors.
 - Routed business screens follow the [screen organization rules](/ketsuite/backend-development/#screen-organization).

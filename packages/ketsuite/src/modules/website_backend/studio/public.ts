@@ -224,6 +224,19 @@ export function renderStudioPublic(scope: Record<string, unknown>) {
     publicVisitor && /^GTM-[A-Z0-9]{4,20}$/.test(String(site.googleTagManagerId ?? ''))
       ? String(site.googleTagManagerId)
       : null
+  // Asking before tracking belongs to the visitor's own site, like the container it holds back.
+  const consent = object(appearance.visitConsent)
+  const visitConsent =
+    publicVisitor && typeof consent.notice === 'string' && consent.notice && Number(consent.version) > 0
+      ? {
+          notice: consent.notice,
+          version: Number(consent.version),
+          subject:
+            record.type === 'website.product' && fields.productId
+              ? { type: 'product', id: String(fields.productId) }
+              : null,
+        }
+      : null
   const navigation = (parent: unknown, ancestors = new Set<string>()): WebsitePublicNavItem[] =>
     menu
       .filter((item) => (item.parentId ?? null) === parent && !ancestors.has(String(item.id)))
@@ -242,6 +255,7 @@ export function renderStudioPublic(scope: Record<string, unknown>) {
       body: websitePublicDocument({
         locale,
         googleTagManagerId,
+        visitConsent,
         head: {
           title: String(meta.title || record.title || ''),
           description: meta.metaDescription,
@@ -296,7 +310,7 @@ export function renderStudioPublic(scope: Record<string, unknown>) {
       'cache-control': 'no-cache',
       vary: 'Cookie',
       ...(publicVisitor ? { 'access-control-allow-origin': '*' } : {}),
-      ...(siteTheme || googleTagManagerId || interactivePreview
+      ...(siteTheme || googleTagManagerId || visitConsent || interactivePreview
         ? {
             'content-security-policy': interactivePreview
               ? themeContentSecurityPolicy(siteTheme ?? { connect: [], frame: [] })

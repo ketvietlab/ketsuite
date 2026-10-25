@@ -1,3 +1,4 @@
+import { roomFixtureCall } from './helpers/hospitality-room-fixture.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -5,7 +6,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   bootWorker,
-  callFn,
   compose,
   createQueue,
   defineDeployment,
@@ -18,10 +18,77 @@ import { address, company, hospitalityCore, partner, product, storage, uom } fro
 import backend from '@ketvietlab/ketsuite/backend'
 
 const modules = [address, partner, company, storage, backend, uom, product, hospitalityCore]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>
-  callFn(name, args, { adapter, manifest, scope })
+  roomFixtureCall(name, args, { adapter, manifest, scope })
+
+/** The company, an open property and a clean room: what a stay needs before it can begin. */
+const prepareHotel = async (
+  adapter: Adapter,
+  property: Record<string, unknown>,
+  roomType: Record<string, unknown>,
+  room: Record<string, unknown>,
+): Promise<void> => {
+  await call('partner.savePartner', { id: 'acme-party', kind: 'company', name: 'Công ty ACME' }, adapter)
+  await call(
+    'company.saveCompany',
+    { id: 'acme', code: 'ACME', partnerId: 'acme-party', currency: 'VND' },
+    adapter,
+  )
+  const saved = await call('hospitality_core.saveProperty', property, adapter)
+  assert.equal((saved.value as Row).ok, true, JSON.stringify(saved.value))
+  await call('hospitality_core.saveRoomType', roomType, adapter)
+  await call('hospitality_core.saveRoom', room, adapter)
+  await call(
+    'hospitality_core.saveRatePlan',
+    {
+      id: `${String(roomType.id)}-rate`,
+      propertyId: property.id,
+      roomTypeId: roomType.id,
+      code: 'BAR',
+      name: 'Best rate',
+      rateType: 'nightly',
+      amount: roomType.baseRate,
+    },
+    adapter,
+  )
+  const current = (await call('hospitality_core.getRoom', { id: room.id }, adapter)).value as Row
+  const clean = await call(
+    'hospitality_core.completeRoomCleaning',
+    { roomId: room.id, expectedVersion: current.version, requestKey: `clean-${String(room.id)}` },
+    adapter,
+  )
+  assert.equal((clean.value as Row).ok, true, JSON.stringify(clean.value))
+  const configured = (await call('hospitality_core.getProperty', { id: property.id }, adapter)).value as Row
+  const opened = await call(
+    'hospitality_core.setPropertyLifecycle',
+    {
+      propertyId: property.id,
+      lifecycle: 'active',
+      expectedVersion: configured.version,
+      requestKey: `open-${String(property.id)}`,
+    },
+    adapter,
+  )
+  assert.equal((opened.value as Row).ok, true, JSON.stringify(opened.value))
+}
+
+/** Only an audit moves the business day; a fixture moves it to the day it needs. */
+const setBusinessDate = (adapter: Adapter, day: string) =>
+  adapter.run('UPDATE hospitality_core_property SET "businessDate" = ? WHERE id = ?', [day, 'hotel'])
+
+/** Every adult arriving is declared at check-in. */
+const arrivalGuests = [
+  {
+    fullName: 'Synthetic guest',
+    type: 'passport',
+    number: 'TEST1234',
+    birth: '1990-01-01',
+    gender: 'female',
+    nationality: 'VN',
+  },
+]
 
 const seedLongStay = async (adapter: Adapter): Promise<void> => {
   await migrateOne(adapter, manifest)
@@ -45,8 +112,8 @@ const seedLongStay = async (adapter: Adapter): Promise<void> => {
     { id: 'breakfast', templateId: 'breakfast-template', defaultCode: 'BF', combinationKey: '' },
     adapter,
   )
-  await call(
-    'hospitality_core.saveProperty',
+  await prepareHotel(
+    adapter,
     {
       id: 'hotel',
       code: 'HCM',
@@ -57,10 +124,6 @@ const seedLongStay = async (adapter: Adapter): Promise<void> => {
       allowWeekly: true,
       longStayBillOnCheckIn: true,
     },
-    adapter,
-  )
-  await call(
-    'hospitality_core.saveRoomType',
     {
       id: 'studio',
       propertyId: 'hotel',
@@ -70,13 +133,10 @@ const seedLongStay = async (adapter: Adapter): Promise<void> => {
       allowMonthly: true,
       allowWeekly: true,
     },
-    adapter,
-  )
-  await call(
-    'hospitality_core.saveRoom',
     { id: '101', propertyId: 'hotel', roomTypeId: 'studio', code: '101', name: '101' },
-    adapter,
   )
+  // The stay began in June.
+  await setBusinessDate(adapter, '2026-06-01')
   const reservation = await call(
     'hospitality_core.createReservation',
     {
@@ -101,6 +161,7 @@ const seedLongStay = async (adapter: Adapter): Promise<void> => {
       roomId: '101',
       assignmentId: 'monthly:assignment',
       at: '2026-06-01T14:00:00.000Z',
+      guests: arrivalGuests,
     },
     adapter,
   )
@@ -118,11 +179,14 @@ const seedLongStay = async (adapter: Adapter): Promise<void> => {
   assert.equal((extra.value as Row).ok, true, JSON.stringify(extra.value))
 }
 
-test('hospitality night audit: queue worker catches up rent and nightly services without duplicates', async () => {
+test('hospitality night audit: queue worker catches up rent and nightly services without duplicates', async (t) => {
+  // The audit closes a day that has ended.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-08-21T01:00:00.000Z') })
   const dir = mkdtempSync(join(tmpdir(), 'ket-hospitality-night-audit-'))
   const file = join(dir, 'hospitality.db')
   const app = defineDeployment({
     name: 'hospitality_night_audit_test',
+    companies: true,
     modules,
     headless: true,
     serve: {},
@@ -146,6 +210,7 @@ test('hospitality night audit: queue worker catches up rent and nightly services
       '2026-07-01',
     )
 
+    await setBusinessDate(producer, '2026-08-20')
     const preview = (
       await call(
         'hospitality_core.previewNightAudit',
@@ -239,6 +304,7 @@ test('hospitality night audit: queue worker catches up rent and nightly services
       910,
     )
 
+    // A closed day stays closed: asking again answers with the completed run and posts nothing.
     registerFunctions(modules)
     const rerun = (
       await call(
@@ -247,9 +313,9 @@ test('hospitality night audit: queue worker catches up rent and nightly services
         inspector,
       )
     ).value as Row
-    assert.equal(rerun.existing, false, 'completed queue uniqueness must not suppress a rerun')
+    assert.equal(rerun.existing, true)
     await inspector.close()
-    assert.equal(await worker.drain(), 1)
+    assert.equal(await worker.drain(), 0)
 
     const after = sqliteAdapter(file)
     await after.open()
@@ -261,7 +327,7 @@ test('hospitality night audit: queue worker catches up rent and nightly services
     )[0]!
     assert.deepEqual(
       { ...afterRun, totalAmount: Number(afterRun.totalAmount) },
-      { attempt: 2, servicePosted: 1, rentPosted: 2, totalAmount: 610 },
+      { attempt: 1, servicePosted: 1, rentPosted: 2, totalAmount: 610 },
     )
     assert.equal((await after.all('SELECT COUNT(*) AS n FROM hospitality_core_charge'))[0]!.n, 4)
     assert.equal(
@@ -279,15 +345,16 @@ test('hospitality night audit: queue worker catches up rent and nightly services
   }
 })
 
-test('hospitality night audit: a property can defer the first long-stay charge to the worker', async () => {
+test('hospitality night audit: a property can defer the first long-stay charge to the worker', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-08-01T15:00:00.000Z') })
   const adapter = sqliteAdapter()
   await adapter.open()
   try {
     await migrateOne(adapter, manifest)
     registerFunctions(modules)
     await call('partner.savePartner', { id: 'guest', kind: 'person', name: 'Guest' }, adapter)
-    await call(
-      'hospitality_core.saveProperty',
+    await prepareHotel(
+      adapter,
       {
         id: 'hotel',
         code: 'HAN',
@@ -297,10 +364,6 @@ test('hospitality night audit: a property can defer the first long-stay charge t
         allowWeekly: true,
         longStayBillOnCheckIn: false,
       },
-      adapter,
-    )
-    await call(
-      'hospitality_core.saveRoomType',
       {
         id: 'weekly',
         propertyId: 'hotel',
@@ -309,14 +372,9 @@ test('hospitality night audit: a property can defer the first long-stay charge t
         baseRate: '70',
         allowWeekly: true,
       },
-      adapter,
-    )
-    await call(
-      'hospitality_core.saveRoom',
       { id: '201', propertyId: 'hotel', roomTypeId: 'weekly', code: '201', name: '201' },
-      adapter,
     )
-    await call(
+    const booked = await call(
       'hospitality_core.createReservation',
       {
         id: 'weekly-stay',
@@ -331,11 +389,13 @@ test('hospitality night audit: a property can defer the first long-stay charge t
       },
       adapter,
     )
-    await call(
+    assert.equal((booked.value as Row).ok, true, JSON.stringify(booked.value))
+    const arrived = await call(
       'hospitality_core.checkIn',
-      { stayId: 'weekly-stay:stay', roomId: '201', at: '2026-08-01T14:00:00.000Z' },
+      { stayId: 'weekly-stay:stay', roomId: '201', at: '2026-08-01T14:00:00.000Z', guests: arrivalGuests },
       adapter,
     )
+    assert.equal((arrived.value as Row).ok, true, JSON.stringify(arrived.value))
     assert.equal((await adapter.all('SELECT COUNT(*) AS n FROM hospitality_core_charge'))[0]!.n, 0)
     assert.equal(
       (

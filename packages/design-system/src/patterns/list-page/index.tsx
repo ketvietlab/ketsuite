@@ -53,6 +53,9 @@ export type ListPageProps = {
   selection?: JSXChild
   status?: JSXChild
   footer?: JSXChild
+  /** The island owns timing; the pattern owns stale-result emphasis. */
+  busy?: boolean
+  dimmed?: boolean
 }
 
 /**
@@ -87,6 +90,8 @@ export const ListPage = (props: ListPageProps): TemplateResult => {
       data-ui="list-page"
       data-variant={props.variant ?? null}
       data-pattern="list"
+      aria-busy={props.busy ? 'true' : null}
+      data-dimmed={props.dimmed ? 'true' : null}
       data-ket-preserve-context=""
     >
       {pageIdentity('list-page', {

@@ -43,7 +43,7 @@
   :where([data-kv-design-system]) [data-ui="tree-grid"] :is(th, td) {
     padding: var(--kv-space-1-5) var(--kv-space-3);
     border-bottom: 1px solid var(--kv-table-border);
-    text-align: left;
+    text-align: start;
     vertical-align: middle;
   }
 

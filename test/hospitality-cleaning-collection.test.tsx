@@ -16,26 +16,29 @@ translate.locale = 'en'
 translate.has = () => true
 translate.resolves = () => true
 
-const manifest = compose([
-  defineModule({
-    name: 'hospitality_core',
-    models: {
-      CleaningTask: {
-        scope: 'company',
-        fields: {
-          id: 'id',
-          code: 'text',
-          propertyId: 'id',
-          roomId: 'id',
-          state: 'text',
-          priority: 'text',
-          requestedAt: 'datetime',
-          assigneeId: 'text?',
+const manifest = compose(
+  [
+    defineModule({
+      name: 'hospitality_core',
+      models: {
+        CleaningTask: {
+          scope: 'company',
+          fields: {
+            id: 'id',
+            code: 'text',
+            propertyId: 'id',
+            roomId: 'id',
+            state: 'text',
+            priority: 'text',
+            requestedAt: 'datetime',
+            assigneeId: 'text?',
+          },
         },
       },
-    },
-  }),
-])
+    }),
+  ],
+  { companies: true },
+)
 
 test('cleaning list API supports offset with stable ordering and unchanged scoped filters', async () => {
   let query: { toSQL: () => { text: string; params: unknown[] } } | undefined
@@ -163,8 +166,10 @@ test('cleaning search uses translated visible values and clamps an out-of-range 
 
 test('cleaning route batches only an authorized property and retains state and creation permission', async () => {
   const { routes } = await import('../packages/ketsuite/src/modules/hospitality_core/routes.ts')
+  // The plain list is a client island; the create dialog still renders the server
+  // screen, which reads its rows in batches.
   const url = new URL(
-    'https://ket.test/admin/hospitality/housekeeping?property=outside-access&state=todo&q=Late&lang=en',
+    'https://ket.test/admin/hospitality/housekeeping?property=outside-access&state=todo&q=Late&lang=en&create=1',
   )
   const req = { method: 'GET', headers: {} } as Parameters<Route>[1]
   const reachedSecondBatch = new Error('Second cleaning batch observed')

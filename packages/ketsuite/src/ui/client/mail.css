@@ -81,18 +81,6 @@
     font-size: 0.875rem;
   }
 
-  [data-ui="chatter-body"] {
-    min-block-size: 4rem;
-    resize: vertical;
-    padding: 0.5rem;
-    border: 1px solid var(--admin-line-strong);
-    border-radius: var(--admin-radius-sm);
-    background: var(--admin-surface);
-    color: var(--admin-ink);
-    font: inherit;
-    font-size: 0.875rem;
-  }
-
   [data-ui="chatter-compose-actions"] > div {
     display: inline-flex;
     gap: var(--admin-gap-xs);

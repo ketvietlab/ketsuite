@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { FormScreenFrame } from './page-frame.tsx'
 import {
   badge,
@@ -132,6 +133,12 @@ export const floorDetailScreen = (
                   body={
                     <RecordActions
                       action={`/admin/hospitality/levels/${encodeURIComponent(floor.id)}/archive?${query}`}
+                      hidden={{
+                        propertyId: floor.propertyId,
+                        expectedVersion: String(floor.version ?? 0),
+                        expectedPropertyVersion: String(floor.property?.version ?? 0),
+                        requestKey: randomUUID(),
+                      }}
                       actions={[
                         floor.active
                           ? {

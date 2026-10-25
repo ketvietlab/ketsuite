@@ -14,6 +14,7 @@
     min-width: 0;
     color: var(--kv-color-ink);
     font-family: var(--kv-font-sans);
+    font-optical-sizing: auto;
     font-size: var(--kv-text-base);
     line-height: var(--kv-line-sm);
     text-rendering: optimizeLegibility;

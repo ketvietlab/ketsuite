@@ -44,6 +44,19 @@ export type DocumentOwner = {
   writeFn: string
   /** Reads the stored-snapshot pointer off a row the read function returned. */
   attachmentOf: (row: Record<string, unknown>) => unknown
+  /** Native owners may provide their canonical snapshot on first migration/read. */
+  initialSnapshotOf?: (row: Record<string, unknown>) => Uint8Array | null
+  /** A successful push must already be durable for these owners. */
+  durablePush?: boolean
+  /** Optional shared lease transport, authorized again by the owner functions. */
+  presenceFn?: string
+  presenceListFn?: string
+  /** Upper cursor bound accepted by the durable owner; reject before calling its lease function. */
+  presenceMaxIndex?: number
+  /** Owners with immutable storage reserve a fresh key for each snapshot write. */
+  snapshotKey?: (company: string, id: string, checksum: string) => string
+  /** Optional owner metadata, sampled synchronously with the snapshot bytes. */
+  snapshotMetadata?: (ref: DocRef) => Record<string, unknown>
   /**
    * Function key that records a flattened document against the row, called
    * with `{ id, storeKey, checksum, size, previewText }`. The owner's, because
@@ -101,49 +114,50 @@ export async function hydrate(
   req: IncomingMessage,
   ref: DocRef,
   attachmentId: unknown,
+  initialSnapshot?: Uint8Array | null,
+  refresh = false,
 ): Promise<boolean> {
   getOrCreateLive(ref)
   // Whether the snapshot has been read, not whether the registry has an entry.
   // `getOrCreateLive` publishes the entry first, so testing for its presence
   // meant a failed or still-running load looked finished — see `hydrated`.
-  if (isHydrated(ref)) return true
-  // Unchecked, like the commit in `flatten` below and for the same reason:
-  // these are `exposure: 'internal'` helpers of a route that has already run
-  // its own permission check, and `ctx.call` would ask for a second grant
-  // nobody has any reason to hold. It used to be a checked call, and it worked
-  // only because the line above usually returns first — a reader-role viewer
-  // opening a record this process had not already loaded got
-  // `E_FN_NOT_PERMITTED` for a function they never named.
+  if (isHydrated(ref) && !refresh) return true
+  const bytes = await storedSnapshot(ctx, url, req, attachmentId, initialSnapshot)
+  if (bytes === null) {
+    forget(ref)
+    return false
+  }
+  if (bytes.length) applySnapshot(ref, bytes)
+  markHydrated(ref)
+  return true
+}
+
+/** Read committed bytes without touching a worker's possibly uncommitted CRDT. */
+export async function storedSnapshot(
+  ctx: ServeContext,
+  url: URL,
+  req: IncomingMessage,
+  attachmentId: unknown,
+  initialSnapshot?: Uint8Array | null,
+): Promise<Uint8Array | null> {
+  // Internal helper; the route must authorize the owner before reading storage.
   const resolved = (await ctx.callUnchecked(
     'livedoc.sync.resolveSnapshotKey',
     { attachmentId },
     url,
     req,
   )) as { storeKey: string | null }
-  // No stored snapshot is a genuine empty document, not a failure to read one.
-  if (!resolved.storeKey) {
-    markHydrated(ref)
-    return true
-  }
+  if (!resolved.storeKey) return attachmentId ? null : (initialSnapshot ?? new Uint8Array())
   const storage = await ctx.storageOf(url, req)
   const found = await storage.get(resolved.storeKey)
-  // The blank document this process just created is dropped rather than kept:
-  // a caller that retries has to actually retry, and one that gives up must
-  // not leave something behind that later reads as the real document.
-  if (!found) {
-    forget(ref)
-    return false
-  }
+  if (!found) return null
   const chunks: Uint8Array[] = []
   try {
     for await (const chunk of found.body) chunks.push(chunk)
   } catch {
-    forget(ref)
-    return false
+    return null
   }
-  applySnapshot(ref, Buffer.concat(chunks))
-  markHydrated(ref)
-  return true
+  return Buffer.concat(chunks)
 }
 
 const singleChunk = async function* (bytes: Uint8Array) {
@@ -157,7 +171,18 @@ export async function flatten(
   url: URL,
   req: IncomingMessage,
   ref: DocRef,
-): Promise<void> {
+  roll = true,
+): Promise<unknown> {
+  let expectedVersion: unknown
+  let ownerId = ref.id
+  if (owner.durablePush) {
+    const row = await writable(ctx, owner, url, req, ref.id)
+    if (!row) throw new Error('Document write refused')
+    expectedVersion = row.version
+    ownerId = String(row.id)
+    if (!(await hydrate(ctx, url, req, ref, owner.attachmentOf(row), owner.initialSnapshotOf?.(row), true)))
+      throw new Error('Document snapshot could not be read')
+  }
   const bytes = snapshotBytes(ref)
   // Nothing to flatten is not the same as an empty document: persisting a
   // document this process does not hold would replace the real one with a
@@ -167,14 +192,27 @@ export async function flatten(
   // written is still owed a flatten afterwards.
   const flattened = updateCountOf(ref)
   const checksum = createHash('sha256').update(bytes).digest('hex')
-  const storeKey = `blobs/${ref.company}/${checksum.slice(0, 2)}/${checksum}`
+  const previewText = previewTextOf(ref)
+  const metadata = owner.snapshotMetadata?.(ref) ?? {}
+  const storeKey =
+    owner.snapshotKey?.(ref.company, ownerId, checksum) ??
+    `blobs/${ref.company}/${checksum.slice(0, 2)}/${checksum}`
   const storage = await ctx.storageOf(url, req)
   await storage.put(storeKey, singleChunk(bytes), { type: 'application/octet-stream', size: bytes.length })
-  await ctx.callUnchecked(
+  const result = await ctx.callUnchecked(
     owner.commitFn,
-    { id: ref.id, storeKey, checksum, size: bytes.length, previewText: previewTextOf(ref) },
+    {
+      ...metadata,
+      id: ref.id,
+      storeKey,
+      checksum,
+      size: bytes.length,
+      previewText,
+      ...(owner.durablePush ? { expectedVersion } : {}),
+    },
     url,
     req,
   )
-  await rollGeneration(ref, flattened)
+  if (roll) await rollGeneration(ref, flattened)
+  return result
 }

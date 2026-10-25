@@ -14,7 +14,7 @@ const CONTRACT_RUNS = 250
 const REPLAY_RUNS = 1_000
 
 const composeStarted = performance.now()
-const manifest = compose(ketsuite.modules, { headless: true })
+const manifest = compose(ketsuite.modules, { headless: true, companies: true })
 const composeMs = performance.now() - composeStarted
 
 const contractStarted = performance.now()
@@ -39,7 +39,7 @@ const command = defineModule({
     },
   },
 })
-const commandManifest = compose([command], { headless: true })
+const commandManifest = compose([command], { headless: true, companies: true })
 const adapter = sqliteAdapter()
 await adapter.open()
 await migrateOne(adapter, commandManifest)

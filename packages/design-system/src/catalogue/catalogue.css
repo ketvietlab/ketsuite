@@ -486,7 +486,7 @@
     }
   }
 
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     :where([data-kv-design-system]) [data-ui="catalogue-hero"],
     :where([data-kv-design-system]) [data-ui="catalogue-group-head"] {
       grid-template-columns: 1fr;

@@ -53,7 +53,7 @@ export type VariantSetup = {
   variants: VariantSetupVariant[]
 }
 
-type Issue = { field: string; message: string; code: string; params?: Record<string, unknown> }
+type Issue = { field: string; message?: string; code: string; params?: Record<string, unknown> }
 
 const bySequence = (a: Row, b: Row) =>
   Number(a.sequence ?? 10) - Number(b.sequence ?? 10) || String(a.name).localeCompare(String(b.name))
@@ -205,6 +205,308 @@ const readVariants = (raw: unknown): VariantInput[] =>
     }
   })
 
+/**
+ * Validate a template's whole attribute-and-variant setup and write it, on a context the
+ * caller already holds inside a transaction (the framework does not nest them). A refusal
+ * returns before the first write, so a caller's transaction holds nothing of it.
+ */
+export const applyVariantSetup = async (
+  ctx: Ctx,
+  templateId: string,
+  rawLines: unknown,
+  rawVariants: unknown,
+): Promise<{ ok: false; errors: Issue[] } | { ok: true; created: number; archived: number }> => {
+  if (!(await ctx.db.select('product.Template', { id: templateId }))[0])
+    return {
+      ok: false,
+      errors: [{ field: 'templateId', code: 'not_found', message: 'template không tồn tại' }],
+    }
+  const lines = readLines(rawLines)
+  const variants = readVariants(rawVariants)
+  const [attributeRows, valueRows, productRows, lineRows] = await Promise.all([
+    ctx.db.select('product.Attribute'),
+    ctx.db.select('product.AttributeValue'),
+    ctx.db.select('product.Product', { templateId }),
+    ctx.db.select('product.TemplateAttributeLine', { templateId }),
+  ])
+  // A line this function did not create keeps whatever id it has, and
+  // `generateVariants` breaks ties on that stored id — so the order below has to
+  // read it rather than assume the id this function would have minted.
+  const heldLineIds = new Map(lineRows.map((row) => [String(row.attributeId), String(row.id)]))
+  const lineIdOf = (attributeId: string): string =>
+    heldLineIds.get(attributeId) ?? lineIdFor(templateId, attributeId)
+  const attributes = new Map(attributeRows.map((row) => [String(row.id), row]))
+  const values = new Map(valueRows.map((row) => [String(row.id), row]))
+  const errors: Issue[] = []
+
+  // ── Attribute lines ──
+  const seenAttributes = new Set<string>()
+  lines.forEach((line, index) => {
+    const attribute = attributes.get(line.attributeId)
+    if (!attribute) {
+      errors.push({
+        field: `lines.${index}.attributeId`,
+        code: 'not_found',
+        message: 'thuộc tính không tồn tại',
+      })
+      return
+    }
+    if (seenAttributes.has(line.attributeId))
+      errors.push({
+        field: `lines.${index}.attributeId`,
+        code: 'duplicate',
+        message: 'thuộc tính bị lặp',
+      })
+    seenAttributes.add(line.attributeId)
+    const seenValues = new Set<string>()
+    line.values.forEach((entry, position) => {
+      const value = values.get(entry.valueId)
+      if (!value || String(value.attributeId) !== line.attributeId)
+        errors.push({
+          field: `lines.${index}.values.${position}`,
+          code: 'not_in_attribute',
+          message: 'giá trị không thuộc thuộc tính này',
+        })
+      if (seenValues.has(entry.valueId))
+        errors.push({
+          field: `lines.${index}.values.${position}`,
+          code: 'duplicate',
+          message: 'giá trị bị lặp',
+        })
+      seenValues.add(entry.valueId)
+      if (!isDecimal(entry.priceExtra))
+        errors.push({
+          field: `lines.${index}.values.${position}.priceExtra`,
+          code: 'invalid_decimal',
+          message: 'giá cộng thêm phải là số',
+        })
+    })
+  })
+
+  // The combination key is spelled in `generateVariants`' own order — attribute
+  // sequence, then line id — so generating afterwards finds these rows instead
+  // of creating the same combinations a second time.
+  const variantLines = lines
+    .filter((line) => {
+      const attribute = attributes.get(line.attributeId)
+      return attribute && attribute.createVariant !== 'no_variant' && line.values.length > 0
+    })
+    .sort((a, b) => {
+      const aa = attributes.get(a.attributeId)
+      const bb = attributes.get(b.attributeId)
+      return (
+        Number(aa?.sequence ?? 10) - Number(bb?.sequence ?? 10) ||
+        lineIdOf(a.attributeId).localeCompare(lineIdOf(b.attributeId))
+      )
+    })
+
+  // ── Variants ──
+  const existing = new Map(productRows.map((row) => [String(row.id), row]))
+  const keys = new Map<string, number>()
+  const barcodes = new Map<string, number>()
+  const resolved = variants.map((variant, index) => {
+    if (variant.id && !existing.has(variant.id))
+      errors.push({
+        field: `variants.${index}.id`,
+        code: 'not_found',
+        message: 'biến thể không thuộc sản phẩm này',
+      })
+    const combination: string[] = []
+    for (const line of variantLines) {
+      const chosen = variant.valueIds[line.attributeId] ?? ''
+      if (!line.values.some((value) => value.valueId === chosen)) {
+        if (variant.active)
+          errors.push({
+            field: `variants.${index}.valueIds.${line.attributeId}`,
+            code: 'required',
+            message: 'chưa chọn giá trị',
+          })
+        continue
+      }
+      combination.push(chosen)
+    }
+    const key = combination.length === variantLines.length ? combination.join(',') : ''
+    if (variant.active && variantLines.length === 0)
+      errors.push({
+        field: `variants.${index}`,
+        code: 'no_attributes',
+        message: 'chưa có thuộc tính tạo biến thể',
+      })
+    if (key) {
+      const other = keys.get(key)
+      if (other !== undefined) {
+        errors.push({
+          field: `variants.${index}.combination`,
+          code: 'duplicate_combination',
+          message: 'tổ hợp trùng',
+          params: { row: other },
+        })
+        errors.push({
+          field: `variants.${other}.combination`,
+          code: 'duplicate_combination',
+          message: 'tổ hợp trùng',
+          params: { row: index },
+        })
+      } else keys.set(key, index)
+    }
+    if (!isDecimal(variant.weight))
+      errors.push({ field: `variants.${index}.weight`, code: 'product.error.template.measure' })
+    if (!isDecimal(variant.volume))
+      errors.push({ field: `variants.${index}.volume`, code: 'product.error.template.measure' })
+    if (variant.barcode) {
+      const other = barcodes.get(variant.barcode)
+      if (other !== undefined)
+        errors.push({ field: `variants.${index}.barcode`, code: 'product.error.variant.barcodeRepeated' })
+      else barcodes.set(variant.barcode, index)
+    }
+    return { ...variant, key }
+  })
+  // An inactive row the editor could not resolve to a full combination keeps the
+  // key it already had — archiving a variant must not need its values re-picked.
+  for (const [index, variant] of resolved.entries())
+    if (!variant.key && !variant.active && variant.id) {
+      const previous = existing.get(variant.id)
+      const key = String(previous?.combinationKey ?? '')
+      resolved[index] = { ...variant, key: key && !keys.has(key) ? key : `archived:${variant.id}` }
+    }
+
+  for (const [barcode, index] of barcodes) {
+    const owner = (await ctx.db.select('product.Product', { barcode }))[0]
+    if (owner && String(owner.templateId) !== templateId)
+      errors.push({ field: `variants.${index}.barcode`, code: 'product.error.variant.barcodeTaken' })
+  }
+  if (errors.length) return { ok: false, errors }
+
+  let created = 0
+  let archived = 0
+  {
+    const tx = ctx
+    const Line = tx.table('product.TemplateAttributeLine')
+    const TemplateValue = tx.table('product.TemplateAttributeValue')
+    const ProductValue = tx.table('product.ProductValue')
+
+    // Lines and their values: drop what left, add what came, keep price extras current.
+    const currentLines = await tx.db.select('product.TemplateAttributeLine', { templateId })
+    const wantedAttributes = new Set(lines.map((line) => line.attributeId))
+    for (const line of currentLines) {
+      const templateValueRows = await tx.db.select('product.TemplateAttributeValue', { lineId: line.id })
+      const leaving = !wantedAttributes.has(String(line.attributeId))
+      const wanted = new Set(
+        (lines.find((entry) => entry.attributeId === String(line.attributeId))?.values ?? []).map((value) =>
+          templateValueIdFor(String(line.id), value.valueId),
+        ),
+      )
+      for (const row of templateValueRows)
+        if (leaving || !wanted.has(String(row.id))) {
+          await tx.db.del(deleteFrom(ProductValue).where(eq(ProductValue.templateAttributeValueId, row.id)))
+          await tx.db.del(deleteFrom(TemplateValue).where(eq(TemplateValue.id, row.id)))
+        }
+      if (leaving) await tx.db.del(deleteFrom(Line).where(eq(Line.id, line.id)))
+    }
+    const templateValueIds = new Map<string, string>()
+    for (const line of lines) {
+      const held = currentLines.find((row) => String(row.attributeId) === line.attributeId)
+      const lineId = held ? String(held.id) : lineIdOf(line.attributeId)
+      if (!held)
+        await tx.db.insert('product.TemplateAttributeLine', {
+          id: lineId,
+          templateId,
+          attributeId: line.attributeId,
+        })
+      for (const value of line.values) {
+        const id = templateValueIdFor(lineId, value.valueId)
+        templateValueIds.set(value.valueId, id)
+        const row = (await tx.db.select('product.TemplateAttributeValue', { id }))[0]
+        if (row)
+          await tx.db.update('product.TemplateAttributeValue', { id }, { priceExtra: value.priceExtra })
+        else
+          await tx.db.insert('product.TemplateAttributeValue', {
+            id,
+            lineId,
+            valueId: value.valueId,
+            priceExtra: value.priceExtra,
+          })
+      }
+    }
+
+    // Variants. Keys move in two passes — every row being written first parks on
+    // a placeholder — so swapping the combinations of two rows never trips the
+    // unique index halfway through.
+    const submitted = new Set(resolved.flatMap((variant) => (variant.id ? [variant.id] : [])))
+    const claimed = new Set(resolved.map((variant) => variant.key))
+    for (const row of productRows) {
+      const id = String(row.id)
+      if (String(row.combinationKey ?? '') === '' || submitted.has(id)) continue
+      // Left the setup: archived, and moved off any key a submitted row now needs.
+      const patch: Row = {}
+      if (row.active !== false) {
+        patch.active = false
+        archived++
+      }
+      if (claimed.has(String(row.combinationKey))) patch.combinationKey = `archived:${id}`
+      if (Object.keys(patch).length) await tx.db.update('product.Product', { id }, patch)
+    }
+    for (const variant of resolved)
+      if (variant.id && String(existing.get(variant.id)?.combinationKey) !== variant.key)
+        await tx.db.update('product.Product', { id: variant.id }, { combinationKey: `pending:${variant.id}` })
+
+    for (const variant of resolved) {
+      const fields = {
+        defaultCode: variant.defaultCode,
+        barcode: variant.barcode,
+        weight: variant.weight,
+        volume: variant.volume,
+        combinationKey: variant.key,
+        active: variant.active,
+      }
+      let id = variant.id
+      if (id) {
+        if (existing.get(id)?.active !== false && !variant.active) archived++
+        await tx.db.update('product.Product', { id }, fields)
+      } else {
+        const base = `${templateId}:${variant.key}`
+        id = base
+        for (let n = 2; (await tx.db.select('product.Product', { id }))[0]; n++) id = `${base}:${n}`
+        await tx.db.insert('product.Product', { id, templateId, ...fields })
+        created++
+      }
+      await tx.db.del(deleteFrom(ProductValue).where(eq(ProductValue.productId, id)))
+      if (variant.key.startsWith('archived:')) continue
+      for (const valueId of Object.values(variant.valueIds)) {
+        const templateAttributeValueId = templateValueIds.get(valueId)
+        if (
+          !templateAttributeValueId ||
+          !variantLines.some((line) => line.values.some((v) => v.valueId === valueId))
+        )
+          continue
+        await tx.db.insert('product.ProductValue', {
+          id: `${id}:${templateAttributeValueId}`,
+          productId: id,
+          templateAttributeValueId,
+        })
+      }
+    }
+
+    // The no-combination variant sells only while nothing else does.
+    const selling = resolved.some((variant) => variant.active)
+    const defaultVariant = productRows.find((row) => String(row.combinationKey ?? '') === '')
+    if (defaultVariant) await tx.db.update('product.Product', { id: defaultVariant.id }, { active: !selling })
+    else if (!selling)
+      await tx.db.insert('product.Product', {
+        id: `${templateId}:default`,
+        templateId,
+        defaultCode: null,
+        barcode: null,
+        weight: '0',
+        volume: '0',
+        combinationKey: '',
+        active: true,
+      })
+  }
+
+  return { ok: true, created, archived }
+}
+
 export const variantSetupFunctions: Record<string, FnSpec> = {
   /**
    * Replace a template's attribute lines and variants with the submitted setup.
@@ -231,304 +533,14 @@ export const variantSetupFunctions: Record<string, FnSpec> = {
       'write:product.Product',
       'write:product.ProductValue',
     ],
+    // The product page edits one variant through this call; a retried submit replays.
+    idempotent: true,
     agent: true,
     handler: async (ctx, args) => {
       const templateId = String(args.templateId)
-      if (!(await ctx.db.select('product.Template', { id: templateId }))[0])
-        return {
-          ok: false,
-          errors: [{ field: 'templateId', code: 'not_found', message: 'template không tồn tại' }],
-        }
-      const lines = readLines(args.lines)
-      const variants = readVariants(args.variants)
-      const [attributeRows, valueRows, productRows, lineRows] = await Promise.all([
-        ctx.db.select('product.Attribute'),
-        ctx.db.select('product.AttributeValue'),
-        ctx.db.select('product.Product', { templateId }),
-        ctx.db.select('product.TemplateAttributeLine', { templateId }),
-      ])
-      // A line this function did not create keeps whatever id it has, and
-      // `generateVariants` breaks ties on that stored id — so the order below has to
-      // read it rather than assume the id this function would have minted.
-      const heldLineIds = new Map(lineRows.map((row) => [String(row.attributeId), String(row.id)]))
-      const lineIdOf = (attributeId: string): string =>
-        heldLineIds.get(attributeId) ?? lineIdFor(templateId, attributeId)
-      const attributes = new Map(attributeRows.map((row) => [String(row.id), row]))
-      const values = new Map(valueRows.map((row) => [String(row.id), row]))
-      const errors: Issue[] = []
-
-      // ── Attribute lines ──
-      const seenAttributes = new Set<string>()
-      lines.forEach((line, index) => {
-        const attribute = attributes.get(line.attributeId)
-        if (!attribute) {
-          errors.push({
-            field: `lines.${index}.attributeId`,
-            code: 'not_found',
-            message: 'thuộc tính không tồn tại',
-          })
-          return
-        }
-        if (seenAttributes.has(line.attributeId))
-          errors.push({
-            field: `lines.${index}.attributeId`,
-            code: 'duplicate',
-            message: 'thuộc tính bị lặp',
-          })
-        seenAttributes.add(line.attributeId)
-        const seenValues = new Set<string>()
-        line.values.forEach((entry, position) => {
-          const value = values.get(entry.valueId)
-          if (!value || String(value.attributeId) !== line.attributeId)
-            errors.push({
-              field: `lines.${index}.values.${position}`,
-              code: 'not_in_attribute',
-              message: 'giá trị không thuộc thuộc tính này',
-            })
-          if (seenValues.has(entry.valueId))
-            errors.push({
-              field: `lines.${index}.values.${position}`,
-              code: 'duplicate',
-              message: 'giá trị bị lặp',
-            })
-          seenValues.add(entry.valueId)
-          if (!isDecimal(entry.priceExtra))
-            errors.push({
-              field: `lines.${index}.values.${position}.priceExtra`,
-              code: 'invalid_decimal',
-              message: 'giá cộng thêm phải là số',
-            })
-        })
-      })
-
-      // The combination key is spelled in `generateVariants`' own order — attribute
-      // sequence, then line id — so generating afterwards finds these rows instead
-      // of creating the same combinations a second time.
-      const variantLines = lines
-        .filter((line) => {
-          const attribute = attributes.get(line.attributeId)
-          return attribute && attribute.createVariant !== 'no_variant' && line.values.length > 0
-        })
-        .sort((a, b) => {
-          const aa = attributes.get(a.attributeId)
-          const bb = attributes.get(b.attributeId)
-          return (
-            Number(aa?.sequence ?? 10) - Number(bb?.sequence ?? 10) ||
-            lineIdOf(a.attributeId).localeCompare(lineIdOf(b.attributeId))
-          )
-        })
-
-      // ── Variants ──
-      const existing = new Map(productRows.map((row) => [String(row.id), row]))
-      const keys = new Map<string, number>()
-      const barcodes = new Map<string, number>()
-      const resolved = variants.map((variant, index) => {
-        if (variant.id && !existing.has(variant.id))
-          errors.push({
-            field: `variants.${index}.id`,
-            code: 'not_found',
-            message: 'biến thể không thuộc sản phẩm này',
-          })
-        const combination: string[] = []
-        for (const line of variantLines) {
-          const chosen = variant.valueIds[line.attributeId] ?? ''
-          if (!line.values.some((value) => value.valueId === chosen)) {
-            if (variant.active)
-              errors.push({
-                field: `variants.${index}.valueIds.${line.attributeId}`,
-                code: 'required',
-                message: 'chưa chọn giá trị',
-              })
-            continue
-          }
-          combination.push(chosen)
-        }
-        const key = combination.length === variantLines.length ? combination.join(',') : ''
-        if (variant.active && variantLines.length === 0)
-          errors.push({
-            field: `variants.${index}`,
-            code: 'no_attributes',
-            message: 'chưa có thuộc tính tạo biến thể',
-          })
-        if (key) {
-          const other = keys.get(key)
-          if (other !== undefined) {
-            errors.push({
-              field: `variants.${index}.combination`,
-              code: 'duplicate_combination',
-              message: 'tổ hợp trùng',
-              params: { row: other },
-            })
-            errors.push({
-              field: `variants.${other}.combination`,
-              code: 'duplicate_combination',
-              message: 'tổ hợp trùng',
-              params: { row: index },
-            })
-          } else keys.set(key, index)
-        }
-        if (!isDecimal(variant.weight))
-          errors.push({ field: `variants.${index}.weight`, code: 'invalid_decimal', message: 'phải là số' })
-        if (!isDecimal(variant.volume))
-          errors.push({ field: `variants.${index}.volume`, code: 'invalid_decimal', message: 'phải là số' })
-        if (variant.barcode) {
-          const other = barcodes.get(variant.barcode)
-          if (other !== undefined)
-            errors.push({ field: `variants.${index}.barcode`, code: 'duplicate', message: 'barcode bị lặp' })
-          else barcodes.set(variant.barcode, index)
-        }
-        return { ...variant, key }
-      })
-      // An inactive row the editor could not resolve to a full combination keeps the
-      // key it already had — archiving a variant must not need its values re-picked.
-      for (const [index, variant] of resolved.entries())
-        if (!variant.key && !variant.active && variant.id) {
-          const previous = existing.get(variant.id)
-          const key = String(previous?.combinationKey ?? '')
-          resolved[index] = { ...variant, key: key && !keys.has(key) ? key : `archived:${variant.id}` }
-        }
-
-      for (const [barcode, index] of barcodes) {
-        const owner = (await ctx.db.select('product.Product', { barcode }))[0]
-        if (owner && String(owner.templateId) !== templateId)
-          errors.push({ field: `variants.${index}.barcode`, code: 'taken', message: 'barcode đã được dùng' })
-      }
-      if (errors.length) return { ok: false, errors }
-
-      let created = 0
-      let archived = 0
-      await ctx.tx(async (tx) => {
-        const Line = tx.table('product.TemplateAttributeLine')
-        const TemplateValue = tx.table('product.TemplateAttributeValue')
-        const ProductValue = tx.table('product.ProductValue')
-
-        // Lines and their values: drop what left, add what came, keep price extras current.
-        const currentLines = await tx.db.select('product.TemplateAttributeLine', { templateId })
-        const wantedAttributes = new Set(lines.map((line) => line.attributeId))
-        for (const line of currentLines) {
-          const templateValueRows = await tx.db.select('product.TemplateAttributeValue', { lineId: line.id })
-          const leaving = !wantedAttributes.has(String(line.attributeId))
-          const wanted = new Set(
-            (lines.find((entry) => entry.attributeId === String(line.attributeId))?.values ?? []).map(
-              (value) => templateValueIdFor(String(line.id), value.valueId),
-            ),
-          )
-          for (const row of templateValueRows)
-            if (leaving || !wanted.has(String(row.id))) {
-              await tx.db.del(
-                deleteFrom(ProductValue).where(eq(ProductValue.templateAttributeValueId, row.id)),
-              )
-              await tx.db.del(deleteFrom(TemplateValue).where(eq(TemplateValue.id, row.id)))
-            }
-          if (leaving) await tx.db.del(deleteFrom(Line).where(eq(Line.id, line.id)))
-        }
-        const templateValueIds = new Map<string, string>()
-        for (const line of lines) {
-          const held = currentLines.find((row) => String(row.attributeId) === line.attributeId)
-          const lineId = held ? String(held.id) : lineIdOf(line.attributeId)
-          if (!held)
-            await tx.db.insert('product.TemplateAttributeLine', {
-              id: lineId,
-              templateId,
-              attributeId: line.attributeId,
-            })
-          for (const value of line.values) {
-            const id = templateValueIdFor(lineId, value.valueId)
-            templateValueIds.set(value.valueId, id)
-            const row = (await tx.db.select('product.TemplateAttributeValue', { id }))[0]
-            if (row)
-              await tx.db.update('product.TemplateAttributeValue', { id }, { priceExtra: value.priceExtra })
-            else
-              await tx.db.insert('product.TemplateAttributeValue', {
-                id,
-                lineId,
-                valueId: value.valueId,
-                priceExtra: value.priceExtra,
-              })
-          }
-        }
-
-        // Variants. Keys move in two passes — every row being written first parks on
-        // a placeholder — so swapping the combinations of two rows never trips the
-        // unique index halfway through.
-        const submitted = new Set(resolved.flatMap((variant) => (variant.id ? [variant.id] : [])))
-        const claimed = new Set(resolved.map((variant) => variant.key))
-        for (const row of productRows) {
-          const id = String(row.id)
-          if (String(row.combinationKey ?? '') === '' || submitted.has(id)) continue
-          // Left the setup: archived, and moved off any key a submitted row now needs.
-          const patch: Row = {}
-          if (row.active !== false) {
-            patch.active = false
-            archived++
-          }
-          if (claimed.has(String(row.combinationKey))) patch.combinationKey = `archived:${id}`
-          if (Object.keys(patch).length) await tx.db.update('product.Product', { id }, patch)
-        }
-        for (const variant of resolved)
-          if (variant.id && String(existing.get(variant.id)?.combinationKey) !== variant.key)
-            await tx.db.update(
-              'product.Product',
-              { id: variant.id },
-              { combinationKey: `pending:${variant.id}` },
-            )
-
-        for (const variant of resolved) {
-          const fields = {
-            defaultCode: variant.defaultCode,
-            barcode: variant.barcode,
-            weight: variant.weight,
-            volume: variant.volume,
-            combinationKey: variant.key,
-            active: variant.active,
-          }
-          let id = variant.id
-          if (id) {
-            if (existing.get(id)?.active !== false && !variant.active) archived++
-            await tx.db.update('product.Product', { id }, fields)
-          } else {
-            const base = `${templateId}:${variant.key}`
-            id = base
-            for (let n = 2; (await tx.db.select('product.Product', { id }))[0]; n++) id = `${base}:${n}`
-            await tx.db.insert('product.Product', { id, templateId, ...fields })
-            created++
-          }
-          await tx.db.del(deleteFrom(ProductValue).where(eq(ProductValue.productId, id)))
-          if (variant.key.startsWith('archived:')) continue
-          for (const valueId of Object.values(variant.valueIds)) {
-            const templateAttributeValueId = templateValueIds.get(valueId)
-            if (
-              !templateAttributeValueId ||
-              !variantLines.some((line) => line.values.some((v) => v.valueId === valueId))
-            )
-              continue
-            await tx.db.insert('product.ProductValue', {
-              id: `${id}:${templateAttributeValueId}`,
-              productId: id,
-              templateAttributeValueId,
-            })
-          }
-        }
-
-        // The no-combination variant sells only while nothing else does.
-        const selling = resolved.some((variant) => variant.active)
-        const defaultVariant = productRows.find((row) => String(row.combinationKey ?? '') === '')
-        if (defaultVariant)
-          await tx.db.update('product.Product', { id: defaultVariant.id }, { active: !selling })
-        else if (!selling)
-          await tx.db.insert('product.Product', {
-            id: `${templateId}:default`,
-            templateId,
-            defaultCode: null,
-            barcode: null,
-            weight: '0',
-            volume: '0',
-            combinationKey: '',
-            active: true,
-          })
-      })
-
-      return { ok: true, created, archived, setup: await variantSetupOf(ctx, templateId) }
+      const result = await ctx.tx((tx) => applyVariantSetup(tx, templateId, args.lines, args.variants))
+      if (!result.ok) return result
+      return { ...result, setup: await variantSetupOf(ctx, templateId) }
     },
   }),
 }

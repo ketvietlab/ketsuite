@@ -31,6 +31,15 @@ test('crm configuration: renders for a manager who may not list users', async (t
     })
     await fixture('user.grantCompany', { id: `${id}:acme`, userId: id, companyId: 'acme' })
   }
+  // A user of the company the CRM never mentions.
+  await fixture('user.createUser', {
+    id: 'outsider',
+    login: 'outsider',
+    password: 'outsider password',
+    name: 'Outside User',
+    defaultCompanyId: 'acme',
+  })
+  await fixture('user.grantCompany', { id: 'outsider:acme', userId: 'outsider', companyId: 'acme' })
   await fixture('user.saveRole', { id: 'crm-configurator', name: 'CRM configurator' })
   for (const [index, fnKey] of [
     'crm.configuration.get',
@@ -62,20 +71,32 @@ test('crm configuration: renders for a manager who may not list users', async (t
   await app.client.logout()
 
   await app.client.login({ login: 'manager', password: 'manager password' })
-  const page = await app.client.get('/admin/crm/configuration?section=teams&lang=en')
-  const html = await page.text()
-  assert.equal(page.status, 200, html.slice(0, 400))
-  assert.match(html, /Care Manager/)
-  assert.doesNotMatch(html, /Administrator<\/option>/)
-  // A viewer without `crm.team.save` opens teams read-only and has no create action.
-  assert.match(html, /record=crm\.team%3Acrm-team-sales/)
-  assert.doesNotMatch(html, /record=crm\.team%3Anew/)
+  assert.equal((await app.client.get('/admin/crm/configuration?lang=en')).status, 200)
+  const read = await app.client.post(
+    '/admin/crm/sales/read',
+    JSON.stringify({ query: 'screen=crm-settings&lang=en' }),
+    { headers: { 'content-type': 'application/json' } },
+  )
+  const body = (await read.json()) as { ok: boolean; value: Row }
+  const { ok, value } = body
+  assert.equal(ok, true, String(read.status))
+  // The screen names the people the CRM's own rows mention (the team's leader and its member), not the
+  // company's users, whom this viewer may not list.
+  assert.deepEqual(
+    (value.people as Row[]).map((person) => person.name),
+    ['Administrator', 'Care Manager'],
+  )
+  // A viewer without `crm.team.save` or `crm.stage.save` sees the teams read-only.
+  assert.equal((value.can as Row).admin, false)
+  assert.ok(
+    (((value.settings as Row).groups as Row).teams as Row[]).some((team) => team.id === 'crm-team-sales'),
+  )
 
   const context = async (input: Record<string, unknown>) =>
     (await app.client.call<Row | null>('crm.team.modalContext', input)).value
   assert.equal(await context({}), null, 'a viewer who may not create gets no create form')
-  const read = (await context({ id: 'crm-team-sales', locale: 'en' }))!
-  const data = read.data as Row
+  const team = (await context({ id: 'crm-team-sales', locale: 'en' }))!
+  const data = team.data as Row
   assert.deepEqual(data.permissions, { save: false, members: false })
   // The people pickers fall back to CRM team members the manager can see.
   assert.deepEqual(

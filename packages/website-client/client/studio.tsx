@@ -1,16 +1,27 @@
 import { uploadImage } from './image-upload.tsx'
 import { attachLiveDescriptions } from './live-description.tsx'
-// The Website Studio island: one client-rendered application opened in its own browser tab.
-// The server renders only the deterministic loading view; everything after hydration — routing,
-// reads, commands, modals — runs here. Product and Atlas run this exact module.
-import { signal, batch, effect } from '@ketvietlab/ketjs-view'
-import { attachDesignSystemInteractions } from '@ketvietlab/design-system'
+// Shared data/command store for server-framed Studio pages. SSR owns the shell and page identity;
+// independently hydrated page regions share this store and preserve drafts across navigation.
+import {
+  signal,
+  batch,
+  computed,
+  effect,
+  html,
+  renderIsland,
+  renderToStaticString,
+  trustedMarkup,
+} from '@ketvietlab/ketjs-view'
+import { attachDesignSystemInteractions, ToastRegion } from '@ketvietlab/design-system'
+import { WorkspacePage, withPageRegions, emptyRegion, createWebsiteRegion } from './page-regions.tsx'
+import type { StudioRegionProps } from './page-regions.tsx'
 import { routes, websiteExtensions, ownerOf, INSTANCE_HOOKS } from './extensions.ts'
 import { matchRoute, buildHref } from './routes.ts'
 import { tr } from './i18n.ts'
 import { createCoreScreens } from './screens/index.ts'
 import { studioFrame, loadingView, failureView, activeEntry } from './shell.tsx'
 import { handleArchiveClick } from './archive-actions.tsx'
+import { screenHelp } from './help.tsx'
 import { parseCommand } from './ui.tsx'
 import type { WebsiteExtensionInstance } from './extensions.ts'
 import type {
@@ -25,8 +36,25 @@ import type {
   WebsiteLocation,
 } from './types.ts'
 
-export type StudioProps = { path?: string; query?: Record<string, string>; basePath?: string }
-export type StudioDependencies = { call?: Call; uploadImage?: ImageUpload }
+export type StudioProps = {
+  path?: string
+  query?: Record<string, string>
+  basePath?: string
+  applications?: import('@ketvietlab/design-system').AppSwitcherProps
+  bootstrap?: Boot
+  frameFallback?: boolean
+}
+export type StudioDependencies = {
+  call?: Call
+  uploadImage?: ImageUpload
+  /** The host obtains a new SSR frame for route/record/site navigation, preserving this store. */
+  frame?: (
+    href: string,
+    signal: AbortSignal,
+  ) => Promise<{ fallback: boolean; bootstrap?: Boot; canonicalHref?: string } | undefined>
+  /** After a save, refresh only server-owned identities; keep data regions and form focus. */
+  identity?: (href: string, signal: AbortSignal) => Promise<void>
+}
 /** What the current route read: its own value, the value behind a modal, and extension extras. */
 type Loaded = { key: string; value: unknown; back: unknown; extras: Record<string, unknown> }
 
@@ -49,7 +77,7 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
     params: first.params,
     query: { ...(props.query ?? {}) },
   })
-  const boot = signal<Boot | null>(null)
+  const boot = signal<Boot | null>(props.bootstrap ?? null)
   const data = signal<Loaded | null>(null)
   const failure = signal<unknown>(null)
   const toasts = signal<Toast[]>([])
@@ -57,6 +85,10 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
   const theme = signal(initialTheme())
   let reading: AbortController | null = null
   let readKey: string | null = null
+  let framing: AbortController | null = null
+  let navigating: AbortController | null = null
+  let identifying: AbortController | null = null
+  let fallbackFrame = props.frameFallback ?? false
   let toastSeq = 0
   const cleanup: (() => void)[] = []
 
@@ -73,6 +105,7 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
 
   /** Shared with every screen and extension instance. Nothing here grants authority. */
   const ctx: StudioContext = {
+    applications: props.applications,
     tr,
     call,
     uploadImage: dependencies.uploadImage ?? uploadImage,
@@ -88,9 +121,21 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
     busy: () => busy(),
     /** For a screen whose modal dialog hides the frame's toast region. */
     toasts: () => toasts(),
-    refresh: () => readRoute(true),
+    refresh: async () => {
+      await readRoute(true)
+      if (dependencies.identity) {
+        identifying?.abort()
+        const controller = new AbortController()
+        identifying = controller
+        await dependencies.identity(href(route().key, route().params, route().query), controller.signal)
+      }
+    },
     /** Re-read the bootstrap (site, actor, offer) and then the route, after a site-level change. */
-    reload: () => bootstrap(boot()?.site?.id).then(() => readRoute(true)),
+    reload: async () => {
+      await bootstrap(boot()?.site?.id)
+      if (dependencies.frame) await replaceFrame(route())
+      await readRoute(true)
+    },
     /** Values contributed by extensions for a named slot, in registration order. Each instance also
      *  receives what its own `readFor` returned for the current route. */
     slot: (hook, value) =>
@@ -146,8 +191,9 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
     return { ...found, query: Object.fromEntries(url.searchParams) }
   }
 
-  async function bootstrap(site: string | null | undefined) {
-    const value = await call<Boot>('website_studio.bootstrap', { site: site ?? null })
+  async function bootstrap(site: string | null | undefined, signal?: AbortSignal) {
+    const value = await call<Boot>('website_studio.bootstrap', { site: site ?? null }, { signal })
+    if (signal?.aborted) throw new DOMException('Navigation cancelled', 'AbortError')
     const previous = boot()?.site?.id
     batch(() => {
       boot.set(value)
@@ -191,6 +237,9 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
         data.set({ key: current.key, value, back: backValue, extras: extraValues })
         failure.set(null)
       })
+      // A server read can fail before it knows the record's pattern/title. After recovery, obtain
+      // its real server frame instead of trying to render that identity in a client data region.
+      if (fallbackFrame && dependencies.frame) await replaceFrame(current)
     } catch (error) {
       if (controller.signal.aborted || (error as Error | null)?.name === 'AbortError') return
       readKey = null
@@ -211,14 +260,50 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
   }
 
   async function apply(next: WebsiteLocation) {
+    navigating?.abort()
+    identifying?.abort()
+    const controller = new AbortController()
+    navigating = controller
+    const previous = route()
     const siteChanged = Boolean(next.query.site) && next.query.site !== boot()?.site?.id
+    const frameChanged =
+      siteChanged ||
+      next.key !== previous.key ||
+      JSON.stringify(next.params) !== JSON.stringify(previous.params)
+    framing?.abort()
+    reading?.abort()
     route.set(next)
     try {
-      if (siteChanged) await bootstrap(next.query.site)
+      if (siteChanged) await bootstrap(next.query.site, controller.signal)
+      if (controller.signal.aborted) return
+      if (frameChanged && dependencies.frame) {
+        data.set(null)
+        const current = await replaceFrame(next)
+        if (!current) return
+      }
       await readRoute()
     } catch (error) {
-      failure.set(error)
+      if (!controller.signal.aborted && (error as Error)?.name !== 'AbortError') failure.set(error)
     }
+  }
+
+  async function replaceFrame(next: WebsiteLocation) {
+    framing?.abort()
+    const controller = new AbortController()
+    framing = controller
+    const result = await dependencies.frame?.(href(next.key, next.params, next.query), controller.signal)
+    if (!controller.signal.aborted) {
+      fallbackFrame = result?.fallback ?? false
+      if (result?.bootstrap) boot.set(result.bootstrap)
+      if (result?.canonicalHref) {
+        const canonical = fromLocation(new URL(result.canonicalHref, location.href))
+        if (canonical) {
+          route.set(canonical)
+          history.replaceState(null, '', result.canonicalHref)
+        }
+      }
+    }
+    return !controller.signal.aborted
   }
 
   async function run(value: string, form?: FormData) {
@@ -335,22 +420,122 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
     }
   }
 
-  const view = () => (
-    // biome-ignore lint/a11y/noStaticElementInteractions: the Studio root delegates events from the native controls inside it.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: Delegates clicks from native buttons and links, which already handle the keyboard.
-    <div data-website-studio onClick={onClick} onInput={onInput} onChange={onChange} onSubmit={onSubmit}>
-      {!boot() ? (failure() ? failureView(failure()) : loadingView()) : studioFrame(ctx, content(), toasts())}
-    </div>
-  )
+  const toastView = () => <ToastRegion label={tr('website.toast.region')} toasts={toasts()} />
+  const regions = computed(() => {
+    const values = new Map<string, unknown>()
+    if (boot() && data()?.key === route().key) {
+      const current = withPageRegions(content, (id, value) => {
+        values.set(id, value)
+        return emptyRegion()
+      })
+      // An error or a screen without a pattern still has a data body, never a client shell.
+      if (!values.size) values.set('fallback.body', current.body)
+    }
+    values.set('studio.toasts', toastView())
+    return values
+  })
+  const region = ({ id, initial }: StudioRegionProps) => {
+    const values = regions()
+    if (id === 'studio.toasts') return html`${values.get(id)}`
+    if (!data() || data()?.key !== route().key) {
+      if (failure() && id.endsWith('.body')) return failureView(failure(), listOf(route().key))
+      return html`${trustedMarkup(initial)}`
+    }
+    const value = values.has(id)
+      ? values.get(id)
+      : id.endsWith('.body') && failure()
+        ? failureView(failure(), listOf(route().key))
+        : null
+    return html`${value}`
+  }
+
+  /** Host-side identity read. Only the page frame is delivered; data bodies start in loading. */
+  async function serverFrame() {
+    try {
+      if (!boot()) await bootstrap(route().query.site)
+      await readRoute()
+    } catch (error) {
+      failure.set(error)
+    }
+    let count = 0
+    const place = (id: string, value: unknown, loading: boolean) => {
+      count++
+      const initial = renderToStaticString(html`${loading ? loadingView() : value}`)
+      const markup = renderIsland('website.region', createWebsiteRegion, { id, initial }, { tag: 'div' })
+      return html`${trustedMarkup(markup.replace('<div ', '<div class="website-region" '))}`
+    }
+    let current = withPageRegions(content, place)
+    const fallback = !count
+    if (!count) {
+      // A failed read cannot construct its normal presenter. Keep an SSR identity and retry body.
+      current = {
+        ...current,
+        body: (
+          <WorkspacePage
+            title={tr(routes[route().key]?.title ?? 'website.route.overview')}
+            body={place('fallback.body', null, true)}
+          />
+        ),
+      }
+    }
+    current = {
+      ...current,
+      body: (
+        <>
+          {current.body}
+          {screenHelp(ctx, tr(current.route?.title ?? 'website.brand'))}
+        </>
+      ),
+    }
+    const frame = boot() ? (
+      studioFrame(
+        ctx,
+        current,
+        [],
+        place('studio.toasts', <ToastRegion label={tr('website.toast.region')} toasts={[]} />, false),
+      )
+    ) : (
+      <>
+        {current.body}
+        {place('studio.toasts', null, false)}
+      </>
+    )
+    return {
+      view: (
+        <div
+          data-website-studio
+          data-website-rendering="ssr-regions"
+          data-website-frame-fallback={fallback ? 'yes' : null}
+        >
+          {frame}
+        </div>
+      ),
+      bootstrap: boot() ?? undefined,
+      fallback,
+    }
+  }
+
+  const view = () => html`${content().body ?? loadingView()}`
 
   return {
     view,
+    region,
+    serverFrame,
+    navigate: ctx.navigate,
+    refresh: ctx.refresh,
     mount({ root, lifetime }: { root: HTMLElement; lifetime: AbortSignal }) {
+      root.addEventListener('click', onClick, { signal: lifetime })
+      root.addEventListener('input', onInput, { signal: lifetime })
+      root.addEventListener('change', onChange, { signal: lifetime })
+      root.addEventListener('submit', onSubmit, { signal: lifetime })
       // Theme belongs to the design-system root the host renders around the island.
       const scope = root.closest<HTMLElement>('[data-kv-design-system]')
       const stopTheme = effect(() => {
         document.documentElement.dataset.theme = theme()
         if (scope) scope.dataset.theme = theme()
+        root
+          .querySelector('button[name="command"][value="studio.theme"]')
+          ?.setAttribute('aria-pressed', String(theme() === 'dark'))
       })
       // GAP ds-runtime-rebind: the DS runtime binds the elements present when it attaches (menus,
       // navigation drawer, search dialog) and refocuses its attach-time element when detached. A
@@ -358,6 +543,9 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
       const syncDescriptions = attachLiveDescriptions(root, lifetime)
       let detach: (() => void) | null = null
       const reattach = () => {
+        root
+          .querySelector('button[name="command"][value="studio.theme"]')
+          ?.setAttribute('aria-pressed', String(theme() === 'dark'))
         const focused = document.activeElement
         detach?.()
         detach = attachDesignSystemInteractions(root)
@@ -390,7 +578,8 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
       }
       addEventListener('popstate', onPop)
       lifetime.addEventListener('abort', () => removeEventListener('popstate', onPop), { once: true })
-      bootstrap(route().query.site)
+      const ready = boot() ? Promise.resolve() : bootstrap(route().query.site)
+      ready
         .then(() => {
           // Canonical URL: the site the server chose becomes explicit, so reload and share keep it.
           const site = boot()?.site?.id
@@ -404,8 +593,12 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
         .catch((error) => failure.set(error))
     },
     dispose() {
+      navigating?.abort()
+      identifying?.abort()
+      framing?.abort()
       reading?.abort()
       for (const stop of cleanup.splice(0)) stop()
+      for (const screen of new Set(Object.values(screens))) screen.dispose?.()
       for (const { instance } of instances) instance.dispose?.()
     },
   }

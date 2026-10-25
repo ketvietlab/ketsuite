@@ -36,6 +36,7 @@ import {
   Progress,
   Select,
   Stack,
+  Surface,
   TabbedView,
   Tabs,
   Tag,
@@ -122,6 +123,9 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
             items={[
               <Icon name="plus" label="Add" />,
               <Icon name="search" label="Search" />,
+              <Icon name="megaphone" label="Advertising" />,
+              <Icon name="sparkles" label="AI recommendation" />,
+              <Icon name="trending-up" label="Increase" />,
               <Icon name="circle-check" tone="positive" label="Complete" />,
               <Icon name="triangle-alert" tone="warning" label="Warning" />,
               <Icon name="x" label="Close" />,
@@ -150,6 +154,20 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
                 gap="column"
                 items={[<Text variant="headingSm">Available</Text>, <Text numeric>1,284</Text>]}
               />,
+            ]}
+          />
+        </Row>
+        <Row
+          label="Columns by room"
+          detail="minimum: two columns while each keeps 23rem, one beside an open sidebar."
+        >
+          <Grid
+            columns={2}
+            minimum="wide"
+            align="stretch"
+            items={[
+              <Surface title="Work queue" body={<Text tone="muted">Due today, then by risk</Text>} />,
+              <Surface title="Receivables aging" body={<Text tone="muted">By days past due</Text>} />,
             ]}
           />
         </Row>
@@ -652,6 +670,7 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
         </Row>
         <Row label="Empty" detail="A useful next step with restrained emphasis.">
           <EmptyState
+            visual="start"
             title="No projects yet"
             message="Create a project to bring your team’s work together."
             actions={<LinkButton label="Explore actions" href="#primitive-actions" size="compact" />}

@@ -2,6 +2,9 @@
   :where([data-kv-design-system]) [data-ui="table-scroll"][data-pattern="data-table"] {
     width: 100%;
     overflow-x: auto;
+    /* The region is the scroll boundary: its table never widens the parents, so a wrapper such as a
+     * client island stays within the page while each column still measures its own content. */
+    contain: inline-size;
     border: 1px solid var(--kv-panel-border);
     border-radius: var(--kv-radius-md);
     background: var(--kv-table-bg);
@@ -33,7 +36,7 @@
     color: var(--kv-text-muted);
     font-size: var(--kv-text-xs);
     line-height: var(--kv-line-xs);
-    text-align: left;
+    text-align: start;
   }
 
   :where([data-kv-design-system]) [data-ui="table-scroll"][data-pattern="data-table"] [data-ui="col"] {
@@ -42,11 +45,11 @@
     border-bottom: 1px solid var(--kv-table-border);
     background: var(--kv-table-header-bg);
     color: var(--kv-table-header-text);
-    font-size: var(--kv-text-2xs);
-    line-height: var(--kv-line-2xs);
-    font-weight: var(--kv-weight-semibold);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    font-weight: var(--kv-weight-medium);
     letter-spacing: 0;
-    text-align: left;
+    text-align: start;
     text-transform: none;
     white-space: nowrap;
   }
@@ -116,7 +119,7 @@
     [data-ui="table-scroll"][data-pattern="data-table"]
     [data-ui="cell"][data-align="end"] {
     font-variant-numeric: tabular-nums;
-    text-align: right;
+    text-align: end;
   }
 
   :where([data-kv-design-system]) [data-ui="table-scroll"][data-pattern="data-table"] [data-ui="row"] {
@@ -167,7 +170,7 @@
     font-size: var(--kv-text-sm);
     line-height: var(--kv-line-sm);
     font-weight: var(--kv-weight-semibold);
-    text-align: left;
+    text-align: start;
   }
 
   :where([data-kv-design-system]) [data-ui="table-scroll"][data-pattern="data-table"] [data-ui="group-link"] {
@@ -347,7 +350,9 @@
   :where([data-kv-design-system])
     [data-ui="table-scroll"][data-pattern="data-table"]
     [data-ui="cell"]
-    :is(a, button, summary, input, select, textarea):not([data-ui="row-link"]) {
+    :is(a, button, summary, input, select, textarea):not([data-ui="row-link"]):not([aria-hidden="true"]):not(
+      [type="hidden"]
+    ) {
     position: relative;
     z-index: 1;
   }
@@ -403,6 +408,17 @@
     overflow-wrap: normal;
   }
 
+  /* Row actions stay on one line so every row keeps one height; the table
+     scrolls before a row's buttons stack. Stacked phone rows still wrap. */
+  @media (min-width: 48rem) {
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"]
+      [data-ui="cell"]
+      > [data-ui="action-group"] {
+      flex-wrap: nowrap;
+    }
+  }
+
   /* `width` sizes the column from its header: narrow shrinks to its content,
      medium and wide keep a text column readable beside the fixed ones. */
   :where([data-kv-design-system])
@@ -426,7 +442,7 @@
   /* Stacked rows. These carry the pattern and the stack flag so they outrank the
      table rules above; scoped to the attribute alone they lost to them, and each
      cell kept its fixed row height and drew over the next. */
-  @media (max-width: 48rem) {
+  @media (max-width: 47.9375rem) {
     :where([data-kv-design-system])
       [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"] {
       overflow: hidden;
@@ -505,6 +521,36 @@
       padding: var(--kv-space-2) 0;
       border: 0;
       white-space: normal;
+    }
+
+    /* Editable values need a full row. Intrinsic flex sizing can shrink a nested
+       field to its padding when a cell also carries price/help text. The table
+       owns its immediate child layout; Field still owns the control itself. */
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      [data-ui="cell"]:has(
+        input:not([type="hidden"], [type="checkbox"], [type="radio"]),
+        select,
+        textarea,
+        [role="combobox"]
+      ) {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      justify-content: normal;
+      text-align: start;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      [data-ui="cell"]:has(
+        input:not([type="hidden"], [type="checkbox"], [type="radio"]),
+        select,
+        textarea,
+        [role="combobox"]
+      )
+      > * {
+      min-width: 0;
+      max-width: 100%;
     }
 
     :where([data-kv-design-system])

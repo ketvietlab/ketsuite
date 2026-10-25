@@ -44,7 +44,7 @@ const modules = [
   pos,
   posChannel,
 ]
-const manifest = compose(modules, { headless: true }),
+const manifest = compose(modules, { headless: true, companies: true }),
   scope = { company: 'acme', branches: null }
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>
   callFn(name, args, {
@@ -66,6 +66,7 @@ test('pos: provider payment primitives stay behind an internal integration seam'
 
   const deployment = defineDeployment({
     name: 'pos_payment_internal_test',
+    companies: true,
     modules,
     headless: true,
     serve: {},

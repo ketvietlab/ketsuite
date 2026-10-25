@@ -1,3 +1,6 @@
+// Seeds a small cosmetics catalogue into a throwaway SQLite file, then serves the
+// KetSuite deployment over it for the product browser tests. Every record a test
+// changes is its own, so the specs can run in any order against one server.
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -14,13 +17,22 @@ import {
   sqliteAdapter,
 } from '@ketvietlab/ketjs'
 import { ketsuite } from '../../../.build/apps/ketsuite/deployment.js'
+import { PASSWORD, PORT } from './users.mjs'
 
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
-const runtime = mkdtempSync(join(tmpdir(), 'ketjs-product-list-e2e-'))
+const here = fileURLToPath(new URL('.', import.meta.url))
+const runtime = mkdtempSync(join(tmpdir(), 'ketsuite-product-e2e-'))
 const database = join(runtime, 'product.sqlite')
 const storage = join(runtime, 'storage')
-const modules = [...ketsuite.modules, ...(ketsuite.theme ? [ketsuite.theme] : [])]
-const manifest = compose(modules)
+const modules = [...ketsuite.modules, ...(ketsuite.theme ? [ketsuite.theme] : []), ...(ketsuite.themes ?? [])]
+// Composed as the served workspace composes it, permission bundles included, so the seed
+// grants exactly what the server will read.
+const manifest = compose(modules, {
+  headless: ketsuite.headless ?? false,
+  modulePermissionDeclarations: ketsuite.permissions?.modules,
+  roleTemplates: ketsuite.permissions?.roleTemplates,
+  companies: true,
+})
 const adapter = sqliteAdapter(database)
 const objects = namespacedStorage(localStorage({ dir: storage }), ketsuite.name)
 const scope = {
@@ -32,16 +44,15 @@ const scope = {
 
 const call = async (name, input) => {
   const result = await callFn(name, input, { adapter, manifest, scope })
-  if (result.value?.ok === false) throw new Error(`${name}: ${JSON.stringify(result.value.errors)}`)
+  if (result.ok === false || result.value?.ok === false)
+    throw new Error(`${name}: ${JSON.stringify(result.value?.errors ?? result.error ?? result.value)}`)
   return result.value
 }
 
-const attachment = async ({ id, source, resId, productId, alt, primary = false, sequence }) => {
-  const bytes = readFileSync(source)
-  const attachmentId = `${id}-attachment`
+const image = async ({ id, file, templateId, productId, alt, primary = false, sequence }) => {
+  const bytes = readFileSync(join(here, file))
   const checksum = createHash('sha256').update(bytes).digest('hex')
   const storeKey = `blobs/default/${checksum.slice(0, 2)}/${checksum}`
-  const recordId = productId ?? resId
   await objects.put(
     storeKey,
     (async function* () {
@@ -50,10 +61,10 @@ const attachment = async ({ id, source, resId, productId, alt, primary = false, 
     { type: 'image/png', size: bytes.length },
   )
   await call('storage.createAttachment', {
-    id: attachmentId,
+    id: `${id}-file`,
     name: `${id}.png`,
     resModel: productId ? 'product.Product' : 'product.Template',
-    resId: recordId,
+    resId: productId ?? templateId,
     resField: 'media',
     kind: 'stored',
     storeKey,
@@ -61,15 +72,57 @@ const attachment = async ({ id, source, resId, productId, alt, primary = false, 
     size: bytes.length,
     checksum,
     public: false,
-    createdAt: '2026-08-20T08:00:00.000Z',
+    createdAt: '2026-10-01T08:00:00.000Z',
   })
   await call('product_media.attachMedia', {
     id,
-    attachmentId,
-    ...(productId ? { productId } : { templateId: resId }),
+    attachmentId: `${id}-file`,
+    ...(productId ? { productId } : { templateId }),
     alt,
     primary,
     sequence,
+  })
+}
+
+const person = async ({ id, login, name, superuser = false }) => {
+  await call('partner.savePartner', { id: `${id}-partner`, kind: 'person', name })
+  await call('user.createUser', {
+    id,
+    login,
+    password: PASSWORD,
+    name,
+    partnerId: `${id}-partner`,
+    defaultCompanyId: 'default',
+    defaultBranchId: 'root:default',
+    superuser,
+  })
+  await call('user.grantCompany', { id: `${id}:default`, userId: id, companyId: 'default' })
+  await call('user.grantBranch', { id: `${id}:root:default`, userId: id, branchId: 'root:default' })
+}
+
+const product = async (input) =>
+  call('product.saveTemplate', { type: 'goods', uomId: 'unit', saleOk: true, purchaseOk: true, ...input })
+
+const stock = async (templateId, onHand) => {
+  await call('stock.configureProduct', { templateId, isStorable: true, tracking: 'none' })
+  if (!onHand) return
+  await call('stock.adjustInventory', {
+    id: `count-${templateId}`,
+    productId: `${templateId}:default`,
+    locationId: 'wh-main:stock',
+    inventoryLocationId: 'inventory-loss',
+    countedQuantity: String(onHand),
+    productUomId: 'unit',
+  })
+}
+
+const archive = async (id) => {
+  const found = await call('product.getTemplate', { id })
+  await call('product.archiveTemplate', {
+    id,
+    active: false,
+    confirmed: true,
+    expectedRevisionId: found?.revisionId ?? 'initial',
   })
 }
 
@@ -77,244 +130,264 @@ const seed = async () => {
   await adapter.open()
   await migrateOne(adapter, manifest)
   registerFunctions(modules)
+
   await call('partner.savePartner', {
-    id: 'ket-company',
+    id: 'company-party',
     kind: 'company',
-    name: 'Công ty Cổ phần Kết Việt',
-    ref: 'KET',
+    name: 'Mỹ phẩm Lá Xanh',
+    ref: 'LX',
   })
   await call('company.saveCompany', {
     id: 'default',
-    code: 'KET',
-    partnerId: 'ket-company',
+    code: 'LX',
+    partnerId: 'company-party',
     currency: 'VND',
   })
-  await call('partner.savePartner', {
-    id: 'product-list-admin-partner',
-    kind: 'person',
-    name: 'Quản trị sản phẩm',
-    email: 'product-admin@ket.local',
+  await person({ id: 'admin', login: 'admin', name: 'Quản trị sản phẩm', superuser: true })
+  await person({ id: 'viewer', login: 'viewer', name: 'Nhân viên xem danh mục' })
+  await person({ id: 'outsider', login: 'outsider', name: 'Nhân viên kho ngoài' })
+  await person({ id: 'reader', login: 'reader', name: 'Cộng tác viên xem giá' })
+
+  // Who may read the catalogue but not change it: the view areas an administrator ticks.
+  await call('user.saveRole', { id: 'catalogue-viewer', name: 'Xem danh mục sản phẩm' })
+  const { revision } = await call('user.authorizationState', {})
+  await call('user.setRoleBundles', {
+    roleId: 'catalogue-viewer',
+    bundleKeys: [
+      'product.view',
+      'product_backend.view',
+      'product_media.view',
+      'stock.view',
+      'stock_backend.view',
+      'uom.view',
+    ],
+    reason: 'product e2e',
+    expectedAuthorizationRevision: revision,
+    idempotencyKey: 'catalogue-viewer-bundles',
   })
-  await call('user.createUser', {
-    id: 'product-list-admin',
-    login: 'admin',
-    password: 'product-demo',
-    name: 'Quản trị sản phẩm',
-    partnerId: 'product-list-admin-partner',
-    defaultCompanyId: 'default',
-    defaultBranchId: 'root:default',
-    superuser: true,
+  await call('user.assignRole', {
+    id: 'viewer:catalogue-viewer',
+    userId: 'viewer',
+    roleId: 'catalogue-viewer',
   })
-  await call('user.grantCompany', {
-    id: 'product-list-admin:default',
-    userId: 'product-list-admin',
-    companyId: 'default',
+  // Who reads the catalogue without stock: the list falls back to the catalogue's own read.
+  await call('user.saveRole', { id: 'catalogue-reader', name: 'Xem danh mục, không xem kho' })
+  await call('user.setRoleBundles', {
+    roleId: 'catalogue-reader',
+    bundleKeys: ['product.view', 'product_backend.view', 'uom.view'],
+    reason: 'product e2e',
+    expectedAuthorizationRevision: (await call('user.authorizationState', {})).revision,
+    idempotencyKey: 'catalogue-reader-bundles',
   })
-  await call('user.grantBranch', {
-    id: 'product-list-admin:root:default',
-    userId: 'product-list-admin',
-    branchId: 'root:default',
+  await call('user.assignRole', {
+    id: 'reader:catalogue-reader',
+    userId: 'reader',
+    roleId: 'catalogue-reader',
   })
+
+  // Units: two families with a packaging unit, a weight family and an archived unit.
+  await call('uom.saveUnit', { id: 'unit', name: 'Cái', relativeFactor: '1' })
+  await call('uom.saveUnit', { id: 'box-6', name: 'Hộp 6 cái', relativeFactor: '6', relativeUomId: 'unit' })
+  await call('uom.saveUnit', { id: 'bottle', name: 'Chai', relativeFactor: '1' })
+  await call('uom.saveUnit', { id: 'kg', name: 'kg', relativeFactor: '1' })
+  await call('uom.saveUnit', { id: 'g', name: 'g', relativeFactor: '0.001', relativeUomId: 'kg' })
   await call('uom.saveUnit', {
-    id: 'unit',
-    name: 'Cái',
-    relativeFactor: '1',
-    sequence: 10,
-    active: true,
+    id: 'crate-old',
+    name: 'Thùng cũ',
+    relativeFactor: '24',
+    relativeUomId: 'unit',
+    active: false,
   })
-  await call('product.saveCategory', { id: 'workwear', name: 'Đồng phục vận hành' })
-  await call('product.saveBrand', { id: 'brand-ket', name: 'Kết Việt' })
+
+  await call('product.saveCategory', { id: 'skincare', name: 'Chăm sóc da' })
+  await call('product.saveCategory', { id: 'ingredients', name: 'Nguyên liệu' })
+  await call('product.saveBrand', { id: 'derma', name: 'Derma Việt' })
+
+  await call('stock.saveWarehouse', { id: 'wh-main', name: 'Kho Hồ Chí Minh', code: 'HCM' })
+  await call('stock.saveLocation', { id: 'inventory-loss', name: 'Điều chỉnh tồn', usage: 'inventory' })
+
+  // Attributes: one that makes variants, one with colours, one that only describes.
   await call('product.saveAttribute', {
-    id: 'color',
-    name: 'Màu sắc',
+    id: 'capacity',
+    name: 'Dung tích',
     sequence: 10,
-    displayType: 'pills',
+    displayType: 'select',
     createVariant: 'always',
     active: true,
   })
-  await call('product.saveAttributeValue', {
-    id: 'color-blue',
-    attributeId: 'color',
-    name: 'Xanh nghiệp vụ',
-    sequence: 10,
-  })
-  await call('product.saveAttributeValue', {
-    id: 'color-orange',
-    attributeId: 'color',
-    name: 'Cam cảnh báo',
-    sequence: 20,
-  })
-  await call('product.saveAttribute', {
-    id: 'size',
-    name: 'Kích thước',
-    sequence: 20,
-    displayType: 'pills',
-    createVariant: 'always',
-    active: true,
-  })
-  for (const [index, name] of ['S', 'M', 'L', 'XL'].entries()) {
+  for (const [index, name] of ['15ml', '30ml', '50ml'].entries())
     await call('product.saveAttributeValue', {
-      id: `size-${name.toLowerCase()}`,
-      attributeId: 'size',
+      id: `capacity-${name}`,
+      attributeId: 'capacity',
       name,
       sequence: (index + 1) * 10,
     })
-  }
+  await call('product.saveAttributeDraft', {
+    id: 'shade',
+    name: 'Tông màu',
+    sequence: 20,
+    displayType: 'color',
+    createVariant: 'always',
+    values: [
+      { id: 'shade-1', name: 'Hồng đất', sequence: 10, htmlColor: '#c97b7b' },
+      { id: 'shade-2', name: 'Nâu trầm', sequence: 20, htmlColor: '#7a4e3a' },
+    ],
+  })
   await call('product.saveAttribute', {
-    id: 'material',
-    name: 'Chất liệu',
+    id: 'scent',
+    name: 'Mùi hương',
     sequence: 30,
     displayType: 'pills',
-    createVariant: 'always',
-    active: true,
-  })
-  for (const [index, name] of ['Cotton', 'Polyester', 'Nỉ'].entries()) {
-    await call('product.saveAttributeValue', {
-      id: `material-${index + 1}`,
-      attributeId: 'material',
-      name,
-      sequence: (index + 1) * 10,
-    })
-  }
-  await call('product.saveAttribute', {
-    id: 'season-note',
-    name: 'Mùa bán hàng',
-    sequence: 40,
-    displayType: 'select',
     createVariant: 'no_variant',
     active: true,
   })
-  await call('product.saveAttributeValue', {
-    id: 'season-note-summer',
-    attributeId: 'season-note',
-    name: 'Mùa hè',
-    sequence: 10,
-  })
-  await call('product.saveTemplate', {
-    id: 'tpl-review',
-    name: 'Áo khoác vận hành KETSUITE',
-    type: 'goods',
-    categoryId: 'workwear',
-    brandId: 'brand-ket',
-    uomId: 'unit',
-    origin: 'Việt Nam',
-    description: 'Sản phẩm fixture dùng để kiểm tra đủ ba tab chi tiết.',
-    listPrice: '1299000',
-    saleOk: true,
-    purchaseOk: true,
-    defaultCode: 'JACKET-DEFAULT',
-    barcode: '8938500000000',
-  })
-  const saleTaxes = await call('account.listTaxes', { typeTaxUse: 'sale' })
-  if (saleTaxes[0]) await call('account.setProductTax', { templateId: 'tpl-review', taxId: saleTaxes[0].id })
-  await call('stock.configureProduct', {
-    templateId: 'tpl-review',
-    isStorable: true,
-    tracking: 'lot',
-  })
-  await call('product.saveVariant', {
-    id: 'variant-review',
-    templateId: 'tpl-review',
-    defaultCode: 'JACKET-REVIEW',
-    barcode: '8938500000017',
-    weight: '0.65',
-    volume: '0.004',
-  })
-  await call('product.setCost', { productId: 'variant-review', standardPrice: '820000' })
-  await call('product.addProductUom', {
-    productId: 'variant-review',
-    uomId: 'unit',
-    barcode: '8938500000017-UOM',
-  })
-  await call('product.saveAttributeLine', {
-    id: 'tpl-review:color',
-    templateId: 'tpl-review',
-    attributeId: 'color',
-    valueIds: ['color-blue', 'color-orange'],
-  })
-  await call('product.saveAttributeLine', {
-    id: 'tpl-review:size',
-    templateId: 'tpl-review',
-    attributeId: 'size',
-    valueIds: ['size-s', 'size-m', 'size-l', 'size-xl'],
-  })
-  await call('product.saveAttributeLine', {
-    id: 'tpl-review:material',
-    templateId: 'tpl-review',
-    attributeId: 'material',
-    valueIds: ['material-1', 'material-2', 'material-3'],
-  })
-  await call('product.saveAttributeLine', {
-    id: 'tpl-review:season-note',
-    templateId: 'tpl-review',
-    attributeId: 'season-note',
-    valueIds: ['season-note-summer'],
-  })
-  await call('product.generateVariants', { templateId: 'tpl-review' })
-  const generatedVariant = (await call('product.listVariants', { templateId: 'tpl-review' })).find(
-    (variant) => variant.id !== 'variant-review',
-  )
-  // One explicit row beyond the 24 generated combinations and the base
-  // variant proves that the media table pages every variant instead of only
-  // showing variants that already have images.
-  await call('product.saveVariant', {
-    id: 'variant-review-extra',
-    templateId: 'tpl-review',
-    defaultCode: 'JACKET-REVIEW-EXTRA',
-  })
-  await attachment({
-    id: 'media-primary',
-    source: join(root, 'e2e/product_backend/fixtures/product-primary.png'),
-    resId: 'tpl-review',
-    alt: 'Áo khoác vận hành màu xanh',
-    primary: true,
-    sequence: 10,
-  })
-  await attachment({
-    id: 'media-secondary',
-    source: join(root, 'e2e/product_backend/fixtures/product-secondary.png'),
-    resId: 'tpl-review',
-    alt: 'Áo khoác vận hành màu cam',
-    sequence: 20,
-  })
-  await attachment({
-    id: 'variant-media-primary',
-    source: join(root, 'e2e/product_backend/fixtures/product-primary.png'),
-    productId: 'variant-review',
-    alt: 'Biến thể áo khoác màu xanh',
-    primary: true,
-    sequence: 10,
-  })
-  await attachment({
-    id: 'variant-media-secondary',
-    source: join(root, 'e2e/product_backend/fixtures/product-secondary.png'),
-    productId: 'variant-review',
-    alt: 'Biến thể áo khoác màu cam',
-    sequence: 20,
-  })
-  if (generatedVariant) {
-    await attachment({
-      id: 'generated-variant-media-primary',
-      source: join(root, 'e2e/product_backend/fixtures/product-secondary.png'),
-      productId: generatedVariant.id,
-      alt: 'Biến thể áo khoác màu cam',
-      primary: true,
-      sequence: 10,
-    })
-  }
 
+  // The product most specs read: full identity, stock, cost and two images.
+  await product({
+    id: 'serum',
+    name: 'Serum B5 phục hồi 30ml',
+    categoryId: 'skincare',
+    brandId: 'derma',
+    origin: 'Việt Nam',
+    description: 'Serum phục hồi da chứa B5, dùng ban đêm.',
+    listPrice: '350000',
+    defaultCode: 'SR-B5-30',
+    barcode: '8938501230012',
+    weight: '0.12',
+    volume: '0.0001',
+  })
+  await call('product.setCost', { productId: 'serum:default', standardPrice: '150000' })
+  await stock('serum', 40)
+  await image({
+    id: 'serum-front',
+    file: 'serum-front.png',
+    templateId: 'serum',
+    alt: 'Chai serum',
+    primary: true,
+    sequence: 10,
+  })
+  await image({ id: 'serum-box', file: 'serum-box.png', templateId: 'serum', alt: 'Hộp serum', sequence: 20 })
+
+  // A product with variants, generated from capacity.
+  await product({
+    id: 'cream',
+    name: 'Kem dưỡng ẩm ban đêm',
+    categoryId: 'skincare',
+    brandId: 'derma',
+    listPrice: '420000',
+  })
+  await call('product.saveAttributeLine', {
+    id: 'cream:capacity',
+    templateId: 'cream',
+    attributeId: 'capacity',
+    valueIds: ['capacity-30ml', 'capacity-50ml'],
+  })
+  await call('product.generateVariants', { templateId: 'cream' })
+
+  // Rows the list filters tell apart.
+  await product({
+    id: 'cotton',
+    name: 'Bông tẩy trang 120 miếng',
+    categoryId: 'skincare',
+    listPrice: '39000',
+    defaultCode: 'TM-001',
+  })
+  await stock('cotton', 0)
+  await product({
+    id: 'niacinamide',
+    name: 'Niacinamide nguyên liệu',
+    categoryId: 'ingredients',
+    listPrice: '2400000',
+    saleOk: false,
+    defaultCode: 'NL-010',
+  })
+  await product({
+    id: 'skin-check',
+    name: 'Dịch vụ soi da',
+    type: 'service',
+    listPrice: '150000',
+    purchaseOk: false,
+  })
+  await product({ id: 'old-mask', name: 'Mặt nạ ngừng bán', categoryId: 'skincare', listPrice: '25000' })
+  await archive('old-mask')
+
+  // Records that one spec each changes.
+  await product({
+    id: 'toner-edit',
+    name: 'Toner cân bằng (sửa)',
+    categoryId: 'skincare',
+    listPrice: '210000',
+  })
+  await product({
+    id: 'toner-archive',
+    name: 'Toner cân bằng (lưu trữ)',
+    categoryId: 'skincare',
+    listPrice: '210000',
+  })
+  await product({ id: 'lotion-bulk', name: 'Lotion hàng loạt', categoryId: 'skincare', listPrice: '180000' })
+  await product({
+    id: 'mist-variants',
+    name: 'Xịt khoáng nhiều dung tích',
+    categoryId: 'skincare',
+    listPrice: '160000',
+  })
+  await product({ id: 'balm-media', name: 'Son dưỡng có ảnh', categoryId: 'skincare', listPrice: '90000' })
+  await image({
+    id: 'balm-front',
+    file: 'serum-front.png',
+    templateId: 'balm-media',
+    alt: 'Son dưỡng mặt trước',
+    primary: true,
+    sequence: 10,
+  })
+  await image({
+    id: 'balm-side',
+    file: 'serum-box.png',
+    templateId: 'balm-media',
+    alt: 'Son dưỡng mặt bên',
+    sequence: 20,
+  })
+  await product({ id: 'balm-remove', name: 'Son dưỡng bỏ ảnh', categoryId: 'skincare', listPrice: '95000' })
+  await image({
+    id: 'balm-remove-front',
+    file: 'serum-front.png',
+    templateId: 'balm-remove',
+    alt: 'Ảnh giữ lại',
+    primary: true,
+    sequence: 10,
+  })
+  await image({
+    id: 'balm-remove-side',
+    file: 'serum-box.png',
+    templateId: 'balm-remove',
+    alt: 'Ảnh cần gỡ',
+    sequence: 20,
+  })
+  await product({ id: 'soap-upload', name: 'Xà phòng cần ảnh', categoryId: 'skincare', listPrice: '55000' })
+  await product({ id: 'toner-copy', name: 'Toner để nhân bản', categoryId: 'skincare', listPrice: '220000' })
+  await product({
+    id: 'gel-variants',
+    name: 'Gel rửa mặt hai dung tích',
+    categoryId: 'skincare',
+    listPrice: '190000',
+  })
+  await call('product.saveAttributeLine', {
+    id: 'gel-variants:capacity',
+    templateId: 'gel-variants',
+    attributeId: 'capacity',
+    valueIds: ['capacity-15ml', 'capacity-30ml'],
+  })
+  await call('product.generateVariants', { templateId: 'gel-variants' })
+
+  // Enough goods that the list pages: thirty-two plus the named rows above.
   for (let index = 1; index <= 32; index += 1) {
     const suffix = String(index).padStart(2, '0')
-    await call('product.saveTemplate', {
+    await product({
       id: `sample-${suffix}`,
-      name: index === 1 ? 'Áo khoác vận hành KETSUITE' : `Sản phẩm mẫu ${suffix}`,
-      type: index % 7 === 0 ? 'service' : 'goods',
-      categoryId: 'workwear',
-      uomId: 'unit',
-      description: `Dữ liệu kiểm tra danh sách số ${suffix}.`,
-      listPrice: String(100000 + index * 17500),
-      saleOk: true,
-      purchaseOk: index % 7 !== 0,
+      name: `Sản phẩm mẫu ${suffix}`,
+      categoryId: index % 2 ? 'skincare' : 'ingredients',
+      listPrice: String(100000 + index * 1000),
+      defaultCode: `MAU-${suffix}`,
     })
   }
   await adapter.close()
@@ -329,7 +402,7 @@ const child = spawn(
     '--workspace',
     '.build/ket.workspace.js',
     '--port',
-    '4173',
+    String(PORT),
   ],
   {
     cwd: root,
@@ -338,9 +411,10 @@ const child = spawn(
       ...process.env,
       KET_SQLITE: database,
       KET_STORAGE_DIR: storage,
-      KET_SECRET: 'product-list-e2e-secret',
+      KET_SECRET: 'product-e2e-secret-0123456789abcdef',
       KET_LOCALE: 'vi',
       KET_FALLBACK_LOCALE: 'vi',
+      KET_LOG_LEVEL: process.env.KET_LOG_LEVEL ?? 'warn',
     },
   },
 )
@@ -351,7 +425,6 @@ const stop = (signal) => {
   stopping = true
   child.kill(signal)
 }
-
 process.on('SIGINT', () => stop('SIGINT'))
 process.on('SIGTERM', () => stop('SIGTERM'))
 child.on('exit', (code) => {

@@ -16,7 +16,7 @@ const input = {
 }
 
 const boot = async () => {
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   await migrateOne(adapter, manifest)

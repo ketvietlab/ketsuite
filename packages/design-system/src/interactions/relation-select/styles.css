@@ -41,6 +41,14 @@
   :where([data-kv-design-system]) [data-ui="relation-trigger"][data-empty="true"] {
     color: var(--kv-text-muted);
   }
+  /* A locked picker reads as a disabled field control does: the same stroke, fill, ink
+     and cursor, so a value that can no longer change does not look like an open choice. */
+  :where([data-kv-design-system]) [data-ui="relation-trigger"]:disabled {
+    box-shadow: inset 0 0 0 1px var(--kv-panel-border);
+    background: var(--kv-interactive-disabled);
+    color: var(--kv-text-disabled);
+    cursor: not-allowed;
+  }
   :where([data-kv-design-system]) [data-ui="relation-trigger"]:focus-visible {
     border-color: var(--kv-focus-border);
     box-shadow: 0 0 0 3px var(--kv-color-focus-ring);
@@ -152,8 +160,22 @@
     color: var(--kv-text-main);
     font: inherit;
   }
+  :where([data-kv-design-system]) [data-ui="relation-menu"][popover] {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0;
+    max-inline-size: calc(100vw - var(--kv-space-2) * 2);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    scroll-margin-top: var(--kv-space-1);
+    scroll-margin-inline-start: var(--kv-space-2);
+  }
+  :where([data-kv-design-system]) [data-ui="relation-menu"][popover]:not(:popover-open) {
+    display: none;
+  }
   :where([data-kv-design-system]) [data-ui="relation-options"] {
     display: grid;
+    grid-auto-rows: max-content;
     max-block-size: 16rem;
     overflow: auto;
   }

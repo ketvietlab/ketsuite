@@ -22,7 +22,7 @@ if (!Number.isInteger(renderPasses) || renderPasses < 1) throw new Error('KET_BE
 
 const modules = [address, partner, website, websiteMenu, websiteSeo, websiteForm, paperTheme]
 const composeStarted = performance.now()
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 const composeMs = performance.now() - composeStarted
 registerFunctions(modules)
 const adapter = sqliteAdapter()

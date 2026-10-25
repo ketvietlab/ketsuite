@@ -1,3 +1,4 @@
+import { deploymentRoomFixture } from './helpers/hospitality-room-fixture.ts'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { defineDeployment, defineFn, defineModule } from '@ketvietlab/ketjs'
@@ -50,6 +51,7 @@ const bridge = defineModule({
 
 const app = defineDeployment({
   name: 'hospitality_inventory_claim_test',
+  companies: true,
   modules: [
     suite.website,
     suite.address,
@@ -71,9 +73,12 @@ test('a room-night claim moves as one net change, never as a release and a retak
   const e2e = await createTestDeployment(app)
   t.after(() => e2e.close())
   const call = <T>(name: string, input: Record<string, unknown> = {}) =>
-    e2e.fixture.call<T>(name, input, { scope })
+    deploymentRoomFixture<T>(e2e.fixture, name, input, { scope })
 
-  await call('hospitality_core.saveProperty', {
+  // A property is placed in its company's central branch.
+  await call('partner.savePartner', { id: 'company-partner', kind: 'company', name: 'Synthetic Hotel JSC' })
+  await call('company.saveCompany', { id: 'default', partnerId: 'company-partner', currency: 'VND' })
+  const property = await call<Row>('hospitality_core.saveProperty', {
     id: 'hotel',
     code: 'HT',
     name: 'Synthetic Hotel',
@@ -82,6 +87,7 @@ test('a room-night claim moves as one net change, never as a release and a retak
     defaultCheckIn: '14:00',
     defaultCheckOut: '12:00',
   })
+  assert.equal(property.value.ok, true, JSON.stringify(property.value))
   await call('hospitality_core.saveRoomType', {
     id: 'deluxe',
     propertyId: 'hotel',
@@ -90,16 +96,17 @@ test('a room-night claim moves as one net change, never as a release and a retak
     baseRate: '100',
   })
   // Two rooms, so the ledger's own total is two without setting it by hand.
-  for (const code of ['201', '202'])
-    await call('hospitality_core.saveRoom', {
+  for (const code of ['201', '202']) {
+    const saved = await call<Row>('hospitality_core.saveRoom', {
       id: `room-${code}`,
       propertyId: 'hotel',
       roomTypeId: 'deluxe',
       code,
       name: `Room ${code}`,
       capacity: 2,
-      status: 'available',
     })
+    assert.equal(saved.value.ok, true, JSON.stringify(saved.value))
+  }
 
   const replace = (previous: InventoryHold[], next: InventoryHold[]) =>
     call<{ ok: boolean; refused?: string }>('hospitality_inventory_claim_test.replace', {
@@ -119,7 +126,8 @@ test('a room-night claim moves as one net change, never as a release and a retak
   const first: InventoryHold = { roomTypeId: 'deluxe', dates: ['2026-10-01'] }
   const second: InventoryHold = { roomTypeId: 'deluxe', dates: ['2026-10-01'] }
 
-  assert.equal((await replace([], [first, second])).value.ok, true)
+  const taken = (await replace([], [first, second])).value
+  assert.equal(taken.ok, true, JSON.stringify(taken))
   assert.deepEqual(await ledger(), ['2026-10-01:2/2'], 'both rooms are taken for that night')
 
   // A third room on a night that has two is refused, and the ledger is untouched.

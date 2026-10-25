@@ -1,0 +1,198 @@
+@layer ket.app {
+  /*
+   * The page owns the gap between the search and each section card. A section is
+   * one card; its modules sit on it without frames of their own, so the card is
+   * the only boundary and modules are told apart by their marks and spacing.
+   */
+  :where([data-kv-design-system]) [data-ui="settings-directory"] {
+    display: grid;
+    min-width: 0;
+    gap: var(--kv-layout-gap);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-search"] {
+    position: relative;
+    display: grid;
+    width: min(100%, 32rem);
+    color: var(--kv-text-muted);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-search"] > [data-ui="icon"] {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: var(--kv-space-3);
+    margin-block: auto;
+    pointer-events: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-search-input"] {
+    width: 100%;
+    min-width: 0;
+    height: var(--kv-control-height);
+    padding-inline: calc(var(--kv-space-3) + 1rem + var(--kv-space-2)) var(--kv-space-3);
+    border: 1px solid var(--kv-border-default);
+    border-radius: var(--kv-radius-sm);
+    background: var(--kv-input-bg);
+    color: var(--kv-text-main);
+    font: inherit;
+    font-size: var(--kv-text-sm);
+    outline-color: var(--kv-color-focus);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-section"] {
+    display: grid;
+    min-width: 0;
+    gap: var(--kv-space-5);
+    padding: var(--kv-space-5) var(--kv-space-6) var(--kv-space-6);
+    border: 1px solid var(--kv-panel-border);
+    border-radius: var(--kv-radius-md);
+    background: var(--kv-panel-bg);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-section-title"] {
+    margin: 0;
+    color: var(--kv-text-main);
+    font-size: var(--kv-text-base);
+    line-height: var(--kv-line-sm);
+    font-weight: var(--kv-weight-semibold);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-grid"] {
+    display: grid;
+    /* At most three columns that share the card's width, every section alike;
+       fewer as the card narrows below three 16rem modules. */
+    --kv-settings-directory-gap: var(--kv-space-8);
+    grid-template-columns: repeat(
+        auto-fill,
+        minmax(min(100%, max(16rem, calc((100% - 2 * var(--kv-settings-directory-gap)) / 3))), 1fr)
+      );
+    gap: var(--kv-space-6) var(--kv-settings-directory-gap);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-module"] {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--kv-space-3);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-module-header"] {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--kv-space-3);
+    row-gap: var(--kv-space-0-5);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-module-mark"] {
+    display: inline-grid;
+    width: 2.25rem;
+    height: 2.25rem;
+    grid-row: span 2;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--kv-accent-subtle);
+    color: var(--kv-accent-text);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-module-mark"] svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="settings-directory-module-header"]:not(:has([data-ui="settings-directory-module-description"]))
+    [data-ui="settings-directory-module-mark"] {
+    grid-row: auto;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-module-title"] {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--kv-text-main);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    font-weight: var(--kv-weight-semibold);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-module-description"] {
+    margin: 0;
+    min-width: 0;
+    color: var(--kv-text-muted);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+  }
+
+  /* Links line up under the module name, not under its mark. */
+  :where([data-kv-design-system]) [data-ui="settings-directory-links"] {
+    display: grid;
+    margin: 0;
+    padding: 0 0 0 calc(2.25rem + var(--kv-space-3));
+    list-style: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-link"] {
+    display: flex;
+    /* The large control height grows to a touch target on a phone. */
+    min-height: var(--kv-control-height-large);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--kv-space-2);
+    margin-inline: calc(-1 * var(--kv-space-2));
+    padding-inline: var(--kv-space-2);
+    border-radius: var(--kv-radius-sm);
+    color: var(--kv-accent-text);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    text-decoration: none;
+    outline-color: var(--kv-color-focus);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-link"] > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-link"] > [data-ui="icon"] {
+    flex: none;
+    color: var(--kv-text-muted);
+    opacity: 0;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-link"]:is(:hover, :focus-visible) {
+    background: var(--kv-interactive-hover);
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="settings-directory-link"]:is(:hover, :focus-visible)
+    > [data-ui="icon"],
+  :where([data-kv-design-system])
+    [data-ui="settings-directory-link"][aria-current="page"]
+    > [data-ui="icon"] {
+    opacity: 1;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-link"][aria-current="page"] {
+    background: var(--kv-accent-subtle);
+    font-weight: var(--kv-weight-semibold);
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory-empty"] {
+    display: grid;
+  }
+
+  :where([data-kv-design-system]) [data-ui="settings-directory"] [hidden] {
+    display: none;
+  }
+
+  @media (max-width: 47.9375rem) {
+    :where([data-kv-design-system]) [data-ui="settings-directory-search"] {
+      width: 100%;
+    }
+
+    :where([data-kv-design-system]) [data-ui="settings-directory-section"] {
+      padding: var(--kv-space-4);
+    }
+  }
+}

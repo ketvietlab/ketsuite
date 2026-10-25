@@ -56,5 +56,14 @@
     [data-kv-design-system][data-presentation="grouped"] [data-ui="record-page-aside"] {
       margin: 0 var(--kv-page-padding-x) var(--kv-gap-section);
     }
+
+    /* A leading rail keeps its card: the canvas gap above it, the record's inset below it. */
+    [data-kv-design-system][data-presentation="grouped"]
+      [data-ui="record-page"][data-aside-stacked="before"]
+      [data-ui="record-page-aside"] {
+      margin: var(--kv-gap-section) var(--kv-page-padding-x) 0;
+      padding: var(--kv-surface-inset);
+      border: 1px solid var(--kv-panel-border);
+    }
   }
 }

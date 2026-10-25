@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test'
 
 const kinds = ['list', 'record', 'flow', 'canvas', 'form-compat', 'dashboard-compat', 'board-compat'] as const
 const states = ['baseline', 'loading', 'empty', 'error', 'validation', 'readonly'] as const
+// Components (badges, notices, tabs) carry data-pattern too; a page draws one page pattern.
+const pagePattern = '[data-pattern="list"], [data-pattern="record"], [data-pattern="workspace"]'
 const hooks = {
   list: 'list-page',
   record: 'record-page',
@@ -62,16 +64,18 @@ for (const kind of kinds)
               await expect(heading).toHaveCSS('align-items', 'flex-start')
             }
             await expect(main.locator('h1')).toHaveCount(1)
-            await expect(main.locator('[data-pattern]')).toHaveCount(1)
+            await expect(main.locator(pagePattern)).toHaveCount(1)
             await expect(main.locator('[data-ui$="-eyebrow"]')).toHaveCount(0)
             await expect(header).toHaveCSS('background-color', chrome)
             await expect(main.locator(`[data-ui="${hook}-context"]`)).toHaveCSS('background-color', chrome)
-            await expect(header).toHaveCSS('padding-top', '16px')
-            await expect(header).toHaveCSS('padding-left', width === 390 ? '16px' : '28px')
-            await expect(header.locator('h1')).toHaveCSS('font-size', width === 390 ? '16px' : '24px')
+            // A record header keeps its 16px top when it stacks on a phone; the others tighten to 8px.
+            await expect(header).toHaveCSS('padding-top', width === 390 && !record ? '8px' : '16px')
+            // The page inset is --kv-layout-gap: 12px, and 8px below 768px.
+            await expect(header).toHaveCSS('padding-left', width === 390 ? '8px' : '12px')
+            await expect(header.locator('h1')).toHaveCSS('font-size', '20px')
             if (!workspace) await expect(body).toHaveCSS('background-color', ground)
             else {
-              await expect(main.locator('[data-pattern]')).toHaveCSS('background-color', ground)
+              await expect(main.locator(pagePattern)).toHaveCSS('background-color', ground)
               if (!canvas) await expect(body).toHaveCSS('background-color', ground)
               if (['baseline', 'validation', 'readonly'].includes(state)) {
                 const panel = theme === 'light' ? working : 'rgb(29, 34, 40)'
@@ -92,7 +96,8 @@ for (const kind of kinds)
                     background: painted && getComputedStyle(painted).backgroundColor,
                   }
                 })
-                expect(gap.size).toBeGreaterThanOrEqual(12)
+                // --kv-layout-gap: 12px, and 8px below 768px.
+                expect(gap.size).toBeGreaterThanOrEqual(width === 390 ? 8 : 12)
                 expect(gap.background).toBe(ground)
               }
             }
@@ -113,7 +118,9 @@ for (const kind of kinds)
             if (record && state === 'validation')
               await expect(body.locator('[aria-invalid="true"]')).toHaveCount(1)
             if (state === 'readonly') {
-              await expect(header.locator('button')).toBeDisabled()
+              // A list's commands sit beside its search in the toolbar; other pages keep them in the header.
+              const commands = hook === 'list-page' ? main.locator('[data-ui="list-page-actions"]') : header
+              await expect(commands.locator('button')).toBeDisabled()
               if (record) await expect(body.locator('input')).toBeDisabled()
             }
             if (!record && ['baseline', 'validation', 'readonly'].includes(state)) {

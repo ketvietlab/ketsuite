@@ -16,6 +16,7 @@ import { productDefaults, productServe, productQueues } from './deployments/comm
 import { createCommerceDeployment } from './deployments/commerce.ts'
 import { createHospitalityDeployment } from './deployments/hospitality.ts'
 import { createOfficeDeployment } from './deployments/office.ts'
+import { suiteMail } from './deployments/mail-targets.ts'
 import * as suite from './index.ts'
 import backend from './modules/backend/index.ts'
 
@@ -47,6 +48,8 @@ const everyProductRole = (): Record<string, RoleTemplateDef> =>
 export const createKetsuiteDeployment = (openStore: OpenStore = sqliteStore) =>
   defineDeployment({
     name: 'ketsuite',
+    // Every KetSuite row belongs to a company; KetJS scopes by company only on request.
+    companies: true,
     modules: [
       suite.website,
       suite.channelApi,
@@ -72,7 +75,15 @@ export const createKetsuiteDeployment = (openStore: OpenStore = sqliteStore) =>
       suite.oauth,
       suite.userBackend,
       suite.oauthBackend,
-      suite.mail,
+      suiteMail([
+        'partner.Partner',
+        'product.Template',
+        'stock.Picking',
+        'sale.Order',
+        'calendar.Event',
+        'crm.Case',
+        'flow.Issue',
+      ]),
       suite.mailStaffChannel,
       suite.mailBackend,
       suite.mailTransport,

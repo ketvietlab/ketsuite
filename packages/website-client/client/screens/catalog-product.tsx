@@ -1,3 +1,4 @@
+import { RecordPage } from '../page-regions.tsx'
 import {
   ActionGroup,
   Checkbox,
@@ -8,7 +9,6 @@ import {
   LinkButton,
   Menu,
   Notice,
-  RecordPage,
   Select,
   Stack,
   Status,
@@ -112,7 +112,11 @@ export function createCatalogProductScreens(ctx: StudioContext): Record<string, 
               descriptionDoc: '[]',
               active: true,
             }
-          : await ctx.call<SourceProduct>('product.getTemplate', { id: route.params.id }, { signal })
+          : await ctx.call<SourceProduct>(
+              'product.getTemplate',
+              { id: route.params.id, siteId: ctx.site().id },
+              { signal },
+            )
         return current
       },
       view: (product) => {

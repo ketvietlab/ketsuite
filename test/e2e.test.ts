@@ -35,7 +35,7 @@ const rawHttp = (port: number, request: string): Promise<string> =>
   })
 
 async function boot() {
-  const manifest = compose(mods)
+  const manifest = compose(mods, { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   for (const sql of renderSql(planMigration(null, schemaFromManifest(manifest)), adapter))
@@ -113,7 +113,7 @@ test('e2e: a bad call returns a structured error an agent can act on', async () 
 test('e2e: binary and streamed routes preserve bytes without inventing a charset', async () => {
   const adapter = sqliteAdapter()
   await adapter.open()
-  const manifest = compose([], { headless: true })
+  const manifest = compose([], { headless: true, companies: true })
   const app = await createKetServer({
     manifest,
     adapter,
@@ -168,7 +168,7 @@ test('e2e: the generic JSON limit runs before authentication resolvers', async (
   await adapter.open()
   let authCalls = 0
   const app = await createKetServer({
-    manifest: compose(mods),
+    manifest: compose(mods, { companies: true }),
     adapter,
     maxJsonBodyBytes: 32,
     resolveAllow: async () => {
@@ -212,7 +212,7 @@ test('e2e: malformed HTTP inputs stay inside the client-error boundary', async (
   let datastoreResolutions = 0
   const pool = createAdapterPool({ create: () => sqliteAdapter(), max: 1 })
   const app = await createKetServer({
-    manifest: compose([], { headless: true }),
+    manifest: compose([], { headless: true, companies: true }),
     pool,
     resolveDatastore: (url) => {
       datastoreResolutions++
@@ -316,8 +316,8 @@ test('e2e: a page renders through the theme, joint fills included', async () => 
 test('e2e: the server resolves the company, so two of them see different rows on one path', async () => {
   const db = sqliteAdapter()
   await db.open()
-  await migrateOne(db, compose(mods))
-  const manifest2 = compose(mods)
+  await migrateOne(db, compose(mods, { companies: true }))
+  const manifest2 = compose(mods, { companies: true })
   registerFunctions(mods)
 
   const app = await createKetServer({
@@ -357,7 +357,7 @@ test('e2e: the server resolves the company, so two of them see different rows on
 test('e2e: a request that names no company is refused rather than answered', async () => {
   const db = sqliteAdapter()
   await db.open()
-  const manifest2 = compose(mods)
+  const manifest2 = compose(mods, { companies: true })
   await migrateOne(db, manifest2)
   registerFunctions(mods)
 

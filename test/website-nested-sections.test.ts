@@ -16,7 +16,7 @@ import { address, paperTheme, partner, website } from '@ketvietlab/ketsuite'
 
 const SCOPE = { company: 'acme', branches: null }
 const modules = [address, partner, website, paperTheme]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 
 const boot = async (): Promise<Adapter> => {
   const db = sqliteAdapter()
@@ -95,7 +95,7 @@ const strictManifest = (): Manifest => {
       'strict.only_text': '<div class="strict">{% slot "body" %}</div>',
     },
   })
-  return compose([address, partner, website, strict, theme])
+  return compose([address, partner, website, strict, theme], { companies: true })
 }
 
 test('nesting: a section holds sections, and the theme draws them where the slot is', async () => {

@@ -163,11 +163,12 @@ test('Chatter backend E2E: Product bridge renders, follows, posts attachments an
     messages: [],
     followers: [],
     following: false,
+    canFollow: true,
   })
 
   assert.deepEqual((await member.call('product_mail_backend.follow', { targetId: 'tpl-collab' })).value, {
     following: true,
-    followerId: 'thread:product.Template:tpl-collab:member-party',
+    followerId: 'thread:acme:product.Template:tpl-collab:member-party',
   })
   await call('storage.createAttachment', {
     id: 'attachment-collab',
@@ -190,7 +191,8 @@ test('Chatter backend E2E: Product bridge renders, follows, posts attachments an
       attachmentIds: ['attachment-collab'],
     })
   ).value
-  assert.equal(posted.threadId, 'thread:product.Template:tpl-collab')
+  // Threads are per company, so one record id in two companies never shares a timeline.
+  assert.equal(posted.threadId, 'thread:acme:product.Template:tpl-collab')
 
   const timeline = (
     await member.call<{ total: number; following: boolean; messages: Row[] }>(
@@ -433,7 +435,7 @@ test('Activity backend E2E: Product scheduling, due state, atomic completion and
       attachmentIds: ['activity-brief'],
     })
   ).value.activity
-  assert.equal(scheduled.threadId, 'thread:product.Template:tpl-collab')
+  assert.equal(scheduled.threadId, 'thread:acme:product.Template:tpl-collab')
 
   const productPage = await e2e.client.get('/admin/product/templates/tpl-collab?tab=media&lang=en', {
     headers: { accept: 'text/html' },
@@ -446,7 +448,7 @@ test('Activity backend E2E: Product scheduling, due state, atomic completion and
   const bootstrap = await e2e.client.get('/_ket/islands.js')
   // The island's bundle URL carries the file's digest, stamped at boot — see
   // packages/ketjs/src/server/assets.ts.
-  assert.match(await bootstrap.text(), /\/_ket\/asset\/activity_backend\/v[0-9a-f]{8}\/activity\.mjs/)
+  assert.match(await bootstrap.text(), /\/_ket\/asset\/activity_backend\/v[0-9a-f]{8}\/activity-bundle\.mjs/)
 
   const before = (
     await member.call<{ activities: Row[] }>('product_activity_backend.list', {
@@ -494,7 +496,8 @@ test('Activity backend E2E: Product scheduling, due state, atomic completion and
     headers: { accept: 'text/html' },
   })
   assert.equal(screen.status, 200)
-  assert.match(await screen.text(), /Confirm launch quantity/)
+  // The rows are an island over the member's own activities, read above.
+  assert.match(await screen.text(), /data-island="communication\.results"/)
 })
 
 test('Activity backend E2E: plans are retry-safe and a failed chain rolls completion back', async (t) => {
@@ -564,13 +567,13 @@ test('Activity backend E2E: plans are retry-safe and a failed chain rolls comple
   await call('activity.reschedule', { id: 'apply-handoff:step-call', dueDate: '2026-08-23' })
   await call('activity.cancel', { id: 'apply-handoff:step-call', feedback: 'No longer required' })
 
-  await type({ id: 'type-disabled-next', name: 'Disabled next', category: 'todo' })
+  await type({ id: 'type-next', name: 'Next step', category: 'todo' })
   await type({
     id: 'type-broken-chain',
     name: 'Broken chain',
     category: 'todo',
     chainingPolicy: 'trigger',
-    nextTypeId: 'type-disabled-next',
+    nextTypeId: 'type-next',
   })
   await call('product_activity_backend.schedule', {
     id: 'activity-rollback',
@@ -579,7 +582,16 @@ test('Activity backend E2E: plans are retry-safe and a failed chain rolls comple
     summary: 'Must remain open',
     dueDate: '2026-08-20',
   })
-  await type({ id: 'type-disabled-next', name: 'Disabled next', category: 'todo', active: false })
+  // A disabled next type only ends the chain, so the chained step fails another
+  // way: its id is already taken by different work, after completion has been
+  // written and the completion message posted.
+  await call('product_activity_backend.schedule', {
+    id: 'activity:activity-rollback:next:type-next',
+    targetId: 'tpl-collab',
+    typeId: 'type-next',
+    summary: 'Occupies the chained id',
+    dueDate: '2026-08-20',
+  })
   await assert.rejects(
     () =>
       call('activity.complete', {
@@ -589,7 +601,7 @@ test('Activity backend E2E: plans are retry-safe and a failed chain rolls comple
       }),
     (error: unknown) => {
       assert.ok(error instanceof TestHttpError)
-      assert.equal((error.body as { code?: string }).code, 'E_ACTIVITY_TYPE')
+      assert.equal((error.body as { code?: string }).code, 'E_ACTIVITY_IDEMPOTENCY_CONFLICT')
       return true
     },
   )
@@ -599,8 +611,9 @@ test('Activity backend E2E: plans are retry-safe and a failed chain rolls comple
       today: '2026-08-20',
     })
   ).value.activities
-  assert.equal(after[0]!.active, true)
-  assert.equal(after[0]!.doneAt, null)
+  const rolledBack = after.find((row) => row.id === 'activity-rollback')!
+  assert.equal(rolledBack.active, true)
+  assert.equal(rolledBack.doneAt, null)
   assert.deepEqual(
     (await call<{ messages: Row[] }>('product_mail_backend.timeline', { targetId: 'tpl-collab' })).value
       .messages,

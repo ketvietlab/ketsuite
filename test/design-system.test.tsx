@@ -1,8 +1,13 @@
+import { exampleApplications } from '../packages/design-system/src/catalogue/application-switcher.ts'
 import assert from 'node:assert/strict'
 import { globSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { renderToString } from '@ketvietlab/ketjs-view'
-import { ketTableGroupedDemoConfig } from '../packages/design-system/src/interactions/ket-table/demo.ts'
+import { createRoot, domHost, renderToString } from '@ketvietlab/ketjs-view'
+import { document as testDocument } from './helpers/dom.ts'
+import {
+  ketTableDemoConfig,
+  ketTableGroupedDemoConfig,
+} from '../packages/design-system/src/interactions/ket-table/demo.ts'
 import { createKetTableView } from '../packages/design-system/src/interactions/ket-table/index.tsx'
 import {
   AppShell,
@@ -16,6 +21,7 @@ import {
   Badge,
   BarChart,
   Breadcrumbs,
+  ColumnChart,
   BoardPage,
   Button,
   CardGrid,
@@ -59,6 +65,7 @@ import {
   KanbanGrid,
   Page,
   PageHeader,
+  PagerBar,
   Person,
   Progress,
   Popover,
@@ -66,7 +73,10 @@ import {
   RelationPicker,
   ResourceList,
   RecordActions,
+  FormActions,
+  FormGrid,
   RecordForm,
+  Section,
   RecordPage,
   RecordRail,
   RecordSummary,
@@ -91,6 +101,7 @@ import {
   MediaGallery,
   WorkspacePage,
   withQueryState,
+  Metric,
 } from '@ketvietlab/design-system'
 import {
   CataloguePage,
@@ -212,7 +223,7 @@ test('design system: foundations expose reference, semantic and component tokens
   assert.match(tokens, /--kv-table-header-height: 2\.625rem/)
   assert.match(tokens, /--kv-radius-md: 0\.4375rem/)
   assert.match(tokens, /--kv-radius-app-region: 0/)
-  assert.match(tokens, /--kv-font-sans: "Inter"/)
+  assert.match(tokens, /--kv-font-sans:\s+"KÉT Sans", "Inter", /)
   assert.match(tokens, /--kv-font-display: var\(--kv-font-sans\)/)
   assert.doesNotMatch(tokens, /Iowan Old Style|Palatino Linotype|ui-serif/)
 })
@@ -281,6 +292,110 @@ test('design system: bar chart keeps every number as text on one scale', () => {
     renderToString(<BarChart label="None" bars={[]} value={() => ''} empty="No data" />),
     /data-ui="bar-chart-empty">(?:<!--k\[?-->)*No data/,
   )
+})
+
+test('design system: column chart reads each period as text on a zero-based scale', () => {
+  const plain = renderToString(
+    <ColumnChart
+      label="Daily spend"
+      points={[
+        { id: 'd1', label: '11/10', value: 8 },
+        { id: 'd2', label: '12/10', value: 0 },
+        { id: 'd3', label: '13/10', value: 16 },
+      ]}
+      value={(point) => `${point.value}m ₫`}
+      tick={(value) => `${value}m`}
+      reference={{ value: 14, label: 'Daily budget 14m ₫' }}
+      labelEvery={2}
+    />,
+  )
+  assert.match(plain, /<figure data-ui="column-chart"/)
+  assert.match(plain, /data-ui="column-chart-columns" aria-label="Daily spend"/)
+  // Every period stays a column, a zero one included, so the time axis keeps its spacing.
+  assert.equal([...plain.matchAll(/data-ui="column-chart-column"/g)].length, 3)
+  // 16 and the 14 reference against a round ceiling of 20.
+  assert.match(
+    plain,
+    /data-ui="column-chart-bar" aria-hidden="true" data-series="1" style="block-size: 80.00%"/,
+  )
+  assert.match(
+    plain,
+    /data-ui="column-chart-bar" aria-hidden="true" data-series="1" style="block-size: 40.00%"/,
+  )
+  assert.match(plain, /data-ui="column-chart-reference" style="inset-block-end: 70.00%"/)
+  assert.match(plain, /data-ui="column-chart-reference-label">(?:<!--k\[?-->)*Daily budget 14m ₫/)
+  assert.match(plain, /data-ui="column-chart-reading">(?:<!--k\[?-->)*13\/10 · 16m ₫/)
+  assert.match(plain, /data-ui="column-chart-tick" style="inset-block-end: 100%">(?:<!--k\[?-->)*20m/)
+  assert.match(plain, /data-ui="column-chart-labels" aria-hidden="true"/)
+  // Labels count back from the latest period, which is always printed.
+  assert.match(plain, /data-printed="true">(?:<!--k\[?-->)*11\/10/)
+  assert.match(plain, /data-printed="false">(?:<!--k\[?-->)*12\/10/)
+  assert.match(plain, /data-printed="true">(?:<!--k\[?-->)*13\/10/)
+
+  const stacked = renderToString(
+    <ColumnChart
+      label="Orders"
+      keys={[
+        { id: 'web', label: 'Website', series: 1 },
+        { id: 'chat', label: 'Chat', series: 2 },
+      ]}
+      points={[
+        {
+          id: 'w41',
+          label: 'Week 41',
+          value: 40,
+          segments: [
+            { series: 1, value: 10 },
+            { series: 2, value: 30 },
+          ],
+        },
+      ]}
+      value={(point) => String(point.value)}
+      max={80}
+    />,
+  )
+  assert.match(stacked, /data-ui="column-chart" data-stacked="true"/)
+  assert.match(stacked, /data-ui="column-chart-legend-item" data-series="2"[\s\S]*?Chat/)
+  assert.match(stacked, /data-ui="column-chart-bar" aria-hidden="true" style="block-size: 50.00%"/)
+  assert.match(stacked, /data-ui="column-chart-segment" data-series="1" style="block-size: 25.00%"/)
+  assert.match(stacked, /data-ui="column-chart-segment" data-series="2" style="block-size: 75.00%"/)
+
+  assert.match(
+    renderToString(
+      <ColumnChart
+        label="None"
+        points={[{ id: 'a', label: 'A', value: 0 }]}
+        value={() => ''}
+        empty="No data"
+      />,
+    ),
+    /data-ui="column-chart-empty">(?:<!--k\[?-->)*No data/,
+  )
+})
+
+test('design system: metric change states direction in words, arrow and tone', () => {
+  const html = renderToString(
+    <Metric
+      label="Cost per order"
+      value="171,429 ₫"
+      change={{ label: '+8.2% vs previous 7 days', direction: 'up', tone: 'danger' }}
+      detail="Verified orders"
+    />,
+  )
+  assert.match(
+    html,
+    /data-ui="metric-value">(?:<!--k\[?-->)*171,429 ₫(?:<!--k\[?-->)*<\/p>(?:<!--k\[?-->)*<p data-ui="metric-change" data-direction="up" data-tone="danger">/,
+  )
+  assert.match(
+    html,
+    /data-ui="metric-change"[^>]*>(?:<!--k\[?-->)*<svg data-ui="icon" data-size="small"[^>]*aria-hidden="true"/,
+  )
+  assert.match(html, /\+8.2% vs previous 7 days/)
+  const flat = renderToString(
+    <Metric label="Orders" value="12" change={{ label: '0% vs previous 7 days', direction: 'flat' }} />,
+  )
+  assert.match(flat, /data-ui="metric-change" data-direction="flat" data-tone="neutral"/)
+  assert.doesNotMatch(renderToString(<Metric label="Orders" value="12" />), /metric-change/)
 })
 
 test('design system: timeframe filter keeps every period a link beside its range', () => {
@@ -447,9 +562,37 @@ test('design system: a label sits beside its control from tablet width and above
       query,
     )
   }
-  // Label stacking belongs to Field; form columns may align their label tracks.
+  // A two-column field grid narrower than 56.75rem would leave each field under 28rem, so it gives every
+  // item a whole row instead and the labels stay beside their controls.
+  const halfRow = css.indexOf('@container (max-width: 56.75rem)')
+  assert.notEqual(halfRow, -1, 'half-row fields take whole rows')
+  const halfRowBlock = css.slice(halfRow, css.indexOf('\n  }\n', halfRow))
+  assert.match(
+    halfRowBlock,
+    /:is\(\s*\[data-ui="grid"\]\[data-columns="2"\]:has\(> :is\(\[data-ui="field"\], \[data-ui="date-picker"\]\)\),\s*\[data-ui="form-grid"\]:not\(\[data-columns="3"\]\)\s*\)\s+> \* \{\s+grid-column: 1 \/ -1;\s+\}/u,
+  )
+  // Only a grid narrower than 28rem stacks labels: the half-row rule never moves a label.
+  assert.doesNotMatch(halfRowBlock, /grid-row|field-label|select/u)
+  // A full-row field of the collapsed form keeps every other field's label track.
   const recordForm = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8')
+  assert.match(
+    recordForm,
+    /@container \(max-width: 56\.75rem\) \{\s+:where\(\[data-kv-design-system\]\)\s+\[data-ui="form-grid"\]:not\(\[data-columns="3"\]\)\s+> \[data-ui="field"\]\[data-span="full"\][^{]+\{\s+grid-template-columns: minmax\(0, min\(35%, 9rem\)\) minmax\(0, 1fr\);/u,
+  )
+  // Label stacking belongs to Field; form columns may align their label tracks.
   assert.doesNotMatch(recordForm, /\[data-ui="field-label"\]/u)
+})
+
+test('design system: a form with only a button keeps its width beside other forms', () => {
+  // Inline-size containment sizes a form as if it were empty, so in a row of inline forms
+  // (an activity's complete, reschedule and cancel) the cancel form shrank to nothing and
+  // its button spilled out of the card.
+  const css = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8')
+  assert.match(css, /\[data-ui="record-form"\] \{[^}]*container-type: inline-size;/u)
+  assert.match(
+    css,
+    /\[data-ui="record-form"\]\[data-layout="inline"\]\[data-has-fields="false"\] \{\s+container-type: normal;\s+\}/u,
+  )
 })
 
 test('design system: single checkboxes keep the box beside a full-width label', () => {
@@ -464,14 +607,80 @@ test('design system: single checkboxes keep the box beside a full-width label', 
   assert.equal(
     (form.match(/\[data-span="full"\]:not\(\[data-kind="group"\]\):not\(\[data-kind="checkbox"\]\)/gu) ?? [])
       .length,
-    2,
+    5,
   )
+  // A full-row DropZone hides its label: its help sits under the zone, not in a label track.
+  assert.equal(
+    (form.match(/:not\(\[data-kind="checkbox"\]\):not\(\s*\[data-label-hidden="true"\]\s*\) \{/gu) ?? [])
+      .length,
+    5,
+  )
+  const zone = renderToString(
+    <DropZone id="import-file" name="file" label="Data file" help="CSV or XLSX" span="full" />,
+  )
+  assert.match(zone, /data-ui="field"[^>]*data-span="full"[^>]*data-label-hidden="true"/u)
 })
 
 test('design system: mobile page titles do not reserve an empty action row', () => {
   const css = readFileSync('packages/design-system/src/patterns/page-shell/styles.css', 'utf8')
   const mobile = css.slice(css.indexOf('@media (max-width: 42rem)'))
   assert.match(mobile, /\[data-kv-page-identity="title-row"\] \{\s+min-block-size: 0;/u)
+})
+
+test('design system: a fixed KetTable truncates one-line cells without hiding focus', () => {
+  const css = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8').replace(
+    /\s+/gu,
+    ' ',
+  )
+  const cell = String.raw`\[data-ui="ket-table"\]\[data-layout="fixed"\] \[data-ui="kt-cell"\]:not\(\[data-wrap="true"\], :has\(\[data-ui="menu"\], \[data-ui="popover"\]\)\)`
+  assert.match(css, new RegExp(`${cell} \\{ overflow: hidden; text-overflow: ellipsis; \\}`, 'u'))
+  assert.match(
+    css,
+    new RegExp(
+      `${cell} > :is\\(a, button\\) \\{ display: inline-block; max-inline-size: 100%; overflow: hidden; text-overflow: ellipsis;`,
+      'u',
+    ),
+  )
+  // A two-line cell (name over detail) is a Stack; the cell's ellipsis cannot reach its lines.
+  assert.match(
+    css,
+    new RegExp(
+      `${cell} > \\[data-ui="stack"\\] > \\* \\{ min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; \\}`,
+      'u',
+    ),
+  )
+  assert.match(
+    css,
+    new RegExp(
+      `${cell} :is\\(a, button, input, select\\):focus-visible \\{ outline-offset: -2px; box-shadow: none; \\}`,
+      'u',
+    ),
+  )
+  assert.match(
+    css,
+    /\[data-ui="ket-table"\]\[data-responsive="stack"\]\[data-layout="fixed"\] :is\(\[data-ui="kt-cell"\], \[data-ui="kt-cell"\] > \[data-ui="stack"\] > \*\) \{ overflow: visible; \}/u,
+  )
+  // The row link's overlay is positioned against the row; a positioned cell would clip it.
+  assert.doesNotMatch(css, /\[data-ui="kt-cell"\] \{[^}]*position:/u)
+})
+
+test('design system: on a phone the page commands follow its identity and meta', () => {
+  const css = readFileSync('packages/design-system/src/patterns/page-shell/styles.css', 'utf8').replace(
+    /\s+/gu,
+    ' ',
+  )
+  const mobile = css.slice(css.indexOf('@media (max-width: 42rem)'))
+  // The meta row sits outside the heading; unwrapping the heading lets it join the title
+  // block instead of landing under the buttons with no gap.
+  assert.match(mobile, /\[data-kv-page-identity="header"\] \{ row-gap: var\(--kv-space-1\); padding:/u)
+  assert.match(
+    mobile,
+    /\[data-kv-page-identity="header"\] :is\(\[data-kv-page-identity="heading"\], \[data-kv-page-identity="title-row"\]\) \{ display: contents; \}/u,
+  )
+  assert.match(
+    mobile,
+    /\[data-kv-page-identity="header"\] \[data-kv-page-identity="actions"\] \{ order: 1; margin-top: var\(--kv-space-2\); \}/u,
+  )
 })
 
 test('design system: grouped workspace keeps a grey canvas and borderless context contents', () => {
@@ -539,7 +748,9 @@ test('design system: application regions are square while independent objects ar
     assert.match(rule ?? '', /border-radius: var\(--kv-radius-app-region\)/)
   }
 
-  const shell = renderToString(<AppShell sidebar="Menu" main="Content" rightRail="Context" />)
+  const shell = renderToString(
+    <AppShell applications={exampleApplications} sidebar="Menu" main="Content" rightRail="Context" />,
+  )
   assert.match(shell, /data-has-right-rail="true"/)
   assert.match(shell, /data-ui="app-right-rail"/)
 })
@@ -834,14 +1045,27 @@ test('design system: canonical page titles share one dense hierarchy', () => {
   }
 })
 
-test('design system: page titles use Polaris headingLg at every viewport', () => {
+test('design system: list command forms own a full row without changing inline actions', () => {
+  const html = renderToString(
+    <ListChrome
+      commands={<Field id="command-date" name="date" label="Date" type="date" layout="inline" />}
+    />,
+  )
+  assert.match(html, /data-ui="list-commands"/)
+  assert.match(html, /data-layout="inline"/)
+  assert.doesNotMatch(html, /data-ui="list-actions"/)
+  assert.doesNotMatch(renderToString(<ListChrome />), /data-ui="list-commands"/)
+})
+
+test('design system: page titles share the desktop and compact identity scale', () => {
   const tokens = readFileSync('packages/design-system/src/foundations/tokens.css', 'utf8')
   assert.match(tokens, /--kv-text-xl: 1\.25rem;/)
   assert.match(tokens, /--kv-line-xl: 1\.5rem;/)
   assert.deepEqual(
     [...css.matchAll(/--kv-page-title-size: ([^;]+);/g)].map((match) => match[1]),
-    ['var(--kv-text-xl)'],
+    ['var(--kv-text-2xl)', '1rem'],
   )
+  assert.match(tokens, /--kv-page-title-line: var\(--kv-leading-tight\);/)
   assert.doesNotMatch(patternCss, /--kv-page-title-size:/)
 
   const identity = css.match(/\[data-kv-page-identity="title"\]\s*\{(?<body>[^}]+)\}/)?.groups?.body
@@ -1029,7 +1253,7 @@ test('design system: stacked table rules outrank the table rules they replace', 
   const pattern = '[data-ui="table-scroll"][data-pattern="data-table"]'
   // Scoped to the stack flag alone, a rule loses to the pattern-scoped table rule for
   // the same hook: cells kept their fixed row height and drew over the next row.
-  const stack = tableCss.slice(tableCss.indexOf('@media (max-width: 48rem)'))
+  const stack = tableCss.slice(tableCss.indexOf('@media (max-width: 47.9375rem)'))
   const selectors = [...stack.matchAll(/([^{}]+)\{[^{}]*\}/g)].map(([, selector = '']) => selector)
   assert.ok(selectors.length > 10)
   for (const selector of selectors.flatMap((list) => list.split(/,(?![^(]*\))/))) {
@@ -1325,9 +1549,85 @@ test('design system: ListChrome assembles URL-driven collection controls', () =>
   assert.match(patterns, /\[data-ui="bulk-actions"\]:not\(\[data-has-selection="true"\]\) \{\s*display: none/)
 })
 
+test('design system: a ListChrome query slot leads the row and keeps views and actions level with its search bar', () => {
+  const views = [
+    { id: 'table', label: 'Table', href: '/orders?view=table', active: true },
+    { id: 'cards', label: 'Cards', href: '/orders?view=cards' },
+  ]
+  const chrome = renderToString(
+    <ListChrome
+      query={<div data-ui="search-filter">Search orders</div>}
+      search={{ action: '/orders' }}
+      views={views}
+      actions={<Button label="Edit saved filter" />}
+    />,
+  )
+  assert.match(
+    chrome,
+    /data-row="query" data-query="slot"[\s\S]*?data-ui="list-query"[\s\S]*?data-ui="search-filter"[\s\S]*data-row="tail"[\s\S]*data-ui="list-view-switch"[\s\S]*data-ui="list-actions"/,
+  )
+  // The slot replaces the plain search form rather than adding a second search.
+  assert.doesNotMatch(chrome, /data-ui="list-search"/)
+  const plain = renderToString(<ListChrome search={{ action: '/orders' }} views={views} />)
+  assert.match(plain, /data-ui="list-search"/)
+  assert.doesNotMatch(plain, /data-query|list-query/)
+  // Only the slot changes the row: it aligns to the top (the expanded search filter is two rows tall),
+  // the slot takes the free width up to the search filter's own cap, and the tail keeps its width and
+  // ends the row (growing too, it took half the free width and pushed the filter's tools to a second line).
+  assert.match(patternCss, /\[data-row="query"\]\[data-query="slot"\] \{\s*align-items: flex-start;/)
+  assert.match(
+    patternCss,
+    /\[data-ui="list-query"\] \{\s*flex: 1 1 32rem;\s*min-inline-size: min\(100%, 20rem\);\s*max-inline-size: 48rem;/,
+  )
+  assert.match(
+    patternCss,
+    /\[data-query="slot"\]\s*> \[data-ui="list-chrome-row"\]\[data-row="tail"\] \{[^}]*flex: 0 1 auto;\s*margin-inline-start: auto;/,
+  )
+  // On a phone the tail takes its own full line again, as without the slot.
+  assert.match(
+    patternCss,
+    /@media \(max-width: 47\.9375rem\)[\s\S]*\[data-query="slot"\]\s*> \[data-ui="list-chrome-row"\]\[data-row="tail"\] \{\s*flex: 1 1 100%;\s*margin-inline-start: 0;/,
+  )
+})
+
+test('design system: a pager step that reaches the end stays the same link, disabled and out of the tab order', () => {
+  // A runtime that pages in place renders the pager again. The step the reader used must stay the node it
+  // was, or the focus on it falls to the page.
+  const pager = (nextHref: string | null) => (
+    <PagerBar
+      label="Pages"
+      summary="21–40 / 60"
+      previousHref="/list?page=1"
+      nextHref={nextHref}
+      nextLabel="Next page"
+    />
+  )
+  const container = testDocument.createElement('div')
+  const root = createRoot(domHost(testDocument as never), container as never)
+  const step = () => container.querySelectorAll('a[data-ui]')[1]
+  const read = (names: string[]) => names.map((name) => step()?.getAttribute(name) ?? null)
+  const names = ['href', 'rel', 'role', 'aria-disabled', 'tabindex', 'data-disabled', 'aria-label']
+  root.render(pager('/list?page=3'))
+  const used = step()
+  assert.deepEqual(read(names), ['/list?page=3', 'next', null, null, null, null, 'Next page'])
+  root.render(pager(null))
+  assert.equal(step(), used, 'the step is the node it was')
+  assert.deepEqual(read(names), [null, null, 'link', 'true', '-1', 'true', 'Next page'])
+  // Paged back, it leads on again.
+  root.render(pager('/list?page=3'))
+  assert.equal(step(), used)
+  assert.deepEqual(read(names), ['/list?page=3', 'next', null, null, null, null, 'Next page'])
+  // The server renders the end alike: a disabled link with no address to follow.
+  assert.equal(
+    renderToString(pager(null)).match(/<a data-ui="pager-link"[^>]*aria-label="Next page"[^>]*>/)?.[0],
+    '<a data-ui="pager-link" data-disabled="true" role="link" aria-disabled="true" tabindex="-1" aria-label="Next page">',
+  )
+})
+
 test('design system: FormPage does not nest a second main landmark inside AppShell', () => {
   const html = renderToString(
     <AppShell
+      applications={exampleApplications}
       sidebar="Menu"
       main={<FormPage title="Supplier" body="Partner fields" aside="Record facts" />}
     />,
@@ -1559,8 +1859,11 @@ test('design system: modal sheets expose route metadata and become fullscreen on
     css.match(
       /@media \(max-width: 47\.9375rem\)[\s\S]*?\[data-kind="confirm"\][\s\S]*?\[data-ui="modal-sheet"\]\[data-size\]\s*\{(?<body>[^}]+)\}/,
     )?.groups?.body ?? ''
-  assert.match(phoneConfirm, /height: auto/, 'a confirmation stays a card on a phone, not a full-screen page')
-  assert.match(phoneConfirm, /border-radius: var\(--kv-radius-lg\)/)
+  assert.doesNotMatch(
+    phoneConfirm,
+    /height:\s*auto|border-radius:\s*var\(/,
+    'phone confirmations follow the shared full-screen modal geometry',
+  )
   assert.match(css, /\[data-ui="confirm-dialog-message"\] \+ \* \{\s*margin-top: var\(--kv-space-4\)/)
 
   const largeDialog =
@@ -1859,12 +2162,16 @@ test('design system: every KetSuite WorkspacePage consumer uses the operational 
     consumers += calls
     const operational = [...source.matchAll(/<WorkspacePage\s+variant="operational"/g)].length
     assert.equal(operational, calls, path)
-    const contextual = [...source.matchAll(/<WorkspacePage\s+variant="operational"\s+(?:frame|context)=/g)]
-      .length
+    const contextual = [
+      ...source.matchAll(
+        /<WorkspacePage\s+variant="operational"(?:\s+layout="[a-z]+")?\s+(?:frame|context)=/g,
+      ),
+    ].length
     assert.equal(contextual, calls, path)
   }
-  // Sales, purchase and stock overviews.
-  assert.equal(consumers, 3)
+  // Sales, purchase and stock overviews, and the hospitality room plan's canvas
+  // (with and without a property).
+  assert.equal(consumers, 5)
 })
 
 test('design system: every KetSuite BoardPage consumer uses the operational workspace and page context', () => {
@@ -1879,7 +2186,9 @@ test('design system: every KetSuite BoardPage consumer uses the operational work
     const contextual = [...source.matchAll(/<BoardPage\s+variant="operational"\s+(?:frame|context)=/g)].length
     assert.equal(contextual, calls, path)
   }
-  assert.equal(consumers, 6)
+  // Four: the CRM pipeline is drawn by the `crm.sales-screen` island, and the
+  // hospitality room plan is a WorkspacePage canvas.
+  assert.equal(consumers, 4)
 })
 
 test('design system: navigation and progress expose semantic state', () => {
@@ -1933,6 +2242,7 @@ test('design system: navigation and progress expose semantic state', () => {
     />,
   )
   assert.match(tabbed, /data-ui="tabbed-view"/)
+  assert.doesNotMatch(tabbed, /data-scroll=/, 'default modal markup stays compatible')
   assert.match(tabbed, /aria-controls="record-panel"/)
   assert.match(tabbed, /aria-labelledby="record-tabs-details-tab"/)
   assert.doesNotMatch(tabbed, /role="tablist"|role="tab"/)
@@ -1940,9 +2250,33 @@ test('design system: navigation and progress expose semantic state', () => {
   const navigationCss = readFileSync('packages/design-system/src/primitives/navigation/styles.css', 'utf8')
   const panelRule = navigationCss.match(/\[data-ui="tab-panel"\] \{(?<body>[^}]+)\}/u)?.groups?.body ?? ''
   assert.match(panelRule, /overflow: auto/u)
+  assert.match(panelRule, /overscroll-behavior: contain/u)
   assert.match(panelRule, /padding-inline: 0/u)
   const modalCss = readFileSync('packages/design-system/src/patterns/modal-sheet/styles.css', 'utf8')
   assert.match(modalCss, /\[data-ui="modal-body"\]:has\(> \[data-ui="tabbed-view"\]\)/u)
+
+  const pageTabs = renderToString(
+    <TabbedView
+      id="settings"
+      label="Settings"
+      scroll="page"
+      items={[{ id: 'details', label: 'Details', href: '/details', active: true }]}
+      body="Long page content"
+    />,
+  )
+  assert.match(pageTabs, /data-ui="tabbed-view" data-scroll="page"/)
+  assert.match(pageTabs, /data-ui="tab-panel" data-scroll="page"/)
+  assert.match(pageTabs, /aria-labelledby="settings-tabs-details-tab"/)
+  const pagePanelRule =
+    navigationCss.match(/\[data-ui="tab-panel"\]\[data-scroll="page"\] \{(?<body>[^}]+)\}/u)?.groups?.body ??
+    ''
+  assert.match(pagePanelRule, /overflow: visible/u)
+  assert.match(pagePanelRule, /overscroll-behavior: auto/u)
+  const pageViewRule =
+    navigationCss.match(/\[data-ui="tabbed-view"\]\[data-scroll="page"\] \{(?<body>[^}]+)\}/u)?.groups
+      ?.body ?? ''
+  assert.match(pageViewRule, /height: auto/u)
+  assert.match(pageViewRule, /overflow: visible/u)
 
   const progress = renderToString(<Progress label="Complete" value={118} tone="positive" />)
   assert.match(progress, /role="progressbar"/)
@@ -2183,6 +2517,37 @@ test('design system: interaction essentials preserve native and accessible fallb
   )
   assert.match(feedback, /aria-live="polite"/)
   assert.match(feedback, /data-ui="toast"[^>]*role="alert"/)
+  assert.doesNotMatch(feedback, /data-ui="toast-progress"/)
+  // Background work: the bar updates silently; title and message carry the announcement.
+  const running = renderToString(
+    <ToastRegion
+      label="Background work"
+      toasts={[
+        {
+          id: 'import',
+          title: 'Importing products',
+          message: 'products.csv',
+          tone: 'info',
+          progress: { value: 140, label: '180 of 450 rows' },
+        },
+      ]}
+    />,
+  )
+  assert.match(running, /data-ui="toast"[^>]*role="status"/)
+  assert.match(
+    running,
+    /data-ui="toast-progress" aria-live="off">[\s\S]*role="progressbar" aria-label="180 of 450 rows"[^>]*aria-valuenow="100"/,
+  )
+  // Two actions take their own row under the copy instead of squeezing it.
+  assert.match(
+    css,
+    /\[data-ui="toast"\]:has\(> \[data-ui="toast-actions"\] :is\(a, button\) ~ :is\(a, button\)\)\s*> :is\(\[data-ui="toast-copy"\], \[data-ui="toast-actions"\]\) \{\s*grid-column: 1 \/ -1;/,
+  )
+  // A modal dialog makes the page inert; the page's toasts then sit under the dialog layer.
+  assert.match(
+    css,
+    /:where\(\[inert\]\) \[data-ui="toast-region"\],\s*:where\(\[data-kv-design-system\]\) \[data-ui="toast-region"\]:where\(\[inert\]\) \{\s*z-index: calc\(var\(--kv-layer-dialog\) - 1\);/,
+  )
   assert.match(renderToString(<Spinner label="Saving" />), /role="status"/)
   assert.match(
     renderToString(<Skeleton label="Loading record" />),
@@ -2246,6 +2611,14 @@ test('design system: typed form controls preserve native values and controlled p
   assert.match(combo, /role="combobox"[^>]*aria-expanded="true"/)
   assert.match(combo, /role="listbox"/)
   assert.match(combo, /role="option" aria-selected="true"/)
+  // The toggle is named in the page's language; English is only the default.
+  assert.match(combo, /data-ui="combobox-toggle" href="\?owner=" aria-label="Close options"/)
+  const toggle = (open: boolean) =>
+    renderToString(
+      <Combobox {...comboProps} open={open} openLabel="Mở danh sách" closeLabel="Đóng danh sách" />,
+    )
+  assert.match(toggle(false), /data-ui="combobox-toggle" href="\?owner=open" aria-label="Mở danh sách"/)
+  assert.match(toggle(true), /data-ui="combobox-toggle" href="\?owner=" aria-label="Đóng danh sách"/)
   const multi = renderToString(
     <MultiCombobox {...comboProps} values={['linh']} removeHref={() => '?remove=linh'} />,
   )
@@ -2412,6 +2785,26 @@ test('design system: data operations preserve URL state and bounded rendering', 
   assert.match(edit, /aria-invalid="true"/)
 })
 
+test('design system: auto description columns fill the row with at most four 12rem tracks', () => {
+  const items = [{ id: 'arrival', label: 'Arrival', value: '4 Sep' }]
+  assert.match(renderToString(<DescriptionList columns="auto" items={items} />), /data-columns="auto"/u)
+  assert.match(renderToString(<DescriptionList items={items} />), /data-columns="2"/u)
+
+  const css = readFileSync('packages/design-system/src/record/display/styles.css', 'utf8')
+    .replace(/\s+/gu, ' ')
+    .replace(/\( /gu, '(')
+    .replace(/ \)/gu, ')')
+  const rule = css.match(
+    /:where\(\[data-kv-design-system\]\) \[data-ui="description-list"\]\[data-columns="auto"\] \{([^}]*)\}/u,
+  )
+  assert.ok(rule, 'the auto description list has its own track rule')
+  // auto-fill keeps empty tracks, so two lists of one width share their columns.
+  assert.match(
+    rule[1],
+    /grid-template-columns: repeat\(auto-fill, minmax\(min\(100%, max\(12rem, calc\(\(100% - 3 \* var\(--kv-space-5\)\) \/ 4\)\)\), 1fr\)\);/u,
+  )
+})
+
 test('design system: record composition covers facts, activity, redaction and media states', () => {
   const facts = renderToString(
     <DescriptionList
@@ -2516,7 +2909,7 @@ test('design system: catalogue renders every registered specimen', () => {
 
 test('design system: governance connects public components to owners and specimens', () => {
   const names = componentRegistry.map((component) => component.name)
-  assert.equal(names.length, 139)
+  assert.equal(names.length, 156)
   assert.equal(new Set(names).size, names.length)
   const examples = new Set(componentGroups.flatMap((group) => group.examples.map((example) => example.id)))
   assert.deepEqual(
@@ -2538,6 +2931,7 @@ test('design system: density, layer, focus, motion and container tokens are cont
     '--kv-density-control-height',
     '--kv-density-row-height',
     '--kv-density-content-gap',
+    '--kv-layer-dock',
     '--kv-layer-menu',
     '--kv-layer-popover',
     '--kv-layer-dialog',
@@ -2553,10 +2947,10 @@ test('design system: density, layer, focus, motion and container tokens are cont
 })
 
 test('design system: inventory classifies every public and compatibility export', () => {
-  assert.equal(designSystemInventory.summary.publicExports, 315)
-  assert.equal(designSystemInventory.summary.runtimeExports, 148)
+  assert.equal(designSystemInventory.summary.publicExports, 372)
+  assert.equal(designSystemInventory.summary.runtimeExports, 174)
   assert.equal(designSystemInventory.summary.plannedComponents, 0)
-  assert.equal(designSystemInventory.summary.compatibilityModules, 43)
+  assert.equal(designSystemInventory.summary.compatibilityModules, 44)
   assert.ok(designSystemInventory.rows.length > designSystemInventory.summary.publicExports)
   assert.deepEqual(
     designSystemInventory.rows.filter((row) => !row.owner || !row.decision || !row.gapTask),
@@ -2577,7 +2971,7 @@ test('design system: inventory is an SSR review surface with URL-owned filters',
   assert.match(inventory, /action="\/inventory" method="get"/)
   assert.match(inventory, /name="q" value="Page"/)
   assert.match(inventory, /data-decision="keep"/)
-  assert.match(inventory.replace(/<!--k\[?-->/gu, ''), /3 entries in this view/)
+  assert.match(inventory.replace(/<!--k\[?-->/gu, ''), /5 entries in this view/)
   assert.match(inventory, /CSS and JavaScript delivery/)
   assert.doesNotMatch(inventory, /<script/)
   assert.doesNotMatch(inventory, /FormPage<\/code>/)
@@ -2716,6 +3110,90 @@ test('design system: a record rail sits beside the wide record column and stacks
   )
 })
 
+test('design system: a leading rail comes before the record in the document and on a stacked page', () => {
+  const page = (asideWhenStacked?: 'after' | 'before') =>
+    renderToString(
+      <RecordPage title="Order" body="Record fields" aside="Blockers" asideWhenStacked={asideWhenStacked} />,
+    ).replace(/<!--k\[?-->/gu, '')
+  const leading = page('before')
+  assert.match(leading, /<section data-ui="record-page"[^>]*data-aside-stacked="before"/u)
+  // Focus and reading order follow the document, so the rail must precede the body there.
+  assert.match(
+    leading,
+    /data-ui="record-page-layout"><aside data-ui="record-page-aside"[\s\S]*?data-ui="record-page-body"/u,
+  )
+  for (const trailing of [page(), page('after')]) {
+    assert.doesNotMatch(trailing, /data-aside-stacked/u)
+    assert.match(trailing, /data-ui="record-page-body"[\s\S]*?data-ui="record-page-aside"/u)
+  }
+  assert.doesNotMatch(
+    renderToString(<RecordPage title="Order" body="Record fields" asideWhenStacked="before" />),
+    /data-aside-stacked|record-page-aside/u,
+  )
+
+  const css = readFileSync('packages/design-system/src/patterns/record-page/styles.css', 'utf8').replace(
+    /\s+/gu,
+    ' ',
+  )
+  const leadingRule = (hook: string) =>
+    `:where\\(\\[data-kv-design-system\\]\\) \\[data-ui="record-page"\\]\\[data-aside-stacked="before"\\] \\[data-ui="${hook}"\\]`
+  // A wide page still draws the rail in the rail column.
+  const wide = css.slice(0, css.indexOf('@container record-page (max-width: 61.25rem)'))
+  assert.match(
+    wide,
+    new RegExp(`${leadingRule('record-page-body')} \\{ grid-row: 1; grid-column: 1; \\}`, 'u'),
+  )
+  assert.match(
+    wide,
+    new RegExp(`${leadingRule('record-page-aside')} \\{ grid-row: 1; grid-column: 2; \\}`, 'u'),
+  )
+  // Stacked, it follows the document order and is closed by one hairline below it.
+  const stacked = css.slice(css.indexOf('@container record-page (max-width: 61.25rem)'))
+  assert.match(stacked, new RegExp(`${leadingRule('record-page-layout')} \\{ row-gap: 0; \\}`, 'u'))
+  assert.match(
+    stacked,
+    new RegExp(
+      `${leadingRule('record-page-aside')} \\{ padding-bottom: var\\(--kv-space-5\\); border-top: 0; border-bottom: 1px solid var\\(--kv-panel-divider\\); \\}`,
+      'u',
+    ),
+  )
+  assert.match(stacked, /grid-row: auto; grid-column: auto;/u)
+  const grouped = readFileSync('packages/design-system/src/layouts/grouped/styles.css', 'utf8').replace(
+    /\s+/gu,
+    ' ',
+  )
+  assert.match(
+    grouped,
+    /\[data-kv-design-system\]\[data-presentation="grouped"\] \[data-ui="record-page"\]\[data-aside-stacked="before"\] \[data-ui="record-page-aside"\] \{ margin: var\(--kv-gap-section\) var\(--kv-page-padding-x\) 0;/u,
+  )
+})
+
+test('design system: record commands follow the record identity on the page width, not the viewport', () => {
+  const css = readFileSync('packages/design-system/src/patterns/record-page/styles.css', 'utf8').replace(
+    /\s+/gu,
+    ' ',
+  )
+  // At 768px the sidebar leaves the page about 35rem, and a record code beside the
+  // commands broke mid-code over three lines. The page's own width decides instead.
+  const narrow =
+    css.match(/@container record-page \(max-width: 47\.9375rem\) \{(?<body>.*?\}) \}/u)?.groups?.body ?? ''
+  // The same elements carry the page identity rules, which load later; the header scope
+  // keeps the stack from losing to them. Title, status, meta and path stay one block and
+  // the commands come last, so a status never reads as a caption of the buttons.
+  assert.match(
+    narrow,
+    /\[data-ui="record-page-header"\] :is\(\[data-ui="record-page-heading"\], \[data-ui="record-page-title-row"\]\) \{ display: contents; \}/u,
+  )
+  assert.match(
+    narrow,
+    /\[data-ui="record-page-header"\] \[data-ui="record-page-actions"\] \{ order: 1; justify-content: flex-start; margin-top: var\(--kv-space-1\); \}/u,
+  )
+  // The phone media block no longer restates the stack; it only widens the command group.
+  const phone = css.slice(css.indexOf('@media (max-width: 42rem)'))
+  assert.ok(phone.length < css.length)
+  assert.doesNotMatch(phone, /record-page-title-row/u)
+})
+
 test('design system: indigo information text remains legible on dark surfaces', () => {
   const css = readFileSync('packages/design-system/src/foundations/tokens.css', 'utf8')
   const color = (token: string) => css.match(new RegExp(`${token}: #(\\w{6})`))![1]!
@@ -2737,6 +3215,15 @@ test('design system: badges and tags share the pill radius', () => {
   }
 })
 
+test('design system: badges keep intrinsic width in stretching layouts and wrap within their container', () => {
+  const status = readFileSync('packages/design-system/src/primitives/status/styles.css', 'utf8')
+  const rule = status.split('[data-ui="badge"][data-pattern="badge"] {')[1]?.split('}')[0] ?? ''
+  assert.match(rule, /inline-size: fit-content;/, 'Grid and column Flex must not stretch short labels')
+  assert.match(rule, /max-width: 100%;/, 'long labels stay within the containing cell')
+  assert.match(rule, /white-space: normal;/)
+  assert.match(rule, /overflow-wrap: anywhere;/)
+})
+
 test('design system: modal and section headings retain distinct type levels', () => {
   const section = layoutCss.split('[data-ui="section-title"]')[1]?.split('}')[0] ?? ''
   const nested =
@@ -2747,7 +3234,14 @@ test('design system: modal and section headings retain distinct type levels', ()
     readFileSync('packages/design-system/src/patterns/modal-sheet/styles.css', 'utf8')
       .split('[data-ui="modal-title"] {')[1]
       ?.split('}')[0] ?? ''
-  assert.match(section, /font-size: var\(--kv-text-sm\)/)
+  // A group heading is 14/20/600 on the canvas as in a modal; a group nested in a group is an
+  // item heading one step down, on the canvas too.
+  assert.match(section, /font-size: var\(--kv-text-md\);\s*line-height: var\(--kv-line-md\)/)
+  const item =
+    layoutCss
+      .split('[data-ui="section"] [data-ui="section"] [data-ui="section-title"] {')[1]
+      ?.split('}')[0] ?? ''
+  assert.match(item, /font-size: var\(--kv-text-sm\);\s*line-height: var\(--kv-line-sm\)/)
   assert.match(nested, /font-size: var\(--kv-text-sm\)/)
   assert.match(modal, /font-size: var\(--kv-text-xl\)/)
 })
@@ -2826,6 +3320,70 @@ test('design system: empty Kanban lanes retain an accessible drop target', () =>
   assert.doesNotMatch(populated, /data-ui="kanban-empty"/)
   const readOnly = renderToString(<KanbanCard id="readonly" title="Read only" href="#record" />)
   assert.doesNotMatch(readOnly, /draggable="true"/)
+  assert.doesNotMatch(readOnly, /draggable="false"/)
+})
+
+test('design system: an interactive KanbanCard is pressed anywhere and dragged as itself', () => {
+  const card = renderToString(<KanbanCard id="a" title="Work" draggable href="#record" note="Due today" />)
+  // The title link covers the card; it is not itself a drag source.
+  assert.match(card, /data-ui="kanban-title">(<!--k\[-->)?<a href="#record" draggable="false">/)
+  assert.match(
+    layoutCss,
+    /\[data-ui="kanban-card"\]\[data-interactive="true"\]\s*\{\s*position: relative;\s*\}/,
+  )
+  assert.match(
+    layoutCss,
+    /\[data-ui="kanban-title"\] a::after\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*content: "";/,
+  )
+  // Other controls in the card stay pressable above the covering link.
+  assert.match(
+    layoutCss,
+    /\[data-ui="kanban-card"\]\s*:is\(a, button, summary, input, select, textarea\):not\(\[data-ui="kanban-title"\] a\)\s*\{\s*position: relative;\s*z-index: 1;/,
+  )
+  assert.match(
+    layoutCss,
+    /\[data-ui="kanban-card"\]:has\(\[data-ui="kanban-title"\] a:focus-visible\)\s*\{\s*outline:/,
+  )
+})
+
+test('design system: a ContentCard with a link is pressed anywhere, its other controls stay pressable', () => {
+  const card = renderToString(<ContentCard title="Listings" href="#listings" summary="Match each shop" />)
+  assert.match(card, /data-ui="content-card"[^>]*data-interactive="true"/)
+  assert.match(card, /data-ui="card-title"[^>]*>(<!--k\[-->)?<a href="#listings">/)
+  assert.match(renderToString(<ContentCard title="Static" />), /data-interactive="false"/)
+  assert.match(
+    layoutCss,
+    /\[data-ui="content-card"\]\[data-interactive="true"\]\s*\{\s*position: relative;\s*\}/,
+  )
+  assert.match(
+    layoutCss,
+    /\[data-ui="content-card"\]\[data-interactive="true"\]\s*\[data-ui="card-title"\]\s*a::after\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*content: "";/,
+  )
+  assert.match(
+    layoutCss,
+    /\[data-ui="content-card"\]\[data-interactive="true"\]\s*:is\(a, button, summary, input, select, textarea, label\):not\(\[data-ui="card-title"\] a\)\s*\{\s*position: relative;\s*z-index: 1;/,
+  )
+  assert.match(
+    layoutCss,
+    /\[data-ui="content-card"\]\[data-interactive="true"\]:has\(\[data-ui="card-title"\] a:focus-visible\)\s*\{\s*outline:/,
+  )
+})
+
+test('design system: RecordForm can block submission while retaining editable fields and feedback', () => {
+  const body = renderToString(
+    <RecordForm
+      action="/invoice"
+      submitLabel="Issue"
+      submitDisabled
+      errors={['Configure charge rules first']}
+      fields={[{ id: 'recipient', name: 'recipient', label: 'Recipient', value: 'Guest' }]}
+    />,
+  )
+  assert.match(body, /type="submit"[^>]*disabled/u)
+  assert.match(body, /Configure charge rules first/u)
+  const input = body.match(/<input[^>]*id="recipient"[^>]*>/u)?.[0]
+  assert.ok(input)
+  assert.doesNotMatch(input, /disabled/u)
 })
 
 test('design system: three-column RecordForm preserves native field and submit semantics', () => {
@@ -2851,6 +3409,80 @@ test('design system: three-column RecordForm preserves native field and submit s
   const css = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8')
   assert.match(css, /@container record-form \(min-width: 56rem\)/u)
   assert.match(css, /\[data-ui="form-grid"\]\[data-columns="3"\] \{[^}]*repeat\(3, minmax\(0, 1fr\)\)/u)
+})
+
+test('design system: a caller-owned form closes with the record form action row, and a step back skips required checks', () => {
+  const row = renderToString(
+    <FormActions
+      label="Steps"
+      actions={[
+        <Button label="Continue" variant="primary" type="submit" name="step" value="2" />,
+        <Button label="Back" type="submit" name="step" value="0" formNoValidate />,
+      ]}
+    />,
+  ).replace(/<!--k\[?-->/gu, '')
+  assert.match(
+    row,
+    /^<div data-ui="form-actions"><div data-ui="action-group" role="group" aria-label="Steps">/u,
+  )
+  // The primary command comes first: Enter submits a native form's first submit button.
+  assert.ok(row.indexOf('Continue') < row.indexOf('Back'))
+  assert.match(row, /<button[^>]*value="0"[^>]*formnovalidate/u)
+  assert.doesNotMatch(row.slice(0, row.indexOf('Continue')).split('<button').at(-1) ?? '', /formnovalidate/u)
+  assert.doesNotMatch(renderToString(<Button label="Save" type="submit" />), /formnovalidate/u)
+  // RecordForm draws its own row through the same component.
+  const form = renderToString(
+    <RecordForm action="/save" fields={[]} submitLabel="Save" cancelHref="/" />,
+  ).replace(/<!--k\[?-->/gu, '')
+  assert.match(form, /<div data-ui="form-actions"><div data-ui="action-group" role="group">/u)
+})
+
+test('design system: a section of a larger form lays three fields per row on its own width', () => {
+  const body = renderToString(
+    <FormGrid
+      columns={3}
+      items={[
+        <Field id="guest-name" name="name" label="Full name" required />,
+        null,
+        <Field id="guest-birth" name="birth" label="Date of birth" type="date" />,
+        <Field id="guest-note" name="note" label="Note" type="textarea" span="full" />,
+      ]}
+    />,
+  ).replace(/<!--k\[?-->/gu, '')
+  assert.match(body, /^<div data-ui="form-fields"><div data-ui="form-grid" data-columns="3">/u)
+  assert.equal(body.match(/data-ui="field"/gu)?.length, 3)
+  assert.doesNotMatch(body, /<form/u)
+  assert.doesNotMatch(renderToString(<FormGrid items={[]} />), /data-columns/u)
+  const css = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8').replace(
+    /\s+/gu,
+    ' ',
+  )
+  assert.match(css, /\[data-ui="form-fields"\] \{[^}]*container: form-fields \/ inline-size;/u)
+  // A default-size dialog's body (56rem less its inset) takes three columns; a phone keeps one.
+  assert.match(
+    css,
+    /@media \(min-width: 48rem\) \{ @container form-fields \(min-width: 52rem\) \{ :where\(\[data-kv-design-system\]\) \[data-ui="form-fields"\] > \[data-ui="form-grid"\]\[data-columns="3"\] \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/u,
+  )
+  // A full-row field of either three-column grid keeps one cell's label track, not a third of the row's.
+  const fullRow =
+    /> \[data-ui="form-grid"\]\[data-columns="3"\] > \[data-ui="field"\]\[data-span="full"\]:not\(\[data-kind="group"\]\):not\(\[data-kind="checkbox"\]\):not\(\s*\[data-label-hidden="true"\]\s*\) \{ grid-template-columns: minmax\(0, min\(9rem, calc\(\(100% - 2 \* var\(--kv-gap-form-column\)\) \/ 3 \* 0\.35\)\)\) minmax\( 0, 1fr \);/gu
+  assert.equal(css.match(fullRow)?.length, 2)
+  assert.match(
+    css,
+    /@container record-form \(min-width: 56rem\) \{ :where\(\[data-kv-design-system\]\) \[data-ui="record-form"\] > \[data-ui="form-grid"\]\[data-columns="3"\] > \[data-ui="field"\]\[data-span="full"\]/u,
+  )
+})
+
+test('design system: a section with an id is named by its title', () => {
+  const named = renderToString(<Section id="guest-2" title="Second guest" body="Fields" />).replace(
+    /<!--k\[?-->/gu,
+    '',
+  )
+  assert.match(named, /<section data-ui="section" id="guest-2" aria-labelledby="guest-2-title">/u)
+  assert.match(named, /<h2 data-ui="section-title" id="guest-2-title">/u)
+  const plain = renderToString(<Section title="Details" body="Fields" />).replace(/<!--k\[?-->/gu, '')
+  assert.match(plain, /<section data-ui="section"><header/u)
+  assert.doesNotMatch(plain, /aria-labelledby|id="/u)
 })
 
 test('design system: SearchFilter bounds the whole group and lets narrow content wrap', () => {
@@ -3018,4 +3650,84 @@ test('design system: modal bands stay toolbar-dense and a checkbox hangs from it
     /align-items: flex-start/,
   )
   assert.ok(rule(field, ':where([data-kv-design-system]) [data-ui="field-option-input"]').includes(box))
+})
+
+test('design system: component text aligns to the reading direction, not a physical side', () => {
+  // `left`/`right` held KetTable headers and numbers on the wrong edge under dir="rtl";
+  // `start`/`end` render the same in a left-to-right page.
+  const sheets = globSync('packages/design-system/src/**/*.css').filter(
+    (path) => !path.includes('/catalogue/'),
+  )
+  assert.ok(sheets.length > 40)
+  for (const path of sheets) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /text-align: (?:left|right)\b/u, path)
+  }
+  const table = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8')
+  assert.match(table, /\[data-ui="kt-col"\]\[data-align="end"\] \{\s*text-align: end;/u)
+  assert.match(table, /\[data-ui="kt-cell"\]\[data-align="end"\] \{\s*text-align: end;/u)
+})
+
+test('design system: first and last page destinations keep their anchors when disabled', () => {
+  const pager = (first: string | null, last: string | null) => (
+    <PagerBar
+      pages={[
+        { id: 'first', label: 'First page', href: first },
+        { id: 'last', label: 'Last page', href: last },
+      ]}
+    />
+  )
+  const container = testDocument.createElement('div')
+  const root = createRoot(domHost(testDocument as never), container as never)
+  root.render(pager('/list?page=1', '/list?page=9'))
+  const first = container
+    .querySelectorAll('a[data-ui]')
+    .filter((node) => node.getAttribute('data-ui') === 'pager-page')[0]
+  const last = container
+    .querySelectorAll('a[data-ui]')
+    .filter((node) => node.getAttribute('data-ui') === 'pager-page')[1]
+  root.render(pager(null, '/list?page=8'))
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[0],
+    first,
+  )
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[1],
+    last,
+  )
+  assert.equal(first?.getAttribute('href'), null)
+  assert.equal(first?.getAttribute('role'), 'link')
+  assert.equal(first?.getAttribute('aria-disabled'), 'true')
+  assert.equal(first?.getAttribute('tabindex'), '-1')
+  root.render(pager('/list?page=1', null))
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[0],
+    first,
+  )
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[1],
+    last,
+  )
+  assert.equal(last?.getAttribute('href'), null)
+  assert.equal(last?.getAttribute('aria-disabled'), 'true')
+})
+
+test('design system: a bounded table keeps scrolling and headings in the table owner', () => {
+  const markup = renderToString(
+    createKetTableView({ id: 'bounded', config: ketTableDemoConfig }, {}, { maxBlockSize: '320px' }).view(),
+  )
+  assert.match(markup, /data-bounded="true"/)
+  assert.match(markup, /max-block-size: 320px/)
+  const plain = renderToString(createKetTableView({ id: 'plain', config: ketTableDemoConfig }).view())
+  assert.doesNotMatch(plain, /data-bounded="true"/)
+  const css = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8')
+  assert.match(css, /\[data-bounded="true"\][^{]*\{[^}]*overflow-y: auto/s)
+  assert.match(css, /\[data-bounded="true"\][^{]*\[data-ui="kt-col"\][^{]*\{[^}]*position: sticky/s)
 })

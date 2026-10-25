@@ -15,6 +15,7 @@ import { address, paperTheme, partner, website, websiteForm } from '@ketvietlab/
  */
 const app = defineDeployment({
   name: 'website_form_retention_app',
+  companies: true,
   headless: true,
   modules: [address, partner, website, websiteForm, paperTheme],
   serve: {},

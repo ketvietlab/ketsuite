@@ -12,7 +12,7 @@ import type { Adapter, Row } from '@ketvietlab/ketjs'
 import { address, paperTheme, partner, website } from '@ketvietlab/ketsuite'
 
 const modules = [address, partner, website, paperTheme]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 const scope = { company: 'default', branches: null }
 
 const call = (adapter: Adapter, name: string, input: Record<string, unknown> = {}) =>

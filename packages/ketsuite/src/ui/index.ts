@@ -1,3 +1,9 @@
+export {
+  placeholderApplications,
+  SETTINGS_PATH,
+  suiteApplications,
+  suiteMainMenu,
+} from './application-switcher.ts'
 // The KetSuite component kit.
 //
 // A module composes these and never writes a tag or a `data-ui` attribute itself —
@@ -118,7 +124,7 @@ export type {
   ProductMediaVariantView,
 } from './product-media.tsx'
 export { recordForm, recordActions, formCluster, formField, formFields } from './form.tsx'
-export { authTokenScreen, loginScreen } from './auth.tsx'
+export { applicationIcon, authTokenScreen, loginScreen } from './auth.tsx'
 export type { FormField, FormOption, RecordFormOptions } from './form.tsx'
 export { datePicker } from './date-picker.tsx'
 export type { DatePickerField, DatePickerOptions } from './date-picker.tsx'
@@ -150,6 +156,8 @@ export {
   recordModalHost,
   recordModalHref,
   recordPageLoading,
+  recordPanelLoading,
+  recordPanelFrame,
   recordPageFrame,
   recordPageShell,
 } from './record-modal.tsx'
@@ -160,12 +168,14 @@ export {
   callRecordFunction,
   createRecordModal,
   createRecordPage,
+  createRecordPanel,
   recordLayerHasDraft,
 } from './client/record-modal.tsx'
 export {
   RecordDialogTrigger,
   RecordStateTrigger,
   RecordModalForm,
+  recordDialogHref,
   recordStateSelectControl,
 } from './client/record-modal-form.tsx'
 export type {
@@ -280,6 +290,5 @@ export {
 export { navGroup as NavGroup } from './nav.tsx'
 export { barChart as BarChart, chart as Chart, delta as Delta } from './charts.tsx'
 export { definitionList as DefinitionList } from './layout.tsx'
-export { UserWorkflow, UserSummary, RoleSelection } from './user-workflow.tsx'
+export { UserWorkflow, userWorkflowPath } from './user-workflow.tsx'
 export type { UserWorkflowOptions, UserWorkflowValues, UserRoleOption } from './user-workflow.tsx'
-export { AccessScope, AccessContext, CredentialDelivery } from './user-workflow.tsx'

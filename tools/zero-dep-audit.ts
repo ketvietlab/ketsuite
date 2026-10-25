@@ -29,6 +29,9 @@ type Rule = {
   optionalPeers?: string[]
   /** Only the package's own entry point may be imported, never a path inside it. */
   publicOnly?: boolean
+  /** Siblings whose `exports` subpaths are each a public entry, so `publicOnly` accepts
+   * a subpath the sibling declares and still refuses one it does not. */
+  exportedSubpaths?: string[]
   /** Also scan .mjs sources: set for packages authored in JavaScript with JSDoc types. */
   sourceDirectory?: string
   javascript?: boolean
@@ -58,6 +61,11 @@ const RULES: Record<string, Rule> = {
   // libvips from npm (@img/*) with no install script or source build; the lockfile
   // records every platform's package, so a Linux image installs from a macOS lock.
   //
+  // marked is the fifth: a screen's Help is Markdown, and the design system's
+  // MarkdownContent takes its tokens from a lexer the host supplies rather than
+  // parsing itself. The CRM sales routes lex their Help with it on the server
+  // only; it has no dependencies of its own and never reaches a browser bundle.
+  //
   // One entry point, like everything else here: nothing imports a path inside
   // them. For chart.js that also decides the bundle — `chart.js/auto` would
   // register every controller ever written, while the root entry makes each
@@ -67,35 +75,39 @@ const RULES: Record<string, Rule> = {
       '@ketvietlab/design-system',
       '@ketvietlab/ketjs',
       '@ketvietlab/ketjs-view',
+      // Native Website Studio uses the browser-safe public SSR frame contract.
+      // publicOnly below still rejects private client implementation imports.
+      '@ketvietlab/website-client',
       'chart.js',
+      'marked',
       'sharp',
       'yjs',
       'ioredis',
+      // Native Flow: the suite serves the Flow workspace and runs its Core on the
+      // server, so it reaches the client's declared entry points and the kit.
+      '@ketvietlab/flow-client',
+      '@ketvietlab/flow-ui',
     ],
     publicOnly: true,
+    exportedSubpaths: ['@ketvietlab/flow-client'],
   },
-  // Flow's component kit sits on top of the suite rather than inside it: the
-  // view runtime, the translator, the design tokens it styles with, and one
-  // suite export, the live document binding at `@ketvietlab/ketsuite/livedoc`.
-  // Written as .mjs with JSDoc types, so its .mjs sources are scanned.
+  // Flow's component kit sits below the suite: the view runtime, the translator
+  // and the design tokens it styles with. It never reaches back into the suite.
+  // The live document editor is the host's, which names its module through
+  // `setFlowLiveDocEditor`. Written as .mjs with JSDoc types, so its .mjs
+  // sources are scanned.
   'flow-client': {
     allow: [
       '@ketvietlab/design-system',
       '@ketvietlab/flow-ui',
       '@ketvietlab/ketjs',
       '@ketvietlab/ketjs-view',
-      '@ketvietlab/ketsuite',
     ],
     javascript: true,
     sourceDirectory: 'client',
   },
   'flow-ui': {
-    allow: [
-      '@ketvietlab/design-system',
-      '@ketvietlab/ketjs',
-      '@ketvietlab/ketjs-view',
-      '@ketvietlab/ketsuite',
-    ],
+    allow: ['@ketvietlab/design-system', '@ketvietlab/ketjs', '@ketvietlab/ketjs-view'],
     javascript: true,
   },
 }
@@ -162,12 +174,23 @@ for (const [name, rule] of Object.entries(RULES)) {
 
         const parts = spec.split('/')
         const target = spec.startsWith('@') ? parts.slice(0, 2).join('/') : (parts[0] as string)
+        // A package naming itself resolves through its own `exports`: not a dependency.
+        if (target === pkg.name) continue
         const isSibling = rule.allow.includes(target)
         const isPeer = (rule.optionalPeers ?? []).includes(target)
         if (!isSibling && !isPeer) {
           problems.push(
             `${file} imports "${spec}" — ${name} may only reach ${[...rule.allow, ...(rule.optionalPeers ?? [])].join(', ') || 'node: builtins'}`,
           )
+          continue
+        }
+        if (isSibling && rule.publicOnly && spec !== target && rule.exportedSubpaths?.includes(target)) {
+          const sibling = JSON.parse(
+            readFileSync(`packages/${target.slice('@ketvietlab/'.length)}/package.json`, 'utf8'),
+          ) as Pkg & { exports?: Record<string, unknown> }
+          if (!Object.hasOwn(sibling.exports ?? {}, `.${spec.slice(target.length)}`))
+            problems.push(`${file} imports "${spec}" — ${target} does not export that entry`)
+          else external++
           continue
         }
         if (isSibling && rule.publicOnly && spec !== target) {
@@ -188,6 +211,24 @@ for (const [name, rule] of Object.entries(RULES)) {
   summary.push(
     `  ${name.padEnd(16)} ${String(files).padStart(2)} files  deps: ${deps.join(', ') || 'none'}${peers.length ? `  optional peer: ${peers.join(', ')}` : ''}  cross-package imports: ${external}`,
   )
+}
+
+// The allowances between audited packages run one way, so each publishes after the
+// packages it reaches and none waits on a package that waits on it.
+const reaches = (from: string, seen: string[]): string[] | null => {
+  for (const next of RULES[from]?.allow ?? []) {
+    const name = next.startsWith('@ketvietlab/') ? next.slice('@ketvietlab/'.length) : ''
+    if (!RULES[name]) continue
+    if (seen.includes(name)) return [...seen, name]
+    const cycle = reaches(name, [...seen, name])
+    if (cycle) return cycle
+  }
+  return null
+}
+for (const name of Object.keys(RULES)) {
+  const cycle = reaches(name, [name])
+  if (cycle?.[0] === name && cycle.at(-1) === name)
+    problems.push(`allowances form a cycle: ${cycle.join(' → ')}`)
 }
 
 console.log('dependency audit, per package:')
