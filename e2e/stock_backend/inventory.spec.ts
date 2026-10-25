@@ -7,6 +7,19 @@ import { fileURLToPath } from 'node:url'
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const artifacts = join(moduleDir, 'artifacts', 'inventory')
 
+/**
+ * Opens a screen and waits for the KetJS bootstrap, which the load event does not
+ * wait for. The adjustment link opens its modal through the runtime the bootstrap
+ * mounts; the bootstrap publishes its navigation once islands and behaviors are
+ * mounted.
+ */
+const open = async (page: Page, path: string) => {
+  await page.goto(path)
+  await page.waitForFunction(
+    () => (globalThis as { __ketNavigation?: unknown }).__ketNavigation !== undefined,
+  )
+}
+
 const login = async (page: Page) => {
   await page.goto('/login?lang=vi')
   await page.locator('input[name="login"]').fill('admin')
@@ -26,28 +39,31 @@ for (const viewport of [
   for (const locale of ['vi', 'en'] as const) {
     test(`renders inventory in ${locale} correctly on ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
-      await page.goto(`/admin/stock/inventory?lang=${locale}`)
-      await expect(page.locator('[data-ui="main"]')).toBeVisible()
+      await open(page, `/admin/stock/inventory?lang=${locale}`)
+      await expect(page.locator('[data-ui="app-main"]')).toBeVisible()
       await expect(page.locator('form[action="/login"]')).toHaveCount(0)
-      await expect(page.locator('#inventory-adjustment-form')).toBeVisible()
-      await expect(page.locator('[data-ui="row"]')).toHaveCount(1)
+      await expect(page.locator('[data-ui="kt-row"]')).toHaveCount(1)
+      await page.locator('a[href*="record=stock.count%3Anew"]').click()
+      const adjustment = page.getByRole('dialog')
+      await expect(adjustment.locator('select[name="productId"]')).toBeVisible()
 
       const metrics = await page.evaluate(() => ({
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
         visibleControls: [
           ...document.querySelectorAll<HTMLElement>(
-            '#inventory-adjustment-form input:not([type="hidden"]), #inventory-adjustment-form select',
+            '[role="dialog"] input:not([type="hidden"]), [role="dialog"] select',
           ),
         ]
           .filter((control) => control.getBoundingClientRect().height > 0)
           .map((control) => control.getBoundingClientRect().height),
       }))
       expect(metrics.documentWidth).toBeLessThanOrEqual(metrics.viewportWidth)
-      // A field is 32px on a touch screen and 28px with a cursor: a fingertip
-      // needs the target, a pointer does not.
-      const fieldHeight = 34
-      expect(metrics.visibleControls.every((height) => height === fieldHeight)).toBe(true)
+      // The design-system control height: 2rem, and 2.25rem below 768px where a
+      // fingertip needs the target.
+      const fieldHeight = viewport.width < 768 ? 36 : 32
+      expect(metrics.visibleControls.length).toBeGreaterThan(0)
+      expect(metrics.visibleControls).toEqual(metrics.visibleControls.map(() => fieldHeight))
       await page.screenshot({
         path: join(artifacts, `inventory-${locale}-${viewport.name}.png`),
         fullPage: true,
@@ -57,16 +73,17 @@ for (const viewport of [
 }
 
 test('applies an inventory count and refreshes the balance', async ({ page }) => {
-  await page.goto('/admin/stock/inventory?lang=vi')
-  await page.locator('select[name="productId"]').selectOption('stock-variant')
-  await page.locator('select[name="locationId"]').selectOption('wh:stock')
-  await page.locator('input[name="countedQuantity"]').fill('15')
-  await page.locator('select[name="productUomId"]').selectOption('unit')
-  await page.locator('select[name="inventoryLocationId"]').selectOption('inventory')
-  await page.getByRole('button', { name: 'Áp dụng' }).click()
+  await open(page, '/admin/stock/inventory?lang=vi')
+  await page.getByRole('link', { name: 'Điều chỉnh tồn kho' }).click()
+  const adjustment = page.getByRole('dialog')
+  await adjustment.locator('select[name="productId"]').selectOption('stock-template:default')
+  await adjustment.locator('select[name="locationId"]').selectOption('wh:stock')
+  await adjustment.locator('input[name="countedQuantity"]').fill('15')
+  await adjustment.locator('select[name="inventoryLocationId"]').selectOption('inventory')
+  await adjustment.getByRole('button', { name: 'Xem chênh lệch' }).click()
+  await expect(adjustment.locator('[data-ui="notice"]')).toContainText('Chưa ghi nhận thay đổi')
 
-  await expect(page).toHaveURL(/\/admin\/stock\/inventory\?applied=1&lang=vi$/)
-  await expect(page.locator('[data-ui="notice"]')).toContainText('Đã áp dụng kiểm kê')
-  await expect(page.locator('[data-ui="row"]')).toContainText('15')
-  await expect(page.locator('[data-ui="record-facts"] [data-ui="record-fact"]').first()).toContainText('15')
+  await adjustment.getByRole('button', { name: 'Áp dụng kiểm kê' }).click()
+  await expect(adjustment).toHaveCount(0)
+  await expect(page.locator('[data-ui="kt-row"]')).toContainText('15')
 })

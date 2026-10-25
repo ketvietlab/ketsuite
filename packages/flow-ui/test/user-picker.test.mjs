@@ -10,6 +10,29 @@ const options = [
   { id: 'b', name: 'Bảo', avatarUrl: '/bao.png' },
   { id: 'c', name: 'Hà', disabled: true },
 ]
+test('remote user picker exposes loading, recovery and pagination without native-page filtering', () => {
+  for (const remote of [
+    { loading: true, total: 0 },
+    { loading: false, total: 0, error: 'Read failed' },
+    { loading: false, total: 1000, onMore: () => {} },
+  ]) {
+    const out = renderToStaticString(
+      FlowUserPicker({
+        id: 'remote',
+        label: 'People',
+        options,
+        value: ['a'],
+        onChange: () => {},
+        remote: { query: 'Mai', onQuery: () => {}, onRetry: () => {}, ...remote },
+      }),
+    )
+    assert.match(out, /value="Mai"/)
+    if (remote.loading) assert.match(out, /Đang tìm kiếm/)
+    if (remote.error) assert.match(out, /role="alert">Read failed/)
+    if (remote.onMore) assert.match(out, /Xem thêm người/)
+    assert.match(out, /aria-haspopup="dialog"/)
+  }
+})
 test('shared user picker has explicit sidebar/list sizes and independent selected checkboxes', () => {
   for (const size of ['md', 'sm']) {
     const out = renderToStaticString(

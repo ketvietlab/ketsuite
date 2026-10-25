@@ -149,6 +149,69 @@ test('blocked counts only tasks whose blocker is still unfinished', () => {
   assert.ok(!workspaceOverviewModel(cleared, 'product', TODAY).blocked.some((t) => t.id === target.id))
 })
 
+test('native blocked summaries remain blocked when their dependency is outside the loaded window', () => {
+  const data = load()
+  const target = data.tasks.find((t) => t.projectId === data.projects[0].id)
+  const bounded = {
+    ...data,
+    tasks: [{ ...target, archived: false, blocked: true, blockerCount: 12, blockedBy: ['outside-window'] }],
+  }
+  assert.deepEqual(
+    workspaceOverviewModel(bounded, 'product', TODAY).blocked.map((t) => t.id),
+    [target.id],
+  )
+  assert.equal(
+    workspaceOverviewModel({ ...bounded, tasks: [{ ...bounded.tasks[0], blocked: false }] }, 'product', TODAY)
+      .blocked.length,
+    0,
+  )
+})
+
+test('overview progress, overdue and review totals use the full authorized scope before paging', () => {
+  const data = load()
+  const m = workspaceOverviewModel(
+    {
+      ...data,
+      tasks: data.tasks.slice(0, 2),
+      counts: {
+        projects: 500,
+        metrics: { total: 1000000, progress: 300000, review: 200000, done: 400000, overdue: 80000 },
+      },
+    },
+    'product',
+    TODAY,
+  )
+  assert.equal(m.tasks.length, 2)
+  assert.equal(m.total, 1000000)
+  assert.equal(m.projectTotal, 500)
+  assert.equal(m.openTotal, 600000)
+  assert.equal(m.overdueTotal, 80000)
+  assert.equal(m.reviewTotal, 200000)
+  assert.deepEqual(m.counts, { todo: 100000, progress: 300000, review: 200000, done: 400000 })
+  const ownProject = data.projects.find((p) => p.workspaceId === 'product')
+  const perProject = workspaceOverviewModel(
+    {
+      ...data,
+      tasks: [],
+      projectMetrics: {
+        [ownProject.id]: {
+          total: 80000,
+          todo: 10000,
+          progress: 20000,
+          review: 10000,
+          done: 40000,
+          overdue: 1000,
+        },
+      },
+    },
+    'product',
+    TODAY,
+  ).rows.find((r) => r.project.id === ownProject.id)
+  assert.equal(perProject.total, 80000)
+  assert.equal(perProject.counts.done, 40000)
+  assert.equal(perProject.overdue, 1000)
+})
+
 test('overview page leads with clickable totals and a deadline chart whose days open their tasks', () => {
   const { nav, render } = setup('realistic'),
     m = workspaceOverviewModel(load('realistic'), 'product', TODAY)
@@ -220,4 +283,69 @@ test('status names follow the current language and the project catalogue, even a
     table = html.slice(html.indexOf('data-flow="evidence-table"'))
   assert.match(table, /data-flow="tag" data-tone="neutral">(Chờ nhận|Đang thực hiện)</)
   assert.doesNotMatch(table, />(To do|In progress|Awaiting acceptance)</)
+})
+
+test('deadline counts remain exact with an empty task preview and keep fourteen business dates', () => {
+  const data = load(),
+    days = Object.fromEntries(
+      Array.from({ length: HORIZON_DAYS }, (_, i) => [
+        new Date(Date.parse(TODAY + 'T00:00:00Z') + i * 86400000).toISOString().slice(0, 10),
+        i + 1,
+      ]),
+    )
+  const model = workspaceOverviewModel(
+    { ...data, tasks: [], deadlineCounts: { today: TODAY, overdue: 1234, dueSoon: 28, days } },
+    'product',
+    TODAY,
+  )
+  assert.equal(model.dueSoonTotal, 28)
+  assert.equal(model.horizon[0].total, 1234)
+  assert.equal(model.horizon[0].tasks.length, 0)
+  assert.deepEqual(
+    model.horizon.slice(1).map((day) => day.total),
+    Array.from({ length: 14 }, (_, i) => i + 1),
+  )
+})
+
+test('active sprint progress uses full-scope totals even when its tasks are outside the preview', () => {
+  const data = load(),
+    sprint = data.sprints.find(
+      (s) =>
+        s.state === 'active' &&
+        data.projects.some((p) => p.id === s.projectId && p.workspaceId === 'product'),
+    )
+  assert.ok(sprint)
+  const model = workspaceOverviewModel(
+    { ...data, tasks: [], sprints: [{ ...sprint, taskTotals: { total: 800, done: 299 } }] },
+    'product',
+    TODAY,
+  )
+  assert.equal(model.sprints[0].total, 800)
+  assert.equal(model.sprints[0].done, 299)
+  assert.equal(model.rows.find((r) => r.project.id === sprint.projectId).sprint.total, 800)
+})
+
+test('workload summaries include server-resolved people outside directory and task windows', () => {
+  const data = load(),
+    people = [{ member: { id: 'outside-directory', name: 'Remote person' }, open: 800, overdue: 200 }]
+  const model = workspaceOverviewModel(
+    { ...data, tasks: [], members: [], peopleMetrics: people },
+    'product',
+    TODAY,
+  )
+  assert.deepEqual(model.people, people)
+  assert.deepEqual(workspaceOverviewModel({ ...data, peopleMetrics: [] }, 'product', TODAY).people, [])
+})
+
+test('blocked metrics use unique scoped target counts independently of the task preview', () => {
+  const data = load(),
+    project = data.projects[0]
+  const m = workspaceOverviewModel(
+    { ...data, tasks: [], blockedCounts: { total: 71, projects: { [project.id]: 71 } } },
+    'product',
+    TODAY,
+  )
+  assert.equal(m.blocked.length, 0)
+  assert.equal(m.blockedTotal, 71)
+  assert.equal(m.rows.find((r) => r.project.id === project.id).blocked, 71)
 })

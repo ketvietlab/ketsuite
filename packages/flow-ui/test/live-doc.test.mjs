@@ -74,6 +74,8 @@ test('document reading column has a moderate 1200px cap, separate from full shel
 
 test('screens without an editor never download the LiveDoc bundle', async () => {
   const source = await readFile(new URL('../src/live-doc.mjs', import.meta.url), 'utf8')
-  assert.doesNotMatch(source, /^import[^\n]*['"]@ketvietlab\/ketsuite\/livedoc['"]/m)
-  assert.match(source, /import\('@ketvietlab\/ketsuite\/livedoc'\)/)
+  // The editor is the host's: the kit never names the suite, and loads what the
+  // host named only when a live document mounts.
+  assert.doesNotMatch(source, /@ketvietlab\/ketsuite/)
+  assert.match(source, /editorModule\s*\?\s*import\(editorModule\)/)
 })

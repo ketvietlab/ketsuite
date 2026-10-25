@@ -102,6 +102,7 @@ const manifest = compose(modules, {
       bundles: ['permission_probe.approve'],
     },
   },
+  companies: true,
 })
 const scope = {
   company: 'company-a',

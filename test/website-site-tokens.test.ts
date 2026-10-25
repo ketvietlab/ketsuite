@@ -25,11 +25,12 @@ import { address, paperTheme, partner, website } from '@ketvietlab/ketsuite'
 
 const SCOPE = { company: 'acme', branches: null }
 const modules = [address, partner, website]
-const manifest = compose([...modules, paperTheme])
+const manifest = compose([...modules, paperTheme], { companies: true })
 const memory = { KET_LOG: 'null', KET_SQLITE: ':memory:', KET_COMPANY: 'acme' }
 
 const app = defineDeployment({
   name: 'tokens_app',
+  companies: true,
   modules,
   theme: paperTheme,
   serve: {

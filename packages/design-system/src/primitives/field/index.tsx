@@ -35,11 +35,15 @@ export type FieldProps = {
   fields?: readonly FieldProps[]
   open?: boolean
 
+  /** Native input events, also emitted by progressively enhanced controls. */
+  onInput?: (event: Event) => void
+  onChange?: (event: Event) => void
+  onBlur?: (event: Event) => void
   id: string
   name: string
   label: string
   /** Forward the host locale to date/time controls; omitted keeps their existing default. */
-  locale?: 'vi' | 'en'
+  locale?: 'vi' | 'en' | 'ja'
   /** Opt-in matched input/action height: 36px desktop, 44px mobile. */
   size?: 'default' | 'large'
   /** A trusted, progressively enhanced control such as a relation selector. */

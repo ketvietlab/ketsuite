@@ -5,6 +5,27 @@ import assert from 'node:assert/strict'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
 import { calendarPeriod } from '@ketvietlab/flow-client/operations-model.mjs'
 const read = (s) => s.call('flow.workspace.bootstrap', { companyId: 'demo', workspaceId: 'product' }).value
+// Grants as the server stores them; the bootstrap carries only the actor's own.
+const stored = (s) => structuredClone(s.sessions.get('demo').data.grants)
+const readReport = (session, sprint) => {
+  let cursor,
+    tasks = [],
+    report
+  do {
+    const page = session.call('flow.sprint.report', {
+      companyId: 'demo',
+      projectId: sprint.projectId,
+      id: sprint.id,
+      cursor,
+    }).value
+    assert.notEqual(page.ok, false, JSON.stringify(page))
+    assert.equal(page.report.taskIds, undefined)
+    report = page.report
+    tasks.push(...page.tasks)
+    cursor = page.cursor
+  } while (cursor)
+  return { ...report, tasks }
+}
 let n = 0
 const run = (s, action, args = {}) =>
   s.call('flow.operations.command', {
@@ -18,15 +39,19 @@ const run = (s, action, args = {}) =>
   }).value
 test('published form validates answers, creates mapped task and records response', () => {
   const s = createOrganizationSession(),
-    result = run(s, 'form.save', {
+    form = {
       title: 'Tiếp nhận',
       access: 'project',
-      assignee: 'Mai Anh',
       priority: 'high',
       publish: true,
       fields: [{ label: 'Số lượng', type: 'number', required: true }],
-    })
+    }
+  // The recipient is posted by id, as the native command takes it; a name or a guest is refused.
+  for (const recipient of [{ assignee: 'Mai Anh' }, { assigneeId: 'guest' }, { assigneeId: 'missing' }])
+    assert.equal(run(s, 'form.save', { ...form, ...recipient }).ok, false, JSON.stringify(recipient))
+  const result = run(s, 'form.save', { ...form, assigneeId: 'mai' })
   assert.ok(result.id, JSON.stringify(result))
+  assert.equal(read(s).forms.find((f) => f.id === result.id).assigneeId, 'mai')
   const before = read(s).tasks.length
   assert.equal(
     run(s, 'form.submit', { id: result.id, title: 'Yêu cầu', answers: { 'field-0': 'abc' } }).ok,
@@ -54,16 +79,17 @@ test('calendar uses real month boundaries', () => {
 test('operations reject stale revisions and unprivileged configuration changes', () => {
   const s = createOrganizationSession()
   const d = read(s)
-  assert.equal(
-    s.call('flow.operations.command', {
-      companyId: 'demo',
-      action: 'inbox.read',
-      ids: [],
-      expectedRevision: 0,
-      idempotencyKey: 'stale',
-    }).value.ok,
-    false,
-  )
+  // A shared operation: personal ones (preferences, read notifications) hold no revision.
+  const stale = s.call('flow.operations.command', {
+    companyId: 'demo',
+    action: 'view.save',
+    projectId: 'core',
+    title: 'Stale view',
+    expectedRevision: 0,
+    idempotencyKey: 'stale',
+  }).value
+  assert.equal(stale.ok, false)
+  assert.equal(stale.errors[0].code, 'conflict')
   assert.equal(read(s).operationsRevision, d.operationsRevision)
   const ro = createOrganizationSession('readonly')
   assert.equal(run(ro, 'form.save', { title: 'Unauthorized' }).ok, false)
@@ -71,6 +97,7 @@ test('operations reject stale revisions and unprivileged configuration changes',
 test('batch grants validate every subject before changing sources', () => {
   const s = createOrganizationSession(),
     before = read(s),
+    held = stored(s),
     base = {
       companyId: 'demo',
       action: 'access.grant',
@@ -86,7 +113,7 @@ test('batch grants validate every subject before changing sources', () => {
     idempotencyKey: 'invalid-batch',
   }).value
   assert.equal(invalid.ok, false)
-  assert.deepEqual(read(s).grants, before.grants)
+  assert.deepEqual(stored(s), held)
   const valid = s.call('flow.organization.command', {
     ...base,
     subjectIds: ['bao', 'ha'],
@@ -94,7 +121,7 @@ test('batch grants validate every subject before changing sources', () => {
   }).value
   assert.notEqual(valid.ok, false)
   assert.equal(
-    read(s).grants.filter(
+    stored(s).filter(
       (g) => g.targetId === 'core' && g.subjectType === 'user' && ['bao', 'ha'].includes(g.subjectId),
     ).length,
     2,
@@ -115,9 +142,9 @@ test('closing sprint records commitment and carries work only within its project
     idempotencyKey: 'sprint-close-preview',
   }).value
   assert.notEqual(result.ok, false)
-  const report = read(s).sprints.find((x) => x.id === sprint.id).report
+  const report = readReport(s, sprint)
   assert.ok(report)
-  assert.ok(Array.isArray(report.taskIds))
+  assert.equal(report.taskIds, undefined)
   assert.equal(report.carryTo, 'Backlog')
   assert.ok(report.tasks.length)
   const frozen = structuredClone(report.tasks)
@@ -129,8 +156,8 @@ test('closing sprint records commitment and carries work only within its project
     title: 'Changed after close',
     idempotencyKey: 'after-close',
   })
-  assert.deepEqual(read(s).sprints.find((x) => x.id === sprint.id).report.tasks, frozen)
-  const frozenReport = structuredClone(read(s).sprints.find((x) => x.id === sprint.id).report)
+  assert.deepEqual(readReport(s, sprint).tasks, frozen)
+  const frozenReport = structuredClone(readReport(s, sprint))
   s.call('flow.entity.action', {
     companyId: 'demo',
     collection: 'sprints',
@@ -139,7 +166,7 @@ test('closing sprint records commitment and carries work only within its project
     carryTo: 'Sprint 13',
     idempotencyKey: 'close-again-after-edit',
   })
-  assert.deepEqual(read(s).sprints.find((x) => x.id === sprint.id).report, frozenReport)
+  assert.deepEqual(readReport(s, sprint), frozenReport)
 })
 test('realistic Core fixtures have one active sprint per project and frozen historical reports', () => {
   const session = createOrganizationSession('baseline', 'sprints', { profile: 'realistic' })
@@ -150,6 +177,7 @@ test('realistic Core fixtures have one active sprint per project and frozen hist
         1,
     )
   const past = data.sprints.find((sprint) => sprint.state === 'closed')
+  past.report = readReport(session, past)
   assert.ok(past.report.tasks.length)
   assert.equal(past.report.carried, 0)
   assert.equal(past.report.completed, past.report.tasks.length)
@@ -163,7 +191,7 @@ test('realistic Core fixtures have one active sprint per project and frozen hist
     carryTo: 'Backlog',
     idempotencyKey: 'retry-history',
   })
-  assert.deepEqual(read(session).sprints.find((sprint) => sprint.id === past.id).report, frozen)
+  assert.deepEqual(readReport(session, past), frozen)
 })
 test('configured task fields survive save and validate required completion values', () => {
   const s = createOrganizationSession(),
@@ -200,4 +228,26 @@ test('configured task fields survive save and validate required completion value
     false,
   )
   assert.equal(read(s).tasks.find((t) => t.id === task.id).customFields[result.id], 'Email')
+})
+
+test('standalone personal routes do not preload task collections or catalogs', () => {
+  const session = createOrganizationSession()
+  for (const route of ['inbox', 'personal-settings']) {
+    const result = session.call('flow.workspace.bootstrap', {
+      companyId: 'demo',
+      workspaceId: 'product',
+      route,
+    }).value
+    assert.notEqual(result.ok, false)
+    for (const key of ['tasks', 'columns', 'taskTypes', 'types', 'tags', 'fields', 'sprints', 'epics'])
+      assert.deepEqual(result[key], [], route + ':' + key)
+    assert.ok(result.context)
+    assert.deepEqual(result.personalPreferences, read(session).personalPreferences)
+  }
+  const taskRead = session.call('flow.workspace.bootstrap', {
+    companyId: 'demo',
+    workspaceId: 'product',
+    route: 'my-work',
+  }).value
+  assert.ok(taskRead.tasks.length)
 })

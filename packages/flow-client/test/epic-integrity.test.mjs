@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createFixtureSession } from '../atlas/store.mjs'
+import {
+  atlasFlowCommand,
+  prepareFlowCommand,
+  resolveFlowCommand,
+} from '@ketvietlab/flow-client/command-contract.mjs'
 
 const valid = (session) => ({
   collection: 'epics',
@@ -10,6 +15,27 @@ const valid = (session) => ({
   outcome: 'All release checks accepted',
   start: '2026-10-09',
   end: '2026-10-23',
+})
+
+test('epic form resolves one stable owner ID and Atlas preserves its display contract', () => {
+  const session = createFixtureSession()
+  const prepared = prepareFlowCommand('flow.entity.save', valid(session), session.data)
+  const typed = resolveFlowCommand('flow.entity.save', prepared)
+  assert.equal(typed.name, 'flow.epic.save')
+  assert.equal(typed.input.ownerId, session.data.user.id)
+  assert.ok(!Object.hasOwn(typed.input, 'owner'))
+  const fixture = atlasFlowCommand(typed.name, typed.input, session.data)
+  const response = session.call(fixture.name, { ...fixture.input, idempotencyKey: 'stable-owner' })
+  assert.ok(response.value.id, JSON.stringify(response.value))
+  assert.equal(session.data.epics.find((e) => e.id === response.value.id).owner, session.data.user.name)
+  const duplicate = {
+    ...session.data,
+    members: [
+      ...session.data.members,
+      { ...session.data.members.find((m) => m.id === session.data.user.id), id: 'duplicate' },
+    ],
+  }
+  assert.throws(() => prepareFlowCommand('flow.entity.save', valid(session), duplicate), /Ambiguous/)
 })
 
 test('epic creation refuses malformed dates, missing outcomes and invalid ownership atomically', () => {

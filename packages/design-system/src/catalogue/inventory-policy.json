@@ -36,6 +36,13 @@
       "wave": 4,
       "gapTask": "DS-031"
     },
+    "./data-display/qr-code/index.tsx": {
+      "owner": "Data display",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 5,
+      "gapTask": "DS-048"
+    },
     "./data-display/data-grid/index.tsx": {
       "owner": "Data display",
       "maturity": "stable",
@@ -270,8 +277,22 @@
       "wave": 4,
       "gapTask": "DS-015"
     },
+    "./patterns/embedded-page/index.tsx": {
+      "owner": "Layout",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
     "./patterns/settings-directory/index.tsx": {
       "owner": "Page recipes",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./patterns/dock/index.tsx": {
+      "owner": "Overlays",
       "maturity": "stable",
       "decision": "keep",
       "wave": 4,
@@ -283,6 +304,13 @@
       "decision": "keep",
       "wave": 2,
       "gapTask": "DS-046"
+    },
+    "./runtime/field-error.js": {
+      "owner": "Forms",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-019"
     },
     "./runtime/peek.js": {
       "owner": "Interactions",

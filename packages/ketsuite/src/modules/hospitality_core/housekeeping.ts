@@ -1,3 +1,5 @@
+import { declineCleaningTaskHandler } from './functions/decline-cleaning-task.ts'
+import { completeCleaningTaskHandler } from './functions/complete-cleaning-task.ts'
 import { asc, defineFn, desc, eq, from } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import {
@@ -45,8 +47,10 @@ const transition = async <T>(run: () => Promise<T>): Promise<T | { ok: false; er
 }
 
 const taskEffects = [
+  'read:hospitality_core.Property',
   'read:hospitality_core.CleaningTask',
   'read:hospitality_core.Room',
+  'read:hospitality_core.RoomBlock',
   'write:hospitality_core.CleaningTask',
   'write:hospitality_core.Room',
 ]
@@ -104,6 +108,7 @@ export const housekeeping: Record<string, FnSpec> = {
       priority: 'text?',
       assigneeId: 'id?',
       requestedAt: 'datetime?',
+      dueAt: 'datetime?',
       notes: 'text?',
     },
     output: { ok: 'bool', id: 'id?', state: 'text?', errors: 'json?' },
@@ -124,11 +129,13 @@ export const housekeeping: Record<string, FnSpec> = {
         const locked = await tx.db.compareAndSet(
           'hospitality_core.Room',
           { id: room.id },
-          { status: room.status, active: true },
-          { status: room.status },
+          { status: room.status, active: true, version: room.version ?? null },
+          { status: room.status, version: Number(room.version ?? 0) + 1 },
         )
         if (!('matched' in locked) || !locked.matched) return failure(issue('roomId', 'transition_conflict'))
-        const outOfService = room.status === 'maintenance' || room.status === 'out_of_order'
+        const B = tx.table('hospitality_core.RoomBlock')
+        const blocked = (await tx.db.count(from(B).where(eq(B.roomId, room.id), eq(B.state, 'active')))) > 0
+        const outOfService = blocked || room.status === 'maintenance' || room.status === 'out_of_order'
         if ((args.taskType === 'maintenance') !== outOfService)
           return failure(issue('taskType', 'cleaning_room_status'))
         if (args.stayId) {
@@ -147,6 +154,7 @@ export const housekeeping: Record<string, FnSpec> = {
           state: 'todo',
           assigneeId: args.assigneeId,
           requestedAt: args.requestedAt ?? new Date().toISOString(),
+          dueAt: args.dueAt ?? null,
           notes: args.notes,
         })
         return success(args.id, { state: 'todo' })
@@ -298,8 +306,8 @@ export const housekeeping: Record<string, FnSpec> = {
             const roomClaim = await tx.db.compareAndSet(
               'hospitality_core.Room',
               { id: room.id },
-              { status: room.status, active: true },
-              { status: 'cleaning' },
+              { status: room.status, active: true, version: room.version ?? null },
+              { status: 'cleaning', version: Number(room.version ?? 0) + 1 },
             )
             if (!('matched' in roomClaim) || !roomClaim.matched)
               throw new TransitionConflict(issue('roomId', 'transition_conflict'))
@@ -319,49 +327,21 @@ export const housekeeping: Record<string, FnSpec> = {
   }),
 
   completeCleaningTask: defineFn({
-    input: { id: 'id', at: 'datetime?' },
+    input: { id: 'id', at: 'datetime?', checklist: 'json', completionNotes: 'text?' },
     output: { ok: 'bool', id: 'id?', state: 'text?', errors: 'json?' },
     effects: taskEffects,
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const task = await record(ctx, 'hospitality_core.CleaningTask', args.id)
-      if (!task) return failure(issue('id', 'cleaning_task_missing'))
-      if (task.state === 'done') return success(task.id, { state: task.state })
-      if (task.state !== 'in_progress') return failure(issue('state', 'cleaning_cannot_complete'))
-      return transition(() =>
-        ctx.tx(async (tx) => {
-          const room = await record(tx, 'hospitality_core.Room', task.roomId)
-          if (room?.status === 'cleaning') {
-            const roomClaim = await tx.db.compareAndSet(
-              'hospitality_core.Room',
-              { id: task.roomId },
-              { status: 'cleaning' },
-              { status: 'cleaning' },
-            )
-            if (!('matched' in roomClaim) || !roomClaim.matched)
-              throw new TransitionConflict(issue('roomId', 'transition_conflict'))
-          }
-          const claimed = await tx.db.compareAndSet(
-            'hospitality_core.CleaningTask',
-            { id: task.id },
-            { state: 'in_progress' },
-            { state: 'done', doneAt: args.at ?? new Date().toISOString() },
-          )
-          if (!('matched' in claimed) || !claimed.matched)
-            throw new TransitionConflict(issue('state', 'transition_conflict'))
-          if (room?.status === 'cleaning') {
-            const T = tx.table('hospitality_core.CleaningTask')
-            const active = await tx.db.all(
-              from(T).where(eq(T.roomId, task.roomId), eq(T.state, 'in_progress')),
-            )
-            if (!active.length)
-              await tx.db.update('hospitality_core.Room', { id: task.roomId }, { status: 'available' })
-          }
-          return success(task.id, { state: 'done' })
-        }),
-      )
-    },
+    handler: completeCleaningTaskHandler,
+  }),
+
+  declineCleaningTask: defineFn({
+    input: { id: 'id', reason: 'text', expectedVersion: 'int', requestKey: 'text' },
+    output: { ok: 'bool', id: 'id?', state: 'text?', errors: 'json?' },
+    effects: taskEffects,
+    idempotent: true,
+    agent: true,
+    handler: declineCleaningTaskHandler,
   }),
 
   cancelCleaningTask: defineFn({
@@ -383,7 +363,7 @@ export const housekeeping: Record<string, FnSpec> = {
             const roomClaim = await tx.db.compareAndSet(
               'hospitality_core.Room',
               { id: task.roomId },
-              { status: 'cleaning' },
+              { status: 'cleaning', version: room.version ?? null },
               { status: 'cleaning' },
             )
             if (!('matched' in roomClaim) || !roomClaim.matched)
@@ -403,7 +383,11 @@ export const housekeeping: Record<string, FnSpec> = {
               from(T).where(eq(T.roomId, task.roomId), eq(T.state, 'in_progress')),
             )
             if (!active.length)
-              await tx.db.update('hospitality_core.Room', { id: task.roomId }, { status: 'dirty' })
+              await tx.db.update(
+                'hospitality_core.Room',
+                { id: task.roomId },
+                { status: 'dirty', version: Number(room.version ?? 0) + 1 },
+              )
           }
           return success(task.id, { state: 'cancelled' })
         }),

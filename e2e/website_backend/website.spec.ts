@@ -92,7 +92,7 @@ test('customer Channel API supports isolated browser and bearer sessions', async
   })
   expect(registered.status()).toBe(201)
   const registration = (await registered.json()) as {
-    data: { customer: { displayName: string; email: string }; csrfToken: string }
+    data: { customer: { displayName: string; email: string; phone: string | null }; csrfToken: string }
     error: null
     meta: { requestId: string }
   }
@@ -100,6 +100,7 @@ test('customer Channel API supports isolated browser and bearer sessions', async
     id: expect.any(String),
     displayName: 'Lan Anh',
     email,
+    phone: null,
   })
   expect(registration.data.csrfToken).toHaveLength(64)
   expect(registration.meta.requestId).toMatch(/^req_/)

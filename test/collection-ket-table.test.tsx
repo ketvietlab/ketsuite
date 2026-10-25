@@ -47,8 +47,27 @@ test('KetTable server collection preserves semantic cells, exact values, native 
   assert.match(html, /data-amount="9007199254740993.01"/)
   assert.match(html, /name="chosen.a\/b" value="1" form="bulk-accounts"/)
   assert.match(html, /aria-sort="ascending"/)
+  assert.match(
+    html,
+    /data-ui="kt-select-all"[^>]*form="bulk-accounts"/,
+    'select-all shares the native bulk form reset',
+  )
   assert.match(html, /href="\?sort=name:desc&amp;lang=vi"/)
   assert.doesNotMatch(html, /data-ui="table"|kt-select-persisted|\[object Object\]/)
+})
+
+test('KetTable server selection names each row by its leading field, not its id', () => {
+  const html = renderToString(
+    <KetTable
+      rows={[row]}
+      id={(item: Row) => item.id}
+      columns={[{ key: 'name', label: 'Name', cell: (item: Row) => item.name }]}
+      labels={ketTableDemoConfig.labels}
+      selection={{ formId: 'bulk-accounts', fieldName: 'chosen' }}
+    />,
+  )
+  assert.match(html, new RegExp(`aria-label="${ketTableDemoConfig.labels.selectRow}: A &amp; B"`))
+  assert.doesNotMatch(html, /aria-label="[^"]*: a\/b"/)
 })
 
 test('KetTable server groups retain URL expansion, leaf paging and closed rows', () => {

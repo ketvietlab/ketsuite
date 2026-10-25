@@ -276,7 +276,7 @@ export function presenceHtml(people: LiveDocViewer[] | undefined, lang?: string 
   return `<span data-ui="flow-editor-presence-label">${escapeHtml(labels.alsoHere)}</span>${people
     .map(
       (person) =>
-        `<span data-ui="flow-editor-viewer" data-size="chip" style="--flow-viewer-hue:${hueOf(person.name)}" title="${escapeAttr(person.name)}">${escapeHtml(initialsOf(person.name))}</span>`,
+        `<span data-ui="flow-editor-viewer" data-size="chip" role="img" aria-label="${escapeAttr(person.name)}" style="--flow-viewer-hue:${hueOf(person.name)}" title="${escapeAttr(person.name)}">${escapeHtml(initialsOf(person.name))}</span>`,
     )
     .join('')}`
 }

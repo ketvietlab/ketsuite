@@ -32,7 +32,9 @@ export function createFlowServerExtensions(extensions = []) {
       return context.transaction(async (scoped) => {
         active()
         for (const extension of chain) await extension.beforeMutation?.(scoped, mutation)
-        return write(scoped)
+        const value = await write(scoped)
+        for (const extension of chain) await extension.afterMutation?.(scoped, mutation, value)
+        return value
       })
     },
     async dispatch(context, name, input) {

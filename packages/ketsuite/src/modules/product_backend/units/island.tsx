@@ -28,6 +28,7 @@ import {
 import type { KetTableLabels } from '@ketvietlab/design-system'
 import { UNIT_LIST_PATH } from '../units.ts'
 import type { UnitAnswer, UnitRow } from '../units.ts'
+import { IslandRegion, PoliteStatus } from '../../../ui/client/island-markup.tsx'
 
 export { UNIT_LIST_PATH }
 
@@ -400,7 +401,7 @@ export const unitList = (props: UnitListProps): IslandController => {
     // After a failure the figures are not known; a stale count would read as current.
     const counted = answer && (phase() === 'ready' || phase() === 'loading') ? answer.counts : null
     return (
-      <div data-product-uom-list="true">
+      <IslandRegion marker="product-uom-list">
         {Stack({
           items: [
             ListChrome({
@@ -450,10 +451,8 @@ export const unitList = (props: UnitListProps): IslandController => {
             ...body(),
           ],
         })}
-        <div role="status" aria-live="polite">
-          {Text({ children: announcement(answer), visuallyHidden: true })}
-        </div>
-      </div>
+        <PoliteStatus>{Text({ children: announcement(answer), visuallyHidden: true })}</PoliteStatus>
+      </IslandRegion>
     )
   }
 

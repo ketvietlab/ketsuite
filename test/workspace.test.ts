@@ -45,8 +45,20 @@ test('umbrella: two deployments disagreeing about the same table is a build erro
     name: 'catalog',
     models: { Product: { scope: 'shared', fields: { id: 'id', price: 'text' } } },
   })
-  const a = defineDeployment({ name: 'a', modules: [catalogV1], datastore: 'main', headless: true })
-  const b = defineDeployment({ name: 'b', modules: [catalogV2], datastore: 'main', headless: true })
+  const a = defineDeployment({
+    name: 'a',
+    companies: true,
+    modules: [catalogV1],
+    datastore: 'main',
+    headless: true,
+  })
+  const b = defineDeployment({
+    name: 'b',
+    companies: true,
+    modules: [catalogV2],
+    datastore: 'main',
+    headless: true,
+  })
   assert.throws(() => composeWorkspace([a, b]), /E_DATASTORE_COLUMN_CLASH|is int .* but text/)
 })
 
@@ -54,6 +66,7 @@ test('umbrella: shared columns must agree on nullability and reference target', 
   const deployment = (name: string, value: string, owner: string) =>
     defineDeployment({
       name,
+      companies: true,
       datastore: 'main',
       headless: true,
       modules: [
@@ -90,6 +103,7 @@ test('umbrella: shared datastore indexes are unioned and same-name conflicts are
   const deployment = (name: string, indexes: Record<string, { fields: string[]; unique?: boolean }>) =>
     defineDeployment({
       name,
+      companies: true,
       datastore: 'main',
       headless: true,
       modules: [
@@ -124,8 +138,20 @@ test('umbrella: shared datastore indexes are unioned and same-name conflicts are
 
 test('umbrella: separate datastores keep separate schemas', () => {
   const ws = composeWorkspace([
-    defineDeployment({ name: 'one', modules: [catalog, inventory], theme, datastore: 'shop' }),
-    defineDeployment({ name: 'two', modules: [catalog], datastore: 'analytics', headless: true }),
+    defineDeployment({
+      name: 'one',
+      companies: true,
+      modules: [catalog, inventory],
+      theme,
+      datastore: 'shop',
+    }),
+    defineDeployment({
+      name: 'two',
+      companies: true,
+      modules: [catalog],
+      datastore: 'analytics',
+      headless: true,
+    }),
   ])
   assert.deepEqual(Object.keys(ws.datastores).sort(), ['analytics', 'shop'])
   assert.equal('leadTimeDays' in ws.datastores.analytics!.schema.tables.catalog_product!.columns, false)
@@ -135,13 +161,13 @@ test('umbrella: a headless deployment renders nothing and may not select a theme
   assert.equal(storefront.headless ?? false, false)
   assert.equal(admin.headless, true)
   assert.throws(
-    () => defineDeployment({ name: 'x', modules: [catalog], theme, headless: true }),
+    () => defineDeployment({ name: 'x', companies: true, modules: [catalog], theme, headless: true }),
     /headless but selects a theme/,
   )
 })
 
 test('agent: only functions marked agent:true are exposed, with their effects', () => {
-  const m = compose([catalog, inventory, theme])
+  const m = compose([catalog, inventory, theme], { companies: true })
   const tools = agentTools(m)
   const names = tools.map((t) => t.name).sort()
   assert.ok(names.includes('catalog__getProduct'))
@@ -156,7 +182,7 @@ test('agent: only functions marked agent:true are exposed, with their effects', 
 })
 
 test('agent: the composition schema is the safe write surface', () => {
-  const m = compose([catalog, inventory, theme])
+  const m = compose([catalog, inventory, theme], { companies: true })
   const cs = compositionSchema(m)
   assert.ok('catalog:product.detail.footer' in cs.joints)
   assert.deepEqual(cs.joints['catalog:product.detail.footer']!.filledBy, ['inventory'])
@@ -165,7 +191,7 @@ test('agent: the composition schema is the safe write surface', () => {
 })
 
 test('agent: one descriptor answers "what is this deployment and what may I do"', () => {
-  const d = agentDescriptor(compose([catalog, inventory, theme]))
+  const d = agentDescriptor(compose([catalog, inventory, theme], { companies: true }))
   assert.ok(d.tools.length > 0)
   assert.equal(d.models['catalog.Product']!.leadTimeDays, 'int? (by inventory)')
   assert.ok('catalog.product' in d.views)
@@ -174,6 +200,7 @@ test('agent: one descriptor answers "what is this deployment and what may I do"'
 test('navigation: a deployment names where each kind of viewer lands', () => {
   const app = defineDeployment({
     name: 'landing',
+    companies: true,
     modules: [catalog, inventory, theme],
     navigation: {
       home: [
@@ -194,6 +221,7 @@ test('navigation: a landing condition that is not a function key is refused at a
     () =>
       defineDeployment({
         name: 'landing',
+        companies: true,
         modules: [catalog, theme],
         // A role name is the tempting thing to write here, and it is exactly what
         // the server cannot resolve at request time.
@@ -207,6 +235,7 @@ test('navigation: a landing condition that is not a function key is refused at a
 test('navigation: a landing page pointing outside the build fails composition, not production', () => {
   const app = defineDeployment({
     name: 'landing',
+    companies: true,
     modules: [catalog, theme],
     navigation: { home: [{ needs: 'checkout.placeOrder', path: '/admin/checkout' }] },
     serve: {},

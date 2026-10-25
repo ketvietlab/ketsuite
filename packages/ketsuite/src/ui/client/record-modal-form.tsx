@@ -6,7 +6,7 @@
 // feeds view state before anything is submitted, and a trigger that opens a dialog
 // of the same record.
 
-import { ActionGroup, Field, ImageDropZone } from '@ketvietlab/design-system'
+import { ActionGroup, Field, FormGrid, ImageDropZone } from '@ketvietlab/design-system'
 import type { FieldOption, FieldProps } from '@ketvietlab/design-system'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { RECORD_COMMAND_FIELD } from './record-modal.tsx'
@@ -51,9 +51,10 @@ export const RecordModalForm = (props: {
       <input type="hidden" name={name} value={value} autocomplete="off" />
     ))}
     {props.fields.length ? (
-      <div data-ui="form-grid" data-columns={props.columns === 3 ? '3' : undefined}>
-        {props.fields.map((item) => Field(props.columns === 1 ? { ...item, span: 'full' } : item))}
-      </div>
+      <FormGrid
+        columns={props.columns === 3 ? 3 : 2}
+        items={props.fields.map((item) => Field(props.columns === 1 ? { ...item, span: 'full' } : item))}
+      />
     ) : null}
     {props.body}
     {props.actions?.length ? <div data-ui="form-actions">{ActionGroup({ actions: props.actions })}</div> : ''}

@@ -20,5 +20,7 @@ export const exampleApplications: AppSwitcherProps = {
     { id: 'website', label: 'Website', href: '#app-website', icon: 'globe' },
     { id: 'flow', label: 'Flow', href: '#app-flow', icon: 'git-branch' },
     { id: 'accounting', label: 'Accounting', href: '#app-accounting', icon: 'calculator' },
+    // Served inside this same shell, so it opens here rather than in a new tab.
+    { id: 'phone', label: 'Phone', href: '#app-phone', icon: 'phone', sameTab: true },
   ],
 }

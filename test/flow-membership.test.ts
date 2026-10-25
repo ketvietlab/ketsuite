@@ -19,12 +19,14 @@ import backend from '@ketvietlab/ketsuite/backend'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import { functions as flowFunctions } from '../packages/ketsuite/src/modules/flow/functions/index.ts'
 import livedoc from '../packages/ketsuite/src/modules/livedoc/index.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const app = defineDeployment({
   name: 'flow_membership',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, backend, livedoc, flow],
   headless: true,
-  serve: { sessions: { anonymous: { company: 'acme' } } },
+  serve: { permissions: everyFunction, sessions: { anonymous: { company: 'acme' } } },
 })
 
 type Deployment = Awaited<ReturnType<typeof createTestDeployment>>

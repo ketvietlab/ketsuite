@@ -255,3 +255,22 @@ test('apply on input: focus is not pulled back once the reader has left the type
   redraw()
   assert.equal(fresh.focused, false)
 })
+
+test('RecordForm preserves repeated hidden scope values for Hospitality GET filters', () => {
+  const markup = renderToString(
+    <RecordForm
+      action="/admin/hospitality/front-desk"
+      method="get"
+      fields={[]}
+      hidden={{ company: 'hotel', branches: ['east', 'west'], lang: 'en' }}
+      submitLabel="Apply"
+    />,
+  )
+  const inputs = [
+    ...markup.matchAll(/<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"[^>]*>/g),
+  ]
+  const query = new URLSearchParams(inputs.map((match) => [match[1]!, match[2]!]))
+  assert.equal(query.get('company'), 'hotel')
+  assert.deepEqual(query.getAll('branches'), ['east', 'west'])
+  assert.equal(query.get('lang'), 'en')
+})

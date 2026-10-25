@@ -1,4 +1,4 @@
-import { documentAccess } from './document-access.mjs'
+import { createPagedOptions } from './paged-options.mjs'
 import { auditChange } from './audit-display.mjs'
 import { FlowInput, FlowLiveDoc, FlowLiveDocLegacyBlocks } from '@ketvietlab/flow-ui'
 import { tr, flowLocaleTag } from './i18n.mjs'
@@ -58,6 +58,7 @@ export function createDocuments(ctx) {
     dirty = signal(false),
     favorites = signal([]),
     creating = signal(false)
+  const liveControllers = new Map()
   const drafts = new Map(),
     sharing = new Map(),
     saveTimers = new Map(),
@@ -93,6 +94,50 @@ export function createDocuments(ctx) {
       (p) => !p.archived && (scope() === 'private' ? p.visibility === 'private' : p.visibility !== 'private'),
     )
   }
+  // Readers are searched on the server among the people who can open the page's project
+  // or Workspace; the client never derives others' access.
+  const knownReaders = new Map()
+  const readers = ctx.call
+    ? createPagedOptions({
+        scope: () =>
+          JSON.stringify([ctx.data()?.company?.id, current()?.id, ctx.data()?.organizationRevision]),
+        refused: ctx.refused,
+        read: async (input, signal) => {
+          const page = current(),
+            companyId = ctx.data().company.id
+          const value = page.projectId
+            ? await ctx.call(
+                'flow.member.options',
+                { ...input, companyId, projectId: page.projectId },
+                { signal },
+              )
+            : await ctx.call(
+                'flow.access.list',
+                { ...input, companyId, scope: 'workspace', targetId: page.workspaceId },
+                { signal },
+              )
+          return { ...value, items: value.items.map((m) => ({ id: m.id, name: m.name, email: m.email })) }
+        },
+        accept: (items) => {
+          for (const m of items) knownReaders.set(m.id, m)
+        },
+      })
+    : null
+  // A chosen reader keeps their row of the read, email included, so choosing moves nothing;
+  // one outside the loaded people is named after it.
+  const readerOptions = (page) => {
+    const found = (readers?.state().items ?? []).filter((m) => m.id !== page.ownerId)
+    const missing = editAccess(page)
+      .readerIds.filter((id) => !found.some((m) => m.id === id))
+      .map((id) => {
+        const known =
+          knownReaders.get(id) ??
+          page.readers?.find((r) => r.id === id) ??
+          ctx.data().members.find((m) => m.id === id)
+        return { id, name: known?.name ?? tr('flow.ui.user.no.longer.available'), email: known?.email }
+      })
+    return [...found, ...missing]
+  }
   const draftFor = (page) => {
     const key = `${ctx.data().company.id}:${page.id}`
     if (!drafts.has(key))
@@ -102,6 +147,7 @@ export function createDocuments(ctx) {
         liveDoc: page.liveDoc,
         dirty: false,
         revision: 0,
+        syncStatus: 'saved',
       })
     return drafts.get(key)
   }
@@ -141,7 +187,9 @@ export function createDocuments(ctx) {
     if (company !== ctx.data()?.company.id) return false
     const key = `${company}:${id}`
     const page = ctx.data().pages.find((p) => p.id === id)
-    if (!page || !ctx.canWrite() || page.access?.write === false || disposed) return false
+    if (!page || disposed) return false
+    if (page.documentTransport) return liveControllers.get(key)?.flush() ?? false
+    if (!ctx.canWrite() || page.access?.write === false) return false
     if (saving.has(key)) return saving.get(key)
     clearTimeout(saveTimers.get(key))
     saveTimers.delete(key)
@@ -197,13 +245,36 @@ export function createDocuments(ctx) {
     draft.dirty = true
     draft.revision++
     dirty.set(true)
-    if (page.titleSource === 'content') scheduleSave(page.id)
+    if (!page.documentTransport && page.titleSource === 'content') scheduleSave(page.id)
+  }
+  const syncDocument = (id, company, state) => {
+    if (disposed || company !== ctx.data()?.company.id) return
+    const page = ctx.data().pages.find((p) => p.id === id)
+    if (!page) return
+    const draft = draftFor(page)
+    draft.syncStatus = state.status
+    if (state.record?.page)
+      ctx.data.set({
+        ...ctx.data(),
+        pages: ctx
+          .data()
+          .pages.map((p) =>
+            p.id === id && Number(state.record.page.version) >= Number(p.version)
+              ? { ...p, ...state.record.page }
+              : p,
+          ),
+      })
+    if (state.status === 'saved') draft.dirty = false
+    dirty.set([...drafts.values()].some((item) => item.dirty))
+    refresh()
   }
   const pendingNotes = () =>
     ctx
       .data()
       ?.pages.filter(
-        (page) => page.titleSource === 'content' && drafts.get(`${ctx.data().company.id}:${page.id}`)?.dirty,
+        (page) =>
+          (page.documentTransport || page.titleSource === 'content') &&
+          drafts.get(`${ctx.data().company.id}:${page.id}`)?.dirty,
       ) ?? []
   const flush = async () => {
     while (pendingNotes().length) {
@@ -550,8 +621,8 @@ export function createDocuments(ctx) {
             titleInContent: page.titleSource === 'content',
             subtitle: html`${FlowAvatar({ name: ctx.data().user.name })}<span
                 >${ctx.data().user.name} ·
-                ${draft.dirty ? tr('flow.ui.unsaved.changes') : tr('flow.ui.saved.in.this.session')}</span
-              >${FlowButton({ label: ctx.busy() ? tr('flow.ui.saving') : tr('flow.ui.save.document'), size: 'sm', disabled: !canEdit() || ctx.busy(), onClick: () => save() })}${FlowScopeMenu(
+                ${draft.syncStatus === 'offline' || draft.syncStatus === 'error' ? tr('flow.document.sync.' + draft.syncStatus) : draft.dirty ? tr('flow.ui.unsaved.changes') : tr(page.documentTransport ? 'flow.ui.saved' : 'flow.ui.saved.in.this.session')}</span
+              >${FlowButton({ label: ctx.busy() ? tr('flow.ui.saving') : tr('flow.ui.save.document'), size: 'sm', disabled: (!canEdit() && draft.syncStatus !== 'error') || ctx.busy(), onClick: () => save() })}${FlowScopeMenu(
                 {
                   label: tr('flow.ui.document.options'),
                   align: 'start',
@@ -607,6 +678,10 @@ export function createDocuments(ctx) {
               surface: 'plain',
               hideLabel: true,
               snapshot: draft.liveDoc,
+              transport: page.documentTransport,
+              onReady: (editor) => liveControllers.set(`${documentCompany}:${page.id}`, editor),
+              onDispose: () => liveControllers.delete(`${documentCompany}:${page.id}`),
+              onSync: (state) => syncDocument(page.id, documentCompany, state),
               blocks: draft.blocks,
               readOnly: !canEdit(),
               onChange: (value) => edit(page.id, value, documentCompany),
@@ -774,19 +849,24 @@ export function createDocuments(ctx) {
                                 label: tr('flow.review.readers'),
                                 size: 'sm',
                                 value: editAccess(page).readerIds,
-                                options: ctx
-                                  .data()
-                                  .members.filter(
-                                    (m) =>
-                                      m.status === 'active' &&
-                                      m.id !== page.ownerId &&
-                                      documentAccess(
-                                        ctx.data(),
-                                        { ...page, visibility: 'shared', readerIds: [m.id] },
-                                        m.id,
-                                      ).read,
-                                  )
-                                  .map((m) => ({ id: m.id, name: m.name })),
+                                options: readerOptions(page),
+                                ...(readers
+                                  ? {
+                                      menu: {
+                                        open: readers.state().open,
+                                        onToggle: (open) => (open ? void readers.open() : readers.close()),
+                                      },
+                                      remote: {
+                                        query: readers.state().query,
+                                        loading: readers.state().loading,
+                                        error: readers.state().error,
+                                        total: readers.state().total,
+                                        onQuery: readers.query,
+                                        onRetry: readers.retry,
+                                        ...(readers.state().cursor ? { onMore: readers.more } : {}),
+                                      },
+                                    }
+                                  : {}),
                                 onChange: (ids) => {
                                   editAccess(page).readerIds = ids
                                   refresh()
@@ -883,6 +963,7 @@ export function createDocuments(ctx) {
     hasChanges: () => [...drafts.values()].some((draft) => draft.dirty),
     dispose: () => {
       disposed = true
+      readers?.dispose()
       for (const timer of saveTimers.values()) clearTimeout(timer)
       saveTimers.clear()
     },

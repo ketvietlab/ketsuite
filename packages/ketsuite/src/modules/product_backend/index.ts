@@ -25,6 +25,8 @@ export default defineModule({
   name: 'product_backend',
   version: '0.2.0',
   depends: ['product_media', 'backend'],
+  // Authorization reads the user module's grants.
+  optional: ['user'],
   title: 'Sản phẩm trong quản trị',
   summary: 'Màn hình danh mục sản phẩm và lối vào từ thanh điều hướng.',
   category: 'Hệ thống',

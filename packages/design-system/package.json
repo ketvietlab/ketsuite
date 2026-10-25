@@ -1,7 +1,7 @@
 {
   "name": "@ketvietlab/design-system",
-  "version": "0.1.41",
-  "description": "Két Việt's public, server-rendered operational design system.",
+  "version": "0.1.42",
+  "description": "K\u00e9t Vi\u1ec7t's public, server-rendered operational design system.",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -54,10 +54,16 @@
     },
     "./styles.css": "./dist/styles.css",
     "./tokens.css": "./dist/foundations/tokens.css",
-    "./catalogue/styles.css": "./dist/catalogue/styles.css"
+    "./catalogue/styles.css": "./dist/catalogue/styles.css",
+    "./date-picker": {
+      "types": "./dist/forms/date-time/index.d.ts",
+      "default": "./dist/forms/date-time/index.js"
+    },
+    "./date-picker/runtime": "./dist/forms/date-time/runtime.js",
+    "./help/runtime": "./dist/runtime/help.js"
   },
   "dependencies": {
-    "@ketvietlab/ketjs-view": "0.5.0"
+    "@ketvietlab/ketjs-view": "0.6.1"
   },
   "publishConfig": {
     "access": "public",

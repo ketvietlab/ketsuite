@@ -26,7 +26,7 @@ import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import { adminUrl, live } from './postgres-live.ts'
 
 const modules = [address, partner, company, storage, user, mail, flow]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 
 const call = (adapter: Adapter, name: string, input: Record<string, unknown>, actor?: string) =>

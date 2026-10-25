@@ -75,7 +75,13 @@ const probe = defineModule({
 const boot = async (t: TestContext) => {
   bearerResolutions = 0
   const e2e = await createTestDeployment(
-    defineDeployment({ name: 'staff_bearer_probe', headless: true, modules: [probe], serve: {} }),
+    defineDeployment({
+      name: 'staff_bearer_probe',
+      companies: true,
+      headless: true,
+      modules: [probe],
+      serve: {},
+    }),
     { worker: false },
   )
   t.after(() => e2e.close())

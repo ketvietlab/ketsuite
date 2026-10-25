@@ -15,7 +15,7 @@ import {
 } from '@ketvietlab/ketsuite/backend'
 import type { Column, DataTable } from '@ketvietlab/ketsuite/backend'
 
-const _ = translator(compose([backend], { headless: true }), 'vi')
+const _ = translator(compose([backend], { headless: true, companies: true }), 'vi')
 
 type Row = { id: string; name: string; qty: number }
 const rows: Row[] = [

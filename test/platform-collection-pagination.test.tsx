@@ -15,12 +15,14 @@ import { renderToString } from '@ketvietlab/ketjs-view'
 import crm from '../packages/ketsuite/src/modules/crm/index.ts'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import { leaderboardScreen } from '../packages/ketsuite/src/modules/crm_backend/screens/leaderboard.tsx'
+import { everyFunction } from './helpers/permissions.ts'
 
 const declaration = defineDeployment({
   name: 'platform_collection_pagination',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, activity, calendar, crm, flow],
   headless: true,
-  serve: { sessions: { anonymous: { company: 'acme' } } },
+  serve: { permissions: everyFunction, sessions: { anonymous: { company: 'acme' } } },
 })
 const stamp = '2026-09-19T00:00:00.000Z'
 const scope = { company: 'acme', companies: ['acme'], branches: null }

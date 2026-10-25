@@ -1,3 +1,4 @@
+import { installNativeFormGuard } from './native-form-guard.ts'
 import { installBulkSelection } from './bulk-selection.ts'
 import { installUserWorkflow } from './user-workflow.ts'
 import type { BrowserBehavior, BrowserNavigation } from '@ketvietlab/ketjs'
@@ -287,6 +288,35 @@ const navigateTo = (href: string, navigation: BrowserNavigation): void => {
   void navigation.navigate(href)
 }
 
+type RouteModalOpener = { id: string; href: string; pathname: string }
+// Fragment replacement disposes the old behavior and its DOM. Retain only the
+// opener's identity, never the detached node, until the close navigation settles.
+let routeModalOpener: RouteModalOpener | null = null
+
+export const restoreRouteModalOpener = (opener: RouteModalOpener | null): boolean => {
+  if (!opener || location.pathname !== opener.pathname) return false
+  const candidate = opener.id ? document.getElementById(opener.id) : null
+  const target =
+    candidate instanceof HTMLAnchorElement && candidate.href === opener.href
+      ? candidate
+      : [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].find(
+          (anchor) => anchor.href === opener.href,
+        )
+  if (!target || target.closest('[inert]') || target.getAttribute('aria-disabled') === 'true') return false
+  target.focus({ preventScroll: true })
+  return true
+}
+
+const closeRouteModal = (href: string, navigation: BrowserNavigation): void => {
+  const opener = routeModalOpener
+  routeModalOpener = null
+  void navigation.navigate(href).then(() => {
+    requestAnimationFrame(() => {
+      if (!activeRouteModal()) restoreRouteModalOpener(opener)
+    })
+  })
+}
+
 /** Internal keyboard ownership guard, shared with the focused native-dialog contract check. */
 export const eventStartedInNestedModal = (event: KeyboardEvent, routeModal: HTMLElement): boolean =>
   event
@@ -405,7 +435,10 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
     focused.add(modal)
     requestAnimationFrame(() => {
       const sheet = modal.querySelector<HTMLElement>('[data-ui="modal-sheet"]')
-      const target = modalFocusables(modal).find((item) => !item.matches('[data-ui="modal-close"]'))
+      const controls = modalFocusables(modal)
+      const target =
+        controls.find((item) => item.getAttribute('aria-invalid') === 'true') ??
+        controls.find((item) => !item.matches('[data-ui="modal-close"]'))
       ;(target ?? sheet)?.focus()
     })
   }
@@ -418,8 +451,23 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
   document.addEventListener(
     'click',
     (event) => {
+      if (event.defaultPrevented) return
       const modal = activeRouteModal()
-      if (!modal) return
+      if (!modal) {
+        const anchor = eventElement(event)?.closest<HTMLAnchorElement>('a[href]')
+        if (
+          anchor &&
+          anchor.origin === location.origin &&
+          anchor.pathname === location.pathname &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey &&
+          event.button === 0 &&
+          (!anchor.target || anchor.target === '_self')
+        )
+          routeModalOpener = { id: anchor.id, href: anchor.href, pathname: location.pathname }
+        return
+      }
       // A tab inside a modal is a third way out of it. It looks like a control
       // that stays on the screen, which is exactly why losing a half-written
       // note to one went unnoticed: the reader never meant to leave. It is a
@@ -436,6 +484,13 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
       if (!mayLeaveModal(modal)) {
         event.preventDefault()
         event.stopPropagation()
+      } else {
+        const close = modal.querySelector<HTMLAnchorElement>('[data-ui="modal-close"]')
+        if (leaving instanceof HTMLAnchorElement && close && leaving.href === close.href) {
+          event.preventDefault()
+          event.stopPropagation()
+          closeRouteModal(close.href, navigation)
+        }
       }
     },
     { capture: true, signal },
@@ -444,6 +499,7 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
   document.addEventListener(
     'click',
     (event) => {
+      if (event.defaultPrevented) return
       const container = document.querySelector<HTMLElement>('[data-save-before-navigation]')
       const form =
         container instanceof HTMLFormElement ? container : container?.querySelector<HTMLFormElement>('form')
@@ -467,6 +523,7 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
   document.addEventListener(
     'keydown',
     (event) => {
+      if (event.defaultPrevented) return
       const modal = activeRouteModal()
       if (!modal) return
       // Relation-select removes its dialog synchronously on Escape. The event's
@@ -478,7 +535,7 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
         if (!close) return
         event.preventDefault()
         if (!mayLeaveModal(modal)) return
-        navigateTo(close.getAttribute('href') ?? close.href, navigation)
+        closeRouteModal(close.getAttribute('href') ?? close.href, navigation)
         return
       }
       if (event.key !== 'Tab') return
@@ -506,10 +563,10 @@ const installRouteModal = (signal: AbortSignal, navigation: BrowserNavigation): 
  * fragment refreshes the list without closing, reloading or rebuilding the modal.
  *
  * A collection that is a client island reads itself again and cancels the event:
- * the slot is then left alone. Re-fetching it anyway would be a second read, and a
- * stale one — a modal that closes announces before it leaves the address bar, so the
- * fetch would replace the list's entry with the record's and open it again. Islands
- * may listen after the shell, so the decision waits until every listener has run.
+ * the slot is then left alone. Re-fetching it anyway would be a second read. A modal
+ * that closes announces before it leaves the address bar, so it names the address it
+ * leaves to: fetching the current one would put the record back and open it again.
+ * Islands may listen after the shell, so the decision waits until every listener has run.
  */
 export const installRecordRefresh = (
   signal: AbortSignal,
@@ -518,10 +575,13 @@ export const installRecordRefresh = (
   document.addEventListener(
     'ket:records-changed',
     (event) => {
+      if (event.defaultPrevented) return
       if (!document.querySelector('[data-ket-slot="backend.content"]')) return
+      const detail = (event as CustomEvent<{ page?: boolean; href?: string } | null>).detail
       // A record page re-reads its own context; there is no collection behind it.
-      if ((event as CustomEvent<{ page?: boolean } | null>).detail?.page) return
-      const href = location.href
+      if (detail?.page) return
+      // A closing modal names the address it leaves to; otherwise the record stays open.
+      const href = detail?.href ?? location.href
       queueMicrotask(() => {
         if (event.defaultPrevented || signal.aborted) return
         void navigation.navigate(href, { replace: true })
@@ -563,12 +623,14 @@ export const backendShell: BrowserBehavior = ({ navigation, lifetime }) => {
   installDropdownDismiss(lifetime)
   installGlobalFilter(lifetime)
   const cleanupRouteModal = installRouteModal(lifetime, navigation)
+  const cleanupNativeDraft = installNativeFormGuard(document, lifetime)
   const cleanupLiveRegion = installLiveRegion(lifetime, navigation)
   return () => {
     cleanupDesignSystem()
     cleanupBulkSelection()
     cleanupLiveRegion?.()
     cleanupRouteModal()
+    cleanupNativeDraft()
     cleanupUserWorkflow()
   }
 }

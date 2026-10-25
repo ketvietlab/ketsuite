@@ -1,7 +1,7 @@
 import { tr } from './i18n.mjs'
 import { html } from '@ketvietlab/ketjs-view'
 import { FlowIcon, FlowInput, FlowButton } from './index.mjs'
-/** Compact date value opens the same native date input used by record forms.
+/** Compact date value opens the same DS calendar adapter used by record forms.
  * With `menu`, the input and actions are built only while the consumer reports it open.
  * @param {{id:string,label:string,value:string,min?:string,max?:string,disabled?:boolean,overdue?:boolean,menu?:{open:boolean,onToggle:(open:boolean)=>void},onChange:(value:string)=>void}} p */
 export function FlowDateField(p) {

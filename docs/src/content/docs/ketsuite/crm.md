@@ -239,7 +239,27 @@ whose `case.save` would refuse it.
 The owning module answers for those rows through its own functions and screens. `crmOwnedKinds()` and
 `crmOwnsKind()` are exported so an extension can align with the same boundary, alongside the helpers
 it needs to write one: `crmSaveCase`, `crmCaseAudience`, `crmCanReadCase`, `crmVisibleCases`,
-`crmSerializeCaseList`, `crmSeededId` and `crmAddTimeline`.
+`crmSerializeCaseList`, `crmSeededId`, `crmAddTimeline` and `crmLogInteraction`, with the effects
+those reads and writes declare (`crmCaseReadEffects`, `crmCaseWriteEffects`).
+
+A job that writes a case as the system, with no signed-in user, passes `{ actorRequired: false }` to
+`crmSaveCase` and `crmLogInteraction`; `{ inTransaction: true }` keeps both in the transaction the
+job already holds, so the case, its first contact and the extension's own record commit together.
+The case's team and owner are still validated: a system write does not place a case with someone
+outside the team.
+
+### What other modules show on a record
+
+The record page (`/admin/crm/cases/{id}`) places the joint `crm_backend:record.related` in its
+Activity tab, above the history, for every module that fills it with an island. Each island receives
+`{ caseId, lang }` and reads what it shows itself, through its own route and permission; it draws
+nothing for a record it has nothing about, and its host takes no room then. The island is started
+when the record is drawn and started again when the page moves to another record.
+
+```ts
+// File: modules/my_module/src/index.ts
+fills: { 'crm_backend:record.related': '{% island "my_module.record-calls" %}' }
+```
 
 The shared header also has optional `sourceKind`, `waitingFor` and `nextContactAt` fields. Extensions
 can separate their work queues and record the next contact without changing the case lifecycle or

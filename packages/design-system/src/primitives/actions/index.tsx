@@ -50,6 +50,11 @@ export type ButtonProps = ActionBase & {
   name?: string | null
   value?: string | null
   form?: string | null
+  /**
+   * Submit without the form's own constraint checks: a step back in a multi-step form, or a command that
+   * carries no edit, must not be stopped by a required field the current step has not filled yet.
+   */
+  formNoValidate?: boolean
   /** For a button that shows or hides a region: whether that region is open now. */
   expanded?: boolean
   /** The id of the region an `expanded` button shows or hides. */
@@ -109,6 +114,7 @@ export const Button = (props: ButtonProps): TemplateResult => (
     name={props.name ?? null}
     value={props.value ?? null}
     form={props.form ?? null}
+    formnovalidate={props.formNoValidate === true ? true : undefined}
     disabled={props.disabled === true || props.loading === true}
     aria-label={props.loading || props.logo ? props.label : null}
     title={props.logo ? props.label : undefined}
@@ -148,6 +154,7 @@ export const IconButton = (props: IconButtonProps): TemplateResult => (
     name={props.name ?? null}
     value={props.value ?? null}
     form={props.form ?? null}
+    formnovalidate={props.formNoValidate === true ? true : undefined}
     disabled={props.disabled === true || props.loading === true}
     aria-label={props.label}
     aria-pressed={props.pressed === undefined ? null : String(props.pressed)}

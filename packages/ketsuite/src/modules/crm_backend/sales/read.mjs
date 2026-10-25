@@ -1034,7 +1034,10 @@ export const createSalesRead = ({
               phone: asked.phone ?? '',
               email: asked.email ?? '',
             }
-          : {}),
+          : // A call from a number no customer has yet: the softphone hands the number over.
+            params.get('phone')
+            ? { phone: phoneDigits(params.get('phone')) }
+            : {}),
       },
       contacts: partners.map((p) => ({
         id: p.id,

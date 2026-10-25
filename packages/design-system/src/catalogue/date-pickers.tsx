@@ -55,6 +55,14 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
         today="2026-09-30"
         help="Chọn trên lịch hoặc nhập ngày trực tiếp."
       />,
+      <DatePicker
+        id="date-japanese"
+        name="releaseDate"
+        label="公開日"
+        locale="ja"
+        value="2026-10-11"
+        today="2026-10-11"
+      />,
       <DateTimePicker
         id="appointment"
         name="appointment"
@@ -62,6 +70,22 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
         value="2026-09-30T09:00"
         today="2026-09-30"
         required
+      />,
+      <DateTimePicker
+        id="locked-appointment"
+        name="lockedAppointment"
+        label="Ngày và giờ đã khóa"
+        value="2026-09-30T09:00"
+        today="2026-09-30"
+        disabled
+      />,
+      <Field
+        id="english-deadline"
+        name="englishDeadline"
+        label="Due by"
+        type="datetime-local"
+        locale="en"
+        value="2026-09-30T09:00"
       />,
       <DateRangePicker
         id="range"

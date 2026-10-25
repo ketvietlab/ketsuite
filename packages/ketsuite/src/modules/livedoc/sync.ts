@@ -3,11 +3,10 @@ import type { Writer } from '@ketvietlab/ketjs'
 import * as Y from 'yjs'
 
 /**
- * Process-local by design, same as the SSE relay it feeds. A restart or a
- * second server instance loses the live doc and any un-flattened updates —
- * acceptable for now since no deployment target here runs more than one
- * instance; the owner's durable snapshot always has the last flattened state
- * to resume from.
+ * Process-local CRDT cache and presence relay. Durable owners acknowledge only
+ * persisted pushes; their SSE routes read shared committed snapshots so edits
+ * also reach other workers and survive restart. Presence remains process-local.
+ * Non-durable owners retain the flatten-on-leave lifecycle.
  *
  * Deliberately I/O-free otherwise: `Ctx.storage` only exists on `JobContext`
  * (packages/ketjs/src/types.ts), not on the plain `Ctx` a `defineFn` handler
@@ -31,9 +30,15 @@ export type StreamChunk = { seq: number; data: unknown }
 export async function* tailTopic(
   topic: string,
   from: number,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; pollMs?: number } = {},
 ): AsyncGenerator<StreamChunk> {
-  for await (const chunk of streams.tail(topic, from, opts)) yield { seq: chunk.seq, data: chunk.data }
+  try {
+    for await (const chunk of streams.tail(topic, from, opts)) yield { seq: chunk.seq, data: chunk.data }
+  } catch (error) {
+    // An idle tail is a normal SSE rotation. Let the route emit its final
+    // `done` event instead of truncating the HTTP response as a network error.
+    if (!(error instanceof Error) || !/^stream ".+" timed out after \d+ms$/.test(error.message)) throw error
+  }
 }
 
 type LiveDoc = {
@@ -172,18 +177,50 @@ export function snapshotBytes(ref: DocRef): Uint8Array | null {
  */
 type Delta = Array<{ insert: string }>
 
-function plainTextOf(node: Y.XmlFragment | Y.XmlElement | Y.XmlText): string {
+function plainTextOf(node: Y.XmlFragment | Y.XmlElement | Y.XmlText | Y.XmlHook): string {
   if (node instanceof Y.XmlText) return (node.toDelta() as Delta).map((op) => op.insert).join('')
+  if (node instanceof Y.XmlHook) return ''
   return node
     .toArray()
-    .map((child) => plainTextOf(child as Y.XmlFragment | Y.XmlElement | Y.XmlText))
+    .map((child) => plainTextOf(child))
     .join(' ')
     .trim()
 }
 
 export function previewTextOf(ref: DocRef): string {
   const entry = live.get(keyFor(ref))
-  return entry ? plainTextOf(entry.doc.getXmlFragment('content')) : ''
+  return entry
+    ? entry.doc
+        .getXmlFragment('content')
+        .toArray()
+        .map((node) => plainTextOf(node))
+        .join('\n')
+    : ''
+}
+
+/** Read metadata from the canonical tree, never from a second editor. */
+export function snapshotBlocksOf(ref: DocRef): Record<string, unknown>[] {
+  const entry = live.get(keyFor(ref))
+  if (!entry) return []
+  return entry.doc
+    .getXmlFragment('content')
+    .toArray()
+    .map((node, index) => {
+      if (!(node instanceof Y.XmlElement))
+        return { id: `live-${index}`, type: 'paragraph', text: plainTextOf(node) }
+      const type = String(node.getAttribute('type') ?? 'p')
+      const block: Record<string, unknown> = {
+        id: node.getAttribute('id') ?? `live-${index}`,
+        type: ({ p: 'paragraph', h2: 'heading', h3: 'subheading' } as Record<string, string>)[type] ?? type,
+        text: plainTextOf(node),
+      }
+      if (node.getAttribute('checked') !== undefined) block.checked = node.getAttribute('checked') === 'true'
+      for (const key of ['align', 'src', 'alt'])
+        if (node.getAttribute(key) !== undefined) block[key] = node.getAttribute(key)
+      if (type === 'image') block.width = Number(node.getAttribute('width')) || 100
+      if (type === 'table') block.rows = JSON.parse(String(node.getAttribute('rows') ?? '[]'))
+      return block
+    })
 }
 
 /**

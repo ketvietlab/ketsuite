@@ -109,6 +109,8 @@ const navigation = {
 export const createHospitalityDeployment = (openStore: OpenStore = sqliteStore) =>
   defineDeployment({
     name: 'hospitality',
+    // Every KetSuite row belongs to a company; KetJS scopes by company only on request.
+    companies: true,
     datastore: 'hospitality',
     modules,
     navigation,

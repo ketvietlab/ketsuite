@@ -7,12 +7,17 @@
     gap: var(--kv-gap-field-group);
   }
 
-  /* Action-only forms must contribute their button's intrinsic width in footers.
-     Inline-size containment would collapse them to zero and overlap adjacent actions. */
+  /* Action-only forms must contribute their button's intrinsic width in footers and in a
+     row of inline forms. Inline-size containment would collapse them to zero and overlap
+     adjacent actions; a form without fields has nothing to measure. */
   :where([data-kv-design-system]) [data-ui="record-form"][data-layout="actions"] {
     container-type: normal;
     display: block;
     flex: 0 0 auto;
+  }
+
+  :where([data-kv-design-system]) [data-ui="record-form"][data-layout="inline"][data-has-fields="false"] {
+    container-type: normal;
   }
 
   :where([data-kv-design-system]) [data-ui="form-errors"] {

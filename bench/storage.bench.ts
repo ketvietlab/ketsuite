@@ -86,6 +86,7 @@ try {
   await prepare()
   const app = defineDeployment({
     name: 'storage_benchmark',
+    companies: true,
     modules: [address, partner, company, storageModule],
     headless: true,
     serve: {

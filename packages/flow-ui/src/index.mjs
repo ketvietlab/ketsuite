@@ -1,4 +1,5 @@
-import { tr } from './i18n.mjs'
+import { tr, flowLocale } from './i18n.mjs'
+import { DatePicker } from '@ketvietlab/design-system/date-picker'
 import { html, each } from '@ketvietlab/ketjs-view'
 import { taskDrag } from './task-drag.mjs'
 // Lucide glyphs, vendored like the design system: regenerate with tools/vendor-lucide.mjs.
@@ -46,15 +47,42 @@ export const FlowButton = (p) =>
     ${p.loading ? html`<span data-flow="spinner" aria-hidden="true"></span>` : p.icon ? FlowIcon(p.icon) : null}${p.iconOnly ? null : p.label}
   </button>`
 
-/** @param {{id:string,name?:string,label:string,icon?:keyof typeof icons,value?:string,placeholder?:string,type?:string,autocomplete?:string,required?:boolean,disabled?:boolean,min?:string,max?:string,step?:string,multiple?:boolean,onBlur?:(event:Event)=>void,onChange?:(event:Event)=>void,error?:string,onInput?:(event:Event)=>void}} p */
+/** Canonical DS calendar with Flow-owned sibling layout and translated content.
+ * @param {{id:string,name?:string,label:string,icon?:keyof typeof icons,value?:string,min?:string,max?:string,step?:string,required?:boolean,disabled?:boolean,readOnly?:boolean,error?:string,onInput?:(event:Event)=>void,onChange?:(event:Event)=>void,onBlur?:(event:Event)=>void}} p */
+export const FlowDateInput = (p) =>
+  html`<div data-flow="field" data-flow-date-input data-kv-design-system><span>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span>${DatePicker(
+    {
+      id: p.id,
+      name: p.name ?? p.id,
+      label: p.label,
+      labelHidden: true,
+      locale: flowLocale(),
+      value: p.value ?? '',
+      min: p.min,
+      max: p.max,
+      step: p.step,
+      required: p.required,
+      disabled: p.disabled,
+      readOnly: p.readOnly,
+      error: p.error,
+      onInput: p.onInput,
+      onChange: p.onChange,
+      onBlur: p.onBlur,
+    },
+  )}</div>`
+
+/** `name: null` leaves the input unnamed, outside any surrounding form's data.
+ * @param {{id:string,name?:string|null,label:string,icon?:keyof typeof icons,value?:string,placeholder?:string,type?:string,autocomplete?:string,required?:boolean,disabled?:boolean,min?:string,max?:string,step?:string,readOnly?:boolean,multiple?:boolean,onBlur?:(event:Event)=>void,onChange?:(event:Event)=>void,error?:string,onInput?:(event:Event)=>void}} p */
 export const FlowInput = (p) =>
-  html`<label data-flow="field" for=${p.id}
+  p.type === 'date'
+    ? FlowDateInput({ ...p, name: p.name ?? undefined })
+    : html`<label data-flow="field" for=${p.id}
     ><span id=${`${p.id}-label`}>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span
     ><input
       data-flow="input"
       data-flow-value=${p.value ?? ''}
       id=${p.id}
-      name=${p.name ?? p.id}
+      name=${p.name === null ? null : (p.name ?? p.id)}
       type=${p.type ?? 'text'}
       autocomplete=${p.autocomplete ?? null}
       min=${p.min ?? null}
@@ -88,10 +116,11 @@ export const FlowSearch = (p) =>
       on:search=${p.onInput}
   /></label>`
 
-/** @param {{label:string,value:string,options:readonly Option[],id?:string,name?:string,disabled?:boolean,invalid?:boolean,descriptionId?:string,onChange?:(event:Event)=>void}} p */
+/** @param {{label:string,value:string,options:readonly Option[],size?:'sm'|'md',id?:string,name?:string,disabled?:boolean,invalid?:boolean,descriptionId?:string,onChange?:(event:Event)=>void}} p */
 export const FlowSelect = (p) =>
-  html`<select
+  html`<span data-flow="select-wrap"><select
     data-flow="select"
+    data-size=${p.size ?? 'md'}
     id=${p.id ?? null}
     name=${p.name ?? null}
     disabled=${p.disabled ?? false}
@@ -107,7 +136,7 @@ export const FlowSelect = (p) =>
       (o) => o.value,
       (o) => html`<option value=${o.value} selected=${p.value === o.value}>${o.label}</option>`,
     )}
-  </select>`
+  </select><span data-flow="select-caret" aria-hidden="true">${FlowIcon('down')}</span></span>`
 
 /** `standalone` provides a native clickable label; use `native` inside an existing label.
  * @param {{label:string,checked:boolean,name?:string,value?:string,target?:'native'|'standalone',indeterminate?:boolean,disabled?:boolean,onChange?:(event:Event)=>void}} p */
@@ -387,4 +416,10 @@ export const FlowFrame = (p) =>
     <div data-flow="app-body">${p.children}</div>
   </div>`
 
-export { FlowLiveDoc, FlowLiveDocText, FlowLiveDocBlocks, FlowLiveDocLegacyBlocks } from './live-doc.mjs'
+export {
+  FlowLiveDoc,
+  FlowLiveDocText,
+  FlowLiveDocBlocks,
+  FlowLiveDocLegacyBlocks,
+  setFlowLiveDocEditor,
+} from './live-doc.mjs'

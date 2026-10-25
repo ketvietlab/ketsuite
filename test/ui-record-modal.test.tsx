@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { renderToString } from '@ketvietlab/ketjs-view'
+import { readFileSync, readdirSync } from 'node:fs'
+import { countingHost, effect, mount, renderToString, signal } from '@ketvietlab/ketjs-view'
+import type { HostNode } from '@ketvietlab/ketjs-view'
 import { ModalSheet } from '@ketvietlab/design-system'
 import {
   RECORD_NEW_ID,
@@ -35,8 +36,14 @@ import {
   resolveRecordModalLabel,
   recordLayerOwnsKey,
   recordFormOwnedByHost,
+  RECORD_ASK_CONFIRM,
+  RECORD_ISLAND_HOST,
+  recordDiscardAccepted,
+  recordReadDenied,
+  recordSubmitterLabel,
 } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 
+import { USER_RECORD_MODAL_LABELS } from '../packages/ketsuite/src/modules/user/modal-labels.ts'
 import { httpServerSource } from './helpers/ketjs-internals.ts'
 const runtime = readFileSync('packages/ketsuite/src/ui/client/record-modal.tsx', 'utf8')
 const bootstrap = httpServerSource()
@@ -47,6 +54,41 @@ test('record form ownership defers nested island submissions and keeps its own f
   assert.equal(recordFormOwnedByHost({ closest: () => host }, host), true)
   assert.equal(recordFormOwnedByHost({ closest: () => child }, host), false)
   assert.equal(recordFormOwnedByHost({ closest: () => null }, host), false)
+  // A page may host its island on a `div` that names it as well as on `ket-island`.
+  const asked: string[] = []
+  recordFormOwnedByHost(
+    {
+      closest: (selector: string) => {
+        asked.push(selector)
+        return host
+      },
+    },
+    host,
+  )
+  assert.deepEqual(asked, [RECORD_ISLAND_HOST])
+  assert.equal(RECORD_ISLAND_HOST, 'ket-island, div[data-ket-island]')
+  assert.match(runtime, /const selector = RECORD_ISLAND_HOST/u)
+})
+
+test('record modal: a refused read is titled as refused, with nothing to retry', () => {
+  assert.equal(recordReadDenied(403), true)
+  for (const status of [undefined, 401, 404, 409, 500, 503]) assert.equal(recordReadDenied(status), false)
+  assert.match(runtime, /failureStatus\.set\(result\.ok \? undefined : result\.status\)/u)
+  // Without the server's own words, a refusal says to ask for access rather than that reading failed.
+  assert.match(
+    runtime,
+    /result\.message \?\? \(denied \? 'recordModal\.denied' : 'recordModal\.loadFailed'\)/u,
+  )
+  const bodyAt = runtime.indexOf("if (status() === 'error' && recordReadDenied(failureStatus()))")
+  const denied = runtime.slice(bodyAt, runtime.indexOf("if (status() === 'error')\n", bodyAt))
+  assert.ok(bodyAt > 0 && denied.length > 0, 'the denied branch precedes the retryable one')
+  assert.match(denied, /title: t\('recordModal\.deniedTitle'\)/u)
+  assert.match(denied, /tone: 'warning'/u)
+  assert.doesNotMatch(denied, /Button|retry/iu, 'a refusal offers no retry')
+  // Every title a failed read shows (modal, client page, route page) follows the same rule.
+  assert.equal(runtime.match(/failureTitle\(\)/gu)?.length, 3)
+  assert.doesNotMatch(runtime, /\? t\('recordModal\.loadFailed'\)/u)
+  assert.ok(RECORD_MODAL_LABELS['recordModal.deniedTitle'] && RECORD_MODAL_LABELS['recordModal.denied'])
 })
 
 test('record keyboard ownership defers Escape and Tab to an open native dialog or an already handled event', () => {
@@ -101,7 +143,7 @@ test('record modal: a create action opens the same modal with the reserved new i
 test('record modal: a reopened record renders from the island cache and revalidates', () => {
   // Cached contexts show at once and are read again quietly behind them.
   assert.match(runtime, /const cached = definition\.cache === false \? undefined : cache\.get\(id\)/u)
-  assert.match(runtime, /envelope\.set\(cached\)[\s\S]*?quiet = true/u)
+  assert.match(runtime, /adopt\(cached\)[\s\S]*?quiet = true/u)
   // Bounded, and dropped by a successful command or a change announced for the kind.
   assert.match(runtime, /while \(cache\.size > RECORD_MODAL_CACHE_SIZE\)/u)
   assert.match(runtime, /cache\.delete\(current\.id\)/u)
@@ -284,7 +326,7 @@ test('record modal: the runtime owns focus, escape, inertness, drafts and collec
   // the render that disables the form.
   assert.match(runtime, /keepDrafts\(currentLayer, scope\)[\s\S]*?setRunning\(true\)/u)
   assert.match(runtime, /kept\.checks\[key\] = control\.checked/u)
-  assert.match(runtime, /if \(!mayDiscard\(topLayer\(\)\)\) return/u)
+  assert.match(runtime, /if \(!\(await mayDiscard\(topLayer\(\)\)\) \|\| dialog\(\) !== opened\) return/u)
   assert.match(runtime, /record\.inert = currentLayers\.length > 1/u)
   assert.match(runtime, /dialogReturnFocus/u)
   assert.match(runtime, /keepAllDrafts\(\)[\s\S]*?viewState\.set/u)
@@ -372,6 +414,19 @@ test('record modal: tabs another module adds follow the declared ones through th
   assert.match(visible, /tab\.visible\?\.\(context\) \?\? true/u)
 })
 
+test('record modal: a closing command tells the shell which address to read the collection at', () => {
+  // The modal leaves the address bar, then announces; the announcement still names the
+  // address without the record, so a refresh never brings the record back.
+  assert.match(
+    runtime,
+    /if \(after === 'close'\) \{\s*hide\('history', \(\) => announce\(true\)\);?\s*return;?\s*\}/u,
+  )
+  assert.match(
+    runtime,
+    /closing\s*\?\s*\{ href: new URL\(recordModalClosedHref\(location\.href\), location\.href\)\.href \}/u,
+  )
+})
+
 test('record modal: tab layout is owned by the runtime instead of module views', () => {
   assert.match(runtime, /return TabbedView\(\{/u)
   assert.match(runtime, /body = active \? active\.view\(context\)/u)
@@ -405,10 +460,27 @@ test('record modal: the loading state never shows a label key', () => {
     assert.doesNotMatch(resolveRecordModalLabel(key, {}), /^recordModal\./u, `${key} resolves to words`)
 })
 
+test('record modal: every runtime label a module asks for has a default and both languages', () => {
+  const root = 'packages/ketsuite/src/modules'
+  const asked = new Set<string>()
+  for (const file of readdirSync(root, { recursive: true }) as string[]) {
+    if (!/\.tsx?$/u.test(file)) continue
+    const source = readFileSync(`${root}/${file}`, 'utf8')
+    for (const match of source.matchAll(/\bc\.t\('(recordModal\.[a-zA-Z]+)'\)/gu))
+      asked.add(match[1] as string)
+  }
+  assert.ok(asked.has('recordModal.save'), 'modules label their save buttons through the runtime')
+  for (const key of asked) {
+    assert.ok(RECORD_MODAL_LABELS[key], `a default exists for ${key}`)
+    assert.ok(USER_RECORD_MODAL_LABELS.vi[key], `a Vietnamese label exists for ${key}`)
+    assert.ok(USER_RECORD_MODAL_LABELS.en[key], `an English label exists for ${key}`)
+  }
+})
+
 test('record modal: read failures replace the loading title and keep retry available', () => {
   assert.match(
     runtime,
-    /title:\s*context\s*\? definition\.title\(context\)\s*: t\(status\(\) === 'error' \? 'recordModal.loadFailed' : 'recordModal.loading'\)/u,
+    /title:\s*context\s*\? definition\.title\(context\)\s*: status\(\) === 'error'\s*\? failureTitle\(\)\s*: t\('recordModal\.loading'\)/u,
   )
   const errorBody = runtime.slice(
     runtime.indexOf("if (status() === 'error')"),
@@ -517,9 +589,10 @@ test('record modal: a command that leaves the modal open says it worked', () => 
   )
   // One that closes says it by closing; a dialog's ancillary mutation that keeps its draft
   // (a fresh quote) changed nothing the reader saved, so it says nothing.
+  // A command whose view shows what it returned (a password shown once) has already answered.
   assert.match(
     runtime,
-    /if \(after !== 'close' && after === declared && !\(scope === 'dialog' && command\.retainDialogDraft\)\)\s*saved\.set\(true\)/u,
+    /if \(\s*after !== 'close' &&\s*after === declared &&\s*!\(scope === 'dialog' && command\.retainDialogDraft\) &&\s*command\.showsOutcome !== true\s*\)\s*saved\.set\(true\)/u,
   )
   // It is never stale: a new submit, another record and closing all clear it.
   assert.match(runtime, /showBusy\.set\(value\)\s*\n\s*if \(value\) saved\.set\(false\)/u)
@@ -539,11 +612,139 @@ test('record modal: a multi-step command stops at the first failing call and ski
   assert.match(runtime, /if \(!result\.ok\) break/u)
 })
 
-test('record modal: a command may ask before it runs, and a decline leaves the record untouched', () => {
+test('record modal: a command may ask before it runs, in the shared dialog, and a decline leaves the record untouched', () => {
   const runAt = runtime.indexOf('const run = async')
   const run = runtime.slice(runAt, runtime.indexOf('setRunning(true)', runAt))
-  assert.match(run, /if \(command\.confirm\)/u)
-  assert.match(run, /if \(message && !globalThis\.confirm\(message\)\) return/u)
+  assert.match(run, /const question = command\.confirm\?\.\(context\)/u)
+  assert.match(run, /const label = recordSubmitterLabel\(submitter\) \?\? t\('recordModal\.confirm'\)/u)
+  assert.match(run, /cancelLabel: t\('recordModal\.back'\)/u)
+  // The answer arrives later: the record must still be the one asked about, with nothing running.
+  assert.match(run, /if \(!accepted \|\| open\(\) !== current \|\| running\(\)\) return/u)
+  assert.doesNotMatch(runtime, /globalThis\.confirm/u, 'the runtime never opens the browser confirm')
+  // The question names the act by the button that asked.
+  assert.equal(recordSubmitterLabel({ getAttribute: () => 'Huỷ đơn' } as unknown as Element), 'Huỷ đơn')
+  assert.equal(
+    recordSubmitterLabel({
+      getAttribute: () => null,
+      querySelector: () => ({ textContent: ' Nhận hàng ' }),
+    } as unknown as Element),
+    'Nhận hàng',
+  )
+  assert.equal(recordSubmitterLabel(null), null)
+})
+
+test('record modal: the runtime asks in a ConfirmDialog, focused on keeping, and answers once', async () => {
+  const { transform } = await import('esbuild')
+  const source = runtime.slice(runtime.indexOf('const ask = ('), runtime.indexOf('const afterRender = ('))
+  const { code } = await transform(source, { loader: 'ts', target: 'es2022' })
+  class Element {
+    inert = false
+    focused = 0
+    isConnected = true
+    focus() {
+      this.focused++
+    }
+  }
+  const store = <T,>(initial: T) => {
+    let value = initial
+    return Object.assign(() => value, { set: (next: T) => (value = next) })
+  }
+  const asking = store<null | { title: string; confirmLabel: string; settle: (yes: boolean) => void }>(null)
+  const layer = Object.assign(new Element(), { querySelectorAll: () => [] })
+  const keep = new Element()
+  const trigger = new Element()
+  const queried: string[] = []
+  const root = {
+    querySelector: (selector: string) => {
+      queried.push(selector)
+      return keep
+    },
+  }
+  const dirty = {
+    values: { name: 'Edited' },
+    initialValues: { name: 'Original' },
+    checks: {},
+    initialChecks: {},
+  }
+  const drafts = store(dirty)
+  // An answer that is already known, or `pending` when the runtime would wait for one.
+  const settled = (answer: Promise<boolean>) => Promise.race([answer, Promise.resolve('pending')])
+  const { ask, mayDiscard } = new Function(
+    'HTMLElement',
+    'HTMLInputElement',
+    'document',
+    'requestAnimationFrame',
+    'asking',
+    'layers',
+    'page',
+    'releaseInert',
+    'root',
+    'inertOutside',
+    'ASK_LAYER',
+    'keepDrafts',
+    'dialog',
+    'topLayer',
+    'dialogDrafts',
+    'recordDrafts',
+    'recordDiscardAccepted',
+    'definition',
+    't',
+    `${code}; return { ask, mayDiscard }`,
+  )(
+    Element,
+    Element,
+    { activeElement: trigger },
+    (callback: () => void) => callback(),
+    asking,
+    () => [layer],
+    null,
+    null,
+    root,
+    () => () => undefined,
+    '[data-record-ask]',
+    () => undefined,
+    () => null,
+    () => layer,
+    drafts,
+    drafts,
+    recordDiscardAccepted,
+    { dialogs: {} },
+    (key: string) => key,
+  )
+  // A dirty draft asks; the question is the shared one and the safe answer has focus.
+  const declined = mayDiscard(layer)
+  const question = asking()!
+  assert.equal(question.title, 'recordModal.unsaved')
+  assert.equal(question.confirmLabel, 'recordModal.discard')
+  assert.equal(layer.inert, true, 'the record under the question is out of reach')
+  assert.deepEqual(queried, ['[data-record-ask] [data-client-modal-close] button'])
+  assert.equal(keep.focused, 1)
+  // A second question while one is open is declined rather than stacked.
+  assert.equal(await settled(ask({ title: 'Other' })), false)
+  question.settle(false)
+  question.settle(true)
+  assert.equal(await declined, false, 'only the first answer counts')
+  assert.equal(asking(), null)
+  assert.equal(layer.inert, false, 'the record is back in reach')
+  assert.equal(trigger.focused, 1, 'declining returns focus to where the question was asked')
+  const accepted = mayDiscard(layer)
+  // A stale answer to an earlier question never dismisses the one on screen.
+  question.settle(true)
+  assert.notEqual(asking(), null, 'the open question stays until it is answered')
+  asking()!.settle(true)
+  assert.equal(await accepted, true)
+  assert.equal(trigger.focused, 1, 'accepting leaves focus to what happens next')
+  // Nothing typed: nothing to ask.
+  drafts.set({ ...dirty, values: { name: 'Original' } })
+  assert.equal(await settled(mayDiscard(layer)), true)
+  assert.equal(asking(), null)
+  // The question's layer is a modal layer for keys, never a record layer.
+  assert.match(runtime, /\.filter\(\(layer\) => !layer\.closest\(ASK_LAYER\)\)/u)
+  assert.match(runtime, /if \(question\) question\.settle\(false\)\s*else void close\(\)/u)
+  assert.match(runtime, /button\[value="\$\{RECORD_ASK_CONFIRM\}"\]/u)
+  assert.match(runtime, /question\.settle\(Boolean\(confirmed\)\)/u)
+  assert.equal(runtime.match(/\{askLayer\(\)\}/gu)?.length, runtime.match(/\{dialogLayer\(\)\}/gu)?.length)
+  assert.equal(RECORD_ASK_CONFIRM, 'record-ask-confirm')
 })
 
 test('record modal: a record wears its state beside the title, inside the head', () => {
@@ -899,6 +1100,14 @@ test('record page: supporting facts stay in an accessible rail before stacked wo
   assert.match(markup, /data-aside-stacked="before"/u)
   assert.match(markup, /Work history/u)
   assert.match(markup, /Customer and SLA/u)
+  // Reference facts may follow the record instead; the definition chooses, both page kinds honour it.
+  const after = renderToString(
+    recordPageFrame({ title: 'Invoice', body: 'Lines', aside: 'Totals', asideWhenStacked: 'after' }),
+  )
+  assert.doesNotMatch(after, /data-aside-stacked/u)
+  assert.ok(after.indexOf('Lines') < after.indexOf('Totals'), 'the rail follows the record')
+  assert.match(runtime, /asideWhenStacked: definition\.pageAsideWhenStacked \?\? 'before'/u)
+  assert.match(runtime, /asideWhenStacked: definition\.pageAsideWhenStacked,/u)
 })
 
 test('record page: the record runtime renders a page that leaves for its collection and owns no history', () => {
@@ -907,7 +1116,7 @@ test('record page: the record runtime renders a page that leaves for its collect
   assert.match(runtime, /: page\s*\? `\[data-ui="record-page"\], \$\{MODAL_LAYER\}`\s*: MODAL_LAYER/u)
   assert.match(runtime, /if \(page\) return pageView\(page\)/u)
   // Closing a page (Close, a delete that closes) leaves through the shell's link handling.
-  const hide = runtime.slice(runtime.indexOf('const hide = ('), runtime.indexOf('const close = ('))
+  const hide = runtime.slice(runtime.indexOf('const hide = ('), runtime.indexOf('const close = async ('))
   assert.match(hide, /if \(page && how !== 'none'\) \{\s*leave\(\)\s*return/u)
   // Nothing outside the page turns inert and focus is not forced into it.
   const show = runtime.slice(runtime.indexOf('const show = ('), runtime.indexOf('const hide = ('))
@@ -964,6 +1173,7 @@ test('record page: the server writes the frame the browser adopts, titled and on
     'loading',
     'back',
     'tab',
+    'dialog',
     'width',
     'trail',
     'trailLabel',
@@ -996,7 +1206,10 @@ test('record page: the runtime keeps a page a page — no history, no fence, no 
   )
   // Closing a dialog leaves the address alone; the page itself never closes.
   assert.match(runtime, /if \(current && !serverPage\)\s*history\.replaceState/u)
-  assert.match(runtime, /if \(serverPage\) return\s*if \(!mayDiscard\(recordLayer\(\)\)\) return/u)
+  assert.match(
+    runtime,
+    /if \(serverPage\) return\s*const current = open\(\)\s*if \(!\(await mayDiscard\(recordLayer\(\)\)\) \|\| open\(\) !== current\) return/u,
+  )
   // What would close the modal closes the dialog and reads the record again in place.
   assert.match(runtime, /serverPage &&[\s\S]{0,200}declared === 'close'[\s\S]{0,200}\? \{ dialog: null \}/u)
 })
@@ -1032,7 +1245,10 @@ test('record page: both client-read and route-context factories adopt their serv
     back: '/admin/records',
     width: 'wide',
   }
-  const client = createRecordPage(definition, { path: (id) => `/admin/records/${id}` })(clientProps)
+  const client = createRecordPage(definition, { path: (id) => `/admin/records/${id}` })({
+    ...clientProps,
+    envelope: { data: { name: 'Destination' }, messages: {} },
+  })
   assert.equal(renderToString(client.view()), renderToString(recordPageLoading(clientProps)))
   const routeProps = {
     id: 'r-1',
@@ -1050,30 +1266,48 @@ test('record page: both client-read and route-context factories adopt their serv
   }
 })
 
-test('record page: Back guards client-read drafts and returns; route-context profiles stay open', () => {
-  const close = runtime.slice(runtime.indexOf('const close = ('), runtime.indexOf('const run = async'))
+test('record page: Back guards client-read drafts and returns; route-context profiles stay open', async () => {
+  const close = runtime.slice(runtime.indexOf('const close = async ('), runtime.indexOf('const run = async'))
   const tail = close.slice(close.indexOf('// Route-context pages'), close.lastIndexOf('}'))
-  const run = new Function('serverPage', 'mayDiscard', 'recordLayer', 'hide', tail)
+  const AsyncFunction = (async () => undefined).constructor as FunctionConstructor
+  const run = new AsyncFunction('serverPage', 'mayDiscard', 'recordLayer', 'hide', 'open', tail)
   const calls: string[] = []
   const layer = {}
+  const current = { id: 'r-1' }
+  let opened: unknown = current
   const invoke = (serverPage: boolean, discard: boolean) =>
     run(
       serverPage,
-      (current: unknown) => {
-        assert.equal(current, layer)
+      async (value: unknown) => {
+        assert.equal(value, layer)
         calls.push('guard')
         return discard
       },
       () => layer,
       (how: string) => calls.push(how),
+      () => opened,
     )
-  invoke(false, true)
+  await invoke(false, true)
   assert.deepEqual(calls, ['guard', 'history'])
   calls.length = 0
-  invoke(false, false)
+  await invoke(false, false)
   assert.deepEqual(calls, ['guard'], 'canceling discard keeps the client-read page')
   calls.length = 0
-  invoke(true, true)
+  // A record that changed while the question was open is not the one to close.
+  const later = run(
+    false,
+    async () => {
+      opened = { id: 'r-2' }
+      return true
+    },
+    () => layer,
+    (how: string) => calls.push(how),
+    () => opened,
+  )
+  await later
+  assert.deepEqual(calls, [], 'the answer applies only to the record it was asked about')
+  opened = current
+  await invoke(true, true)
   assert.deepEqual(calls, [], 'a route-context profile has no close action')
   assert.match(runtime, /\(!serverPage \|\| inModal\.matches\('\[data-ui="modal-layer"\]'\)\)/u)
 })
@@ -1208,4 +1442,431 @@ test('record modal: a chosen picture previews from an object URL the runtime rev
   assert.match(runtime, /file\?\.type\.startsWith\('image\/'\) \? URL\.createObjectURL\(file\) : ''/u)
   assert.match(runtime, /if \(previous\) \{\s*URL\.revokeObjectURL\(previous\)/u)
   assert.match(runtime, /for \(const src of filePreviews\) URL\.revokeObjectURL\(src\)/u)
+})
+
+test('record modal: a relation change retains its selected value when draft capture detaches the old select', async () => {
+  const { applyRecordControlState } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const control = { value: 'chosen-property' }
+  let selected = ''
+  applyRecordControlState(
+    control,
+    () => {
+      control.value = ''
+    },
+    (value) => {
+      selected = value
+    },
+  )
+  assert.equal(selected, 'chosen-property')
+})
+
+test('record modal: nested islands retain unchanged contexts and replace the controller host when props change', async () => {
+  const { recordIsland } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const host = countingHost(),
+    root = host.root()
+  const props = signal({ id: 'dependent-type', config: { disabled: true, propertyId: '' } })
+  const mounted = mount(host, root, () => recordIsland('backend.relation-select', props()))
+  const island = (node: HostNode): HostNode | undefined =>
+    node.tag === 'ket-island' ? node : node.children?.map(island).find(Boolean)
+  const first = island(root)
+  assert.ok(first)
+  props.set({ id: 'dependent-type', config: { disabled: true, propertyId: '' } })
+  assert.equal(island(root), first)
+  props.set({ id: 'dependent-type', config: { disabled: false, propertyId: 'selected' } })
+  assert.notEqual(island(root), first)
+  assert.equal(JSON.parse(island(root)!.attrs!['data-props']!).config.disabled, false)
+  mounted.dispose()
+})
+
+test('record modal: request context keeps tenant branch locale and excludes modal and business query fields', async () => {
+  const { recordRequestHref } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const current =
+    'https://hotel.test/admin/hospitality/rooms?company=hotel&companies=a&companies=b&branch=front&lang=vi&q=guest&record=hospitality.room:one'
+  const href = new URL(recordRequestHref('/admin/hospitality/rooms/one/record-context', current))
+  assert.equal(href.searchParams.get('company'), 'hotel')
+  assert.deepEqual(href.searchParams.getAll('companies'), ['a', 'b'])
+  assert.equal(href.searchParams.get('branch'), 'front')
+  assert.equal(href.searchParams.get('lang'), 'vi')
+  assert.equal(href.searchParams.has('q'), false)
+  assert.equal(href.searchParams.has('record'), false)
+  assert.equal(
+    new URL(recordRequestHref('/context?company=other&lang=en', current)).searchParams.get('company'),
+    'other',
+  )
+  assert.throws(() => recordRequestHref('https://outside.test/context', current), /same-origin/)
+})
+
+test('record modal: route context forwards only declared parent and pagination keys with execution scope', async () => {
+  const { recordContextRequestHref } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const current =
+    'https://hotel.test/admin/hospitality/properties/one?company=hotel&branch=front&lang=vi&property=one&building=tower&itemsPage=3&q=guest&record=hospitality.fee:new'
+  const target = new URL(recordContextRequestHref('/context', current, ['property', 'building', 'itemsPage']))
+  assert.equal(target.searchParams.get('company'), 'hotel')
+  assert.equal(target.searchParams.get('branch'), 'front')
+  assert.equal(target.searchParams.get('lang'), 'vi')
+  assert.equal(target.searchParams.get('property'), 'one')
+  assert.equal(target.searchParams.get('building'), 'tower')
+  assert.equal(target.searchParams.get('itemsPage'), '3')
+  assert.equal(target.searchParams.has('q'), false)
+  assert.equal(target.searchParams.has('record'), false)
+  assert.equal(
+    new URL(recordContextRequestHref('/context?property=two', current, ['property'])).searchParams.get(
+      'property',
+    ),
+    'two',
+  )
+  assert.throws(
+    () => recordContextRequestHref('https://external.test/context', current, ['property']),
+    /same-origin/,
+  )
+})
+
+test('record modal: a pending close owns only its collection return and preserves filter and tenant boundaries', async () => {
+  const { recordModalReturnMatches } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const expected = 'https://hotel.test/admin/hospitality/rooms?company=hotel&q=201&lang=vi'
+  assert.equal(
+    recordModalReturnMatches(
+      expected,
+      'https://hotel.test/admin/hospitality/rooms?lang=vi&q=201&company=hotel',
+    ),
+    true,
+  )
+  for (const current of [
+    expected.replace('company=hotel', 'company=other'),
+    expected.replace('q=201', 'q=202'),
+    expected.replace('/rooms?', '/stays?'),
+    `${expected}&record=hospitality.room:one`,
+    expected.replace('https://hotel.test', 'https://other.test'),
+  ])
+    assert.equal(recordModalReturnMatches(expected, current), false)
+})
+
+test('record modal: domain refusal message keys retain field identity and resolve localized repair text', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({
+      ok: true,
+      value: {
+        ok: false,
+        errors: [
+          {
+            field: 'taxExemptReason',
+            code: 'tax_exempt_reason',
+            messageKey: 'hospitality_billing.validation.tax_exempt_reason',
+          },
+        ],
+      },
+    }),
+  )
+  const result = await callRecordFunction('hospitality_billing.saveChargeRule', {})
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.equal(result.issues[0]?.field, 'taxExemptReason')
+  assert.equal(result.issues[0]?.messageKey, 'hospitality_billing.validation.tax_exempt_reason')
+  assert.equal(
+    resolveRecordModalIssue(result.issues[0]!.messageKey!, {
+      messages: { 'hospitality_billing.validation.tax_exempt_reason': 'Ghi lý do từ 3 đến 2.000 ký tự.' },
+    }),
+    'Ghi lý do từ 3 đến 2.000 ký tự.',
+  )
+  assert.equal(
+    resolveRecordModalIssue('unknown.validation.private', {}),
+    RECORD_MODAL_LABELS['recordModal.saveFailed'],
+  )
+})
+
+test('record page: Hospitality dialogs and reload preserve tenant branches and declared history pages', async () => {
+  const { recordClientPageHref } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const current =
+    'https://hotel.test/admin/hospitality/reservations/one?company=hotel&companies=a&companies=b&branch=front&branches=x&branches=y&lang=vi&historyPage=2&assignmentPage=3&returnTo=%2Fadmin%2Fhospitality%2Ffront-desk&q=guest'
+  const keys = ['historyPage', 'assignmentPage', 'returnTo']
+  const opened = new URL(
+    recordClientPageHref('/admin/hospitality/reservations/one', current, null, 'amend', keys),
+    current,
+  )
+  assert.equal(opened.searchParams.get('company'), 'hotel')
+  assert.deepEqual(opened.searchParams.getAll('companies'), ['a', 'b'])
+  assert.deepEqual(opened.searchParams.getAll('branches'), ['x', 'y'])
+  assert.equal(opened.searchParams.get('branch'), 'front')
+  assert.equal(opened.searchParams.get('lang'), 'vi')
+  assert.equal(opened.searchParams.get('historyPage'), '2')
+  assert.equal(opened.searchParams.get('assignmentPage'), '3')
+  assert.equal(opened.searchParams.get('returnTo'), '/admin/hospitality/front-desk')
+  assert.equal(opened.searchParams.get('dialog'), 'amend')
+  assert.equal(opened.searchParams.has('q'), false)
+  const closed = new URL(
+    recordClientPageHref('/admin/hospitality/reservations/one', opened.href, null, null, keys),
+    current,
+  )
+  assert.equal(closed.searchParams.get('company'), 'hotel')
+  assert.equal(closed.searchParams.get('historyPage'), '2')
+  assert.equal(closed.searchParams.has('dialog'), false)
+  assert.throws(() => recordClientPageHref('https://outside.test/record', current, null), /same-origin/)
+})
+
+test('record page: a server-rendered destination adopts its requested dialog after fragment navigation', () => {
+  const body = /if \(serverPage\) \{\n {10}adopted.set\(true\)([\s\S]*?)\n {10}return\n {8}\}/u.exec(runtime)
+  assert.ok(body)
+  const execute = new Function(
+    'pageProps',
+    'definition',
+    'dialog',
+    'afterRender',
+    'status',
+    'load',
+    'open',
+    body[1]!.replace('open()!.id', 'open().id'),
+  )
+  const events: unknown[] = []
+  const invoke = (name: string | null) =>
+    execute(
+      { dialog: name },
+      { dialogs: { hold: {} } },
+      { set: (value: unknown) => events.push(value) },
+      () => events.push('focused'),
+      () => 'ready',
+      () => events.push('load'),
+      () => ({ id: 'booking' }),
+    )
+  invoke('hold')
+  assert.deepEqual(events, [{ name: 'hold', params: {} }, 'focused'])
+  invoke(null)
+  invoke('unknown')
+  invoke('toString')
+  assert.equal(events.length, 2, 'missing, unknown and inherited names never open a step')
+})
+
+test('record page: destination dialog props take precedence over the previous fragment URL', () => {
+  const expression =
+    /show\(\s*page\.props\.id,\s*tab,\s*'none',\s*undefined,\s*(page\.props\.dialog[^\n]+?),?\s*\)\n/u.exec(
+      runtime,
+    )
+  assert.ok(expression)
+  const resolve = new Function('page', 'location', `return ${expression[1]}`)
+  const location = { href: 'https://hotel.test/admin/hospitality/front-desk?dialog=old' }
+  assert.equal(resolve({ props: { dialog: 'hold' } }, location), 'hold')
+  assert.equal(resolve({ props: { dialog: '' } }, location), '')
+  assert.equal(resolve({ props: {} }, location), 'old')
+})
+
+test('record page: same-record links retain an action dialog while changing selected charge context', () => {
+  const start = runtime.indexOf('// Switching tab is not discarding:')
+  const finish = runtime.indexOf('            }\n            show(', start)
+  assert.ok(start >= 0 && finish > start)
+  const body = runtime
+    .slice(start, finish)
+    .replaceAll('querySelector<HTMLElement>', 'querySelector')
+    .replaceAll('closest<HTMLElement>', 'closest')
+  const execute = new Function(
+    'target',
+    'recordLayer',
+    'keepDrafts',
+    'issues',
+    'outcome',
+    'show',
+    "let element = null, dialogReturnFocus = null, url = new URL('https://ket.test/admin/hospitality/folios/folio-1');\n" +
+      body,
+  )
+  const calls: unknown[][] = []
+  const show = (...args: unknown[]) => calls.push(args)
+  const signal = { set: () => undefined }
+  execute(
+    { id: 'folio-1', tab: undefined, dialog: 'void' },
+    () => null,
+    () => undefined,
+    signal,
+    signal,
+    show,
+  )
+  assert.deepEqual(calls[0]?.slice(0, 3), ['folio-1', null, 'push'])
+  assert.equal(calls[0]?.[4], 'void', 'opening a charge action must retain its dialog')
+  execute(
+    { id: 'folio-1', tab: 'history', dialog: undefined },
+    () => null,
+    () => undefined,
+    signal,
+    signal,
+    show,
+  )
+  assert.deepEqual(calls[1]?.slice(0, 3), ['folio-1', 'history', 'replace'])
+  assert.equal(calls[1]?.[4], undefined)
+})
+
+test('record page: native search submits normally and command submits remain atomic', () => {
+  const start = runtime.indexOf("          'submit',")
+  const end = runtime.indexOf('          { signal: lifetime },', start)
+  const handler = runtime
+    .slice(start, end)
+    .replace(/^\s*'submit',\s*/u, '')
+    .replace(/,\s*$/u, '')
+    .replace('(event as SubmitEvent)', 'event')
+  class Form {}
+  class Submitter {
+    name: string
+    value: string
+    constructor(name: string, value: string) {
+      this.name = name
+      this.value = value
+    }
+  }
+  class Data {
+    get() {
+      return null
+    }
+  }
+  const calls: unknown[] = []
+  const callback = new Function(
+    'HTMLFormElement',
+    'HTMLButtonElement',
+    'FormData',
+    'root',
+    'RECORD_COMMAND_FIELD',
+    'run',
+    'recordFormOwnedByHost',
+    `return (${handler})`,
+  )(
+    Form,
+    Submitter,
+    Data,
+    { contains: () => true },
+    '__command',
+    (...args: unknown[]) => calls.push(args),
+    () => true,
+  )
+  let prevented = 0
+  const event = { target: new Form(), submitter: new Submitter('', ''), preventDefault: () => prevented++ }
+  callback(event)
+  assert.equal(prevented, 0, 'a native GET search must navigate')
+  assert.equal(calls.length, 0)
+  callback({ ...event, submitter: new Submitter('__command', 'confirm') })
+  assert.equal(prevented, 1)
+  assert.equal(calls.length, 1)
+  assert.equal((calls[0] as unknown[])[0], 'confirm')
+})
+
+test('record page: selected quote context reaches the read before a same-tab click returns', () => {
+  const start = runtime.indexOf('            if (changedContext) {')
+  const end = runtime.indexOf('            if (current?.id === target.id) {', start)
+  const execute = new Function(
+    'changedContext',
+    'contextQuery',
+    'url',
+    'previousUrl',
+    'keepDrafts',
+    'recordLayer',
+    'history',
+    'current',
+    'target',
+    'load',
+    runtime.slice(start, end),
+  )
+  const previousUrl = new URL('http://example.test/new?company=a&search=1')
+  let recorded = '',
+    readUrl = ''
+  execute(
+    true,
+    ['company', 'search', 'ratePlanId'],
+    new URL('http://example.test/new?company=a&search=1&ratePlanId=rate-2'),
+    previousUrl,
+    () => undefined,
+    () => null,
+    {
+      state: {},
+      replaceState: (_state: unknown, _title: string, href: string) => {
+        recorded = href
+      },
+    },
+    { id: 'new' },
+    { id: 'new' },
+    () => {
+      readUrl = recorded
+    },
+  )
+  assert.equal(new URL(readUrl).searchParams.get('ratePlanId'), 'rate-2')
+  assert.equal(new URL(readUrl).searchParams.get('company'), 'a')
+})
+
+test('record page: fragment mount adopts destination search context after hydration without reading the previous URL', () => {
+  const start = runtime.indexOf('          if (page.props.envelope) {')
+  const end = runtime.indexOf('          show(\n            page.props.id,', start)
+  assert.ok(start > 0 && end > start)
+  const execute = new Function(
+    'page',
+    'open',
+    'envelope',
+    'status',
+    runtime.slice(start, end).replace(' as RecordContextEnvelope<Data>', ''),
+  )
+  const received: unknown[] = []
+  const next = { data: { query: { adults: 1, search: '1', ratePlanId: 'destination-rate' } } }
+  execute(
+    { props: { id: 'new', envelope: next } },
+    { set: (value: unknown) => received.push(value) },
+    { set: (value: unknown) => received.push(value) },
+    { set: (value: unknown) => received.push(value) },
+  )
+  assert.deepEqual(received, [{ id: 'new', tab: '' }, next, 'ready'])
+  execute(
+    { props: { id: 'new' } },
+    { set: () => assert.fail('no preload') },
+    { set: () => assert.fail('no preload') },
+    { set: () => assert.fail('no preload') },
+  )
+})
+
+test('record modal: a created record gets its own clean draft baseline under synchronous rendering', async () => {
+  const { recordDraftHasChanges } = await import('../packages/ketsuite/src/ui/client/record-modal.tsx')
+  const empty = () => ({
+    values: {} as Record<string, string>,
+    checks: {},
+    initialValues: {} as Record<string, string>,
+    initialChecks: {},
+  })
+  const recordDrafts = signal(empty())
+  const envelope = signal<{ title: string; description: string } | null>({ title: 'Deluxe', description: '' })
+  // A real signal effect represents the fields registering their initial values.
+  const dispose = effect(() => {
+    const row = envelope()
+    if (!row) return
+    const draft = recordDrafts()
+    for (const [name, value] of Object.entries(row)) draft.initialValues[name] ??= value
+  })
+  const start = runtime.indexOf('      if (!sameRecord) {', runtime.indexOf('    const show = ('))
+  const end = runtime.indexOf('      if (sameRecord &&', start)
+  assert.ok(start > 0 && end > start)
+  const bindings = {
+    sameRecord: false,
+    tallestRecordHeight: 0,
+    pendingEntryDialog: null,
+    entryDialog: null,
+    returnFocus: null,
+    opener: {},
+    issues: signal([]),
+    saved: signal(false),
+    recordDrafts,
+    dialogDrafts: signal(empty()),
+    dialogViewState: signal({}),
+    viewState: signal({}),
+    outcome: signal(null),
+    dialog: signal(null),
+    dialogReturnFocus: null,
+    envelope,
+    emptyDraftState: empty,
+    id: 'room-type:deluxe:en',
+    load: () => {},
+  }
+  try {
+    new Function(...Object.keys(bindings), runtime.slice(start, end))(...Object.values(bindings))
+    const saved = { title: 'Deluxe room', description: 'A saved room description.' }
+    envelope.set(saved)
+    recordDrafts.set({ ...recordDrafts(), values: { ...saved } })
+    assert.equal(
+      recordDraftHasChanges(recordDrafts()),
+      false,
+      'saving and opening the new record is not an edit',
+    )
+    recordDrafts.set({ ...recordDrafts(), values: { ...saved, description: 'Unsaved changes' } })
+    assert.equal(recordDraftHasChanges(recordDrafts()), true, 'later edits still require the discard guard')
+  } finally {
+    dispose()
+  }
 })

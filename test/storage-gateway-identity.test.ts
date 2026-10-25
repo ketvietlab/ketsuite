@@ -10,6 +10,7 @@ test('private downloads honor resolved gateway identity, permission and company 
   const dir = await mkdtemp(join(tmpdir(), 'ket-storage-gateway-'))
   const app = defineDeployment({
     name: 'gatewayfiles',
+    companies: true,
     modules: [address, partner, company, storage],
     serve: {
       sessions: { anonymous: { company: 'acme' } },

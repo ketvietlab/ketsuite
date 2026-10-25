@@ -4,7 +4,10 @@ import { globSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { createRoot, domHost, renderToString } from '@ketvietlab/ketjs-view'
 import { document as testDocument } from './helpers/dom.ts'
-import { ketTableGroupedDemoConfig } from '../packages/design-system/src/interactions/ket-table/demo.ts'
+import {
+  ketTableDemoConfig,
+  ketTableGroupedDemoConfig,
+} from '../packages/design-system/src/interactions/ket-table/demo.ts'
 import { createKetTableView } from '../packages/design-system/src/interactions/ket-table/index.tsx'
 import {
   AppShell,
@@ -70,6 +73,7 @@ import {
   RelationPicker,
   ResourceList,
   RecordActions,
+  FormActions,
   FormGrid,
   RecordForm,
   Section,
@@ -219,7 +223,7 @@ test('design system: foundations expose reference, semantic and component tokens
   assert.match(tokens, /--kv-table-header-height: 2\.625rem/)
   assert.match(tokens, /--kv-radius-md: 0\.4375rem/)
   assert.match(tokens, /--kv-radius-app-region: 0/)
-  assert.match(tokens, /--kv-font-sans: "Inter"/)
+  assert.match(tokens, /--kv-font-sans:\s+"KÉT Sans", "Inter", /)
   assert.match(tokens, /--kv-font-display: var\(--kv-font-sans\)/)
   assert.doesNotMatch(tokens, /Iowan Old Style|Palatino Linotype|ui-serif/)
 })
@@ -577,6 +581,18 @@ test('design system: a label sits beside its control from tablet width and above
   )
   // Label stacking belongs to Field; form columns may align their label tracks.
   assert.doesNotMatch(recordForm, /\[data-ui="field-label"\]/u)
+})
+
+test('design system: a form with only a button keeps its width beside other forms', () => {
+  // Inline-size containment sizes a form as if it were empty, so in a row of inline forms
+  // (an activity's complete, reschedule and cancel) the cancel form shrank to nothing and
+  // its button spilled out of the card.
+  const css = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8')
+  assert.match(css, /\[data-ui="record-form"\] \{[^}]*container-type: inline-size;/u)
+  assert.match(
+    css,
+    /\[data-ui="record-form"\]\[data-layout="inline"\]\[data-has-fields="false"\] \{\s+container-type: normal;\s+\}/u,
+  )
 })
 
 test('design system: single checkboxes keep the box beside a full-width label', () => {
@@ -1029,14 +1045,27 @@ test('design system: canonical page titles share one dense hierarchy', () => {
   }
 })
 
-test('design system: page titles use Polaris headingLg at every viewport', () => {
+test('design system: list command forms own a full row without changing inline actions', () => {
+  const html = renderToString(
+    <ListChrome
+      commands={<Field id="command-date" name="date" label="Date" type="date" layout="inline" />}
+    />,
+  )
+  assert.match(html, /data-ui="list-commands"/)
+  assert.match(html, /data-layout="inline"/)
+  assert.doesNotMatch(html, /data-ui="list-actions"/)
+  assert.doesNotMatch(renderToString(<ListChrome />), /data-ui="list-commands"/)
+})
+
+test('design system: page titles share the desktop and compact identity scale', () => {
   const tokens = readFileSync('packages/design-system/src/foundations/tokens.css', 'utf8')
   assert.match(tokens, /--kv-text-xl: 1\.25rem;/)
   assert.match(tokens, /--kv-line-xl: 1\.5rem;/)
   assert.deepEqual(
     [...css.matchAll(/--kv-page-title-size: ([^;]+);/g)].map((match) => match[1]),
-    ['var(--kv-text-xl)'],
+    ['var(--kv-text-2xl)', '1rem'],
   )
+  assert.match(tokens, /--kv-page-title-line: var\(--kv-leading-tight\);/)
   assert.doesNotMatch(patternCss, /--kv-page-title-size:/)
 
   const identity = css.match(/\[data-kv-page-identity="title"\]\s*\{(?<body>[^}]+)\}/)?.groups?.body
@@ -1830,8 +1859,11 @@ test('design system: modal sheets expose route metadata and become fullscreen on
     css.match(
       /@media \(max-width: 47\.9375rem\)[\s\S]*?\[data-kind="confirm"\][\s\S]*?\[data-ui="modal-sheet"\]\[data-size\]\s*\{(?<body>[^}]+)\}/,
     )?.groups?.body ?? ''
-  assert.match(phoneConfirm, /height: auto/, 'a confirmation stays a card on a phone, not a full-screen page')
-  assert.match(phoneConfirm, /border-radius: var\(--kv-radius-lg\)/)
+  assert.doesNotMatch(
+    phoneConfirm,
+    /height:\s*auto|border-radius:\s*var\(/,
+    'phone confirmations follow the shared full-screen modal geometry',
+  )
   assert.match(css, /\[data-ui="confirm-dialog-message"\] \+ \* \{\s*margin-top: var\(--kv-space-4\)/)
 
   const largeDialog =
@@ -2130,12 +2162,16 @@ test('design system: every KetSuite WorkspacePage consumer uses the operational 
     consumers += calls
     const operational = [...source.matchAll(/<WorkspacePage\s+variant="operational"/g)].length
     assert.equal(operational, calls, path)
-    const contextual = [...source.matchAll(/<WorkspacePage\s+variant="operational"\s+(?:frame|context)=/g)]
-      .length
+    const contextual = [
+      ...source.matchAll(
+        /<WorkspacePage\s+variant="operational"(?:\s+layout="[a-z]+")?\s+(?:frame|context)=/g,
+      ),
+    ].length
     assert.equal(contextual, calls, path)
   }
-  // Sales, purchase and stock overviews.
-  assert.equal(consumers, 3)
+  // Sales, purchase and stock overviews, and the hospitality room plan's canvas
+  // (with and without a property).
+  assert.equal(consumers, 5)
 })
 
 test('design system: every KetSuite BoardPage consumer uses the operational workspace and page context', () => {
@@ -2150,8 +2186,9 @@ test('design system: every KetSuite BoardPage consumer uses the operational work
     const contextual = [...source.matchAll(/<BoardPage\s+variant="operational"\s+(?:frame|context)=/g)].length
     assert.equal(contextual, calls, path)
   }
-  // Five: the CRM pipeline is drawn by the `crm.sales-screen` island now, not a server BoardPage.
-  assert.equal(consumers, 5)
+  // Four: the CRM pipeline is drawn by the `crm.sales-screen` island, and the
+  // hospitality room plan is a WorkspacePage canvas.
+  assert.equal(consumers, 4)
 })
 
 test('design system: navigation and progress expose semantic state', () => {
@@ -2872,7 +2909,7 @@ test('design system: catalogue renders every registered specimen', () => {
 
 test('design system: governance connects public components to owners and specimens', () => {
   const names = componentRegistry.map((component) => component.name)
-  assert.equal(names.length, 151)
+  assert.equal(names.length, 156)
   assert.equal(new Set(names).size, names.length)
   const examples = new Set(componentGroups.flatMap((group) => group.examples.map((example) => example.id)))
   assert.deepEqual(
@@ -2894,6 +2931,7 @@ test('design system: density, layer, focus, motion and container tokens are cont
     '--kv-density-control-height',
     '--kv-density-row-height',
     '--kv-density-content-gap',
+    '--kv-layer-dock',
     '--kv-layer-menu',
     '--kv-layer-popover',
     '--kv-layer-dialog',
@@ -2909,8 +2947,8 @@ test('design system: density, layer, focus, motion and container tokens are cont
 })
 
 test('design system: inventory classifies every public and compatibility export', () => {
-  assert.equal(designSystemInventory.summary.publicExports, 358)
-  assert.equal(designSystemInventory.summary.runtimeExports, 167)
+  assert.equal(designSystemInventory.summary.publicExports, 372)
+  assert.equal(designSystemInventory.summary.runtimeExports, 174)
   assert.equal(designSystemInventory.summary.plannedComponents, 0)
   assert.equal(designSystemInventory.summary.compatibilityModules, 44)
   assert.ok(designSystemInventory.rows.length > designSystemInventory.summary.publicExports)
@@ -2933,7 +2971,7 @@ test('design system: inventory is an SSR review surface with URL-owned filters',
   assert.match(inventory, /action="\/inventory" method="get"/)
   assert.match(inventory, /name="q" value="Page"/)
   assert.match(inventory, /data-decision="keep"/)
-  assert.match(inventory.replace(/<!--k\[?-->/gu, ''), /4 entries in this view/)
+  assert.match(inventory.replace(/<!--k\[?-->/gu, ''), /5 entries in this view/)
   assert.match(inventory, /CSS and JavaScript delivery/)
   assert.doesNotMatch(inventory, /<script/)
   assert.doesNotMatch(inventory, /FormPage<\/code>/)
@@ -3331,6 +3369,23 @@ test('design system: a ContentCard with a link is pressed anywhere, its other co
   )
 })
 
+test('design system: RecordForm can block submission while retaining editable fields and feedback', () => {
+  const body = renderToString(
+    <RecordForm
+      action="/invoice"
+      submitLabel="Issue"
+      submitDisabled
+      errors={['Configure charge rules first']}
+      fields={[{ id: 'recipient', name: 'recipient', label: 'Recipient', value: 'Guest' }]}
+    />,
+  )
+  assert.match(body, /type="submit"[^>]*disabled/u)
+  assert.match(body, /Configure charge rules first/u)
+  const input = body.match(/<input[^>]*id="recipient"[^>]*>/u)?.[0]
+  assert.ok(input)
+  assert.doesNotMatch(input, /disabled/u)
+})
+
 test('design system: three-column RecordForm preserves native field and submit semantics', () => {
   const props = {
     action: '/purchase/lines',
@@ -3354,6 +3409,32 @@ test('design system: three-column RecordForm preserves native field and submit s
   const css = readFileSync('packages/design-system/src/patterns/record-form/styles.css', 'utf8')
   assert.match(css, /@container record-form \(min-width: 56rem\)/u)
   assert.match(css, /\[data-ui="form-grid"\]\[data-columns="3"\] \{[^}]*repeat\(3, minmax\(0, 1fr\)\)/u)
+})
+
+test('design system: a caller-owned form closes with the record form action row, and a step back skips required checks', () => {
+  const row = renderToString(
+    <FormActions
+      label="Steps"
+      actions={[
+        <Button label="Continue" variant="primary" type="submit" name="step" value="2" />,
+        <Button label="Back" type="submit" name="step" value="0" formNoValidate />,
+      ]}
+    />,
+  ).replace(/<!--k\[?-->/gu, '')
+  assert.match(
+    row,
+    /^<div data-ui="form-actions"><div data-ui="action-group" role="group" aria-label="Steps">/u,
+  )
+  // The primary command comes first: Enter submits a native form's first submit button.
+  assert.ok(row.indexOf('Continue') < row.indexOf('Back'))
+  assert.match(row, /<button[^>]*value="0"[^>]*formnovalidate/u)
+  assert.doesNotMatch(row.slice(0, row.indexOf('Continue')).split('<button').at(-1) ?? '', /formnovalidate/u)
+  assert.doesNotMatch(renderToString(<Button label="Save" type="submit" />), /formnovalidate/u)
+  // RecordForm draws its own row through the same component.
+  const form = renderToString(
+    <RecordForm action="/save" fields={[]} submitLabel="Save" cancelHref="/" />,
+  ).replace(/<!--k\[?-->/gu, '')
+  assert.match(form, /<div data-ui="form-actions"><div data-ui="action-group" role="group">/u)
 })
 
 test('design system: a section of a larger form lays three fields per row on its own width', () => {
@@ -3584,4 +3665,69 @@ test('design system: component text aligns to the reading direction, not a physi
   const table = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8')
   assert.match(table, /\[data-ui="kt-col"\]\[data-align="end"\] \{\s*text-align: end;/u)
   assert.match(table, /\[data-ui="kt-cell"\]\[data-align="end"\] \{\s*text-align: end;/u)
+})
+
+test('design system: first and last page destinations keep their anchors when disabled', () => {
+  const pager = (first: string | null, last: string | null) => (
+    <PagerBar
+      pages={[
+        { id: 'first', label: 'First page', href: first },
+        { id: 'last', label: 'Last page', href: last },
+      ]}
+    />
+  )
+  const container = testDocument.createElement('div')
+  const root = createRoot(domHost(testDocument as never), container as never)
+  root.render(pager('/list?page=1', '/list?page=9'))
+  const first = container
+    .querySelectorAll('a[data-ui]')
+    .filter((node) => node.getAttribute('data-ui') === 'pager-page')[0]
+  const last = container
+    .querySelectorAll('a[data-ui]')
+    .filter((node) => node.getAttribute('data-ui') === 'pager-page')[1]
+  root.render(pager(null, '/list?page=8'))
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[0],
+    first,
+  )
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[1],
+    last,
+  )
+  assert.equal(first?.getAttribute('href'), null)
+  assert.equal(first?.getAttribute('role'), 'link')
+  assert.equal(first?.getAttribute('aria-disabled'), 'true')
+  assert.equal(first?.getAttribute('tabindex'), '-1')
+  root.render(pager('/list?page=1', null))
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[0],
+    first,
+  )
+  assert.equal(
+    container
+      .querySelectorAll('a[data-ui]')
+      .filter((node) => node.getAttribute('data-ui') === 'pager-page')[1],
+    last,
+  )
+  assert.equal(last?.getAttribute('href'), null)
+  assert.equal(last?.getAttribute('aria-disabled'), 'true')
+})
+
+test('design system: a bounded table keeps scrolling and headings in the table owner', () => {
+  const markup = renderToString(
+    createKetTableView({ id: 'bounded', config: ketTableDemoConfig }, {}, { maxBlockSize: '320px' }).view(),
+  )
+  assert.match(markup, /data-bounded="true"/)
+  assert.match(markup, /max-block-size: 320px/)
+  const plain = renderToString(createKetTableView({ id: 'plain', config: ketTableDemoConfig }).view())
+  assert.doesNotMatch(plain, /data-bounded="true"/)
+  const css = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8')
+  assert.match(css, /\[data-bounded="true"\][^{]*\{[^}]*overflow-y: auto/s)
+  assert.match(css, /\[data-bounded="true"\][^{]*\[data-ui="kt-col"\][^{]*\{[^}]*position: sticky/s)
 })

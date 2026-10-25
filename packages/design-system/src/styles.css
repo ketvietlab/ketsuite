@@ -36,6 +36,7 @@
 @import "./data-display/matrix/styles.css";
 @import "./data-display/bar-chart/styles.css";
 @import "./data-display/column-chart/styles.css";
+@import "./data-display/qr-code/styles.css";
 @import "./data-operations/timeframe-filter/styles.css";
 @import "./record/display/styles.css";
 @import "./record/formatted-values/styles.css";
@@ -55,7 +56,9 @@
 @import "./patterns/help-drawer/styles.css";
 @import "./content/markdown/styles.css";
 @import "./patterns/peek/styles.css";
+@import "./patterns/embedded-page/styles.css";
 @import "./patterns/settings-directory/styles.css";
+@import "./patterns/dock/styles.css";
 @import "./patterns/list-page/responsive.css";
 @import "./patterns/pipeline/styles.css";
 @import "./patterns/board-page/styles.css";

@@ -90,6 +90,11 @@ test('Lucide icons have one geometry and explicit decorative or informative sema
   assert.doesNotMatch(informative, /aria-hidden/)
 })
 
+test('money in and money out have their Lucide arrows', () => {
+  assert.match(render(<Icon name="arrow-down-left" />), /<path d="M17 7 7 17"[^>]*>.*<path d="M17 17H7V7"/s)
+  assert.match(render(<Icon name="arrow-up-right" />), /<path d="M7 7h10v10"[^>]*>.*<path d="M7 17 17 7"/s)
+})
+
 test('action emphasis and tone are independent while legacy aliases still work', () => {
   const html = render(
     <Button label="Delete" variant="primary" tone="danger" pressed fullWidth icon="x" loading />,

@@ -1,11 +1,13 @@
+import { mailWithTargets } from '@ketvietlab/ketsuite'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { defineDeployment, defineModule, eq, from, KetError } from '@ketvietlab/ketjs'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
 import { createTestDeployment, TestHttpError } from '@ketvietlab/ketjs/testing'
-import { company, mail, partner, storage, user } from '@ketvietlab/ketsuite'
+import { company, partner, storage, user } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
 import { ensureThread, followThread, postMessage } from '../packages/ketsuite/src/modules/mail/index.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const recordBridge = defineModule({
   name: 'mail_e2e_bridge',
@@ -103,9 +105,26 @@ const recordBridge = defineModule({
 
 const app = defineDeployment({
   name: 'mail_headless_e2e',
-  modules: [address, partner, company, storage, user, mail, recordBridge],
+  companies: true,
+  modules: [
+    address,
+    partner,
+    company,
+    storage,
+    user,
+    mailWithTargets([
+      {
+        resModel: 'mail_e2e_bridge.Record',
+        readFunction: 'mail.listInbox',
+        effects: [],
+        visible: async (_ctx, ids) => new Set(ids),
+      },
+    ]),
+    recordBridge,
+  ],
   headless: true,
   serve: {
+    permissions: everyFunction,
     sessions: { anonymous: { company: 'acme' } },
   },
 })

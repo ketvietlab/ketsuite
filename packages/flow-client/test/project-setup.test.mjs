@@ -6,6 +6,8 @@ import { createOrganizationSession } from '../atlas/organization-store.mjs'
 import { createProjectSetup, workspaceInheritance } from '@ketvietlab/flow-client/project-setup.mjs'
 import { renderToStaticString } from '@ketvietlab/ketjs-view'
 const read = (s) => s.call('flow.workspace.bootstrap', { companyId: 'demo' }).value
+// Grants as the server stores them; the bootstrap carries only the actor's own.
+const stored = (s) => structuredClone(s.sessions.get('demo').data.grants)
 const args = {
   companyId: 'demo',
   collection: 'projects',
@@ -28,11 +30,20 @@ const args = {
   idempotencyKey: 'setup-1',
 }
 test('inheritance preview uses selected Workspace grants and internal access', () => {
-  const d = read(createOrganizationSession())
-  assert.match(workspaceInheritance(d, 'product')[0].label, /Engineering/)
-  assert.match(workspaceInheritance(d, 'operations')[0].label, /Customer Success/)
-  assert.match(workspaceInheritance(d, 'lab')[0].value, /không gồm khách mời/)
-  assert.deepEqual(workspaceInheritance(d, 'unknown'), [])
+  const s = createOrganizationSession(),
+    d = read(s)
+  // The Workspace's grants come from grant.list, never from the actor-only bootstrap grants.
+  const grants = (id) =>
+    s.call('flow.grant.list', { companyId: 'demo', scope: 'workspace', targetId: id, limit: 100 }).value.items
+  assert.match(workspaceInheritance(d, 'product', grants('product'))[0].label, /Engineering/)
+  assert.match(workspaceInheritance(d, 'operations', grants('operations'))[0].label, /Customer Success/)
+  assert.match(workspaceInheritance(d, 'lab', grants('lab'))[0].value, /không gồm khách mời/)
+  assert.deepEqual(workspaceInheritance(d, 'unknown', []), [])
+  assert.deepEqual(
+    workspaceInheritance(d, 'product'),
+    [],
+    'without read rows nothing is inferred from the bootstrap',
+  )
 })
 test('a removed project renders recovery instead of turning its profile into a creation form', () => {
   const presenter = createProjectSetup({
@@ -52,15 +63,15 @@ test('create, replay and edit preserve metadata and avoid duplicate grants', () 
   assert.ok(result.id, JSON.stringify(result))
   const d = read(s),
     p = d.projects.find((p) => p.id === result.id),
-    count = d.grants.length
+    count = stored(s).length
   assert.equal(p.ownerId, 'bao')
   assert.equal(p.state, 'active')
   assert.deepEqual(p.tags, args.tags)
   assert.equal(p.outcome, args.outcome)
   assert.equal(p.defaultView, 'project-issues')
-  assert.ok(d.grants.some((g) => g.targetId === p.id && g.subjectId === 'bao' && g.role === 'admin'))
+  assert.ok(stored(s).some((g) => g.targetId === p.id && g.subjectId === 'bao' && g.role === 'admin'))
   assert.deepEqual(s.call('flow.entity.save', args).value, result)
-  assert.equal(read(s).grants.length, count)
+  assert.equal(stored(s).length, count)
   const edit = s.call('flow.entity.save', {
     ...args,
     entityId: p.id,
@@ -69,16 +80,17 @@ test('create, replay and edit preserve metadata and avoid duplicate grants', () 
     idempotencyKey: 'edit-1',
   }).value
   assert.ok(edit.id)
-  assert.equal(read(s).grants.length, count)
+  assert.equal(stored(s).length, count)
   assert.equal(read(s).projects.find((x) => x.id === p.id).title, 'Website mới')
 })
 test('a task editor cannot edit a project profile or create a project without the required scope administration', () => {
   const s = createOrganizationSession('member')
-  const before = read(s)
+  const before = read(s),
+    held = stored(s)
   assert.equal(s.call('flow.entity.save', { ...args, entityId: 'core' }).value.ok, false)
   assert.equal(s.call('flow.entity.save', args).value.ok, false)
   assert.deepEqual(read(s).projects, before.projects)
-  assert.deepEqual(read(s).grants, before.grants)
+  assert.deepEqual(stored(s), held)
 })
 test('invalid code, dates, owner, Team and cross-company Workspace fail without writes', () => {
   for (const patch of [
@@ -92,10 +104,11 @@ test('invalid code, dates, owner, Team and cross-company Workspace fail without 
     { workspaceId: 'north-product' },
   ]) {
     const s = createOrganizationSession(),
-      before = read(s)
+      before = read(s),
+      held = stored(s)
     assert.equal(s.call('flow.entity.save', { ...args, ...patch }).value.ok, false)
     assert.equal(read(s).projects.length, before.projects.length)
-    assert.equal(read(s).grants.length, before.grants.length)
+    assert.equal(stored(s).length, held.length)
   }
   const s = createOrganizationSession()
   s.call('flow.entity.save', args)

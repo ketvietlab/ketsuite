@@ -1,3 +1,5 @@
+import { attachDatePickers } from '@ketvietlab/design-system/date-picker/runtime'
+import { attachHelpDrawers } from '@ketvietlab/design-system/help/runtime'
 import { createRoot, domHost } from '@ketvietlab/ketjs-view'
 import { tr } from './i18n.mjs'
 import { attachTimelineDrag } from './timeline-drag.mjs'
@@ -5,7 +7,8 @@ import { createDialogFocusReturn } from './dialog-focus.mjs'
 import { createFormErrorFocus } from './form-error-focus.mjs'
 import { icons } from './icons.mjs'
 
-/** @typedef {ReturnType<typeof import('@ketvietlab/ketsuite/livedoc').createLiveDocView>} LiveEditor */
+/** The host's live document editor, as far as mounting it needs.
+ * @typedef {{view:()=>import('@ketvietlab/ketjs-view').TemplateResult,mountEditor:(content:HTMLElement)=>unknown,dispose:()=>void}} LiveEditor */
 
 /** Reflect the command dialog's state on server-rendered launchers without replacing their DOM.
  * @param {ParentNode} root @param {{open:boolean,disabled:boolean,dialogId:string}} state */
@@ -50,6 +53,19 @@ import { attachSearchPopover } from './search-popover.mjs'
 /** Explicit and disposable; never scans unrelated Suite roots. @param {HTMLElement} root */
 export function attachFlowUI(root) {
   const controller = new AbortController()
+  const clearDatePickers = attachDatePickers(root)
+  const clearHelp =
+    typeof document !== 'undefined' && typeof window.matchMedia === 'function'
+      ? attachHelpDrawers(root, {
+          beforeOpen: () => {
+            if (!window.matchMedia('(max-width:760px)').matches) return
+            const navigation = root.querySelector('[data-flow="mobile-nav"]')
+            if (!(navigation instanceof HTMLDetailsElement) || !navigation.open) return
+            navigation.open = false
+            return navigation.querySelector('summary') ?? undefined
+          },
+        })
+      : () => {}
   const searchPopover = attachSearchPopover(root, controller.signal)
   const docTreeFocus = createDocTreeFocusReturn(root)
   root.addEventListener(
@@ -407,11 +423,11 @@ export function attachFlowUI(root) {
   /** @type {WeakMap<Element,string>} */
   const spotlightPositions = new WeakMap()
   const sync = () => {
-    root.querySelectorAll('[data-flow="scope-tabs"]').forEach((element) => {
+    root.querySelectorAll('[data-flow="scope-tabs"], [data-flow="project-views"]').forEach((element) => {
       if (!(element instanceof HTMLElement)) return
       const active = element.querySelector('[aria-current="page"]')
       if (!(active instanceof HTMLElement)) return
-      const key = active.getAttribute('href') ?? ''
+      const key = `${active.getAttribute('href') ?? active.textContent ?? ''}:${element.clientWidth}`
       if (scopeTabPositions.get(element) === key) return
       const rect = element.getBoundingClientRect(),
         target = active.getBoundingClientRect()
@@ -593,6 +609,8 @@ export function attachFlowUI(root) {
     },
     dispose() {
       searchPopover.dispose()
+      clearDatePickers()
+      clearHelp()
       docTreeFocus.dispose()
       dialogFocus.dispose()
       for (const entry of liveEditors.values()) entry.dispose()

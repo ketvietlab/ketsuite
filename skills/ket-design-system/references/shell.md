@@ -44,10 +44,19 @@ Các đường dẫn trong bảng tương đối với `ketsuite/`; đường d�
 
 - Rail graphite 48px ở bên trái; logo mark trên rail, không làm rộng rail.
   App có URL mở tab mới bằng link native; tên hiện khi hover/focus; active dùng
-  app ID. Host quyết định URL, quyền và trạng thái sắp ra mắt.
+  app ID. Host quyết định URL, quyền và trạng thái sắp ra mắt. App mà host phục vụ
+  ngay trong shell này đặt `sameTab: true`: mở ở tab hiện tại, link nằm dưới
+  `data-ket-reload` để tải lại cả document (rail và sidebar đổi theo app).
 - KetSuite dùng `suiteApplications` từ menu đã lọc quyền cho mọi deployment.
-  Kinh doanh/Sales và Website có đích thật; Kế toán, Flow, Phone, Chat chưa có URL.
-  Website ở rail; bỏ link Website trùng và Kế toán khỏi menu chính. Cài đặt lấy
+  Kinh doanh/Sales và Website có đích thật; Kế toán, Chat chưa có URL. Native Flow có
+  đích `/flow/` khi được compose và menu đã lọc quyền cấp URL; Flow cũ chưa có đích trên rail.
+  Phone lấy đích từ mục đầu tiên được phép của menu gốc `phone` khi có module cung cấp, mở
+  cùng tab; màn của nó gọi `adminPage`/`frameOf` với `app: 'phone'` (frame đặt `Frame.app`,
+  rail và menu) để rail sáng Phone, sidebar mang tên Phone và chỉ chứa menu gốc đó. Không tự
+  dựng frame trong module: mất `sidebar.foot`, `locale`, `collectionUrl`.
+  Trang của app chưa mua có thể là `EmbeddedPage` (iframe trang giới thiệu, `topbar: false`).
+  Website và native Flow ở rail; bỏ các link trùng và Kế toán khỏi menu chính, giữ menu Flow
+  cũ ở deployment chưa thay thế. Cài đặt lấy
   các liên kết quản trị đã có quyền, mở bằng click/chạm/bàn phím.
 - Sidebar chính có header cố định 44px, tên app, Search và Collapse; không hairline
   ở header. Hairline phân cấp canh tâm ô icon, giữ nhãn cha/con thẳng cột.
@@ -85,7 +94,7 @@ Mermaid dùng loader do host bundle và theme chung của DS:
 Không CDN hoặc theme riêng cho từng app; giữ nguồn đọc được nếu chưa có JavaScript
 hoặc diagram lỗi. Xem [Screen help and ecosystem Mermaid](../../../packages/design-system/README.md#screen-help-and-ecosystem-mermaid)
 để dùng đúng các nhãn, lớp ngữ nghĩa và cơ chế sáng/tối.
-Theme chung dùng box 12px, connector bo góc, Inter 13px và khoảng cách sơ đồ gọn.
+Theme chung dùng box 12px, connector bo góc, KÉT Sans 13px (`--kv-font-sans`) và khoảng cách sơ đồ gọn.
 Điểm quyết định gọn dùng `Q("Câu hỏi?"):::kv-decision` (vàng, nét đứt);
 nhánh phải có nhãn, kết quả dùng `kv-positive`/`kv-warning`/`kv-danger`.
 Không đoán màu theo câu chữ ở runtime. Chuỗi ngang dài chuyển sang luồng dọc hoặc

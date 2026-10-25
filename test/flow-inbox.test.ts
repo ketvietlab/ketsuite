@@ -111,11 +111,12 @@ test('a mention on a Flow issue arrives in the reader’s inbox and names the is
   // than a list of disembodied sentences.
   assert.equal(String(held.targetModel), 'flow.Issue')
 
-  // And the screen that serves it finds it. `/admin/inbox` is mail_backend's,
-  // not Flow's — the point of this assertion is that Flow needed to build
-  // nothing for its notifications to land somewhere a person can read them.
+  // And the screen that serves it reads the same list. `/admin/inbox` is
+  // mail_backend's, not Flow's — the point of this assertion is that Flow needed
+  // to build nothing for its notifications to land somewhere a person can read
+  // them. The rows are an island over `mail.listInbox`, asked above.
   const page = await (await app.client.get('/admin/inbox?lang=en')).text()
-  assert.match(page, /xem giúp phần này/)
+  assert.match(page, /data-island="communication\.results"/)
 
   // Reading it clears the count, so the indicator in the sidebar is telling
   // the truth rather than counting forever.

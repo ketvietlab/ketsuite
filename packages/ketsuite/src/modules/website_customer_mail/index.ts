@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { defineModule, eq, from, KetError } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
+import { sitePublicOrigin } from '../website/public-origin.ts'
 import { queueTemplate, templateKeys, writeTemplate } from '../mail_transport/index.ts'
 
 /**
@@ -111,12 +112,14 @@ const functions: Record<string, FnSpec> = {
   mailPasswordReset: {
     anonymous: true,
     exposure: 'internal',
-    input: { resetId: 'id', siteId: 'id', resetUrl: 'text' },
+    input: { resetId: 'id', siteId: 'id', token: 'text' },
     output: { queued: 'bool' },
     effects: [
       'read:website.CustomerPasswordReset',
       'read:website.CustomerAccount',
       'read:website.Site',
+      'read:website.SiteDomain',
+      'read:website.CustomerRealmSite',
       'read:mail_transport.Template',
       'read:mail_transport.Delivery',
       'write:mail_transport.Delivery',
@@ -126,11 +129,20 @@ const functions: Record<string, FnSpec> = {
     idempotent: true,
     handler: (ctx: Ctx, args) =>
       ctx.tx(async (tx) => {
-        const url = new URL(String(args.resetUrl))
-        if (url.protocol !== 'https:' && url.protocol !== 'http:')
-          return fail('E_WEBSITE_CUSTOMER_MAIL_URL', 'resetUrl must be an http(s) address')
+        const origin = await sitePublicOrigin(tx, String(args.siteId))
+        if (!origin) return { queued: false }
+        const token = String(args.token)
+        if (!/^[A-Za-z0-9_-]{43}$/.test(token))
+          return fail('E_WEBSITE_CUSTOMER_MAIL_TOKEN', 'invalid reset token')
+        const url = new URL(`/account/reset?${new URLSearchParams({ token })}`, origin)
         const reset = (await tx.db.select('website.CustomerPasswordReset', { id: args.resetId }))[0]
-        if (!reset || reset.usedAt) return { queued: false }
+        if (
+          !reset ||
+          reset.usedAt ||
+          String(reset.expiresAt) <= new Date().toISOString() ||
+          reset.tokenDigest !== createHash('sha256').update(token).digest('hex')
+        )
+          return { queued: false }
         const account = (await tx.db.select('website.CustomerAccount', { id: reset.accountId }))[0]
         const to = String(account?.email ?? '').trim()
         if (!to) return { queued: false }
@@ -139,6 +151,18 @@ const functions: Record<string, FnSpec> = {
         if (!template) return { queued: false }
         const Site = tx.table('website.Site')
         const site = await tx.db.one(from(Site).where(eq(Site.id, args.siteId)))
+        const RS = tx.table('website.CustomerRealmSite')
+        const realmSite = await tx.db.one(
+          from(RS).where(eq(RS.siteId, args.siteId), eq(RS.realmId, reset.realmId), eq(RS.active, true)),
+        )
+        if (
+          !site ||
+          !account ||
+          account.status !== 'active' ||
+          account.realmId !== reset.realmId ||
+          !realmSite
+        )
+          return { queued: false }
         await queueTemplate(tx, {
           // One reset, one message: a retry queues nothing new.
           id: `website-customer-reset:${String(reset.id)}`,

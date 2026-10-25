@@ -1,6 +1,9 @@
 /** Messages owned by the Flow component kit. Keys are registered under the `flow.` prefix. */
 export const flowMessages = {
   en: {
+    'ui.options.more': 'More options',
+    'ui.people.selected.one': '1 person selected',
+    'ui.people.more': 'More people',
     'ui.picker.done': 'Done',
     'ui.search.people': 'Search people…',
     'ui.search.everything': 'Search everything in Flow…',
@@ -186,6 +189,9 @@ export const flowMessages = {
     'review.unavailable': 'Unavailable in the current state',
   },
   ja: {
+    'ui.options.more': '選択肢をもっと表示',
+    'ui.people.selected.one': '1 人を選択中',
+    'ui.people.more': 'さらに表示',
     'ui.picker.done': '完了',
     'ui.search.people': '人を検索…',
     'ui.search.everything': 'Flow全体を検索…',
@@ -372,6 +378,9 @@ export const flowMessages = {
     'review.unavailable': '現在の状態では利用できません',
   },
   vi: {
+    'ui.options.more': 'Thêm lựa chọn',
+    'ui.people.selected.one': 'Đã chọn 1 người',
+    'ui.people.more': 'Xem thêm người',
     'ui.picker.done': 'Xong',
     'ui.search.people': 'Tìm người…',
     'ui.search.everything': 'Tìm mọi thứ trong Flow…',

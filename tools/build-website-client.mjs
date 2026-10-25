@@ -8,7 +8,9 @@ const documentRenderer = resolve(root, 'packages/ketsuite/src/ui/client/live-doc
 export async function buildWebsiteClient() {
   const out = resolve(root, 'packages/ketsuite/src/modules/website_backend/client')
   mkdirSync(out, { recursive: true })
-  cpSync(resolve(root, 'packages/website-client/client/gtm.mjs'), resolve(out, 'gtm.mjs'))
+  // Visitor-site scripts are copied as written: same-origin modules, no inline code, no bundling.
+  for (const file of ['gtm.mjs', 'consent.mjs', 'visit.mjs'])
+    cpSync(resolve(root, 'packages/website-client/client', file), resolve(out, file))
   // Bundle the same pure renderer used by the builder into the server package.
   await build({
     entryPoints: [resolve(root, 'packages/website-client/client/renderer.tsx')],

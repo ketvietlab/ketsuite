@@ -11,12 +11,15 @@ import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import livedoc from '../packages/ketsuite/src/modules/livedoc/index.ts'
 import flowBackend from '../packages/ketsuite/src/modules/flow_backend/index.ts'
 import { sweepLive } from '../packages/ketsuite/src/modules/livedoc/sync.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const app = defineDeployment({
   name: 'flow_collab_headless_e2e',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, backend, livedoc, flow, flowBackend],
   headless: true,
   serve: {
+    permissions: everyFunction,
     sessions: { anonymous: { company: 'acme' } },
   },
 })
@@ -132,6 +135,7 @@ test('flow collab headless E2E: content, push, live relay and an explicit leave 
  */
 const guarded = defineDeployment({
   name: 'flow_collab_permissions',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, backend, livedoc, flow, flowBackend],
   headless: true,
   serve: {
@@ -524,9 +528,10 @@ test('flow collab: previewText reads a document made of blocks', async () => {
     })
     await e2e.client.request('/admin/flow/issues/issue-4/leave', { method: 'POST' })
 
+    // One line per block, as typed; runs inside a block still read as one line.
     assert.equal(
       (await call<Row>('flow.issue.get', { id: 'issue-4' })).previewText,
-      'Rollout plan Freeze the branch Tell support',
+      'Rollout plan\nFreeze the branch\nTell support',
     )
   } finally {
     await e2e.close()

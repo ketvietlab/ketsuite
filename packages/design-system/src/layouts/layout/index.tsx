@@ -119,7 +119,9 @@ export const Inline = (props: {
 /**
  * Fixed columns. `align="stretch"` gives every block in a row the row's height,
  * so side-by-side dashboard cards end on one line instead of leaving a hole
- * under the shorter one.
+ * under the shorter one. `minimum` (the `CardGrid` widths: 12, 17 or 23rem) keeps
+ * at most `columns` but drops one whenever a column would be narrower, so the grid
+ * follows the room it has (beside an open sidebar) rather than the viewport.
  */
 export const Grid = (props: {
   items: readonly JSXChild[]
@@ -127,11 +129,13 @@ export const Grid = (props: {
   mobileColumns?: 1 | 2
   gap?: ResponsiveGap
   align?: 'start' | 'stretch'
+  minimum?: 'compact' | 'default' | 'wide'
 }): TemplateResult => (
   <div
     data-ui="grid"
     data-columns={String(props.columns ?? 3)}
     data-align={props.align === 'stretch' ? 'stretch' : null}
+    data-minimum={props.minimum ?? null}
     {...gapAttributes(props.gap, 'default')}
     data-mobile-columns={props.mobileColumns ? String(props.mobileColumns) : null}
   >

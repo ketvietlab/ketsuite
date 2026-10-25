@@ -35,9 +35,11 @@ import { HelpDrawer } from '../patterns/help-drawer/index.tsx'
 import { MermaidDiagram } from '../content/markdown/index.tsx'
 import { ModalSheet } from '../patterns/modal-sheet.tsx'
 import { Peek, PeekLayout } from '../patterns/peek/index.tsx'
+import { EmbeddedPage } from '../patterns/embedded-page/index.tsx'
 import { SettingsDirectory } from '../patterns/settings-directory/index.tsx'
+import { Dock, DockRegion } from '../patterns/dock/index.tsx'
 import { Pipeline } from '../patterns/pipeline.tsx'
-import { FormGrid, RecordForm } from '../patterns/record-form.tsx'
+import { FormActions, FormGrid, RecordForm } from '../patterns/record-form.tsx'
 import { ActionMenu, Menu } from '../interactions/menu/index.tsx'
 import { ContextButton } from '../interactions/context-button/index.tsx'
 import { Popover } from '../interactions/popover/index.tsx'
@@ -83,6 +85,7 @@ import { Tree, TreeGrid } from '../data-display/tree/index.tsx'
 import { DataMatrix } from '../data-display/matrix/index.tsx'
 import { BarChart } from '../data-display/bar-chart/index.tsx'
 import { ColumnChart } from '../data-display/column-chart/index.tsx'
+import { QrCode } from '../data-display/qr-code/index.tsx'
 import { TimeframeFilter } from '../data-operations/timeframe-filter/index.tsx'
 import { AvatarGroup, DescriptionList, Person, Status } from '../record/display/index.tsx'
 import { FormattedDate, FormattedMoney, FormattedNumber } from '../record/formatted-values/index.tsx'
@@ -134,9 +137,9 @@ const demoNavItems = (active: DemoLayout) => [
   { label: 'Canvas', href: '#workspace-canvas', leading: '□', active: active === 'canvas' },
 ]
 
-const DemoSidebar = (props: { active: DemoLayout }): TemplateResult => (
+const DemoSidebar = (props: { id: string; active: DemoLayout }): TemplateResult => (
   <AppNavigation
-    id={`demo-navigation-${props.active}`}
+    id={`demo-navigation-${props.id}`}
     label="KétSuite workspace"
     identity={<AppBrand label="KétSuite" href="#app-shell" />}
     context="Operations workspace"
@@ -212,7 +215,9 @@ const DemoRail = (props: {
   </div>
 )
 
+/** One page holds several shells: `id` (the specimen's) keeps each one's ids its own. */
 const DemoShell = (props: {
+  id: string
   active: DemoLayout
   main: JSXChild
   railTitle?: string
@@ -223,6 +228,9 @@ const DemoShell = (props: {
   <AppShell
     applications={{
       ...exampleApplications,
+      ...(exampleApplications.settings
+        ? { settings: { ...exampleApplications.settings, id: `${props.id}-settings` } }
+        : {}),
       items: [
         ...exampleApplications.items,
         { id: 'phone', label: 'Phone', icon: 'phone', unavailableLabel: 'Coming soon' },
@@ -234,10 +242,10 @@ const DemoShell = (props: {
       <AppTopbar
         location={<span>Acme · Main branch</span>}
         navigation={
-          <NavigationToggle controls={`demo-navigation-${props.active}-drawer`} label="Open navigation" />
+          <NavigationToggle controls={`demo-navigation-${props.id}-drawer`} label="Open navigation" />
         }
         search={{
-          id: `demo-global-search-${props.active}`,
+          id: `demo-global-search-${props.id}`,
           action: '#app-shell',
           triggerLabel: 'Search everywhere',
           closeLabel: 'Close',
@@ -247,7 +255,7 @@ const DemoShell = (props: {
         }}
       />
     }
-    sidebar={<DemoSidebar active={props.active} />}
+    sidebar={<DemoSidebar id={props.id} active={props.active} />}
     main={props.main}
     rightRail={
       props.railTitle !== undefined ? (
@@ -432,6 +440,11 @@ export const componentGroups: readonly ComponentGroup[] = [
               </Text>,
               <Inline
                 items={[
+                  <Icon name="layers-3" label="Workspace" />,
+                  <Icon name="building-2" label="Company" />,
+                  <Icon name="layout-grid" label="Applications" />,
+                  <Icon name="sun" label="Light theme" />,
+                  <Icon name="moon" label="Dark theme" />,
                   <Icon name="info" label="Information" />,
                   <Icon name="circle-check" tone="positive" label="Complete" />,
                   <Text numeric>1,284.00</Text>,
@@ -1052,6 +1065,7 @@ export const componentGroups: readonly ComponentGroup[] = [
           'One navigation model becomes a persistent desktop sidebar and an accessible mobile drawer.',
         render: () => (
           <DemoShell
+            id="app-navigation"
             active="collection"
             main={
               <Page
@@ -1102,12 +1116,20 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'embedded-page',
+        name: 'Embedded page',
+        description:
+          'A page served by another site shown as the whole screen, edge to edge below the top bar, such as a product introduction for an app the company has not bought. Sandboxed, with a visually hidden heading; the host chooses the URL.',
+        render: () => <EmbeddedPage src="/help-theme" title="Product introduction" />,
+      },
+      {
         id: 'app-shell',
         name: 'Collection shell',
         description:
           'A full list workspace with sidebar navigation, URL-owned list chrome, selectable rows and a context rail.',
         render: () => (
           <DemoShell
+            id="app-shell"
             active="collection"
             main={
               <ListPage
@@ -1141,6 +1163,7 @@ export const componentGroups: readonly ComponentGroup[] = [
           'A durable subject with record identity, tabs, form content and a right-hand facts rail.',
         render: () => (
           <DemoShell
+            id="record-page"
             active="record"
             main={
               <RecordPage
@@ -1231,6 +1254,7 @@ export const componentGroups: readonly ComponentGroup[] = [
           'A rail of blockers that leads the record once the page stacks; a wide page keeps it beside the record.',
         render: () => (
           <DemoShell
+            id="record-page-leading-rail"
             active="record"
             main={
               <RecordPage
@@ -1295,6 +1319,7 @@ export const componentGroups: readonly ComponentGroup[] = [
           'A vertical operations overview where metrics, process state and exception lists sit on one grey canvas.',
         render: () => (
           <DemoShell
+            id="workspace-flow"
             active="flow"
             main={
               <WorkspacePage
@@ -1363,6 +1388,7 @@ export const componentGroups: readonly ComponentGroup[] = [
           'A horizontal board-style surface where the main content can scroll without changing the shell.',
         render: () => (
           <DemoShell
+            id="workspace-canvas"
             active="canvas"
             main={
               <WorkspacePage
@@ -1620,6 +1646,33 @@ export const componentGroups: readonly ComponentGroup[] = [
                   />,
                 ],
               }),
+              <ListChrome
+                status="1 selected"
+                commands={
+                  <form action="#list-chrome">
+                    <Stack
+                      items={[
+                        <Field
+                          id="collection-feedback"
+                          name="feedback"
+                          label="Feedback"
+                          type="text"
+                          layout="inline"
+                        />,
+                        <Field
+                          id="collection-due-date"
+                          name="dueDate"
+                          label="Due date"
+                          type="date"
+                          layout="inline"
+                          value="2026-10-13"
+                        />,
+                        <ActionGroup actions={[<Button label="Apply" type="submit" />]} />,
+                      ]}
+                    />
+                  </form>
+                }
+              />,
               <ListChrome
                 filtersToggle={{ label: 'Filters' }}
                 filterMenus={
@@ -1980,6 +2033,27 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'record-form-submit-blocked',
+        name: 'Record form · blocked submission',
+        description:
+          'A domain prerequisite can disable submission while recipient fields and error feedback remain accessible.',
+        render: () => (
+          <Surface
+            title="Invoice"
+            body={
+              <RecordForm
+                action="#record-form-submit-blocked"
+                fields={[{ id: 'blocked-recipient', name: 'recipient', label: 'Recipient', value: 'Guest' }]}
+                submitLabel="Issue invoice"
+                unsavedPrompt="Discard this draft?"
+                submitDisabled
+                errors={['Configure charge rules before issuing the invoice.']}
+              />
+            }
+          />
+        ),
+      },
+      {
         id: 'record-form-three-columns',
         name: 'Record form · three peer fields',
         description:
@@ -2095,55 +2169,65 @@ export const componentGroups: readonly ComponentGroup[] = [
         id: 'form-grid',
         name: 'Form grid in sections',
         description:
-          'A form split into sections lays each group out as a record form does: three peer fields per row once the group is 52rem wide, one column on a phone. Repeated groups carry an id so their fields say whose they are.',
+          "A form split into sections lays each group out as a record form does: three peer fields per row once the group is 52rem wide, one column on a phone. Repeated groups carry an id so their fields say whose they are. FormActions closes the form with the record form's action row; a step back skips the required checks.",
         render: () => (
           <form action="#form-grid" method="post">
             <Stack
-              divided
-              items={['Lead guest', 'Second guest'].map((title, index) => (
-                <Section
-                  id={`form-grid-guest-${index + 1}`}
-                  title={title}
-                  body={
-                    <FormGrid
-                      columns={3}
-                      items={[
-                        <Field
-                          id={`form-grid-name-${index}`}
-                          name={`guest-${index}-name`}
-                          label="Full name"
-                          required
-                        />,
-                        <Field
-                          id={`form-grid-birth-${index}`}
-                          name={`guest-${index}-birth`}
-                          label="Date of birth"
-                          type="date"
-                          required
-                        />,
-                        <Field
-                          id={`form-grid-document-${index}`}
-                          name={`guest-${index}-document`}
-                          label="Document"
-                          type="select"
-                          value="passport"
-                          options={[
-                            { value: 'passport', label: 'Passport' },
-                            { value: 'id', label: 'National ID' },
+              items={[
+                <Stack
+                  divided
+                  items={['Lead guest', 'Second guest'].map((title, index) => (
+                    <Section
+                      id={`form-grid-guest-${index + 1}`}
+                      title={title}
+                      body={
+                        <FormGrid
+                          columns={3}
+                          items={[
+                            <Field
+                              id={`form-grid-name-${index}`}
+                              name={`guest-${index}-name`}
+                              label="Full name"
+                              required
+                            />,
+                            <Field
+                              id={`form-grid-birth-${index}`}
+                              name={`guest-${index}-birth`}
+                              label="Date of birth"
+                              type="date"
+                              required
+                            />,
+                            <Field
+                              id={`form-grid-document-${index}`}
+                              name={`guest-${index}-document`}
+                              label="Document"
+                              type="select"
+                              value="passport"
+                              options={[
+                                { value: 'passport', label: 'Passport' },
+                                { value: 'id', label: 'National ID' },
+                              ]}
+                            />,
+                            <Field
+                              id={`form-grid-note-${index}`}
+                              name={`guest-${index}-note`}
+                              label="Note"
+                              type="textarea"
+                              span="full"
+                            />,
                           ]}
-                        />,
-                        <Field
-                          id={`form-grid-note-${index}`}
-                          name={`guest-${index}-note`}
-                          label="Note"
-                          type="textarea"
-                          span="full"
-                        />,
-                      ]}
+                        />
+                      }
                     />
-                  }
-                />
-              ))}
+                  ))}
+                />,
+                <FormActions
+                  actions={[
+                    <Button label="Continue" variant="primary" type="submit" name="step" value="2" />,
+                    <Button label="Back" type="submit" name="step" value="0" formNoValidate />,
+                  ]}
+                />,
+              ]}
             />
           </form>
         ),
@@ -2403,6 +2487,65 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'dock',
+        name: 'Dock',
+        description:
+          'Non-modal panels for tasks beside the page, such as a call and a chat conversation, in the DockRegion at the bottom end of the viewport (shown embedded). While a dock is open, toasts move to the top end and the page keeps room for a collapsed dock. Collapsed, the actions stay.',
+        render: () => (
+          <DockRegion
+            placement="embedded"
+            docks={[
+              <Dock
+                id="ringing-dock"
+                tone="attention"
+                collapsed
+                eyebrow="Incoming call · Gifts and corporate"
+                title="Sam Lee"
+                toggle={{ collapseLabel: 'Hide matching records', expandLabel: 'Show matching records' }}
+                body={<Text>Two open records match this number.</Text>}
+                actions={
+                  <ActionGroup
+                    actions={[
+                      <Button label="Answer" variant="primary" icon="phone" />,
+                      <Button label="Decline" variant="secondary" icon="phone-off" />,
+                    ]}
+                  />
+                }
+              />,
+              <Dock
+                id="call-dock"
+                eyebrow="On a call · Line 0901 234 501"
+                title="Alex Morgan"
+                status={[<Text>04:12</Text>, <Badge label="Recording" tone="danger" />]}
+                toggle={{ collapseLabel: 'Collapse call', expandLabel: 'Expand call' }}
+                body={
+                  <DescriptionList
+                    columns="auto"
+                    items={[
+                      { id: 'phone', label: 'Phone', value: '090 661 0423' },
+                      {
+                        id: 'record',
+                        label: 'Open record',
+                        value: <Link href="#dock" label="CS-3472 · Late delivery" />,
+                      },
+                    ]}
+                  />
+                }
+                actions={
+                  <ActionGroup
+                    actions={[
+                      <IconButton label="Mute" icon={<Icon name="mic-off" />} pressed={false} />,
+                      <IconButton label="Hold" icon={<Icon name="pause" />} pressed={false} />,
+                      <Button label="End call" variant="destructive" icon="phone-off" />,
+                    ]}
+                  />
+                }
+              />,
+            ]}
+          />
+        ),
+      },
+      {
         id: 'modal-sheet',
         name: 'Modal sheet',
         description: 'Shown embedded here; the production mode occupies the viewport.',
@@ -2498,6 +2641,14 @@ export const componentGroups: readonly ComponentGroup[] = [
                 id="more-actions"
                 label="More actions"
                 items={[{ id: 'export', label: 'Export report', href: '#data-table' }]}
+              />,
+              <Menu
+                id="account-menu"
+                label="Account"
+                triggerAppearance="plain"
+                trigger={<Avatar name="Ngọc Linh" size="small" />}
+                align="end"
+                items={[{ id: 'profile', label: 'Profile', href: '#record-page' }]}
               />,
             ]}
           />
@@ -2745,7 +2896,8 @@ export const componentGroups: readonly ComponentGroup[] = [
                 selection={{ formId: 'catalogue-loading-selection', fieldName: 'selected' }}
                 responsive="stack"
                 labels={ketTableDemoConfig.labels}
-                caption="Table-owned loading rows; selection stays disabled until the read answers"
+                maxBlockSize="12rem"
+                caption="Bounded table-owned loading rows; selection stays disabled until the read answers"
               />,
               <KetTable
                 columns={[{ key: 'work', label: 'Retained result', cell: (row: { id: string }) => row.id }]}
@@ -2782,6 +2934,7 @@ export const componentGroups: readonly ComponentGroup[] = [
                 rowHref={() => '#ket-table'}
                 layout="fixed"
                 caption="Fixed columns · URL-driven server collection"
+                responsive="stack"
                 labels={ketTableDemoConfig.labels}
               />,
               <KetTable
@@ -2798,6 +2951,36 @@ export const componentGroups: readonly ComponentGroup[] = [
                 rowHref={(row) => `#ket-table-${row.id}`}
                 currentRow="R-1042"
                 caption="The row the reader came back to from its record page"
+                labels={ketTableDemoConfig.labels}
+              />,
+              <KetTable
+                columns={[
+                  {
+                    key: 'name',
+                    label: 'Indicator',
+                    wrap: true,
+                    cell: (row: { id: string; name: string; amount: string }) => row.name,
+                  },
+                  { key: 'id', label: 'Code', cell: (row: { id: string }) => row.id },
+                  {
+                    key: 'amount',
+                    label: 'End of period',
+                    align: 'end',
+                    cell: (row: { id: string; amount: string }) => row.amount,
+                  },
+                ]}
+                rows={[
+                  { id: '100', name: 'A. Current assets', level: 0, amount: '528,229,831' },
+                  { id: '110', name: 'I. Cash and cash equivalents', level: 1, amount: '187,900,000' },
+                  { id: '111', name: '1. Cash', level: 2, amount: '187,900,000' },
+                  { id: '200', name: 'B. Non-current assets', level: 0, amount: '36,000,000' },
+                  { id: '270', name: 'Total assets', level: 0, amount: '564,229,831' },
+                ]}
+                id={(row) => row.id}
+                rowLevel={(row) => row.level}
+                rowEmphasis={(row) => (row.id === '270' ? 'total' : row.level < 2 ? 'group' : null)}
+                responsive="stack"
+                caption="An outline: rows indent by level, groups and totals read stronger"
                 labels={ketTableDemoConfig.labels}
               />,
               <Code value={rowAnchorHref('/reservations?page=2', 'R-1042', { top: 336, left: 214 })} />,
@@ -2835,6 +3018,22 @@ export const componentGroups: readonly ComponentGroup[] = [
               createRelationSelectView({
                 id: 'demo-relation-select',
                 config: relationSelectDemoConfig,
+              }).view(),
+              createRelationSelectView({
+                id: 'demo-dependent-relation',
+                config: {
+                  ...relationSelectDemoConfig,
+                  name: 'locationId',
+                  ariaLabel: 'Location in selected warehouse',
+                  value: null,
+                  options: [],
+                  manager: {
+                    listFunction: 'stock.lookupLocations',
+                    listInputFields: { warehouseId: 'warehouseId' },
+                    searchInDropdown: true,
+                  },
+                  labels: { ...relationSelectDemoConfig.labels, choose: 'Choose a warehouse first' },
+                },
               }).view(),
               createRelationSelectView(
                 {
@@ -3018,12 +3217,8 @@ export const componentGroups: readonly ComponentGroup[] = [
           <Stack
             items={[
               <DatePickerExamples />,
-              <DateTimePicker
-                id="appointment"
-                name="appointment"
-                label="Appointment"
-                value="2026-09-08T14:30"
-              />,
+              // DatePickerExamples already holds an `appointment` picker; ids stay unique on the page.
+              <DateTimePicker id="visit" name="visit" label="Appointment" value="2026-09-08T14:30" />,
               <TimePicker id="cutoff" name="cutoff" label="Cut-off" value="17:00" />,
             ]}
           />
@@ -3633,6 +3828,37 @@ export const componentGroups: readonly ComponentGroup[] = [
         ),
       },
       {
+        id: 'qr-code',
+        name: 'QR code',
+        description:
+          'A code a phone scans, drawn on the server: black on a white plate in either theme, named for what scanning does, with what a person must read printed beside it.',
+        render: () => (
+          <Inline
+            items={[
+              <QrCode
+                value="https://example.com/invoices/INV-1042/pay?amount=13020000"
+                label="Pay invoice INV-1042 by bank transfer"
+                caption="INV-1042 · 13,020,000 ₫"
+              />,
+              <DescriptionList
+                columns="auto"
+                items={[
+                  { id: 'bank', label: 'Bank', value: 'Example Bank' },
+                  { id: 'account', label: 'Account', value: '0123 4567 8910' },
+                  { id: 'amount', label: 'Amount', value: '13,020,000 ₫' },
+                  { id: 'reference', label: 'Reference', value: 'INV-1042' },
+                ]}
+              />,
+              <QrCode
+                value="WIFI:S:Example;T:WPA;P:example-pass;;"
+                label="Join the shop's Wi-Fi"
+                size="small"
+              />,
+            ]}
+          />
+        ),
+      },
+      {
         id: 'activity-audit',
         name: 'Activity timeline and audit log',
         description:
@@ -3725,6 +3951,33 @@ export const componentGroups: readonly ComponentGroup[] = [
                 ]}
               />,
             ]}
+          />
+        ),
+      },
+      {
+        id: 'workspace-master-detail',
+        name: 'Master-detail workspace',
+        description:
+          'A queue beside the item being worked on: ResourceList marks the open item with currentId; the split wraps when the detail would drop below 60% or 38rem.',
+        render: () => (
+          <WorkspacePage
+            title="Bank reconciliation"
+            variant="operational"
+            masterLabel="Unmatched transactions"
+            master={
+              <ResourceList
+                label="Unmatched transactions"
+                rows={orders}
+                id={(row) => row.id}
+                href={(row) => `?id=${row.id}`}
+                primary={(row) => `${row.id} · ${row.total}`}
+                secondary={(row) => row.customer}
+                currentId="SO-1042"
+              />
+            }
+            body={
+              <Surface title="SO-1042" body="Candidates, allocation and the difference for the open item." />
+            }
           />
         ),
       },

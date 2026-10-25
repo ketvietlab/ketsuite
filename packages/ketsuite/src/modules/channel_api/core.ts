@@ -544,6 +544,11 @@ export const stableHash = (value: unknown): string => {
 
 export const readJson = async (req: Req, limit = 32 * 1024): Promise<Record<string, unknown>> => {
   const type = String(req.headers['content-type'] ?? '').toLowerCase()
+  // A request that carries no content at all reads as an empty object, so a
+  // route whose body is optional still answers a client that sends nothing; the
+  // schema check that follows decides whether nothing is enough.
+  if (!type && !req.headers['transfer-encoding'] && Number(req.headers['content-length'] ?? 0) === 0)
+    return {}
   if (!type.includes('application/json'))
     throw Object.assign(new Error('unsupported media type'), { code: 'E_MEDIA_TYPE' })
   const declared = Number(req.headers['content-length'] ?? 0)

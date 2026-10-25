@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   chargeDescription,
   dataTable,
@@ -25,6 +26,8 @@ export type CheckOutCharge = {
 }
 
 export type CheckOutReadiness = {
+  stayVersion?: number
+  issuedKeys?: number
   stayId: string
   state: string
   ready: boolean
@@ -122,6 +125,7 @@ export const checkOutPrepScreen = (
   frame: Frame,
   permitted: boolean,
   errors: readonly string[] = [],
+  currentHref?: string,
 ): TemplateResult => {
   const pending = data.awaitingFulfilment ?? []
   const owes = data.balance != null && Number(data.balance) > 0
@@ -162,7 +166,7 @@ export const checkOutPrepScreen = (
       : []),
   ]
 
-  const action = `/admin/hospitality/reservations/${reservation.id}`
+  const action = currentHref ?? `/admin/hospitality/reservations/${encodeURIComponent(reservation.id)}`
   const confirm =
     data.ready && permitted ? (
       <Section
@@ -174,20 +178,47 @@ export const checkOutPrepScreen = (
             method="post"
             submit={_('hospitality_core.reservation.action.checkOut')}
             submitVariant="primary"
-            hidden={{ operation: 'check-out', lang: locale }}
-            fields={
-              data.lateReasonRequired
+            hidden={{
+              operation: 'check-out',
+              lang: locale,
+              expectedVersion: String(data.stayVersion ?? 0),
+              requestKey: randomUUID(),
+            }}
+            fields={[
+              {
+                name: 'handover',
+                label: _('hospitality_core.reservation.checkout.handover'),
+                type: 'checkbox-group',
+                options: [
+                  {
+                    name: 'handover-keys',
+                    value: 'yes',
+                    label: _('hospitality_core.reservation.checkout.keys', { count: data.issuedKeys ?? 1 }),
+                  },
+                  {
+                    name: 'handover-charges',
+                    value: 'yes',
+                    label: _('hospitality_core.reservation.checkout.checkedCharges'),
+                  },
+                ],
+              },
+              {
+                name: 'departureNotes',
+                label: _('hospitality_core.reservation.checkout.notes'),
+                type: 'textarea',
+              },
+              ...(data.lateReasonRequired
                 ? [
                     {
                       name: 'lateReason',
                       label: _('hospitality_core.checkOutPrep.lateReason'),
-                      type: 'textarea',
+                      type: 'textarea' as const,
                       required: true,
                       help: _('hospitality_core.checkOutPrep.lateReasonHint'),
                     },
                   ]
-                : []
-            }
+                : []),
+            ]}
           />
         }
       />

@@ -48,6 +48,9 @@ export const retryEmailEffects = [
   ...recordEffects,
   'read:mail_transport.Delivery',
   'write:mail_transport.Delivery',
+  // Mail transport's retry also re-arms the notifications the delivery carries.
+  'read:mail_transport.DeliveryNotification',
+  'write:mail.Notification',
   'enqueue:mail_transport.deliver',
 ] as const
 

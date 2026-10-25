@@ -3,12 +3,7 @@ setFlowLocale('vi')
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
-import {
-  taskAssigneeIds,
-  taskUsers,
-  isAssignedTo,
-  assignableUsers,
-} from '@ketvietlab/flow-client/task-assignees.mjs'
+import { taskAssigneeIds, taskUsers, isAssignedTo } from '@ketvietlab/flow-client/task-assignees.mjs'
 import { taskGroups, taskGroupValue } from '@ketvietlab/flow-client/task-order.mjs'
 import { taskCreatePayload } from '@ketvietlab/flow-client/task-composer.mjs'
 const read = (s) => s.call('flow.workspace.bootstrap', { companyId: 'demo' }).value
@@ -55,9 +50,13 @@ test('invalid IDs, duplicates, people without access, stale and readonly saves n
   assert.equal(save(s, t.id, { assigneeIds: ['bao'], expectedVersion: 0 }).ok, false)
   const readonly = createOrganizationSession('readonly')
   assert.equal(save(readonly, t.id, { assigneeIds: ['bao'] }).ok, false)
+  // Who may be assigned is the server's answer, not a filter over the bootstrap.
   assert.deepEqual(
-    assignableUsers(read(s), 'core').map((u) => u.id),
-    ['mai', 'bao'],
+    s
+      .call('flow.member.options', { companyId: 'demo', projectId: 'core', limit: 100 })
+      .value.items.map((u) => u.id)
+      .sort(),
+    ['bao', 'mai'],
   )
 })
 test('task creation/subtasks and legacy assignment normalize to the same ID array', () => {

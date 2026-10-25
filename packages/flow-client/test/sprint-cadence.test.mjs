@@ -350,19 +350,34 @@ test('a Kanban project has no Sprint tab, field or form; a sprint project propos
   view = await island(session, { screen: 'sprint-new', project: kanban, workspaceId: 'product' })
   page = view.html()
   assert.match(page, /This project uses Kanban/)
-  assert.doesNotMatch(page, /id="start"/)
+  assert.doesNotMatch(page, /name="start"/)
   view.close()
 
   view = await island(session, { screen: 'issue-new', project: 'core', workspaceId: 'product' })
   page = view.html()
+  // Options carry the sprint ID; the label is what the person picks by.
   const options = [
-    ...(/name="sprint"[\s\S]*?<\/select>/.exec(page)?.[0] ?? '').matchAll(/<option value="([^"]+)"/g),
-  ].map((m) => m[1])
+    ...(/name="sprint"[\s\S]*?<\/select>/.exec(page)?.[0] ?? '').matchAll(
+      /<option value="[^"]+"[^>]*>([^<]*)</g,
+    ),
+  ].map((m) => m[1].trim())
   assert.ok(
     options.includes('Sprint 13') && !options.some((o) => /^(OPS|DOC|MOB) /.test(o)),
     'only sprints of the task project are offered: ' + options.join(', '),
   )
-  handlers(view.flow.view(), 'id=projectId', 'change')[0]({ target: { value: kanban } })
+  // The project is chosen from a searchable menu that reads its options once opened.
+  handlers(view.flow.view(), 'id=projectId-menu', 'beforetoggle')[0]({ newState: 'open' })
+  await tick()
+  const hadElement = 'HTMLElement' in globalThis
+  globalThis.HTMLElement ??= class {}
+  try {
+    handlers(view.flow.view(), 'aria-label=Project KAN', 'click')[0]({
+      currentTarget: { closest: () => ({ hidePopover() {}, parentElement: { querySelector: () => null } }) },
+    })
+  } finally {
+    if (!hadElement) delete globalThis.HTMLElement
+  }
+  await tick()
   assert.doesNotMatch(
     view.html(),
     /name="sprint"/,
@@ -402,8 +417,8 @@ test('a Kanban project has no Sprint tab, field or form; a sprint project propos
   view.close()
   view = await island(session, { screen: 'sprint-new', project: 'core', workspaceId: 'product' })
   page = view.html()
-  assert.match(page, /id="title"[^>]*value="(KV · )?Sprint 14"/)
-  assert.match(page, /id="start"[^>]*value="2026-10-19"/)
-  assert.match(page, /id="end"[^>]*value="2026-11-01"/)
+  assert.match(page, /name="title"[^>]*value="(KV · )?Sprint 14"/)
+  assert.match(page, /name="start"[^>]*value="2026-10-19"/)
+  assert.match(page, /name="end"[^>]*value="2026-11-01"/)
   view.close()
 })

@@ -6,7 +6,7 @@ import { address, paperTheme, partner, website } from '@ketvietlab/ketsuite'
 
 test('Studio cancels only the expected entry schedule, preserves live content and enforces access', async () => {
   const modules = [address, partner, website, paperTheme]
-  const manifest = compose(modules)
+  const manifest = compose(modules, { companies: true })
   const db = sqliteAdapter()
   await db.open()
   await migrateOne(db, manifest)

@@ -16,7 +16,10 @@ const destination = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    kind: { type: 'string', enum: ['sales_order', 'warehouse_picking'] },
+    kind: {
+      type: 'string',
+      enum: ['sales_order', 'warehouse_picking', 'partner', 'product_template', 'crm_case'],
+    },
     id: string,
   },
   required: ['kind', 'id'],
@@ -70,15 +73,18 @@ const positive = (value: string | null, fallback: number, maximum: number): numb
 }
 const boolean = (value: string | null): boolean => value === 'true'
 
-const destinationOf = (row: Row): { kind: string; id: string } | null => {
+export const notificationDestinationOf = (row: Row): { kind: string; id: string } | null => {
   const id = row.targetId == null ? '' : String(row.targetId)
   if (!id) return null
+  if (row.targetModel === 'partner.Partner') return { kind: 'partner', id }
+  if (row.targetModel === 'product.Template') return { kind: 'product_template', id }
+  if (row.targetModel === 'crm.Case') return { kind: 'crm_case', id }
   if (row.targetModel === 'sale.Order') return { kind: 'sales_order', id }
   if (row.targetModel === 'stock.Picking') return { kind: 'warehouse_picking', id }
   return null
 }
 const project = (row: Row) => {
-  const target = destinationOf(row)
+  const target = notificationDestinationOf(row)
   return {
     id: String(row.id),
     eventType: `mail.${String(row.kind)}`,
@@ -160,7 +166,7 @@ export const channelRoutes = routesOf(
     operationId: 'staff.notifications.markRead',
     summary: 'Mark one actor-owned notification as read.',
     auth: 'required',
-    capability: { key: 'mail.notifications', action: 'read' },
+    capability: { key: 'mail.notifications', action: 'update' },
     request: {
       params: {
         type: 'object',
@@ -188,7 +194,7 @@ export const channelRoutes = routesOf(
     operationId: 'staff.notifications.markAllRead',
     summary: 'Mark every currently unread actor-owned notification as read.',
     auth: 'required',
-    capability: { key: 'mail.notifications', action: 'read' },
+    capability: { key: 'mail.notifications', action: 'update' },
     responses: { '200': envelope(marked) },
     handler: async (ctx, url, req) => {
       const result = (await ctx.call(

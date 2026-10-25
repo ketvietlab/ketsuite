@@ -14,6 +14,7 @@ export const ROOM_STATUSES = [
   'occupied',
   'dirty',
   'cleaning',
+  'inspection',
   'maintenance',
   'out_of_order',
 ] as const
@@ -38,7 +39,14 @@ export const ROOM_VIEW_TYPES = [
 
 export const AMENITY_SCOPES = ['property', 'room'] as const
 export const BED_TYPES = ['single', 'double', 'queen', 'king', 'sofa', 'bunk'] as const
-export const CANCELLATION_POLICY_TYPES = ['flexible', 'moderate', 'strict', 'non_refundable'] as const
+export const CANCELLATION_POLICY_TYPES = [
+  'flexible',
+  'moderate',
+  'strict',
+  'non_refundable',
+  'peak',
+  'contract',
+] as const
 export const CONTACT_TYPES = ['general', 'frontdesk', 'reservation'] as const
 export const CONTENT_IMAGE_CATEGORIES = [
   'exterior',
@@ -72,6 +80,7 @@ export const FOLIO_STATES = ['draft', 'open', 'closed', 'cancelled'] as const
 export const ASSIGNMENT_STATES = ['held', 'active', 'closed'] as const
 export const BOOKING_PROVIDERS = [
   'direct',
+  'walk_in',
   'website',
   'booking',
   'agoda',
@@ -79,7 +88,9 @@ export const BOOKING_PROVIDERS = [
   'traveloka',
   'airbnb',
 ] as const
+export const MANUAL_CHARGE_TYPES = ['laundry', 'transfer', 'late_checkout'] as const
 export const CHARGE_TYPES = [
+  ...MANUAL_CHARGE_TYPES,
   'room',
   'minibar',
   'spa',
@@ -96,14 +107,21 @@ export const CHARGE_TYPES = [
  * making the public hospitality module depend on that datastore.
  */
 export const CHARGE_FULFILLMENT_KINDS = ['none', 'external_stock'] as const
-export const PROPERTY_CHARGE_TYPES = ['parking', 'city_tax', 'internet', 'resort_fee', 'other'] as const
+export const PROPERTY_CHARGE_TYPES = [
+  'parking',
+  'city_tax',
+  'internet',
+  'resort_fee',
+  'extra_bed',
+  'other',
+] as const
 export const EXTRA_RECURRENCES = ['once', 'per_night', 'per_unit'] as const
 export const DOCUMENT_TYPES = ['cccd', 'cmnd', 'passport', 'other'] as const
 export const GENDERS = ['male', 'female', 'other'] as const
 export const OCR_STATES = ['pending', 'done', 'failed'] as const
 export const CLEANING_TASK_TYPES = ['checkout_clean', 'daily_clean', 'maintenance', 'inspection'] as const
 export const CLEANING_TASK_PRIORITIES = ['normal', 'urgent'] as const
-export const CLEANING_TASK_STATES = ['todo', 'in_progress', 'done', 'cancelled'] as const
+export const CLEANING_TASK_STATES = ['todo', 'in_progress', 'done', 'cancelled', 'declined'] as const
 export const NIGHT_AUDIT_STATES = ['queued', 'running', 'completed', 'failed'] as const
 export const STAY_NOTICE_STATES = ['attention', 'ready', 'submitted', 'confirmed'] as const
 export const STAY_NOTICE_REASONS = ['tourism', 'business', 'family', 'other'] as const
@@ -141,3 +159,12 @@ export type NightAuditState = (typeof NIGHT_AUDIT_STATES)[number]
 export type StayNoticeState = (typeof STAY_NOTICE_STATES)[number]
 export type StayNoticeReason = (typeof STAY_NOTICE_REASONS)[number]
 export type StayNoticeChannel = (typeof STAY_NOTICE_CHANNELS)[number]
+
+export const GUEST_LOYALTY_TIERS = [
+  'none',
+  'club',
+  'silver_elite',
+  'gold_elite',
+  'platinum_elite',
+  'diamond_elite',
+] as const

@@ -26,6 +26,19 @@
     line-height: var(--kv-line-sm);
   }
 
+  /* The rows share one label and one value column, so every track starts and ends on one line
+     however wide each value is. Below 48rem the track runs under the label and value instead. */
+  @media (min-width: 48rem) {
+    :where([data-kv-design-system]) [data-ui="bar-chart-rows"] {
+      grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) auto;
+    }
+
+    :where([data-kv-design-system]) [data-ui="bar-chart-row"] {
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
+  }
+
   :where([data-kv-design-system]) [data-ui="bar-chart-label"] {
     display: grid;
     min-width: 0;

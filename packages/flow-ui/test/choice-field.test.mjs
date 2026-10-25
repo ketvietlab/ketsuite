@@ -113,7 +113,7 @@ test('a consumer-owned menu builds its options only while open and keeps the tri
   assert.doesNotMatch(closed, /data-flow="choice-option"/)
   for (const out of [closed, open]) {
     assert.match(out, /popovertarget="row-status-menu"/)
-    assert.match(out, /id="row-status-menu" popover="auto" role="listbox"/)
+    assert.match(out, /id="row-status-menu" popover="auto"[^>]*role="listbox"/)
     assert.match(out, /<span id="row-status-value">Cần làm<\/span>/)
   }
   assert.equal((open.match(/data-flow="choice-option"/g) ?? []).length, 2)

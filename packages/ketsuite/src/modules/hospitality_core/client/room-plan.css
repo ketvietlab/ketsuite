@@ -1,0 +1,347 @@
+/*
+ * The room plan (`hospitality.room-plan`): rooms down the side, nights across, one bar per stay from the
+ * afternoon it arrives to the morning it leaves, so each night is two half tracks and a turnover shares its
+ * day. Only the plan's own geometry lives here, as accepted in the mock (design/hospitality/hospitality.css);
+ * controls, notices and the peek are drawn by the design system.
+ */
+@layer ket.app {
+  .hos-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--kv-space-2);
+  }
+  /* The frame is a size container: `days` nights fill its width, never narrower than a readable half
+     track, and the rest of the horizon lies beyond the scroll. */
+  .hos-tape {
+    --hos-tape-room: 10.5rem;
+    --hos-tape-min: 2.25rem;
+    --hos-tape-span: 28;
+    container-type: inline-size;
+    max-width: 100%;
+    max-height: calc(100dvh - 15rem);
+    min-height: 20rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    overflow-anchor: none;
+    border: 1px solid var(--kv-panel-border);
+    border-radius: var(--kv-radius-md);
+    background: var(--kv-panel-bg);
+  }
+  /* The floor menu names the floor at the top while the plan scrolls; it holds the width of a two-digit floor so the row never shifts. */
+  [data-tape-floor-label] {
+    display: inline-block;
+    min-inline-size: 3.5rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .hos-tape:focus-visible {
+    outline: 2px solid var(--kv-focus-border);
+    outline-offset: 2px;
+  }
+  .hos-tape[data-days="7"] {
+    --hos-tape-span: 14;
+  }
+  /* Day lines, weekends and today are painted behind the rows: one layer each instead of a cell per room and night. */
+  .hos-tape-grid {
+    --hos-tape-half: max(var(--hos-tape-min), calc((100cqi - var(--hos-tape-room)) / var(--hos-tape-span)));
+    --hos-tape-day: calc(2 * var(--hos-tape-half));
+    display: grid;
+    grid-template-columns: var(--hos-tape-room) repeat(var(--hos-tape-halves), var(--hos-tape-half));
+    width: max-content;
+    background-image:
+      linear-gradient(var(--kv-info), var(--kv-info)),
+      linear-gradient(to right, var(--kv-panel-divider) 0 1px, transparent 1px),
+      linear-gradient(
+        to right,
+        color-mix(in srgb, var(--kv-text-main) 4%, transparent) 0 calc(2 * var(--hos-tape-day)),
+        transparent 0
+      );
+    background-size:
+      2px 100%,
+      var(--hos-tape-day) 100%,
+      calc(7 * var(--hos-tape-day)) 100%;
+    background-position:
+      calc(var(--hos-tape-room) + var(--hos-tape-today) * var(--hos-tape-day)) 0,
+      var(--hos-tape-room) 0,
+      calc(var(--hos-tape-room) + var(--hos-tape-saturday) * var(--hos-tape-day)) 0;
+    background-repeat: no-repeat, repeat-x, repeat-x;
+  }
+  .hos-tape-head,
+  .hos-tape-row,
+  .hos-tape-days {
+    display: grid;
+    grid-template-columns: subgrid;
+  }
+  .hos-tape-head,
+  .hos-tape-row,
+  .hos-tape-spacer {
+    grid-column: 1 / -1;
+  }
+  .hos-tape-head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--kv-table-header-bg);
+    border-bottom: 1px solid var(--kv-panel-divider);
+  }
+  /* Rows hold one height each, so the island can draw only the rows near the scroll and size the rest;
+     the frame does not anchor its scroll, since the spacers around those rows change height as it moves. */
+  .hos-tape-row {
+    grid-template-rows: 2.25rem;
+  }
+  .hos-tape-days {
+    grid-column: 2 / -1;
+    grid-row: 1;
+  }
+  .hos-tape-days > * {
+    grid-column: span 2;
+    border-left: 1px solid var(--kv-panel-divider);
+  }
+  /* Weekends carry a tint of the text colour, so they read in both themes without a new token. */
+  .hos-tape-days > [data-weekend] {
+    background: color-mix(in srgb, var(--kv-text-main) 4%, transparent);
+  }
+  .hos-tape-days > [data-today] {
+    border-left: 2px solid var(--kv-info);
+  }
+  /* A floor opens with a full-width band; its label stays at the start while the nights scroll. */
+  .hos-tape-row[data-floor-label] {
+    grid-template-rows: 1.75rem;
+    background: var(--kv-table-header-bg);
+  }
+  .hos-tape-row[data-floor-label] .hos-tape-corner {
+    border-right: 0;
+    color: var(--kv-text-main);
+    white-space: nowrap;
+  }
+  .hos-tape-row[data-floor-label] .hos-tape-corner span {
+    color: var(--kv-text-muted);
+    font-weight: var(--kv-weight-normal);
+  }
+
+  .hos-tape-corner,
+  .hos-tape-room {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--kv-space-2);
+    min-width: 0;
+    padding: 0 var(--kv-space-3);
+    border-right: 1px solid var(--kv-panel-divider);
+  }
+  .hos-tape-corner {
+    background: var(--kv-table-header-bg);
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    font-weight: var(--kv-weight-medium);
+  }
+  .hos-tape-row[data-summary] {
+    grid-template-rows: minmax(1.75rem, auto);
+    border-top: 1px solid var(--kv-panel-divider);
+  }
+  .hos-tape-day {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    padding: var(--kv-space-1) 0;
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+  }
+  .hos-tape-day strong {
+    color: var(--kv-text-main);
+    font-weight: var(--kv-weight-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+  .hos-tape-day[data-today] {
+    color: var(--kv-info);
+  }
+  .hos-tape-day[data-today] strong {
+    color: var(--kv-info);
+  }
+  .hos-tape-total {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--kv-text-main);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .hos-tape-total a {
+    color: var(--kv-warning);
+    font-weight: var(--kv-weight-semibold);
+  }
+  .hos-tape-total > span {
+    color: var(--kv-text-muted);
+  }
+
+  .hos-tape-grid > .hos-tape-row {
+    border-bottom: 1px solid var(--kv-panel-divider);
+  }
+  .hos-tape-row[data-loading] .hos-tape-corner {
+    border-right: 0;
+    white-space: nowrap;
+  }
+  .hos-tape-room {
+    background: var(--kv-panel-bg);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+  }
+  .hos-tape-room strong {
+    flex: none;
+    min-width: 2.25rem;
+    font-weight: var(--kv-weight-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+  .hos-tape-type {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--kv-text-muted);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .hos-tape-dot {
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--kv-text-muted);
+  }
+  .hos-tape-dot[data-tone="positive"] {
+    background: var(--kv-positive);
+  }
+  .hos-tape-dot[data-tone="warning"] {
+    background: var(--kv-warning);
+  }
+  .hos-tape-dot[data-tone="info"] {
+    background: var(--kv-info);
+  }
+  .hos-tape-dot[data-tone="danger"] {
+    background: var(--kv-danger);
+  }
+
+  /* A stay bar: filled while the guest is in the house, outlined while the booking waits for them,
+     quiet once they have left. A bar cut by the window edge loses its rounded end on that side. */
+  .hos-tape-bar {
+    position: relative;
+    z-index: 1;
+    grid-row: 1;
+    align-self: center;
+    min-width: 0;
+    height: 1.625rem;
+    margin-inline: 1px;
+    padding: 0 var(--kv-space-1);
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: var(--kv-radius-sm);
+    font-size: var(--kv-text-xs);
+    line-height: 1.5rem;
+    font-weight: var(--kv-weight-medium);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-decoration: none;
+  }
+  .hos-tape-bar[data-kind="in-house"] {
+    background: var(--kv-info-bg);
+    border-color: var(--kv-info);
+    color: var(--kv-info);
+  }
+  .hos-tape-bar[data-kind="booked"] {
+    background: var(--kv-panel-bg);
+    border-style: dashed;
+    border-color: var(--kv-info);
+    color: var(--kv-info);
+  }
+  .hos-tape-bar[data-kind="past"] {
+    background: var(--kv-table-header-bg);
+    border-color: var(--kv-panel-divider);
+    color: var(--kv-text-muted);
+  }
+  .hos-tape-bar[data-kind="out"] {
+    background: repeating-linear-gradient(135deg, var(--kv-danger-bg) 0 6px, transparent 6px 12px);
+    border-color: var(--kv-danger);
+    color: var(--kv-danger);
+  }
+  .hos-tape-bar[data-clip="start"],
+  .hos-tape-bar[data-clip="both"] {
+    margin-inline-start: 0;
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+    border-inline-start-width: 0;
+  }
+  .hos-tape-bar[data-clip="end"],
+  .hos-tape-bar[data-clip="both"] {
+    margin-inline-end: 0;
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
+    border-inline-end-width: 0;
+  }
+  .hos-tape-bar:hover {
+    filter: brightness(0.97);
+  }
+  .hos-tape-bar:focus-visible {
+    z-index: 2;
+    outline: 2px solid var(--kv-focus-border);
+    outline-offset: 1px;
+  }
+  /* The bar whose reservation is in the peek: a ring in its own colour, so its kind still reads. */
+  .hos-tape-bar[aria-current="true"] {
+    z-index: 2;
+    box-shadow: 0 0 0 1px currentcolor;
+    font-weight: var(--kv-weight-semibold);
+  }
+
+  .hos-tape-key {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--kv-space-1);
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+  }
+  .hos-tape-swatch {
+    width: 1rem;
+    height: 0.75rem;
+    border: 1px solid transparent;
+    border-radius: 2px;
+  }
+  .hos-tape-swatch[data-kind="in-house"] {
+    background: var(--kv-info-bg);
+    border-color: var(--kv-info);
+  }
+  .hos-tape-swatch[data-kind="booked"] {
+    border-style: dashed;
+    border-color: var(--kv-info);
+  }
+  .hos-tape-swatch[data-kind="past"] {
+    background: var(--kv-table-header-bg);
+    border-color: var(--kv-panel-divider);
+  }
+  .hos-tape-swatch[data-kind="out"] {
+    background: repeating-linear-gradient(135deg, var(--kv-danger-bg) 0 3px, transparent 3px 6px);
+    border-color: var(--kv-danger);
+  }
+  @media (width < 48rem) {
+    /* The room column keeps the number and its state; the type stays in the row's title. */
+    .hos-tape {
+      --hos-tape-room: 5rem;
+      --hos-tape-min: 1.75rem;
+      max-height: calc(100dvh - 18rem);
+    }
+    .hos-tape-type {
+      display: none;
+    }
+    .hos-tape-corner,
+    .hos-tape-room {
+      padding: var(--kv-space-1) var(--kv-space-2);
+    }
+  }
+}

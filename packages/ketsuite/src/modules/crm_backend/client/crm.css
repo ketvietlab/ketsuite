@@ -60,4 +60,10 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+
+  /* An island another module places on a record (`crm_backend:record.related`) lays out nothing
+     itself: what it draws sits in the tab's stack, and an island with nothing to show takes no room. */
+  ket-island[data-crm-related] {
+    display: contents;
+  }
 }

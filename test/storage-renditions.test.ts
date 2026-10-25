@@ -17,16 +17,19 @@ import sharp from 'sharp'
 type Attachment = { id: string; storeKey: string; checksum: string }
 type Rendition = { size: string; width: number; height: number; storeKey: string; mimetype: string }
 
+// No sign-in here: the development identity (default company, every function) needs KET_DEV=1.
 test('storage renditions: the media worker resizes an uploaded image to WebP, the file route serves it, and removal lets the sweep collect it', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ket-renditions-'))
   const env = {
     KET_LOG: 'null',
+    KET_DEV: '1',
     KET_SQLITE: join(dir, 'app.db'),
     KET_STORAGE_DIR: join(dir, 'files'),
     KET_COMPANY: 'acme',
   }
   const app = defineDeployment({
     name: 'renditions',
+    companies: true,
     modules: [address, partner, company, storageModule],
     worker: { queues: { maintenance: 1, media: 1 } },
   })

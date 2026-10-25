@@ -1,10 +1,10 @@
 import { tr } from './i18n.mjs'
 import { html, each } from '@ketvietlab/ketjs-view'
-import { FlowAvatar, FlowAvatarGroup, FlowIcon } from './index.mjs'
+import { FlowAvatar, FlowAvatarGroup, FlowIcon, FlowButton } from './index.mjs'
 /** @typedef {{id:string,name:string,email?:string,avatarUrl?:string,disabled?:boolean,description?:string}} FlowUserOption */
 /** Controlled multi-user field. Identity, eligibility and persistence belong to the consumer.
  * With `menu`, search and people are built only while the consumer reports the menu open.
- * @param {{id:string,label:string,size?:'sm'|'md',value:string[],options:FlowUserOption[],disabled?:boolean,placeholder?:string,menu?:{open:boolean,onToggle:(open:boolean)=>void},onChange:(ids:string[])=>void}} p */
+ * @param {{id:string,label:string,size?:'sm'|'md',value:string[],options:FlowUserOption[],disabled?:boolean,placeholder?:string,menu?:{open:boolean,onToggle:(open:boolean)=>void},remote?:{query:string,loading:boolean,error?:string|null,total:number,onQuery:(query:string)=>void,onRetry:()=>void,onMore?:()=>void},onChange:(ids:string[])=>void}} p */
 export function FlowUserPicker(p) {
   const selected = p.value.map(
     (id) => p.options.find((u) => u.id === id) ?? { id, name: tr('flow.ui.user.no.longer.available') },
@@ -80,11 +80,15 @@ export function FlowUserPicker(p) {
    ${
      p.menu && !p.menu.open
        ? null
-       : html`<div data-flow="user-picker-search">${FlowIcon('search')}<input type="text" data-flow-user-filter placeholder=${tr('flow.ui.search.people')} aria-label=${tr('flow.ui.search.people.58e40b')} autocomplete="off"
+       : html`<div data-flow="user-picker-search">${FlowIcon('search')}<input type="text" data-flow-user-filter value=${p.remote?.query} placeholder=${tr('flow.ui.search.people')} aria-label=${tr('flow.ui.search.people.58e40b')} autocomplete="off"
     on:input=${
       /** @param {Event} e */ (e) => {
         const input = /** @type {HTMLInputElement} */ (e.currentTarget),
           menu = input.closest('[popover]')
+        if (p.remote) {
+          p.remote.onQuery(input.value)
+          return
+        }
         const normalize = /** @param {string} s */ (s) =>
           s
             .normalize('NFD')
@@ -117,8 +121,11 @@ export function FlowUserPicker(p) {
     ${FlowAvatar({ name: u.name, src: u.avatarUrl })}<span><span>${u.name}</span>${u.description || u.email ? html`<small>${u.description ?? u.email}</small>` : null}</span>
    </label>`,
    )}</div>
-   <p data-flow="user-picker-empty" role="status" hidden=${p.options.length > 0}>${tr('flow.ui.no.matching.people')}</p>
-   <div data-flow="user-picker-footer"><small>${tr('flow.ui.people.selected', [p.value.length])}</small><button type="button" on:click=${/** @param {MouseEvent} e */ (e) => close(/** @type {HTMLElement} */ (/** @type {HTMLElement} */ (e.currentTarget).closest('[popover]')))}>${tr('flow.ui.picker.done')}</button></div>`
+   <p data-flow="user-picker-empty" role="status" hidden=${p.remote ? p.remote.loading || Boolean(p.remote.error) || p.remote.total > 0 : p.options.length > 0}>${tr('flow.ui.no.matching.people')}</p>
+   ${p.remote?.loading ? html`<p role="status">${tr('flow.ui.search.loading')}</p>` : null}
+   ${p.remote?.error ? html`<p role="alert">${p.remote.error}</p>${FlowButton({ label: tr('flow.ui.search.retry'), size: 'sm', onClick: p.remote.onRetry })}` : null}
+   ${p.remote?.onMore ? FlowButton({ label: tr('flow.ui.people.more'), size: 'sm', disabled: p.remote.loading, onClick: p.remote.onMore }) : null}
+   <div data-flow="user-picker-footer"><small>${p.value.length === 1 ? tr('flow.ui.people.selected.one') : tr('flow.ui.people.selected', [p.value.length])}</small><button type="button" on:click=${/** @param {MouseEvent} e */ (e) => close(/** @type {HTMLElement} */ (/** @type {HTMLElement} */ (e.currentTarget).closest('[popover]')))}>${tr('flow.ui.picker.done')}</button></div>`
 }
   </div>
  </div></div>`

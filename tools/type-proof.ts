@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { compose, generateDts } from '@ketvietlab/ketjs'
 import { catalog, inventory, checkout, defaultTheme as theme } from '@ketvietlab/ketsuite'
 
-const manifest = compose([catalog, inventory, checkout, theme])
+const manifest = compose([catalog, inventory, checkout, theme], { companies: true })
 const dts = generateDts(manifest)
 mkdirSync('.ket', { recursive: true })
 writeFileSync('.ket/types.d.ts', dts)

@@ -4,7 +4,10 @@ import { basename, extname, join } from 'node:path'
 
 // A test that stops making progress must fail rather than stall the run, and a
 // leaked handle must not keep the child alive after the last test has reported.
-const RUNNER_FLAGS = ['--test', '--test-timeout=120000', '--test-force-exit']
+// Each file can seed thousands of database rows and boot an HTTP application.
+// Keep database/CPU contention bounded on hosted runners; do not derive this
+// fan-out from the host's advertised CPU count.
+const RUNNER_FLAGS = ['--test', '--test-concurrency=2', '--test-timeout=120000', '--test-force-exit']
 
 /** @typedef {'framework' | 'identity' | 'collaboration' | 'catalog' | 'orders' | 'accounting' | 'crm-loyalty' | 'hospitality' | 'website' | 'manufacturing'} TestGroup */
 /** @typedef {readonly [RegExp, TestGroup]} GroupRule */
@@ -55,6 +58,24 @@ const TEST_GROUPS = [
 const TEST_SOURCE = /^test\/[^/]+\.test\.tsx?$/
 const MODULE_SOURCE = /^packages\/ketsuite\/src\/modules\/([^/]+)\//
 const DOCUMENTATION = /^(?:docs\/|.*\.md$)/
+// The browser lane: browser.yml runs these on a schedule, apart from the HTTP and unit
+// tests this file plans for the merge gate, so changing one moves no gate group.
+const BROWSER_LANE = /^(?:e2e\/|test\/browser\/)/
+
+/**
+ * What a test that drives a browser contains: a headless flag, the browser binary it was given,
+ * Playwright, or a DevTools target. Spelled in pieces so this file and the test that reads it do
+ * not match themselves.
+ */
+export const BROWSER_MARKERS = new RegExp(
+  [
+    ['--head', 'less'].join(''),
+    ['KET', 'BROWSER', 'BIN'].join('_'),
+    ['KET', 'CHROME'].join('_'),
+    ['@play', 'wright/'].join(''),
+    ['webSocket', 'DebuggerUrl'].join(''),
+  ].join('|'),
+)
 
 /** @param {string} name @param {readonly GroupRule[]} rules @returns {TestGroup} */
 function groupFromRules(name, rules) {
@@ -86,7 +107,7 @@ export function groupsForChanges(files) {
   /** @type {Set<TestGroup>} */
   const selected = new Set()
   for (const file of files) {
-    if (!file || DOCUMENTATION.test(file)) continue
+    if (!file || DOCUMENTATION.test(file) || BROWSER_LANE.test(file)) continue
     if (TEST_SOURCE.test(file)) {
       selected.add(groupForTest(file))
       continue

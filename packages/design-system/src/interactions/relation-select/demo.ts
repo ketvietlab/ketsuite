@@ -13,6 +13,11 @@ export const relationSelectDemoConfig: RelationSelectConfig = {
     { value: 'an-viet', label: 'An Việt', description: 'Hà Nội' },
     { value: 'song-xanh', label: 'Sông Xanh', description: 'Đà Nẵng' },
     { value: 'coop-mart', label: 'Coopmart', description: 'TP. Hồ Chí Minh' },
+    {
+      value: 'legacy,contact-id',
+      label: 'Opaque ID contact',
+      description: 'JSON commands preserve this ID with getSelectedValues()',
+    },
   ],
   labels: {
     choose: 'Choose a partner',

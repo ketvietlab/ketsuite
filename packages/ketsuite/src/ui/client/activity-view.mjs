@@ -1,4 +1,5 @@
 // @ts-nocheck Shared dependency-free browser/SSR activity view.
+import { DatePicker } from '@ketvietlab/design-system'
 const LABELS = {
   vi: {
     title: 'Hoạt động đã lên kế hoạch',
@@ -27,6 +28,7 @@ const LABELS = {
     done: 'Hoàn tất',
     canceled: 'Đã hủy',
     myActivities: 'Hoạt động của tôi',
+    unavailable: 'Không tải được hoạt động',
   },
   en: {
     title: 'Planned activities',
@@ -55,6 +57,7 @@ const LABELS = {
     done: 'Done',
     canceled: 'Canceled',
     myActivities: 'My activities',
+    unavailable: 'Activities are unavailable',
   },
 }
 
@@ -67,11 +70,6 @@ const apiFor = (resModel) => {
   if (resModel === 'sale.Order') return 'sale_activity_backend'
   if (resModel === 'account.Move') return 'account_activity_backend'
   return null
-}
-const localDate = () => {
-  const now = new Date()
-  const offset = now.getTimezoneOffset() * 60_000
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10)
 }
 const errorText = (error) =>
   error && typeof error === 'object' && 'message' in error ? String(error.message) : 'Activity request failed'
@@ -138,7 +136,7 @@ export function createRecordActivityView(runtime, props, seed = {}) {
   const activities = signal(seed.activities ?? [])
   const bridge = apiFor(String(props.resModel))
   const requests = requestScope()
-  let pollCount = 0
+  const today = signal('')
   let pollTimer = null
 
   const load = async ({ quiet = false } = {}) => {
@@ -151,9 +149,10 @@ export function createRecordActivityView(runtime, props, seed = {}) {
     try {
       const [typeRows, result] = await Promise.all([
         callApi(requests.fetch, 'activity.listTypes', {}),
-        callApi(requests.fetch, `${bridge}.list`, { targetId: props.resId, today: localDate() }),
+        callApi(requests.fetch, `${bridge}.list`, { targetId: props.resId }),
       ])
       types.set(typeRows)
+      today.set(result.today)
       activities.set(result.activities ?? [])
       error.set('')
       status.set('ready')
@@ -187,7 +186,7 @@ export function createRecordActivityView(runtime, props, seed = {}) {
       })
       form.reset()
       const date = form.querySelector('[name="dueDate"]')
-      if (date) date.value = localDate()
+      if (date) date.value = today()
       await load({ quiet: true })
       scheduleOpen.set(false)
     } catch (cause) {
@@ -209,7 +208,6 @@ export function createRecordActivityView(runtime, props, seed = {}) {
       await callApi(requests.fetch, 'activity.complete', {
         id: String(form.dataset.id),
         feedback: String(values.get('feedback') ?? ''),
-        completedDate: localDate(),
       })
       await load({ quiet: true })
       itemAction.set(null)
@@ -261,8 +259,7 @@ export function createRecordActivityView(runtime, props, seed = {}) {
   }
 
   const schedulePoll = () => {
-    if (requests.disposed() || pollCount >= 240) return
-    pollCount++
+    if (requests.disposed()) return
     pollTimer = setTimeout(async () => {
       if (requests.disposed()) return
       if (document.visibilityState === 'visible' && !busy()) await load({ quiet: true })
@@ -278,7 +275,7 @@ export function createRecordActivityView(runtime, props, seed = {}) {
   }
 
   return {
-    view: () => html`<section data-ui="activity-record" data-state=${status()} aria-label=${labels.title}>
+    view: () => html`<section data-kv-design-system data-ui="activity-record" data-state=${status()} aria-label=${labels.title}>
     <header data-ui="activity-head">
       <h2 data-ui="activity-title">${labels.title}</h2>
       <button data-ui="activity-schedule-trigger" data-active=${scheduleOpen()} data-control="action" data-variant="secondary" data-size="compact" type="button" aria-pressed=${scheduleOpen()} on:click=${() => scheduleOpen.set(!scheduleOpen())} disabled=${busy()}>${labels.newActivity}</button>
@@ -293,7 +290,7 @@ export function createRecordActivityView(runtime, props, seed = {}) {
       )}</select></label>
       <label data-ui="activity-field">${labels.summary}<input data-ui="form-control" name="summary" autocomplete="off" required maxlength="500" disabled=${busy()}></label>
       <label data-ui="activity-field">${labels.note}<textarea data-ui="form-control" name="note" disabled=${busy()}></textarea></label>
-      <label data-ui="activity-field">${labels.due}<input data-ui="form-control" type="date" name="dueDate" value=${localDate()} autocomplete="off" required disabled=${busy()}></label>
+      ${DatePicker({ id: `activity-${props.resId}-due`, name: 'dueDate', label: labels.due, value: today(), today: today(), locale: String(props.lang).startsWith('en') ? 'en' : 'vi', disabled: busy() })}
       <div data-ui="activity-schedule-actions">
         <label data-ui="activity-attachment">${labels.attachment}<input data-ui="form-control" type="file" name="attachment" autocomplete="off" disabled=${busy()}></label>
         <div>
@@ -369,27 +366,45 @@ export function createActivityIndicatorView(runtime, props, initial = { count: 0
   const labels = labelsOf(props)
   const count = signal(Number(initial.count ?? 0))
   const overdue = signal(Number(initial.overdue ?? 0))
+  const failed = signal(false)
+  let timer = null
   const requests = requestScope()
   const load = async () => {
     try {
-      const result = await callApi(requests.fetch, 'activity.countDue', { today: localDate() })
+      const result = await callApi(requests.fetch, 'activity.countDue', {})
+      failed.set(false)
       count.set(Number(result.count ?? 0))
       overdue.set(Number(result.overdue ?? 0))
     } catch {
       if (requests.disposed()) return
-      count.set(0)
-      overdue.set(0)
+      failed.set(true)
     }
   }
+  const refresh = () => void load()
+  const poll = () => {
+    if (requests.disposed()) return
+    timer = setTimeout(async () => {
+      if (document.visibilityState === 'visible') await load()
+      poll()
+    }, 15_000)
+  }
   return {
-    view: () => html`<a data-ui="activity-indicator" data-overdue=${overdue() > 0} href="/admin/activities" title=${labels.myActivities} aria-label=${labels.myActivities}>
+    view: () => html`<a data-ui="activity-indicator" data-overdue=${overdue() > 0} href="/admin/activities" title=${failed() ? labels.unavailable : labels.myActivities} aria-label=${failed() ? labels.unavailable : labels.myActivities}>
     <svg data-ui="activity-indicator-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" />
     </svg>
-    ${count() > 0 ? html`<span data-ui="activity-indicator-count">${count()}</span>` : ''}
+    ${failed() ? html`<span data-ui="activity-indicator-count">!</span>` : count() > 0 ? html`<span data-ui="activity-indicator-count">${count()}</span>` : ''}
   </a>`,
-    mount: () => void load(),
-    dispose: requests.dispose,
+    mount: () => {
+      refresh()
+      poll()
+      window.addEventListener('online', refresh)
+    },
+    dispose: () => {
+      if (timer !== null) clearTimeout(timer)
+      if (typeof window !== 'undefined') window.removeEventListener('online', refresh)
+      requests.dispose()
+    },
   }
 }

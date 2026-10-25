@@ -36,6 +36,7 @@ import {
   Progress,
   Select,
   Stack,
+  Surface,
   TabbedView,
   Tabs,
   Tag,
@@ -153,6 +154,20 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
                 gap="column"
                 items={[<Text variant="headingSm">Available</Text>, <Text numeric>1,284</Text>]}
               />,
+            ]}
+          />
+        </Row>
+        <Row
+          label="Columns by room"
+          detail="minimum: two columns while each keeps 23rem, one beside an open sidebar."
+        >
+          <Grid
+            columns={2}
+            minimum="wide"
+            align="stretch"
+            items={[
+              <Surface title="Work queue" body={<Text tone="muted">Due today, then by risk</Text>} />,
+              <Surface title="Receivables aging" body={<Text tone="muted">By days past due</Text>} />,
             ]}
           />
         </Row>

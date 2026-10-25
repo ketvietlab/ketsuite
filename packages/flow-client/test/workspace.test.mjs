@@ -1,4 +1,4 @@
-import { setFlowLocale } from '@ketvietlab/flow-client/i18n.mjs'
+import { setFlowLocale, tr } from '@ketvietlab/flow-client/i18n.mjs'
 setFlowLocale('vi')
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -7,6 +7,7 @@ import { renderToStaticString, renderIsland } from '@ketvietlab/ketjs-view'
 import { createFlowWorkspace, routes } from '@ketvietlab/flow-client/workspace.mjs'
 import { contentWidths, contentWidthFor } from '@ketvietlab/flow-client/content-layout.mjs'
 import { createFnClient, FlowApiError } from '@ketvietlab/flow-client/api.mjs'
+import { atlasFlowCommand, resolveFlowCommand } from '@ketvietlab/flow-client/command-contract.mjs'
 import { createFixtureSession } from '../atlas/store.mjs'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
 import { flowShellData } from '@ketvietlab/flow-client/shell-model.mjs'
@@ -54,6 +55,80 @@ async function renderScreen(screen, scenario = 'baseline', props = {}, prepare) 
   island.dispose()
   return output
 }
+test('reloading a person’s access reads the members list behind it instead of loading forever', async () => {
+  const fixture = createOrganizationSession('baseline', 'member-access'),
+    calls = [],
+    lifetime = new AbortController()
+  let failNext = false
+  const call = createFnClient({
+    fetch: async (url, request) => {
+      const name = decodeURIComponent(url.split('/').pop()),
+        args = JSON.parse(request.body)
+      // The person's own sources are read with their id; the list behind the modal without.
+      const list = name === 'flow.access.list' && !args.memberId
+      calls.push(list ? 'list' : name)
+      const fail = list && failNext
+      if (fail) failNext = false
+      const value = fail
+        ? { ok: false, errors: [{ code: 'unavailable', message: 'Try later' }] }
+        : fixture.call(name, args)
+      return new Response(JSON.stringify(value), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  // The bootstrap reads the modal's route; the list's first page is not part of it.
+  const island = createFlowWorkspace(
+    {
+      screen: 'member-access',
+      record: 'bao',
+      companyId: 'demo',
+      workspaceId: 'product',
+      background: '/flow/workspace-members?company=demo&workspace=product',
+    },
+    { call },
+  )
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0))
+  }
+  failNext = true
+  island.mount({ root: root(), lifetime: lifetime.signal })
+  await settle()
+  try {
+    // The island renders in its own locale; expected text follows it.
+    const unavailable = tr('flow.members.unavailable'),
+      showing = new RegExp(tr('flow.access.showing', ['\\d+', '\\d+']))
+    let html = renderToStaticString(island.view())
+    assert.ok(html.includes(unavailable), 'a failed first page explains itself')
+    assert.doesNotMatch(html, showing)
+    const retry = calls.length
+    // Try again reads the first page once more.
+    const button = (node) => {
+      if (!node || typeof node !== 'object') return null
+      if (Array.isArray(node)) return node.map(button).find(Boolean) ?? null
+      if (node.items && node.render) return button(node.items.map((x, i) => node.render(x, i)))
+      if (!node.strings) return null
+      const inner = node.values.map(button).find(Boolean)
+      if (inner) return inner
+      const index = node.strings.findIndex((part) => part.endsWith('on:click='))
+      return index >= 0 &&
+        node.strings[0].trimStart().startsWith('<button') &&
+        renderToStaticString(node).includes(tr('flow.ui.try.again'))
+        ? node.values[index]
+        : null
+    }
+    button(island.view())()
+    await settle()
+    assert.deepEqual(calls.slice(retry), ['list'])
+    html = renderToStaticString(island.view())
+    assert.match(html, showing)
+    assert.ok(!html.includes(unavailable))
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
 test('all registered core screens and initial loading retain one sidebar search launcher without a topbar input', async () => {
   for (const screen of Object.keys(routes)) {
     const output = await renderScreen(screen)
@@ -81,6 +156,42 @@ test('bootstrap recovery advice distinguishes unavailable data from denied acces
   const denied = await renderScreen('pages', 'forbidden')
   assert.match(denied, /Không có quyền truy cập/)
   assert.match(denied, /Liên hệ chủ tổ chức/)
+})
+
+test('list metric cards use authorized collection totals rather than the loaded task page', async () => {
+  const output = await renderScreen('all-issues', 'baseline', {}, (fixture) => {
+    const call = fixture.call.bind(fixture)
+    fixture.call = (name, input) => {
+      const response = call(name, input)
+      if (name === 'flow.workspace.bootstrap' && response.value) {
+        response.value.tasks = response.value.tasks.slice(0, 2)
+        response.value.counts = {
+          metrics: { total: 1257, progress: 801, review: 147, done: 222, overdue: 89 },
+        }
+      }
+      return response
+    }
+  })
+  for (const count of [1257, 801, 147, 222, 89]) assert.match(output, new RegExp('>' + count + '<'))
+})
+
+test('label library renders scoped usage even when no tasks or projects are in its preview', async () => {
+  const output = await renderScreen('tags', 'baseline', {}, (fixture) => {
+    const call = fixture.call.bind(fixture)
+    fixture.call = (name, input) => {
+      const response = call(name, input)
+      if (name === 'flow.workspace.bootstrap' && response.value) {
+        const label = response.value.tags.find((tag) => !tag.projectId && !tag.archived)
+        assert.ok(label)
+        response.value.tasks = []
+        response.value.projects = []
+        response.value.labelUsage = { [label.id]: { tasks: 98765, projects: 432 } }
+      }
+      return response
+    }
+  })
+  assert.match(output, /98765/)
+  assert.match(output, /432/)
 })
 
 test('the mounted workspace observes editor identity changes when switching records without replacing its host', async () => {
@@ -149,6 +260,65 @@ test('a closed sprint deep link shows its saved report instead of offering to cl
   assert.match(modal, /Sprint này đã đóng/)
   assert.match(modal, /Xem tổng kết/)
   assert.doesNotMatch(modal, /name="carryTo"|Xác nhận đóng sprint/)
+})
+test('a retained native island reconstitutes a task modal and its explicit destination background', async () => {
+  const saved = { location: globalThis.location, history: globalThis.history, document: globalThis.document }
+  const fixture = createOrganizationSession('baseline', 'issue')
+  const data = fixture.sessions.get('demo').data
+  const source = data.tasks.find((t) => t.projectId === 'core')
+  const target = data.tasks.find((t) => t.projectId === 'ops')
+  const makeProps = (task) => ({
+    serverShell: true,
+    lang: 'vi',
+    screen: 'issue',
+    companyId: 'demo',
+    workspaceId: data.projects.find((p) => p.id === task.projectId).workspaceId,
+    project: task.projectId,
+    record: task.id,
+    recordProvided: true,
+    background: `/flow/project-issues?company=demo&project=${task.projectId}`,
+    chrome: flowShellData(data),
+  })
+  globalThis.location = new URL(
+    `http://flow.local/flow/issue?company=demo&project=core&lang=vi&id=${source.id}&background=${encodeURIComponent(makeProps(source).background)}`,
+  )
+  globalThis.history = {
+    state: {},
+    replaceState(state, _, url) {
+      this.state = state
+      globalThis.location.href = new URL(url, globalThis.location.href).href
+    },
+  }
+  globalThis.document = Object.assign(new EventTarget(), { documentElement: {} })
+  const lifetime = new AbortController()
+  const island = createFlowWorkspace(makeProps(source), {
+    call: async (name, input) => fixture.call(name, input).value,
+    navigatePage: async () => {},
+  })
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const next = makeProps(target)
+    island.update(next)
+    globalThis.location.href = `http://flow.local/flow/issue?company=demo&project=ops&lang=vi&id=${target.id}&background=${encodeURIComponent(next.background)}`
+    document.dispatchEvent(
+      new CustomEvent('ket:navigation-complete', { detail: { url: location.href, mode: 'push' } }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const output = renderToStaticString(island.view())
+    assert.match(output, /id="flow-task-modal"/)
+    assert.ok(output.includes(target.title))
+    assert.doesNotMatch(output, /Không thể mở Flow|data-flow="loading"/)
+    const chrome = renderToStaticString(island.shellView(island.view()))
+    assert.ok(chrome.includes(routes['project-issues'].title))
+  } finally {
+    lifetime.abort()
+    island.dispose()
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete globalThis[key]
+      else globalThis[key] = value
+    }
+  }
 })
 test('explicit missing or foreign sprint and epic links never display another record', async () => {
   for (const screen of ['sprint-close', 'sprint-report', 'epic']) {
@@ -424,9 +594,32 @@ test('owner role is selected and protected while the workspace archive uses a sm
   assert.match(modal, /<footer/)
   assert.match(modal, /<button[^>]*disabled[^>]*>[\s\S]*?Lưu trữ Workspace/)
 })
+test('workspace archive confirmation uses the scoped project count beyond its navigation window', async () => {
+  const output = await renderScreen(
+    'workspace-archive',
+    'baseline',
+    { workspaceId: 'product', record: 'product' },
+    (fixture) => {
+      const call = fixture.call.bind(fixture)
+      fixture.call = (name, input) => {
+        const response = call(name, input)
+        if (name === 'flow.workspace.bootstrap' && response.value) {
+          response.value.projects = []
+          response.value.context = { ...response.value.context, workspaceId: 'product' }
+          response.value.counts = { projects: 500 }
+        }
+        return response
+      }
+    },
+  )
+  const modal = output.slice(output.indexOf('id="flow-form-modal"'))
+  assert.match(modal, /Xem 500 dự án đang hoạt động/)
+  assert.match(modal, /<button[^>]*disabled[^>]*>[\s\S]*?Lưu trữ Workspace/)
+})
+
 test('every route renders its client presenter after the same API bootstrap', async () => {
   // Core alone: the pro package adds its own routes only when it is registered.
-  assert.equal(Object.keys(routes).length, 76)
+  assert.equal(Object.keys(routes).length, 80)
   for (const key of ['goals', 'goal', 'goal-new', 'goal-edit']) assert.equal(routes[key], undefined)
   for (const [key, route] of Object.entries(routes)) {
     const output = await renderScreen(key)
@@ -446,6 +639,66 @@ test('every route renders its client presenter after the same API bootstrap', as
     const invalid = /\[object Object\]|undefined|Không thể khởi động/.exec(output)
     assert.equal(invalid, null, key + (invalid ? output.slice(invalid.index - 80, invalid.index + 120) : ''))
     assert.equal((output.match(/<h1(?: |>|\n)/g) || []).length, 1, key)
+  }
+})
+
+test('denied SSR scope renders immediately and stays recoverable after hydration and fragment updates', async () => {
+  const saved = { location: globalThis.location, history: globalThis.history }
+  globalThis.location = {
+    href: 'http://flow.local/flow/issue?company=demo&project=inaccessible&id=secret-task&lang=vi',
+  }
+  globalThis.history = {
+    state: {},
+    replaceState(next, _, url) {
+      this.state = next
+      globalThis.location.href = new URL(url, globalThis.location.href).href
+    },
+  }
+  const fixture = createOrganizationSession('baseline', 'my-work')
+  const chrome = flowShellData(
+    fixture.call('flow.workspace.bootstrap', { route: 'my-work', shellOnly: true }).value,
+  )
+  chrome.problem = { code: 'forbidden' }
+  const props = {
+    screen: 'issue',
+    project: 'inaccessible',
+    record: 'secret-task',
+    recordProvided: true,
+    serverShell: true,
+    chrome,
+  }
+  const lifetime = new AbortController()
+  const island = createFlowWorkspace(props, {
+    call: async () => {
+      throw new FlowApiError('Server refused this scope', 'forbidden')
+    },
+  })
+  const check = () => {
+    const output = renderToStaticString(island.view())
+    assert.match(output, /Không có quyền truy cập/)
+    assert.match(output, /Việc của tôi/)
+    assert.match(output, /Thử lại/)
+    assert.doesNotMatch(output, /data-flow="loading"|data-flow="toast"|<dialog|<form|secret-task/)
+    const shell = renderToStaticString(island.shellView(island.view()))
+    assert.doesNotMatch(shell, /Tạo task|Tạo công việc/)
+  }
+  try {
+    check()
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    check()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    check()
+    island.update({ ...props, screen: 'board', recordProvided: false })
+    check()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    check()
+  } finally {
+    lifetime.abort()
+    island.dispose()
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete globalThis[key]
+      else globalThis[key] = value
+    }
   }
 })
 
@@ -590,7 +843,7 @@ test('HTTP client handles both domain failures and failed HTTP responses', async
         status: 403,
       }),
   })
-  await assert.rejects(denied('x'), /Denied/)
+  await assert.rejects(denied('x'), (error) => error.code === 'forbidden')
 })
 test('fixture commands preserve blocking, CAS, replay and dependency-cycle behaviors', () => {
   const f = createFixtureSession()
@@ -1148,6 +1401,108 @@ const findHandler = (node, marker, event) => {
   return null
 }
 
+test('accepting an invitation establishes fresh SSR chrome in the newly authorized workspace', async () => {
+  const previous = {
+    location: globalThis.location,
+    history: globalThis.history,
+    document: globalThis.document,
+  }
+  const fixture = createOrganizationSession('baseline', 'my-work')
+  const full = fixture.call('flow.workspace.bootstrap', {
+    companyId: 'demo',
+    workspaceId: 'product',
+    route: 'my-work',
+  }).value
+  const blank = {
+    ...full,
+    context: { companyId: 'demo', workspaceId: '', projectId: null },
+    workspaces: [],
+    projects: [],
+    members: [],
+    tasks: [],
+    capabilities: { write: false, manageOrganization: false },
+    invitationOffer: { available: true },
+  }
+  let accepted = false
+  const replacements = [],
+    fragments = []
+  const url = new URL('http://flow.local/flow/invitation-accept?company=demo&lang=vi&id=invitation')
+  globalThis.location = {
+    get href() {
+      return url.href
+    },
+    get pathname() {
+      return url.pathname
+    },
+    get search() {
+      return url.search
+    },
+    replace(target) {
+      replacements.push(target)
+    },
+  }
+  globalThis.history = {
+    state: {},
+    replaceState(state, _, target) {
+      this.state = state
+      url.href = new URL(target, url).href
+    },
+  }
+  globalThis.document = Object.assign(new EventTarget(), { documentElement: {} })
+  const lifetime = new AbortController()
+  const island = createFlowWorkspace(
+    {
+      serverShell: true,
+      companyId: 'demo',
+      workspaceId: '',
+      screen: 'invitation-accept',
+      record: 'invitation',
+      recordProvided: true,
+      chrome: flowShellData(blank),
+    },
+    {
+      call: async (name) => {
+        if (name === 'flow.invitation.accept') {
+          accepted = true
+          return { ok: true }
+        }
+        return accepted ? full : blank
+      },
+      navigatePage: async (target) => fragments.push(target),
+    },
+  )
+  const button = (node) => {
+    if (!node || typeof node !== 'object') return null
+    if (node.strings?.[0]?.trimStart().startsWith('<button') && node.values.includes('Nhận lời mời'))
+      return findHandler(node, '<button', 'click')
+    for (const child of Array.isArray(node)
+      ? node
+      : node.items && node.render
+        ? node.items.map(node.render)
+        : (node.values ?? [])) {
+      const found = button(child)
+      if (found) return found
+    }
+    return null
+  }
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const accept = button(island.view())
+    assert.equal(typeof accept, 'function')
+    await accept()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(replacements.length, 1)
+    assert.equal(new URL(replacements[0], url).pathname, '/flow/my-work')
+    assert.equal(new URL(replacements[0], url).searchParams.get('workspace'), 'product')
+    assert.deepEqual(fragments, [])
+  } finally {
+    lifetime.abort()
+    island.dispose()
+    Object.assign(globalThis, previous)
+  }
+})
+
 test('an unacknowledged comment keeps its replay key across an intervening successful mutation', async () => {
   const original = globalThis.FormData
   globalThis.FormData = class {
@@ -1279,7 +1634,10 @@ test('both list clear actions reset the personal Workspace and preserve presenta
         if (node.items && node.render)
           return changeWorkspace(node.items.map((item, i) => node.render(item, i)))
         if (!node.strings) return null
-        if (node.strings[0].trimStart().startsWith('<select') && node.values.includes('Lọc theo Workspace'))
+        if (
+          node.strings.some((part) => part.includes('<select')) &&
+          node.values.includes('Lọc theo Workspace')
+        )
           return findHandler(node, '<select', 'change')
         return changeWorkspace(node.values)
       }
@@ -1352,7 +1710,7 @@ test('accepted organization forms release the busy guard before closing, while a
         fetch: async (url, request) => {
           const name = decodeURIComponent(url.split('/').pop())
           const result =
-            refused && name === 'flow.organization.command'
+            refused && name === 'flow.member.update'
               ? {
                   ok: true,
                   value: {
@@ -1419,8 +1777,8 @@ test('revoking an invitation asks before writing; cancel, refusal and retry pres
     fetch: async (url, request) => {
       const name = decodeURIComponent(url.split('/').pop()),
         input = JSON.parse(request.body)
-      if (name === 'flow.organization.command') {
-        commands.push(input)
+      if (name === 'flow.invitation.revoke') {
+        commands.push({ ...input, function: name })
         if (refuseOnce) {
           refuseOnce = false
           return new Response(
@@ -1480,7 +1838,7 @@ test('revoking an invitation asks before writing; cancel, refusal and retry pres
     buttons.at(-1)()
     await new Promise((resolve) => setTimeout(resolve, 0))
     assert.equal(commands.length, 1)
-    assert.equal(commands[0].action, 'invitation.revoke')
+    assert.equal(commands[0].function, 'flow.invitation.revoke')
     assert.equal(fixture.sessions.get('demo').data.invitations[0].status, 'pending')
     assert.match(renderToStaticString(island.view()), /id="flow-action-confirm"/)
     assert.match(renderToStaticString(island.view()), /Invitation refused/)
@@ -1496,6 +1854,277 @@ test('revoking an invitation asks before writing; cancel, refusal and retry pres
     lifetime.abort()
     island.dispose()
   }
+})
+
+test('members list pending invitations only and page them past the first window', async () => {
+  const fixture = createOrganizationSession('baseline', 'organization-members'),
+    lifetime = new AbortController(),
+    d = fixture.sessions.get('demo').data,
+    stamp = (n) => new Date(Date.UTC(2026, 9, 1, 8, n)).toISOString()
+  d.invitations = [
+    ...Array.from({ length: 55 }, (_, n) => ({
+      id: `invite-${n}`,
+      email: `person-${n}@example.test`,
+      role: 'member',
+      status: 'pending',
+      projectId: null,
+      sentAt: stamp(n),
+    })),
+    {
+      id: 'invite-accepted',
+      email: 'accepted@example.test',
+      role: 'member',
+      status: 'accepted',
+      projectId: null,
+      sentAt: stamp(56),
+    },
+    {
+      id: 'invite-revoked',
+      email: 'revoked@example.test',
+      role: 'member',
+      status: 'revoked',
+      projectId: null,
+      sentAt: stamp(57),
+    },
+  ]
+  const call = createFnClient({
+    fetch: async (url, request) =>
+      Response.json(fixture.call(decodeURIComponent(url.split('/').pop()), JSON.parse(request.body))),
+  })
+  const island = createFlowWorkspace({ screen: 'organization-members' }, { call })
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const click = (node, label) => {
+    if (!node || typeof node !== 'object') return null
+    if (Array.isArray(node)) return node.map((child) => click(child, label)).find(Boolean)
+    if (node.items && node.render)
+      return click(
+        node.items.map((item, i) => node.render(item, i)),
+        label,
+      )
+    if (!node.strings) return null
+    if (node.strings[0].trimStart().startsWith('<button') && node.values.includes(label))
+      return findHandler(node, '<button', 'click')
+    return click(node.values, label)
+  }
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await settle()
+    let html = renderToStaticString(island.view())
+    assert.match(html, /person-54@example\.test/, 'the newest invitation is on the first page')
+    assert.doesNotMatch(html, /person-4@example\.test/, 'the oldest wait for the next page')
+    assert.doesNotMatch(html, /accepted@example\.test|revoked@example\.test/)
+    assert.doesNotMatch(html, /Đã thu hồi/, 'no invitation is labelled revoked')
+    assert.match(html, /Đang hiển thị 50 trên 55 lời mời đang chờ/)
+
+    // An invitation sent elsewhere invalidates the cursor; retry starts from the new first page.
+    d.invitations.push({
+      id: 'invite-late',
+      email: 'late@example.test',
+      role: 'member',
+      status: 'pending',
+      projectId: null,
+      sentAt: stamp(58),
+    })
+    click(island.view(), 'Xem thêm lời mời')()
+    await settle()
+    assert.match(renderToStaticString(island.view()), /Invitations changed/)
+    click(island.view(), 'Thử lại')()
+    await settle()
+    html = renderToStaticString(island.view())
+    assert.match(html, /late@example\.test/)
+    assert.match(html, /Đang hiển thị 50 trên 56 lời mời đang chờ/)
+
+    click(island.view(), 'Xem thêm lời mời')()
+    await settle()
+    html = renderToStaticString(island.view())
+    assert.match(html, /person-0@example\.test/)
+    assert.match(html, /Đang hiển thị 56 trên 56 lời mời đang chờ/)
+    assert.equal(click(island.view(), 'Xem thêm lời mời'), undefined, 'no more after the last page')
+    assert.equal(new Set(html.match(/(person-\d+|late)@example\.test/g)).size, 56)
+    assert.equal((html.match(/(person-\d+|late)@example\.test/g) ?? []).length, 56, 'each invitation once')
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
+
+test('people with access to a project come from the server and page past the first window', async () => {
+  const fixture = createOrganizationSession('baseline', 'project-members'),
+    lifetime = new AbortController(),
+    d = fixture.sessions.get('demo').data,
+    core = d.projects.find((p) => p.id === 'core'),
+    template = d.members.find((m) => m.role === 'member' && m.status === 'active')
+  // An internal Workspace opens an inheriting project to every internal person.
+  d.workspaces.find((w) => w.id === core.workspaceId).access = 'internal'
+  core.access = 'workspace'
+  for (let n = 0; n < 60; n++)
+    d.members.push({
+      ...structuredClone(template),
+      id: `access-${n}`,
+      name: `Access ${String(n).padStart(2, '0')}`,
+      email: `access-${n}@example.test`,
+    })
+  const expected = fixture.call('flow.access.list', { companyId: 'demo', scope: 'project', targetId: 'core' })
+    .value.total
+  assert.ok(expected > 60)
+  const call = createFnClient({
+    fetch: async (url, request) =>
+      Response.json(fixture.call(decodeURIComponent(url.split('/').pop()), JSON.parse(request.body))),
+  })
+  const island = createFlowWorkspace({ screen: 'project-members', project: 'core' }, { call })
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const click = (node, label) => {
+    if (!node || typeof node !== 'object') return null
+    if (Array.isArray(node)) return node.map((child) => click(child, label)).find(Boolean)
+    if (node.items && node.render)
+      return click(
+        node.items.map((item, i) => node.render(item, i)),
+        label,
+      )
+    if (!node.strings) return null
+    if (node.strings[0].trimStart().startsWith('<button') && node.values.includes(label))
+      return findHandler(node, '<button', 'click')
+    return click(node.values, label)
+  }
+  const people = (html) => html.match(/access-\d+@example\.test/g) ?? []
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await settle()
+    let html = renderToStaticString(island.view())
+    assert.match(html, new RegExp(`Đang hiển thị 50 trên ${expected} người có quyền truy cập`))
+    assert.ok(people(html).length < 60, 'the first page is not the whole organization')
+
+    // A person added elsewhere invalidates the cursor; retry starts from the new first page.
+    d.members.push({
+      ...structuredClone(template),
+      id: 'access-late',
+      name: 'Access late',
+      email: 'late@example.test',
+    })
+    click(island.view(), 'Xem thêm người')()
+    await settle()
+    assert.match(renderToStaticString(island.view()), /Access changed/)
+    click(island.view(), 'Thử lại')()
+    await settle()
+    html = renderToStaticString(island.view())
+    assert.match(html, new RegExp(`Đang hiển thị 50 trên ${expected + 1} người có quyền truy cập`))
+
+    for (let guard = 0; click(island.view(), 'Xem thêm người') && guard < 5; guard++) {
+      click(island.view(), 'Xem thêm người')()
+      await settle()
+    }
+    html = renderToStaticString(island.view())
+    assert.match(
+      html,
+      new RegExp(`Đang hiển thị ${expected + 1} trên ${expected + 1} người có quyền truy cập`),
+    )
+    assert.equal(new Set(people(html)).size, 60, 'every added person is listed')
+    assert.equal(people(html).length, 60, 'each person once')
+    assert.match(html, /late@example\.test/)
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
+
+test('Teams page past the first window of the directory', async () => {
+  const fixture = createOrganizationSession('baseline', 'teams'),
+    lifetime = new AbortController(),
+    d = fixture.sessions.get('demo').data
+  for (let n = 0; n < 105; n++)
+    d.teams.push({
+      id: `team-${n}`,
+      companyId: d.company.id,
+      title: `Team ${String(n).padStart(3, '0')}`,
+      description: '',
+      memberIds: [],
+    })
+  const call = createFnClient({
+    fetch: async (url, request) =>
+      Response.json(fixture.call(decodeURIComponent(url.split('/').pop()), JSON.parse(request.body))),
+  })
+  const island = createFlowWorkspace({ screen: 'teams' }, { call })
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const click = (node, label) => {
+    if (!node || typeof node !== 'object') return null
+    if (Array.isArray(node)) return node.map((child) => click(child, label)).find(Boolean)
+    if (node.items && node.render)
+      return click(
+        node.items.map((item, i) => node.render(item, i)),
+        label,
+      )
+    if (!node.strings) return null
+    if (node.strings[0].trimStart().startsWith('<button') && node.values.includes(label))
+      return findHandler(node, '<button', 'click')
+    return click(node.values, label)
+  }
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await settle()
+    let html = renderToStaticString(island.view())
+    assert.match(html, /Đang hiển thị 100 trên 107 team/)
+    assert.doesNotMatch(html, /Team 104/)
+    click(island.view(), 'Xem thêm team')()
+    await settle()
+    html = renderToStaticString(island.view())
+    assert.match(html, /Đang hiển thị 107 trên 107 team/)
+    assert.match(html, /Team 104/)
+    assert.equal((html.match(/Team 0\d\d/g) ?? []).length, 100, 'each Team once')
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
+
+test('a project form counts its initial access on the server, past the people window', async () => {
+  const fixture = createOrganizationSession('baseline', 'project-new'),
+    lifetime = new AbortController(),
+    d = fixture.sessions.get('demo').data,
+    template = d.members.find((m) => m.role === 'member' && m.status === 'active')
+  for (const w of d.workspaces) w.access = 'internal'
+  for (let n = 0; n < 150; n++)
+    d.members.push({
+      ...structuredClone(template),
+      id: `reach-${n}`,
+      name: `Reach ${String(n).padStart(3, '0')}`,
+      email: `reach-${n}@example.test`,
+    })
+  const reads = []
+  const call = createFnClient({
+    fetch: async (url, request) => {
+      const name = decodeURIComponent(url.split('/').pop()),
+        body = JSON.parse(request.body)
+      reads.push([name, body])
+      return Response.json(fixture.call(name, body))
+    },
+  })
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  for (const [screen, project, read] of [
+    ['project-new', undefined, 'flow.access.preview'],
+    ['project-profile', 'core', 'flow.access.list'],
+  ]) {
+    const island = createFlowWorkspace({ screen, project }, { call })
+    try {
+      island.mount({ root: root(), lifetime: lifetime.signal })
+      // The form asks for its reach when it renders, as the mounted island does.
+      for (let n = 0; n < 4; n++) {
+        renderToStaticString(island.view())
+        await settle()
+      }
+      const request = reads.findLast(([name]) => name === read)
+      assert.ok(request, screen + ' reads its reach from the server')
+      if (screen === 'project-new') assert.equal(request[1].change, 'project-create')
+      const expected = fixture.call(read, request[1]).value.total
+      assert.ok(expected > 100, 'more people than the loaded window')
+      assert.match(
+        renderToStaticString(island.view()),
+        new RegExp(`${expected} người có quyền truy cập ban đầu`),
+      )
+    } finally {
+      island.dispose()
+    }
+  }
+  lifetime.abort()
 })
 
 test('editing the next operations form clears completed feedback without dismissing a recoverable error', async () => {
@@ -1547,8 +2176,8 @@ test('saved view archive confirms before writing, keeps refusal recoverable and 
     fetch: async (url, request) => {
       const name = decodeURIComponent(url.split('/').pop()),
         input = JSON.parse(request.body)
-      if (name === 'flow.operations.command') {
-        commands.push(input)
+      if (name === 'flow.view.save') {
+        commands.push({ ...input, function: name })
         if (refuseOnce) {
           refuseOnce = false
           return Response.json({
@@ -1751,22 +2380,27 @@ test('catalog deep links hydrate field, status, type and label records instead o
       { required: true, appliesTo: 'core' },
     )
   })
-  assert.match(field, /id="title"[^>]*value="Môi trường"/)
+  assert.match(field, /id="flow-record-field-edit-title"[^>]*name="title"[^>]*value="Môi trường"/)
+  assert.match(field, /for="flow-record-field-edit-title"/)
+  assert.match(field, /aria-labelledby="flow-record-field-edit-title-label"/)
   assert.match(field, /Lựa chọn · Production \/ Staging/)
   assert.match(field, /value="select" selected/)
   assert.match(field, /value="true" selected/)
   assert.match(field, /value="core" selected/)
-  assert.match(field, /id="options"[^>]*>\s*Production\nStaging<\/textarea>/)
+  assert.match(
+    field,
+    /id="flow-record-field-edit-options"[^>]*name="options"[^>]*>\s*Production\nStaging<\/textarea>/,
+  )
   const column = await renderScreen('column-edit', 'baseline', { record: 'progress' })
-  assert.match(column, /id="title"[^>]*value="Đang thực hiện"/)
+  assert.match(column, /id="flow-record-column-edit-title"[^>]*value="Đang thực hiện"/)
   assert.match(column, /value="progress" selected/)
   const type = await renderScreen('type-edit', 'baseline', { record: 'bug' }, (fixture) => {
     fixture.sessions.get('demo').data.types.find((t) => t.id === 'bug').icon = 'flag'
   })
-  assert.match(type, /id="title"[^>]*value="Bug"/)
+  assert.match(type, /id="flow-record-type-edit-title"[^>]*value="Bug"/)
   assert.match(type, /value="flag" selected/)
   const label = await renderScreen('tag-edit', 'baseline', { record: 'risk' })
-  assert.doesNotMatch(label, /id="title"[^>]*value=""/)
+  assert.doesNotMatch(label, /id="flow-record-tag-edit-title"[^>]*value=""/)
 })
 
 test('project profile uses project administration permission and missing projects have no creation form', async () => {
@@ -1810,14 +2444,14 @@ test('project collections use the current workspace for empty state and creation
 test('missing catalog records recover without silently creating and ordinary members can only inspect', async () => {
   const missing = await renderScreen('field-edit', 'baseline', { record: 'removed-field' })
   assert.match(missing, /Hồ sơ không còn khả dụng/)
-  assert.doesNotMatch(missing, /data-flow-record-form|id="title"/)
+  assert.doesNotMatch(missing, /data-flow-record-form|id="flow-record-field-edit-title"/)
   const creation = await renderScreen('field-edit')
   assert.match(creation, /data-flow-record-form/)
   const member = await renderScreen('field-edit', 'member', { record: 'env' })
   assert.match(member, /Quản lý tổ chức mới có thể sửa/)
-  assert.match(member, /id="title"[^>]*disabled/)
+  assert.match(member, /id="flow-record-field-edit-title"[^>]*disabled/)
   assert.match(member, /name="kind"[^>]*disabled/)
-  assert.match(member, /id="options"[^>]*disabled/)
+  assert.match(member, /id="flow-record-field-edit-options"[^>]*disabled/)
   assert.match(member, /type="submit"[^>]*disabled/)
 })
 
@@ -1898,7 +2532,9 @@ test('catalog form submission targets the existing record, retains its configura
   assert.equal(saves.length, 1)
   assert.equal(saves[0].entityId, 'env')
   const count = fixture.sessions.get('demo').data.fields.length
-  assert.equal(fixture.call('flow.entity.save', saves[0]).value.id, 'env')
+  const typed = resolveFlowCommand('flow.entity.save', saves[0])
+  const reverse = atlasFlowCommand(typed.name, typed.input)
+  assert.equal(fixture.call(reverse.name, reverse.input).value.id, 'env')
   const held = fixture.sessions.get('demo').data.fields.find((f) => f.id === 'env')
   assert.equal(fixture.sessions.get('demo').data.fields.length, count)
   assert.equal(held.title, values.title)
@@ -1907,7 +2543,7 @@ test('catalog form submission targets the existing record, retains its configura
   assert.equal(held.required, false)
   assert.equal(held.appliesTo, 'all')
   const missing = fixture.call('flow.entity.save', {
-    ...saves[0],
+    ...reverse.input,
     entityId: 'removed-field',
     idempotencyKey: 'missing-catalog',
   })
@@ -1932,7 +2568,7 @@ test('renaming a built-in status keeps its workflow kind and displays the new li
     assert.equal(column.kind, 'progress')
     assert.equal(column.labelKey, undefined)
   })
-  assert.match(output, /id="title"[^>]*value="Đang kiểm chứng"/)
+  assert.match(output, /id="flow-record-column-edit-title"[^>]*value="Đang kiểm chứng"/)
 })
 
 test('dropping a file on the task uploads its bytes, saves the reference and opens an in-place preview', async () => {
@@ -1944,7 +2580,7 @@ test('dropping a file on the task uploads its bytes, saves the reference and ope
     fetch: async (url, request) => {
       const name = decodeURIComponent(url.split('/').pop()),
         input = JSON.parse(request.body)
-      if (name === 'flow.entity.save') saves.push({ input, uploadsSoFar: uploads.length })
+      if (name === 'flow.attachment.save') saves.push({ input, uploadsSoFar: uploads.length })
       return new Response(JSON.stringify(fixture.call(name, input)), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -2077,6 +2713,8 @@ test('list rows build a picker only while its menu is open, one row menu at a ti
     assert.ok(ids.length > 1)
     assert.equal(options(closed), 0)
     show(ids[0])
+    assert.match(renderToStaticString(island.view()), /aria-busy="true"/)
+    await new Promise((resolve) => setTimeout(resolve, 0))
     const first = renderToStaticString(island.view())
     assert.ok(inMenu(first, ids[0]) > 1)
     assert.equal(options(first), inMenu(first, ids[0]))
@@ -2087,6 +2725,7 @@ test('list rows build a picker only while its menu is open, one row menu at a ti
     show(ids[0])
     handlerOf(island.view(), ids[0], 'beforetoggle')({ newState: 'closed' })
     show(ids[1])
+    await new Promise((resolve) => setTimeout(resolve, 0))
     handlerOf(island.view(), ids[0], 'toggle')({ newState: 'closed' })
     const second = renderToStaticString(island.view())
     assert.equal(inMenu(second, ids[0]), 0)
@@ -2227,6 +2866,31 @@ test('re-rendering a large list reuses the task model instead of scanning every 
     island.dispose()
   }
 })
+test('a task outside the loaded page still reads detail before opening its editor', async () => {
+  const fixture = createOrganizationSession('baseline', 'all-issues'),
+    lifetime = new AbortController()
+  const calls = []
+  const call = async (name, args) => {
+    calls.push(name)
+    const listArgs =
+      name === 'flow.workspace.bootstrap' ? { ...args, route: 'all-issues', recordId: undefined } : args
+    const { value } = JSON.parse(JSON.stringify(fixture.call(name, listArgs)))
+    if (name === 'flow.workspace.bootstrap') value.tasks = value.tasks.filter((t) => t.id !== 'KV-142')
+    return value
+  }
+  const island = createFlowWorkspace({ screen: 'issue', record: 'KV-142' }, { call })
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const output = renderToStaticString(island.view())
+    assert.equal(calls.filter((name) => name === 'flow.issue.detail').length, 1)
+    assert.doesNotMatch(output, /Công việc không tồn tại/)
+    assert.ok(output.includes('data-flow="live-doc"'), output.slice(-900))
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
 test('a task opened from a screen read loads its body and discussion before offering the editor', async () => {
   const fixture = createOrganizationSession('baseline', 'all-issues'),
     lifetime = new AbortController(),
@@ -2327,4 +2991,185 @@ test('clearing a search shows the tasks again from the loaded data without a new
     lifetime.abort()
     island.dispose()
   }
+})
+
+test('a loaded organization controller accepts shell-only member navigation before its primary read', async () => {
+  await import('@ketvietlab/flow-client/organization.mjs')
+  const fixture = createOrganizationSession('baseline', 'workspace-overview')
+  const chrome = flowShellData(
+    fixture.call('flow.workspace.bootstrap', {
+      shellOnly: true,
+      route: 'workspace-overview',
+      companyId: 'demo',
+      workspaceId: 'product',
+    }).value,
+  )
+  const props = {
+    screen: 'workspace-overview',
+    serverShell: true,
+    companyId: 'demo',
+    workspaceId: 'product',
+    chrome,
+  }
+  const call = createFnClient({
+    fetch: async (url, request) =>
+      new Response(
+        JSON.stringify(fixture.call(decodeURIComponent(url.split('/').pop()), JSON.parse(request.body))),
+        { headers: { 'content-type': 'application/json' } },
+      ),
+  })
+  const island = createFlowWorkspace(props, { call }),
+    lifetime = new AbortController()
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(chrome.members.length, 1, 'shell carries only actor access metadata')
+    const next = { ...props, screen: 'workspace-members' }
+    const server = createFlowWorkspace(next)
+    try {
+      assert.doesNotThrow(() => island.update(next))
+      assert.equal(
+        renderToStaticString(island.shellView(null)),
+        renderToStaticString(server.shellView(null)),
+        'loaded controller must match the fresh SSR chrome until the primary read',
+      )
+    } finally {
+      server.dispose()
+    }
+    assert.doesNotThrow(() => renderToStaticString(island.view()))
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
+
+test('opening task creation from a standalone inbox reads catalogs before rendering the form', async () => {
+  const previous = {
+    location: globalThis.location,
+    history: globalThis.history,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+  }
+  globalThis.location = new URL('http://flow.local/flow/inbox?company=demo&workspace=product&lang=en')
+  globalThis.history = {
+    state: {},
+    replaceState(state, _, url) {
+      this.state = state
+      if (url) globalThis.location.href = new URL(url, globalThis.location.href).href
+    },
+    pushState(state, _, url) {
+      this.replaceState(state, _, url)
+    },
+  }
+  globalThis.requestAnimationFrame = (fn) => {
+    fn()
+    return 0
+  }
+  setFlowLocale('en')
+  const fixture = createOrganizationSession(),
+    lifetime = new AbortController(),
+    requests = []
+  let release
+  const call = createFnClient({
+    fetch: async (url, request) => {
+      const name = decodeURIComponent(url.split('/').pop()),
+        input = JSON.parse(request.body)
+      if (name === 'flow.workspace.bootstrap') {
+        requests.push(input.route)
+        if (input.route === 'issue-new')
+          await new Promise((resolve) => {
+            release = resolve
+          })
+      }
+      return Response.json(fixture.call(name, input))
+    },
+  })
+  const island = createFlowWorkspace({ screen: 'inbox', workspaceId: 'product' }, { call })
+  const button = (node, label) => {
+    if (!node || typeof node !== 'object') return null
+    if (Array.isArray(node)) return node.map((child) => button(child, label)).find(Boolean)
+    if (node.items && node.render)
+      return button(
+        node.items.map((item, i) => node.render(item, i)),
+        label,
+      )
+    if (!node.strings) return null
+    if (node.strings[0].trimStart().startsWith('<button') && node.values.includes(label))
+      return findHandler(node, '<button', 'click')
+    return button(node.values, label)
+  }
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const create = button(island.view(), 'Create task')
+    assert.equal(typeof create, 'function')
+    create()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(requests, ['inbox', 'issue-new'])
+    assert.doesNotMatch(renderToStaticString(island.view()), /id="flow-task-create"/)
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.match(renderToStaticString(island.view()), /id="flow-task-create"/)
+  } finally {
+    release?.()
+    lifetime.abort()
+    island.dispose()
+    Object.assign(globalThis, previous)
+    setFlowLocale('vi')
+  }
+})
+
+test('status filter retains the referenced state outside the bootstrap catalog window', async () => {
+  const fixture = createOrganizationSession('baseline', 'all-issues'),
+    lifetime = new AbortController()
+  const call = async (name, args) => {
+    const { value } = JSON.parse(JSON.stringify(fixture.call(name, args)))
+    if (name === 'flow.workspace.bootstrap') {
+      value.columns = []
+      value.tasks = value.tasks
+        .filter((task) => !task.archived)
+        .slice(0, 1)
+        .map((task) => ({
+          ...task,
+          status: 'outside-window',
+          statusDefinition: {
+            id: 'outside-window',
+            label: 'Referenced review',
+            kind: 'review',
+            color: 'yellow',
+          },
+        }))
+    }
+    return value
+  }
+  const island = createFlowWorkspace({ screen: 'all-issues' }, { call })
+  try {
+    island.mount({ root: root(), lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const output = renderToStaticString(island.view())
+    assert.match(output, /<option[^>]*value="outside-window"[^>]*>Referenced review<\/option>/)
+  } finally {
+    lifetime.abort()
+    island.dispose()
+  }
+})
+
+test('organization library renders paging and hydrates an edit beyond its first catalog window', async () => {
+  const prepare = (fixture) => {
+    const raw = fixture.sessions.get('demo').data
+    for (let i = 0; i < 205; i++)
+      raw.types.push({
+        id: `library-${i}`,
+        title: `Library ${i}`,
+        sequence: 2000 + i,
+        version: 1,
+        icon: 'list',
+        color: 'neutral',
+      })
+  }
+  const list = await renderScreen('organization-settings', 'baseline', {}, prepare)
+  assert.match(list, /Library 0/)
+  assert.doesNotMatch(list, /Library 204/)
+  assert.match(list, /50/)
+  const edit = await renderScreen('type-edit', 'baseline', { record: 'library-204' }, prepare)
+  assert.match(edit, /value="Library 204"/)
 })

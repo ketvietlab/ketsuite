@@ -11,6 +11,8 @@ type PageFrameProps = {
   body: JSXChild
   headerActions?: JSXChild
   actions?: JSXChild
+  footer?: JSXChild
+  controlsMode?: 'legacy' | 'islands'
 }
 
 export const ListScreenFrame = ({
@@ -21,6 +23,8 @@ export const ListScreenFrame = ({
   controls,
   actions,
   headerActions,
+  footer,
+  controlsMode = 'legacy',
 }: PageFrameProps): TemplateResult => {
   return shell(
     _,
@@ -31,8 +35,9 @@ export const ListScreenFrame = ({
       title={title}
       headerActions={headerActions}
       actions={collectionActions(_, frame, actions)}
-      controls={collectionControls(_, title, frame, controls)}
+      controls={controlsMode === 'islands' ? controls : collectionControls(_, title, frame, controls)}
       body={body}
+      footer={footer}
     />,
     { ...frame, chrome: null, topbar: false },
   )

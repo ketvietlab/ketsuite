@@ -35,6 +35,8 @@ export default defineModule({
       effects: ['read:catalog.Product', 'write:checkout.Order'],
       idempotent: true,
       agent: true,
+      // An agent previews this before committing it; the handler only writes rows.
+      dryRun: true,
       handler: async (ctx, args) => {
         const product = (await ctx.db.select('catalog.Product', { id: args.productId }))[0]
         if (!product) throw new Error(`unknown product ${String(args.productId)}`)

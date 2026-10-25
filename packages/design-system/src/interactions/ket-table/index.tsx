@@ -187,6 +187,13 @@ export type KetTableServerProps<Row> = {
   rowName?: (row: Row) => string
   rowHref?: (row: Row) => string
   rowLink?: boolean
+  /**
+   * An outline, as a financial statement has: the row's depth (0 at the top). The first
+   * cell's content indents one step per level; every row keeps the same columns.
+   */
+  rowLevel?: (row: Row) => number | null
+  /** A row that heads the rows below it (`group`) or adds them up (`total`) reads stronger. */
+  rowEmphasis?: (row: Row) => KetTableRowEmphasis | null
   /** The id of the row the reader came back to from its record page (see `rowAnchorHref`). */
   currentRow?: string | null
   /** A delayed collection refresh dims retained rows; the collection owns its announcement. */
@@ -196,6 +203,8 @@ export type KetTableServerProps<Row> = {
   caption?: string | null
   tools?: JSXChild
   responsive?: 'scroll' | 'stack'
+  /** Collection-owned viewport budget. The table owns scrolling and sticky headings. */
+  maxBlockSize?: string | null
   gutter?: 'compact'
   selection?: KetTableSelection
   groups?: readonly (Omit<KetTableGroup, 'rows' | 'children' | 'href'> & {
@@ -213,10 +222,15 @@ export type KetTableServerProps<Row> = {
   labels: KetTableLabels
 }
 
+export type KetTableRowEmphasis = 'group' | 'total'
+
 type ServerRendering = {
   rowName?: (row: KetTableRow) => string
+  maxBlockSize?: string | null
   rowHref?: (row: KetTableRow) => string
   rowLink?: boolean
+  rowLevel?: (row: KetTableRow) => number | null
+  rowEmphasis?: (row: KetTableRow) => KetTableRowEmphasis | null
   currentRow?: string | null
   busy?: boolean
   loading?: boolean
@@ -284,6 +298,9 @@ export const KetTable = <Row,>(props: KetTableServerProps<Row>): TemplateResult 
       rowName: !props.loading && props.rowName ? (row) => props.rowName!(row.source as Row) : undefined,
       rowHref: !props.loading && props.rowHref ? (row) => props.rowHref!(row.source as Row) : undefined,
       rowLink: props.rowLink,
+      rowLevel: !props.loading && props.rowLevel ? (row) => props.rowLevel!(row.source as Row) : undefined,
+      rowEmphasis:
+        !props.loading && props.rowEmphasis ? (row) => props.rowEmphasis!(row.source as Row) : undefined,
       currentRow: props.currentRow,
       busy: props.busy,
       loading: Boolean(props.loading),
@@ -291,6 +308,7 @@ export const KetTable = <Row,>(props: KetTableServerProps<Row>): TemplateResult 
       caption: props.caption,
       tools: props.tools,
       responsive: props.responsive,
+      maxBlockSize: props.maxBlockSize,
       gutter: props.gutter,
     },
   ).view() as TemplateResult
@@ -392,7 +410,11 @@ export function createKetTableView(
   const rowNameOf = (row: KetTableRow): string => {
     const named = server?.rowName?.(row)
     if (named?.trim()) return named
-    const lead = config.columns[0] ? row[config.columns[0].key] : undefined
+    const key = config.columns[0]?.key
+    // A server-rendered row carries its record in `source`; name it by the same leading field.
+    const source =
+      row.source && typeof row.source === 'object' ? (row.source as Record<string, unknown>) : undefined
+    const lead = key ? (row[key] ?? source?.[key]) : undefined
     return typeof lead === 'string' && lead.trim()
       ? lead
       : typeof lead === 'number'
@@ -630,6 +652,16 @@ export function createKetTableView(
   const isCurrent = (row: KetTableRow): boolean =>
     server?.currentRow != null && server.currentRow === idOf(row)
 
+  // An outline level beyond a few steps would push the subject out of its column.
+  const levelOf = (row: KetTableRow): number => {
+    const level = Math.trunc(Number(server?.rowLevel?.(row) ?? 0))
+    return Number.isFinite(level) ? Math.min(Math.max(level, 0), 4) : 0
+  }
+  const emphasisOf = (row: KetTableRow): KetTableRowEmphasis | null => {
+    const emphasis = server?.rowEmphasis?.(row)
+    return emphasis === 'group' || emphasis === 'total' ? emphasis : null
+  }
+
   const tableRow = (row: KetTableRow): TemplateResult => (
     <tr
       data-ui="kt-row"
@@ -637,6 +669,9 @@ export function createKetTableView(
       data-selected={isSelected(row) ? 'true' : null}
       data-current={isCurrent(row) ? 'true' : null}
       data-row-href={server?.rowHref?.(row)}
+      data-level={levelOf(row) ? String(levelOf(row)) : null}
+      data-emphasis={emphasisOf(row)}
+      style={levelOf(row) ? `--kt-row-level: ${levelOf(row)}` : undefined}
       tabindex={server?.rowHref && server.rowLink === false ? 0 : null}
     >
       {config.selection ? (
@@ -786,6 +821,7 @@ export function createKetTableView(
         data-kind={column.kind ?? column.format.kind}
         data-priority={column.priority ?? 'secondary'}
         data-width={column.width ?? null}
+        data-sortable={column.sortHref || (column.sortable && !isGrouped()) ? 'true' : null}
         aria-sort={direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : null}
         scope="col"
       >
@@ -900,6 +936,9 @@ export function createKetTableView(
         data-ui="ket-table"
         data-server={server ? 'true' : null}
         data-responsive={server?.responsive}
+        data-has-sort={
+          columns.some((column) => column.sortHref || (column.sortable && !isGrouped())) ? 'true' : null
+        }
         data-gutter={server?.gutter}
         data-layout={fixedColumns ? 'fixed' : null}
         style={
@@ -928,7 +967,14 @@ export function createKetTableView(
         {(isGrouped() ? groups().length === 0 : rows().length === 0) ? (
           <EmptyState title={labels.empty} message={labels.emptyHint} />
         ) : (
-          <div data-ui="kt-scroll" tabindex="0" role="region" aria-label={labels.region ?? 'Results'}>
+          <div
+            data-ui="kt-scroll"
+            data-bounded={server?.maxBlockSize ? 'true' : null}
+            style={server?.maxBlockSize ? `max-block-size: ${server.maxBlockSize}` : undefined}
+            tabindex="0"
+            role="region"
+            aria-label={labels.region ?? 'Results'}
+          >
             <table data-ui="kt-grid">
               {server?.caption && <caption data-ui="kt-caption">{server.caption}</caption>}
               {fixedColumns ? (
@@ -950,6 +996,7 @@ export function createKetTableView(
                       <label data-ui="kt-selection-target">
                         <input
                           data-ui="kt-select-all"
+                          form={server ? config.selection?.formId : undefined}
                           disabled={server?.loading}
                           type="checkbox"
                           autocomplete="off"

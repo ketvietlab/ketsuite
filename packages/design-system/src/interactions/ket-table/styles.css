@@ -36,6 +36,15 @@
     display: flex;
     justify-content: flex-end;
   }
+  :where([data-kv-design-system]) [data-ui="kt-scroll"][data-bounded="true"] {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  :where([data-kv-design-system]) [data-ui="kt-scroll"][data-bounded="true"] [data-ui="kt-col"] {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 1;
+  }
   :where([data-kv-design-system]) [data-ui="kt-caption"] {
     padding: var(--kv-space-3);
     text-align: start;
@@ -166,6 +175,19 @@
   }
   :where([data-kv-design-system]) [data-ui="kt-cell"][data-align="end"] {
     text-align: end;
+  }
+  /* An outlined table (a financial statement) indents the subject a step per level, reads the
+     rows that head or add up others in semibold and draws a stronger rule above a total. */
+  :where([data-kv-design-system])
+    [data-ui="kt-row"][data-level]
+    > [data-ui="kt-cell"]:is(:first-child, [data-ui="kt-select-cell"] + *) {
+    padding-inline-start: calc(var(--kv-space-3) + var(--kt-row-level, 0) * var(--kv-space-4));
+  }
+  :where([data-kv-design-system]) [data-ui="kt-row"][data-emphasis] > [data-ui="kt-cell"] {
+    font-weight: var(--kv-weight-semibold);
+  }
+  :where([data-kv-design-system]) [data-ui="kt-row"][data-emphasis="total"] > [data-ui="kt-cell"] {
+    border-top: 1px solid var(--kv-border-strong);
   }
   :where([data-kv-design-system]) [data-ui="kt-cell"][data-wrap="true"] {
     min-inline-size: var(--kv-table-text-min-width);
@@ -333,6 +355,49 @@
     block-size: 1px;
     overflow: hidden;
   }
+  /* Keep column sorting in the table when rows become phone summaries. */
+  :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"][data-has-sort="true"] thead {
+    position: static;
+    clip-path: none;
+    inline-size: auto;
+    block-size: auto;
+    overflow: visible;
+    display: block;
+    padding: var(--kv-space-2);
+    background: var(--kv-table-header-bg);
+    border-bottom: 1px solid var(--kv-table-border);
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"][data-has-sort="true"]
+    thead
+    tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--kv-space-1);
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"][data-has-sort="true"]
+    [data-ui="kt-col"] {
+    height: auto;
+    padding: 0;
+    border-bottom: 0;
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"][data-has-sort="true"]
+    thead
+    th:not([data-sortable="true"]) {
+    position: absolute;
+    clip-path: inset(50%);
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"][data-has-sort="true"]
+    [data-ui="kt-sort-button"] {
+    min-block-size: var(--kv-control-height);
+    padding-inline: var(--kv-space-2);
+  }
   :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] [data-ui="kt-row"] {
     display: grid;
     padding: var(--kv-space-2);
@@ -359,6 +424,20 @@
     [data-ui="kt-row"][data-current="true"]
     > :first-child {
     box-shadow: none;
+  }
+  /* A stacked row is one block: the outline neither indents its first line nor rules a total's
+     lines apart; emphasis alone marks the rows that head or add up others. */
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"]
+    [data-ui="kt-row"][data-level]
+    > [data-ui="kt-cell"] {
+    padding-inline-start: var(--kv-space-3);
+  }
+  :where([data-kv-design-system])
+    [data-ui="ket-table"][data-responsive="stack"]
+    [data-ui="kt-row"][data-emphasis="total"]
+    > [data-ui="kt-cell"] {
+    border-top: 0;
   }
   :where([data-kv-design-system]) [data-ui="ket-table"][data-responsive="stack"] [data-ui="kt-cell"] {
     display: flex;

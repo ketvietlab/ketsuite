@@ -290,6 +290,10 @@
     gap: var(--kv-space-2);
   }
 
+  :where([data-kv-design-system]) [data-ui="list-commands"] {
+    min-width: 0;
+  }
+
   :where([data-kv-design-system]) [data-ui="bulk-actions"] {
     display: flex;
     flex-wrap: wrap;

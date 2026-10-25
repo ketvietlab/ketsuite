@@ -490,9 +490,10 @@ test('sending invitations finishes onboarding; a failed address stays in the box
   assert.match(html(), /<h1>Invite your team<\/h1>/)
   assert.deepEqual(
     c('flow.workspace.bootstrap').invitations.map((i) => [i.email, i.role]),
+    // Pending invitations come newest first; the earlier one keeps its role.
     [
-      ['bao@hoasen.example', 'member'],
       ['ha@hoasen.example', 'admin'],
+      ['bao@hoasen.example', 'member'],
     ],
   )
   // Someone else changed the organization meanwhile: the send fails once, reloads, and the retry goes through.
@@ -525,7 +526,7 @@ test('a lost invitation response retries its committed command without duplicati
       const name = decodeURIComponent(url.split('/').pop()),
         args = JSON.parse(request.body)
       const result = session.call(name, args)
-      if (name === 'flow.organization.command' && args.action === 'member.invite') {
+      if (name === 'flow.member.invite') {
         invitationKeys.push(args.idempotencyKey)
         if (!lost) {
           lost = true
@@ -689,4 +690,46 @@ test('the overview checklist leads with the first open step, waits for a project
   const [hide] = handlers(view(), 'data-variant=ghost', 'click')
   hide()
   assert.doesNotMatch(renderToStaticString(view()), /data-flow="checklist"/)
+})
+
+test('Overview checklist consumes scoped existence independently of preview windows', () => {
+  const data = call(createOrganizationSession('baseline', 'workspace-overview'))('flow.workspace.bootstrap', {
+    route: 'workspace-overview',
+    workspaceId: 'product',
+  })
+  const state = data.gettingStartedState
+  assert.equal(state.workspaceId, 'product')
+  assert.equal(state.project, true)
+  assert.equal(state.task, true)
+  const windowed = {
+    ...data,
+    projects: [],
+    tasks: [],
+    members: [],
+    pages: [],
+    invitations: [],
+    gettingStartedState: { workspaceId: 'product', project: true, task: true, invite: true, page: true },
+  }
+  assert.deepEqual(
+    gettingStarted(windowed, 'product', '2026-10-13').steps.map((s) => s.done),
+    [true, true, true, true],
+  )
+  assert.deepEqual(
+    gettingStarted(
+      { ...windowed, gettingStartedState: { ...windowed.gettingStartedState, workspaceId: 'elsewhere' } },
+      'product',
+      '2026-10-13',
+    ).steps.map((s) => s.done),
+    [false, false, false, false],
+    'stale workspace projection is ignored',
+  )
+  assert.equal(
+    gettingStarted(
+      { ...data, gettingStartedState: { ...state, page: false } },
+      'product',
+      '2026-10-13',
+    ).steps.find((s) => s.id === 'page').done,
+    false,
+    'explicit absence overrides stale local rows',
+  )
 })

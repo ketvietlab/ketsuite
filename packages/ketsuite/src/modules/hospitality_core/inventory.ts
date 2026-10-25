@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { claimVersion, hasPropertyScope, readRecord, runCommand } from './functions/command.ts'
 import { and, asc, defineFn, eq, from, gt, gte, inArray, lte, not, or } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { addCalendarDays, dateKeyIn } from './calendar.ts'
@@ -28,8 +29,7 @@ const natural = (value: unknown): number => Number(value ?? 0)
 const isNatural = (value: unknown): boolean => Number.isInteger(natural(value)) && natural(value) >= 0
 
 const record = async (ctx: Ctx, model: string, id: unknown): Promise<Row | null> => {
-  const table = ctx.table(model)
-  return ctx.db.one(from(table).where(eq(table.id, id)))
+  return readRecord(ctx, model, id)
 }
 
 const validDateKey = (value: unknown): value is string => {
@@ -56,6 +56,20 @@ const dateRange = (
       return { dates: [], errors: [issue('to', 'inventory_horizon', { count: maximum })] }
   }
   return { dates, errors: [] }
+}
+
+const restrictWeekdays = (range: { dates: string[]; errors: InventoryIssue[] }, value: unknown) => {
+  if (value == null) return
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.some((day) => !Number.isInteger(day) || Number(day) < 1 || Number(day) > 7)
+  ) {
+    range.errors.push(issue('weekdays', 'inventory_weekdays'))
+    return
+  }
+  range.dates = range.dates.filter((date) => value.includes(new Date(`${date}T00:00:00Z`).getUTCDay() || 7))
+  if (!range.dates.length) range.errors.push(issue('weekdays', 'inventory_weekdays_empty'))
 }
 
 /** Calendar nights occupied by a stay; checkout is deliberately excluded. */
@@ -162,7 +176,7 @@ export const quoteAvailability = async (
 const ledgerId = (roomTypeId: unknown, date: string): string => `${String(roomTypeId)}:${date}`
 const restrictionId = (roomTypeId: unknown, date: string): string => `${String(roomTypeId)}:${date}`
 
-const ensureLedgerRows = async (
+export const ensureLedgerRows = async (
   ctx: Ctx,
   propertyId: unknown,
   roomTypeId: unknown,
@@ -277,7 +291,7 @@ type LedgerPatch = (
   current: Row,
 ) => { total: number; sold: number; blocked: number; totalManual?: boolean } | InventoryIssue
 
-const changeLedger = async (
+export const changeLedger = async (
   ctx: Ctx,
   propertyId: unknown,
   roomTypeId: unknown,
@@ -305,6 +319,21 @@ const changeLedger = async (
   }
   throw new InventoryConflict(issue('roomTypeId', 'transition_conflict'))
 }
+
+export const adjustBlockedRooms = async (
+  ctx: Ctx,
+  propertyId: unknown,
+  roomTypeId: unknown,
+  date: string,
+  delta: number,
+): Promise<void> =>
+  changeLedger(ctx, propertyId, roomTypeId, date, (current) => {
+    const total = Number(current.total),
+      sold = Number(current.sold),
+      blocked = Number(current.blocked) + delta
+    if (blocked < 0 || total - sold - blocked < 0) return issue('dateFrom', 'inventory_unavailable', { date })
+    return { total, sold, blocked }
+  })
 
 export const reserveInventory = async (
   ctx: Ctx,
@@ -509,6 +538,8 @@ export const inventory: Record<string, FnSpec> = {
 
   saveRatePlan: defineFn({
     input: {
+      requestKey: 'text?',
+      expectedVersion: 'int?',
       id: 'id',
       propertyId: 'id',
       roomTypeId: 'id',
@@ -519,6 +550,8 @@ export const inventory: Record<string, FnSpec> = {
       isDefault: 'bool?',
       mealPlan: 'text?',
       minStay: 'int?',
+      minAdvanceDays: 'int?',
+      cancellationPolicyId: 'id?',
       maxStay: 'int?',
       active: 'bool?',
     },
@@ -527,83 +560,111 @@ export const inventory: Record<string, FnSpec> = {
       'read:hospitality_core.Property',
       'read:hospitality_core.RoomType',
       'read:hospitality_core.RatePlan',
+      'read:hospitality_core.CancellationPolicy',
       'write:hospitality_core.RatePlan',
       'write:hospitality_core.InventoryChange',
+      'read:hospitality_core.CommandReceipt',
+      'write:hospitality_core.CommandReceipt',
     ],
     idempotent: true,
     agent: true,
-    handler: async (ctx: Ctx, args) => {
-      const property = await record(ctx, 'hospitality_core.Property', args.propertyId)
-      const roomType = await record(ctx, 'hospitality_core.RoomType', args.roomTypeId)
-      const existing = await record(ctx, 'hospitality_core.RatePlan', args.id)
-      const code = cleanCode(args.code)
-      const name = cleanText(args.name)
-      const rateType = String(args.rateType)
-      const amount = Number(args.amount)
-      const minStay = natural(args.minStay)
-      const maxStay = natural(args.maxStay)
-      const active = args.active ?? existing?.active ?? true
-      const isDefault = args.isDefault ?? existing?.isDefault ?? false
-      const mealPlan = cleanText(args.mealPlan) || undefined
-      const errors: InventoryIssue[] = []
-      if (!property) errors.push(issue('propertyId', 'property_missing'))
-      if (!roomType) errors.push(issue('roomTypeId', 'room_type_missing'))
-      else if (roomType.propertyId !== args.propertyId) errors.push(issue('roomTypeId', 'property_mismatch'))
-      if (!code) errors.push(issue('code', 'required'))
-      if (!name) errors.push(issue('name', 'required'))
-      if (!oneOf(RATE_TYPES, rateType)) errors.push(issue('rateType', 'rate_type'))
-      if (!Number.isFinite(amount) || amount < 0) errors.push(issue('amount', 'non_negative'))
-      if (!isNatural(args.minStay)) errors.push(issue('minStay', 'non_negative'))
-      if (!isNatural(args.maxStay)) errors.push(issue('maxStay', 'non_negative'))
-      if (maxStay > 0 && maxStay < minStay) errors.push(issue('maxStay', 'los_order'))
-      if (mealPlan && !oneOf(MEAL_PLANS, mealPlan)) errors.push(issue('mealPlan', 'meal_plan'))
-      const Plan = ctx.table('hospitality_core.RatePlan')
-      const sameCode = await ctx.db.all(
-        from(Plan).where(eq(Plan.roomTypeId, args.roomTypeId), eq(Plan.code, code)),
-      )
-      if (sameCode.some((row) => row.id !== args.id)) errors.push(issue('code', 'unique'))
-      if (active && isDefault) {
-        const defaults = await ctx.db.all(
-          from(Plan).where(
-            eq(Plan.roomTypeId, args.roomTypeId),
-            eq(Plan.rateType, rateType),
-            eq(Plan.active, true),
-            eq(Plan.isDefault, true),
-          ),
+    handler: async (ctx: Ctx, args) =>
+      runCommand(ctx, args, 'saveRatePlan', async (ctx) => {
+        const property = await record(ctx, 'hospitality_core.Property', args.propertyId)
+        const roomType = await record(ctx, 'hospitality_core.RoomType', args.roomTypeId)
+        const existing = await record(ctx, 'hospitality_core.RatePlan', args.id)
+        const code = cleanCode(args.code)
+        const name = cleanText(args.name)
+        const rateType = String(args.rateType)
+        const amount = Number(args.amount)
+        const minStay = natural(args.minStay)
+        const maxStay = natural(args.maxStay)
+        const minAdvanceDays = Number(args.minAdvanceDays ?? existing?.minAdvanceDays ?? 0)
+        const cancellationPolicyId =
+          args.cancellationPolicyId === undefined
+            ? (existing?.cancellationPolicyId ?? null)
+            : args.cancellationPolicyId || null
+        const cancellationPolicy = cancellationPolicyId
+          ? await record(ctx, 'hospitality_core.CancellationPolicy', cancellationPolicyId)
+          : null
+        const active = args.active ?? existing?.active ?? true
+        const isDefault = args.isDefault ?? existing?.isDefault ?? false
+        const mealPlan = cleanText(args.mealPlan) || undefined
+        const errors: InventoryIssue[] = []
+        if (!property) errors.push(issue('propertyId', 'property_missing'))
+        else if (!hasPropertyScope(ctx, property)) errors.push(issue('propertyId', 'property_scope'))
+        else if (property.active !== true) errors.push(issue('propertyId', 'property_archived'))
+        if (!roomType) errors.push(issue('roomTypeId', 'room_type_missing'))
+        else if (roomType.propertyId !== args.propertyId)
+          errors.push(issue('roomTypeId', 'property_mismatch'))
+        else if (roomType.active !== true) errors.push(issue('roomTypeId', 'room_type_archived'))
+        if (existing && existing.code !== code) errors.push(issue('code', 'immutable_code'))
+        if (existing && (existing.propertyId !== args.propertyId || existing.roomTypeId !== args.roomTypeId))
+          errors.push(issue('roomTypeId', 'property_mismatch'))
+        if (!code) errors.push(issue('code', 'required'))
+        if (!name) errors.push(issue('name', 'required'))
+        if (!oneOf(RATE_TYPES, rateType)) errors.push(issue('rateType', 'rate_type'))
+        if (!Number.isFinite(amount) || amount < 0) errors.push(issue('amount', 'non_negative'))
+        if (!isNatural(args.minStay)) errors.push(issue('minStay', 'non_negative'))
+        if (!isNatural(args.maxStay)) errors.push(issue('maxStay', 'non_negative'))
+        if (!Number.isInteger(minAdvanceDays) || minAdvanceDays < 0 || minAdvanceDays > 365)
+          errors.push(issue('minAdvanceDays', 'rate_plan_advance_range'))
+        if (cancellationPolicyId && (!cancellationPolicy || cancellationPolicy.active !== true))
+          errors.push(issue('cancellationPolicyId', 'policy_missing'))
+        if (maxStay > 0 && maxStay < minStay) errors.push(issue('maxStay', 'los_order'))
+        if (mealPlan && !oneOf(MEAL_PLANS, mealPlan)) errors.push(issue('mealPlan', 'meal_plan'))
+        const Plan = ctx.table('hospitality_core.RatePlan')
+        const sameCode = await ctx.db.all(
+          from(Plan).where(eq(Plan.roomTypeId, args.roomTypeId), eq(Plan.code, code)),
         )
-        if (defaults.some((row) => row.id !== args.id)) errors.push(issue('isDefault', 'default_rate_unique'))
-      }
-      if (errors.length) return failure(...errors)
-      const values = {
-        id: args.id,
-        propertyId: args.propertyId,
-        roomTypeId: args.roomTypeId,
-        code,
-        name,
-        rateType,
-        amount: String(args.amount),
-        isDefault,
-        defaultKey: active && isDefault ? 'active' : undefined,
-        mealPlan,
-        minStay,
-        maxStay,
-        active,
-      }
-      await ctx.tx(async (tx) => {
-        if (existing) await tx.db.update('hospitality_core.RatePlan', { id: args.id }, values)
-        else await tx.db.insert('hospitality_core.RatePlan', values)
-        const today = dateKeyIn(new Date(), String(property!.timezone ?? 'UTC'))
-        await recordInventoryChange(tx, {
+        if (sameCode.some((row) => row.id !== args.id)) errors.push(issue('code', 'unique'))
+        if (active && isDefault) {
+          const defaults = await ctx.db.all(
+            from(Plan).where(
+              eq(Plan.roomTypeId, args.roomTypeId),
+              eq(Plan.rateType, rateType),
+              eq(Plan.active, true),
+              eq(Plan.isDefault, true),
+            ),
+          )
+          if (defaults.some((row) => row.id !== args.id))
+            errors.push(issue('isDefault', 'default_rate_unique'))
+        }
+        if (errors.length) return failure(...errors)
+        const values = {
+          id: args.id,
           propertyId: args.propertyId,
           roomTypeId: args.roomTypeId,
-          kind: 'rate',
-          dateFrom: today,
-          dateTo: addCalendarDays(today, 365),
-          aggregateId: args.id,
-        })
-      })
-      return { ok: true, id: String(args.id), errors: [] }
-    },
+          code,
+          name,
+          rateType,
+          amount: String(args.amount),
+          isDefault,
+          defaultKey: active && isDefault ? 'active' : undefined,
+          mealPlan,
+          minAdvanceDays,
+          cancellationPolicyId,
+          minStay,
+          maxStay,
+          active,
+        }
+        const tx = ctx
+        {
+          if (existing) await claimVersion(tx, 'hospitality_core.RatePlan', existing, args.expectedVersion)
+          if (existing) await tx.db.update('hospitality_core.RatePlan', { id: args.id }, values)
+          else await tx.db.insert('hospitality_core.RatePlan', { ...values, version: 1 })
+          const today = dateKeyIn(new Date(), String(property!.timezone ?? 'UTC'))
+          await recordInventoryChange(tx, {
+            propertyId: args.propertyId,
+            roomTypeId: args.roomTypeId,
+            kind: 'rate',
+            dateFrom: today,
+            dateTo: addCalendarDays(today, 365),
+            aggregateId: args.id,
+          })
+        }
+        return { ok: true, id: String(args.id), errors: [] }
+      }),
   }),
 
   listInventory: defineFn({
@@ -687,6 +748,7 @@ export const inventory: Record<string, FnSpec> = {
 
   setInventoryRange: defineFn({
     input: {
+      weekdays: 'json?',
       propertyId: 'id',
       roomTypeId: 'id',
       from: 'date',
@@ -701,6 +763,7 @@ export const inventory: Record<string, FnSpec> = {
       'read:hospitality_core.RoomType',
       'read:hospitality_core.Room',
       'read:hospitality_core.AvailabilityLedger',
+      'read:hospitality_core.RoomBlock',
       'write:hospitality_core.AvailabilityLedger',
       'write:hospitality_core.InventoryChange',
     ],
@@ -710,6 +773,7 @@ export const inventory: Record<string, FnSpec> = {
       const property = await record(ctx, 'hospitality_core.Property', args.propertyId)
       const roomType = await record(ctx, 'hospitality_core.RoomType', args.roomTypeId)
       const range = dateRange(args.from, args.to)
+      restrictWeekdays(range, args.weekdays)
       const errors = [...range.errors]
       if (!property) errors.push(issue('propertyId', 'property_missing'))
       if (!roomType) errors.push(issue('roomTypeId', 'room_type_missing'))
@@ -726,11 +790,26 @@ export const inventory: Record<string, FnSpec> = {
       try {
         return await ctx.tx(async (tx) => {
           await ensureLedgerRows(tx, args.propertyId, args.roomTypeId, range.dates)
-          for (const date of range.dates)
+          for (const date of range.dates) {
+            const B = tx.table('hospitality_core.RoomBlock')
+            const automatic =
+              args.blocked === undefined
+                ? 0
+                : await tx.db.count(
+                    from(B).where(
+                      eq(B.propertyId, args.propertyId),
+                      eq(B.roomTypeId, args.roomTypeId),
+                      eq(B.state, 'active'),
+                      eq(B.kind, 'ooo'),
+                      lte(B.dateFrom, date),
+                      gt(B.dateTo, date),
+                    ),
+                  )
             await changeLedger(tx, args.propertyId, args.roomTypeId, date, (current) => {
               if (args.followRooms === true) {
                 const sold = Number(current.sold)
-                const blocked = args.blocked === undefined ? Number(current.blocked) : natural(args.blocked)
+                const blocked =
+                  args.blocked === undefined ? Number(current.blocked) : natural(args.blocked) + automatic
                 if (sold + blocked > roomCount)
                   return issue('total', 'inventory_capacity', {
                     date,
@@ -741,7 +820,8 @@ export const inventory: Record<string, FnSpec> = {
               }
               const total = args.total === undefined ? Number(current.total) : natural(args.total)
               const sold = Number(current.sold)
-              const blocked = args.blocked === undefined ? Number(current.blocked) : natural(args.blocked)
+              const blocked =
+                args.blocked === undefined ? Number(current.blocked) : natural(args.blocked) + automatic
               if (sold + blocked > total)
                 return issue('total', 'inventory_capacity', { date, total, committed: sold + blocked })
               return {
@@ -753,6 +833,7 @@ export const inventory: Record<string, FnSpec> = {
                 ...(args.total === undefined ? {} : { totalManual: true }),
               }
             })
+          }
           await recordInventoryChange(tx, {
             propertyId: args.propertyId,
             roomTypeId: args.roomTypeId,
@@ -771,6 +852,7 @@ export const inventory: Record<string, FnSpec> = {
 
   setRestrictionRange: defineFn({
     input: {
+      weekdays: 'json?',
       propertyId: 'id',
       roomTypeId: 'id',
       from: 'date',
@@ -795,6 +877,7 @@ export const inventory: Record<string, FnSpec> = {
       const property = await record(ctx, 'hospitality_core.Property', args.propertyId)
       const roomType = await record(ctx, 'hospitality_core.RoomType', args.roomTypeId)
       const range = dateRange(args.from, args.to)
+      restrictWeekdays(range, args.weekdays)
       const minLos = natural(args.minLos)
       const maxLos = natural(args.maxLos)
       const errors = [...range.errors]

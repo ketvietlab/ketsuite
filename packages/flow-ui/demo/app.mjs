@@ -20,6 +20,7 @@ import {
   FlowTaskCard,
   FlowShell,
   FLOW_STATUSES,
+  setFlowLiveDocEditor,
 } from '../src/index.mjs'
 import {
   FlowCatalogEditor,
@@ -69,6 +70,8 @@ import { FlowDocTree, FlowDocEditor } from '../src/documents.mjs'
 import { attachFlowUI } from '../src/runtime.mjs'
 import { initialTasks } from './fixtures.mjs'
 
+// The demo serves KetSuite's editor build at /live-doc.mjs (tools/build-i18n.mjs).
+setFlowLiveDocEditor('/live-doc.mjs')
 const container = document.querySelector('#flow-demo')
 const root = createRoot(domHost(), container)
 const runtime = attachFlowUI(container)
@@ -446,6 +449,7 @@ function library() {
         'FlowPropertyFields · nhãn 13px / giá trị 14px',
         FlowPropertyFields({
           children: html`${FlowSelectField({
+            id: 'property-sample-assignee',
             name: 'sample-property-assignee',
             label: 'Người phụ trách',
             icon: 'user',
@@ -948,6 +952,40 @@ function library() {
       }),
     )}
     ${specimen(
+      'Lựa chọn có tìm kiếm và phân trang',
+      'FlowChoiceField · remote query / more',
+      FlowChoiceField({
+        id: 'demo-paged-choice',
+        label: 'Dự án',
+        value: 'outside',
+        selected: { label: 'Dự án đã chọn', content: 'Dự án đã chọn' },
+        options: [{ value: 'one', label: 'Dự án 1', content: 'Dự án 1' }],
+        remote: { query: '', loading: false, onQuery() {}, onRetry() {}, onMore() {} },
+        onChange() {},
+      }),
+    )}
+    ${specimen(
+      'Trạng thái tải từ máy chủ',
+      'FlowChoiceField · remote loading / retry',
+      FlowInline({
+        children: html`${FlowChoiceField({
+          id: 'demo-status-loading',
+          label: 'Đang tải trạng thái',
+          value: '',
+          options: [],
+          remote: { loading: true, onRetry() {} },
+          onChange() {},
+        })}${FlowChoiceField({
+          id: 'demo-status-error',
+          label: 'Thử lại trạng thái',
+          value: '',
+          options: [],
+          remote: { loading: false, error: 'Không tải được bộ trạng thái', onRetry() {} },
+          onChange() {},
+        })}`,
+      }),
+    )}
+    ${specimen(
       'Chỉnh nhanh trong danh sách',
       'FlowChoiceField · sm / FlowDateField',
       FlowInline({
@@ -1054,6 +1092,7 @@ function workspace() {
           },
         })}
         ${FlowSelect({
+          size: 'sm',
           label: 'Lọc trạng thái',
           value: status,
           options: [{ value: 'all', label: 'Mọi trạng thái' }, ...statusOptions],

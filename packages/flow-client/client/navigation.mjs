@@ -42,7 +42,7 @@ export const workspaceRoutes = new Set([
   'field-edit',
 ])
 export const pageRoutes = new Set(['pages', 'page', 'page-new', 'page-child', 'page-move', 'page-archived'])
-export const personalRoutes = new Set(['my-work', 'inbox', 'personal-settings'])
+export const personalRoutes = new Set(['my-work', 'inbox', 'personal-settings', 'invitation-accept'])
 export function routeScope(key, scope = '') {
   if (personalRoutes.has(key)) return 'personal'
   if (workspaceRoutes.has(key) || (pageRoutes.has(key) && scope === 'workspace')) return 'workspace'
@@ -136,10 +136,11 @@ export const managementTabs = {
     },
   ],
 }
-export function managementNavigation(route) {
+export function managementNavigation(route, data) {
   const active = { team: 'teams', tags: 'organization-settings' }[route] ?? route
   for (const [scope, options] of Object.entries(managementTabs)) {
-    if (options.some((option) => option.value === active)) return { scope, active, options }
+    if (options.some((option) => option.value === active))
+      return { scope, active, options: options.filter((option) => option.available?.(data) !== false) }
   }
   return null
 }

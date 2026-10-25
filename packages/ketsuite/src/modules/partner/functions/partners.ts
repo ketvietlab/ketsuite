@@ -127,7 +127,8 @@ export async function getPartnerHandler(ctx: Ctx, a: Row) {
   }
 }
 
-export async function savePartnerHandler(ctx: Ctx, a: Row) {
+/** Shared partner write service; callers may include it in their existing transaction. */
+export async function savePartnerRecord(ctx: Ctx, a: Row) {
   const errors: Issue[] = []
   if (!PARTNER_KINDS.includes(String(a.kind) as never))
     errors.push(issue('kind', 'partner.error.kind', { allowed: PARTNER_KINDS }))
@@ -165,6 +166,10 @@ export async function savePartnerHandler(ctx: Ctx, a: Row) {
   await ctx.db.commit(cs, existing ? { id: a.id } : undefined)
   await invalidatePartnerCountCache()
   return { ok: true, id: a.id }
+}
+
+export async function savePartnerHandler(ctx: Ctx, a: Row) {
+  return savePartnerRecord(ctx, a)
 }
 
 export async function normalizePartnerPhonesHandler(ctx: Ctx, a: Row) {

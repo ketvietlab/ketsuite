@@ -1,7 +1,6 @@
 import { tr } from './i18n.mjs'
-export const catalogColors = ['neutral', 'blue', 'green', 'yellow', 'red']
-export const statusKinds = ['todo', 'progress', 'review', 'done']
-export const taskTypeIcons = ['list', 'flag', 'layers']
+import { catalogColors, statusKinds, taskTypeIcons } from './catalog-contract.mjs'
+export { catalogColors, statusKinds, taskTypeIcons }
 export const defaultProjectStatuses = [
   {
     id: 'planned',
@@ -45,18 +44,39 @@ export const taskColumns = (data, projectId) => {
         .sort((a, b) => p.taskStatusIds.indexOf(a.id) - p.taskStatusIds.indexOf(b.id))
     : data.columns.filter((c) => !c.projectId)
 }
-export const taskTags = (data, projectId) => {
+export const taskTags = (data, projectId, task) => {
+  if (task?.catalogs && task.catalogs.projectId === projectId) {
+    const options = new Map(task.catalogs.tags.map((tag) => [tag.id, tag]))
+    for (const tag of task.tagDefinitions ?? [])
+      if ((task.tags ?? task.tagIds ?? []).includes(tag.id) && !options.has(tag.id))
+        options.set(tag.id, { ...tag, archived: true })
+    return [...options.values()]
+  }
   const p = data.projects?.find((p) => p.id === projectId)
   return p?.taskLabelIds
     ? data.tags.filter((t) => p.taskLabelIds.includes(t.id))
     : data.tags.filter((t) => !t.projectId && t.domain !== 'project')
 }
+export const taskFields = (data, task) =>
+  task?.catalogs && task.catalogs.projectId === task.projectId ? task.catalogs.fields : data.fields
+export const taskTypeDefinition = (data, task) =>
+  task?.typeDefinition &&
+  (task.type == null
+    ? task.typeId === task.typeDefinition.id
+    : [task.typeDefinition.id, task.typeDefinition.code].includes(task.type))
+    ? task.typeDefinition
+    : data.types?.find(
+        (type) => type.id === (task?.type ?? task?.typeId) || (task?.type != null && type.code === task.type),
+      )
 export const projectTags = (data, p) =>
   p?.projectLabelIds
     ? data.tags.filter((t) => p.projectLabelIds.includes(t.id))
     : data.tags.filter((t) => !t.projectId && t.domain === 'project')
-export const statusKind = (data, task) =>
-  data.columns?.find((c) => c.id === task?.status)?.kind ?? task?.status
+export const taskStatusDefinition = (data, task) =>
+  task?.statusDefinition && task.statusDefinition.id === task.status
+    ? task.statusDefinition
+    : data?.columns?.find((c) => c.id === task?.status)
+export const statusKind = (data, task) => taskStatusDefinition(data, task)?.kind ?? task?.status
 export const isDone = (data, task) => statusKind(data, task) === 'done'
 export const statusForKind = (data, projectId, kind) =>
   taskColumns(data, projectId).find((c) => c.kind === kind)?.id ?? kind

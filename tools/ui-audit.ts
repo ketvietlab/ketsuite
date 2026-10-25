@@ -40,6 +40,36 @@ const PENDING: Record<string, string> = {
   'apps/admin/serve.ts': 'the design harness page, same reason',
   'apps/design-system/serve.tsx': 'the public catalogue and sales demo; its chrome is not a product screen',
   'apps/design-system/demo.tsx': 'the public catalogue and sales demo; its chrome is not a product screen',
+  'packages/ketsuite/src/modules/flow_workspace/index.ts':
+    'the standalone Flow workspace writes its own document head and island bootstrap — needs a kit document for apps outside the admin shell',
+  'packages/ketsuite/src/modules/hospitality_billing/collections/billing-book.tsx':
+    'a #1044 collection island that draws its own result region and filter triggers — needs kit primitives that take handlers',
+  'packages/ketsuite/src/modules/hospitality_core/collections/folio-book.tsx':
+    'a #1044 collection island that draws its own result region and filter triggers — needs kit primitives that take handlers',
+  'packages/ketsuite/src/modules/hospitality_core/collections/reservation-book.tsx':
+    'a #1044 collection island that draws its own result region and filter triggers — needs kit primitives that take handlers',
+  'packages/ketsuite/src/modules/hospitality_core/collections/stay-book.tsx':
+    'a #1044 collection island that draws its own result region and filter triggers — needs kit primitives that take handlers',
+  'packages/ketsuite/src/modules/hospitality_core/collections/view.tsx':
+    'the #1044 collection runtime shared by those books, same reason',
+  'packages/ketsuite/src/modules/hospitality_core/plan/room-plan.tsx':
+    'the #1044 room plan draws its own tape-chart grid — needs a kit timeline board',
+  'packages/ketsuite/src/modules/hospitality_core/screens/tape-chart.tsx':
+    'the tape chart legend of that room plan, same reason',
+  'packages/ketsuite/src/modules/hospitality_core/records/reservation-page.tsx':
+    'the #1044 reservation workspace calls section(...) instead of <Section />',
+  'packages/ketsuite/src/modules/hospitality_core/screens/inventory-workbench.tsx':
+    'a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form',
+  'packages/ketsuite/src/modules/hospitality_core/screens/night-audit-workbench.tsx':
+    'a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form',
+  'packages/ketsuite/src/modules/hospitality_core/screens/property-gallery.tsx':
+    'the #1044 gallery posts a multipart upload and shows its images by hand — needs a kit upload field and image tile',
+  'packages/ketsuite/src/modules/hospitality_core/screens/property-structure.tsx':
+    'a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form',
+  'packages/ketsuite/src/modules/hospitality_core/screens/property-workbench.tsx':
+    'a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form',
+  'packages/ketsuite/src/modules/hospitality_core/screens/room-operations-workbench.tsx':
+    'a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form',
 }
 
 /**
@@ -225,7 +255,13 @@ for (const pattern of PATTERNS) {
       continue
     }
     if (path.endsWith('.tsx')) {
-      for (const match of source.matchAll(/<[a-z][a-z0-9-]*(?=[\s/>])/g)) {
+      // A whole-line comment is prose (`record=<id>`), and a name right before
+      // `<` makes it a type argument (`signal<string>`, `ReturnType<typeof f>`):
+      // neither is markup. Blanking keeps every offset, so line numbers hold.
+      const code = source.replace(/^[ \t]*\/\/.*$|^[ \t]*\/\*[\s\S]*?\*\//gm, (comment) =>
+        comment.replace(/[^\n]/g, ' '),
+      )
+      for (const match of code.matchAll(/(?<![\w$])<[a-z][a-z0-9-]*(?=[\s/>])/g)) {
         const line = source.slice(0, match.index).split('\n').length
         findings.push({ file: path, line, what: 'raw JSX tag', text: lines[line - 1]?.trim() ?? match[0] })
       }

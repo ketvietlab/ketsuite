@@ -34,7 +34,7 @@ on a sync branch, then open a pull request into public `integration`.
 ## Promotion and release
 
 - `integration` receives reviewed snapshots and has no automatic full CI.
-- Promote `integration` into `develop`; `verify.yml` owns the broad verification gate.
+- Promote `integration` into `develop`; `verify.yml` owns the broad verification gate (HTTP and unit). Read the latest `browser.yml` run on the promoted commit too; it is not a gate.
 - Require the stable `verification gate` check on `develop` and `master`, plus
   `permission coverage` on `develop`. The gate rejects failed, cancelled or skipped
   test jobs when the planner selected them; an unselected group may be skipped.
@@ -91,12 +91,16 @@ The coordinated release publishes these packages in dependency order:
 
 1. `@ketvietlab/design-system`
 2. `@ketvietlab/ketspec`
-3. `@ketvietlab/ketsuite`
-4. `@ketvietlab/website-client`
-5. `@ketvietlab/flow-ui`
-6. `@ketvietlab/flow-client`
+3. `@ketvietlab/flow-ui`
+4. `@ketvietlab/flow-client`
+5. `@ketvietlab/ketsuite`
+6. `@ketvietlab/website-client`
 
-KetJS and KetJS View are npm dependencies released from their own repository.
+`@ketvietlab/ketsuite` and `@ketvietlab/website-client` depend on each other, so neither
+order is complete until both are published.
+
+KetJS and KetJS View are npm dependencies released from their own repository. `ketsuite new`
+asks for the KetJS release that `@ketvietlab/ketsuite` depends on, not the KetSuite version.
 
 ## Retry a partial publication
 

@@ -10,6 +10,7 @@ import type { Message } from '@ketvietlab/ketjs'
  */
 export const messages: Record<string, Record<string, Message>> = {
   vi: {
+    'apps.help': 'Hướng dẫn màn hình',
     'globalSearch.label': 'Tìm kiếm toàn hệ thống',
     'globalSearch.trigger': 'Tìm toàn hệ thống',
     'globalSearch.close': 'Đóng',
@@ -232,6 +233,7 @@ export const messages: Record<string, Record<string, Message>> = {
     'pages.count': { one: '{count} trang', other: '{count} trang' },
   },
   en: {
+    'apps.help': 'Screen help',
     'globalSearch.label': 'Global search',
     'globalSearch.trigger': 'Search everywhere',
     'globalSearch.close': 'Close',

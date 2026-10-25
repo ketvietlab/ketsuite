@@ -30,7 +30,7 @@ for (const [name, value] of Object.entries({
   if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`)
 
 const modules = [address, partner, company, uom, product, pricing, stock, loyalty]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'bench', branches: null }
 registerFunctions(modules)
 

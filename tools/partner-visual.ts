@@ -12,7 +12,7 @@ if (!path) throw new Error('set KET_VISUAL_SQLITE to a new SQLite file')
 if (existsSync(path)) throw new Error(`refusing to replace existing visual database: ${path}`)
 
 const modules = [...ketsuite.modules, ...(ketsuite.theme ? [ketsuite.theme] : [])]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 const adapter = sqliteAdapter(path)
 await adapter.open()
 await migrateOne(adapter, manifest)

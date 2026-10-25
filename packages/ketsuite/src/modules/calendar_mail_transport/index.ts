@@ -24,7 +24,7 @@ const displayTime = (event: Row): string =>
 
 const functions: Record<string, FnSpec> = {
   sendInvitations: {
-    input: { eventId: 'id', templateId: 'id', baseUrl: 'text' },
+    input: { eventId: 'id', templateId: 'id', baseUrl: 'text?' },
     output: { deliveryIds: 'json' },
     effects,
     idempotent: true,
@@ -49,18 +49,21 @@ const functions: Record<string, FnSpec> = {
               message: 'only the organizer may send invitations',
             })
         }
-        let origin: string
+        const T = tx.table('mail_transport.Template')
+        const template = await tx.db.one(from(T).where(eq(T.id, args.templateId), eq(T.active, true)))
+        const origin = String(template?.publicOrigin ?? '')
+        let suppliedOrigin = origin
         try {
-          const url = new URL(String(args.baseUrl))
-          if (!['http:', 'https:'].includes(url.protocol)) throw new Error('unsupported protocol')
-          origin = url.origin
+          if (args.baseUrl) suppliedOrigin = new URL(String(args.baseUrl)).origin
         } catch {
+          suppliedOrigin = ''
+        }
+        if (!origin || suppliedOrigin !== origin)
           throw new KetError({
             code: 'E_CALENDAR_MAIL_URL',
             module: 'calendar_mail_transport',
-            message: 'baseUrl must be an HTTP(S) origin',
+            message: 'invitations require the publicOrigin configured on the template',
           })
-        }
         const A = tx.table('calendar.Attendee')
         const attendees = await tx.db.all(from(A).where(eq(A.eventId, event.id)))
         const partnerIds = attendees.flatMap((row) => (row.partnerId ? [row.partnerId] : []))

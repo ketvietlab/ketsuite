@@ -10,32 +10,51 @@ const setup = ({
   record = 'bao',
   params = { accessScope: 'workspace', target: 'product' },
   errors = {},
+  route = 'workspace-members',
 } = {}) => {
-  const data = createOrganizationSession('baseline', undefined, { profile: 'realistic' }).call(
-      'flow.workspace.bootstrap',
-      { companyId: 'demo' },
-    ).value,
+  const session = createOrganizationSession('baseline', undefined, { profile: 'realistic' }),
+    data = session.call('flow.workspace.bootstrap', {
+      companyId: 'demo',
+      route: 'workspace-members',
+      workspaceId: 'product',
+    }).value,
     nav = [],
     mutations = [],
-    confirms = []
+    confirms = [],
+    calls = []
   const org = createOrganization({
     data: signal(data),
     workspaceId: () => 'product',
     projectId: () => null,
+    route: () => route,
     record: () => record,
     params: () => params,
     canWrite: () => canWrite,
     formError: () => errors,
     busy: () => false,
     mutate: (_fn, args) => mutations.push(args),
-    call: async () => {},
+    // Reads go to the same Atlas session the bootstrap came from, as the browser's would.
+    call: async (name, args) => {
+      calls.push([name, args])
+      const value = session.call(name, { companyId: 'demo', ...args }).value
+      if (value?.ok === false) throw Object.assign(new Error(value.errors[0].message), value.errors[0])
+      return value
+    },
     navigate: (key, params) => nav.push([key, params]),
     close: () => {},
     isModal: () => true,
     switchWorkspace: () => {},
     confirmAction: (request) => confirms.push(request),
   })
-  return { data, nav, mutations, confirms, org }
+  return { data, nav, mutations, confirms, calls, org }
+}
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+// The member modal reads that person's access when its route is prepared.
+const memberModal = async (options = {}) => {
+  const state = setup({ route: 'member-access', ...options })
+  state.org.prepare()
+  await tick()
+  return state
 }
 test('organization forms associate server field errors with the native editable control', () => {
   const { org } = setup({
@@ -46,6 +65,9 @@ test('organization forms associate server field errors with the native editable 
   assert.match(output, /id="title-error"[^>]*>Enter a name with content\./)
   assert.match(output, /id="description"[^>]*aria-invalid="true"[^>]*aria-describedby="description-error"/)
   assert.match(output, /id="description-error"[^>]*>Keep the description shorter\./)
+  // A new Workspace defaults to the restricted value the native server accepts.
+  assert.match(output, /<option value="restricted"[^>]*selected/)
+  assert.doesNotMatch(output, /value="private"/)
 })
 
 const handlers = (node, marker, event, out = []) => {
@@ -106,21 +128,31 @@ test('clicking a row, its name or its button opens that person in the access mod
   const view = org.view('workspace-members')
   const rowOpen = handlers(view, '<tr', 'click'),
     nameOpen = handlers(view, '<button type="button" title=', 'click')
-  rowOpen[1]({ target: { closest: () => null } })
+  const names = [...renderToStaticString(view).matchAll(/<button type="button" title="([^"]+)"/g)].map(
+    (m) => m[1],
+  )
+  const bao = names.indexOf('Trần Quốc Bảo'),
+    mai = names.indexOf('Mai Anh')
+  assert.ok(bao >= 0 && mai >= 0)
+  rowOpen[bao]({ target: { closest: () => null } })
   assert.deepEqual(nav.pop(), ['member-access', { id: 'bao', accessScope: 'workspace', target: 'product' }])
-  rowOpen[1]({ target: { closest: () => ({}) } })
+  rowOpen[bao]({ target: { closest: () => ({}) } })
   assert.equal(nav.length, 0, 'a click on a control inside the row is left to that control')
-  nameOpen[0]()
+  nameOpen[mai]()
   assert.deepEqual(nav.pop(), ['member-access', { id: 'mai', accessScope: 'workspace', target: 'product' }])
 })
 
-test('the member modal explains every source and scopes each change to that person', () => {
-  const { org, nav, mutations, confirms } = setup(),
+test('the member modal explains every source and scopes each change to that person', async () => {
+  const { org, nav, mutations, confirms, calls } = await memberModal(),
     html = renderToStaticString(org.modal('member-access'))
   assert.match(html, /Trần Quốc Bảo · bao@example\.test/)
   assert.match(html, /Workspace · Team Engineering/)
   assert.match(html, /Team grant · applies to all 15 people in Engineering/)
   assert.match(html, /Remove for the whole team/)
+  assert.deepEqual(calls.at(-1), [
+    'flow.access.list',
+    { companyId: 'demo', scope: 'workspace', targetId: 'product', memberId: 'bao', limit: 1 },
+  ])
   handlers(org.modal('member-access'), 'data-flow="button"', 'click').find(
     (_, i, all) => i === all.length - 1,
   )()
@@ -134,13 +166,16 @@ test('the member modal explains every source and scopes each change to that pers
   assert.equal(mutations.pop().action, 'access.revoke')
 })
 
-test('read-only viewers can open a member but get no changes, and an unknown person is explained', () => {
-  const { org } = setup({ canWrite: false })
-  assert.match(renderToStaticString(org.view('workspace-members')), />\s*View\s*<\/button>/)
+test('read-only viewers can open a member but get no changes, and an unknown person is explained', async () => {
+  assert.match(
+    renderToStaticString(setup({ canWrite: false }).org.view('workspace-members')),
+    />\s*View\s*<\/button>/,
+  )
+  const { org } = await memberModal({ canWrite: false })
   const html = renderToStaticString(org.modal('member-access'))
   assert.doesNotMatch(html, /Remove for the whole team|Grant more access|Organization role &amp; work hours/)
   assert.match(
-    renderToStaticString(setup({ record: 'ghost' }).org.modal('member-access')),
+    renderToStaticString((await memberModal({ record: 'ghost' })).org.modal('member-access')),
     /Member not found/,
   )
 })
@@ -192,4 +227,61 @@ test('the grant action sits in the shell topbar and people are found through the
   assert.deepEqual(nav.pop(), ['access-grant', { accessScope: 'workspace', target: 'product' }])
   assert.equal(setup({ canWrite: false }).org.topAction('workspace-members'), null)
   assert.equal(org.topAction('organization-members'), null)
+})
+
+test('changing project access previews, from the server, who gains or loses it', async () => {
+  const session = createOrganizationSession('baseline', undefined, { profile: 'realistic' }),
+    raw = session.sessions.get('demo').data,
+    rawCore = raw.projects.find((p) => p.id === 'core')
+  // An inheriting project in an internal Workspace: restricting it is a real loss for some.
+  raw.workspaces.find((w) => w.id === rawCore.workspaceId).access = 'internal'
+  rawCore.access = 'workspace'
+  const data = session.call('flow.workspace.bootstrap', {
+      companyId: 'demo',
+      route: 'project-members',
+      projectId: 'core',
+    }).value,
+    core = data.projects.find((p) => p.id === 'core'),
+    next = 'private',
+    calls = []
+  const org = createOrganization({
+    data: signal(data),
+    workspaceId: () => core.workspaceId,
+    projectId: () => 'core',
+    route: () => 'project-members',
+    record: () => null,
+    params: () => ({}),
+    canWrite: () => true,
+    formError: () => ({}),
+    busy: () => false,
+    mutate: () => {},
+    call: async (name, args) => {
+      calls.push([name, args])
+      const value = session.call(name, { companyId: 'demo', ...args }).value
+      if (value?.ok === false) throw Object.assign(new Error(value.errors[0].message), value.errors[0])
+      return value
+    },
+    navigate: () => {},
+    close: () => {},
+    isModal: () => false,
+    switchWorkspace: () => {},
+    confirmAction: () => {},
+  })
+  const expected = session.call('flow.access.preview', {
+    companyId: 'demo',
+    change: 'project-access',
+    projectId: 'core',
+    access: next,
+  }).value
+  assert.ok(expected.items.length > 0)
+  handlers(org.view('project-members'), '<select', 'change')[0]({ target: { value: next } })
+  assert.match(renderToStaticString(org.view('project-members')), /Preparing preview/)
+  await tick()
+  const html = renderToStaticString(org.view('project-members'))
+  assert.deepEqual(calls.at(-1), [
+    'flow.access.preview',
+    { companyId: 'demo', change: 'project-access', projectId: 'core', access: next },
+  ])
+  for (const row of expected.items) assert.ok(html.includes(row.name), row.name)
+  assert.doesNotMatch(html, /Preparing preview/)
 })

@@ -8,6 +8,12 @@ scope hooks). Preserve native route parameters, including repository/branch/path
 for an Atlas result. Core never imports the private search provider. No extension
 may add another content-search field to a page header or collection.
 
+Atlas-only `organizationRead({name, args, read, fail})` handles an explicit name
+from `readNames()`. Its `read()` callback supplies the same authorized, unprojected
+bootstrap used by search; it never grants access to raw organization records.
+Return `undefined` for an unclaimed name. Production uses typed module functions,
+not this fixture adapter. Cursor reads and their fixtures share the declared API.
+
 Core is MIT. The application entry registers client extensions before creating the
 first workspace. Registration order is render/guard order; names, routes, forms and
 API error codes have one owner. Invalid registration changes no shared registry.
@@ -27,6 +33,17 @@ stay outside the primary CSR data island.
 Each island gets a fresh `create(ctx)` instance. `view`/`modal`, `topAction`,
 `navigation`, `taskSection`, `taskLinks`, `taskEstimate`, `taskStatusHint`,
 `taskPoints`, `settingsSection` and `sprintSummary` compose public Flow UI components.
+Sprint list/close totals come from each sprint's authoritative `taskTotals`, not
+the loaded task page. An extension that changes points must project its full-scope
+total on the server. Atlas-only extensions use `sprintTotals({result})`, after
+permission scoping and before route/task-window projection, to simulate that read;
+this hook is never a production backend.
+`sprintSummary` receives immutable report metadata from `flow.sprint.report`.
+Historical task snapshots are a separate paginated collection, not a `tasks`
+array on bootstrap or on the summary passed to this hook.
+An extension route may declare `available(data)`; management navigation filters its
+tab against the authorized bootstrap/shell metadata. Availability is presentation
+only: the server must independently deny unavailable reads and commands.
 `settingsSection(key, scope)` is called with `organization-settings`, `project-settings` and
 `workspace-settings` (the Workspace record as `scope`); return one settings row
 (`FlowSection({ inset: 'none', title, description, actions })`) or `null`. The host lays the rows
@@ -86,7 +103,11 @@ names and capability requirements are explicit. Missing commands return
 `requireCapability(capability, input)` before opening its transaction. The host must
 throw on refusal and must resolve tenant, actor and record scope from authenticated
 server state. Inside `transaction(callback)`, all `beforeMutation(scoped, mutation)`
-guards run in registration order before `write(scoped)`. A guard throws to refuse;
+guards run in registration order before `write(scoped)`. After the write, optional
+`afterMutation(scoped, mutation, result)` hooks run in the same transaction. They may
+persist extension state or enqueue a durable outbox intent; they must never perform
+external I/O. Their failure rolls back the core write too. Replay skips both hooks.
+A guard throws to refuse;
 the transaction must roll back any failure. `dispatch` uses that same path for an
 extension-owned command. Cleanup is idempotent and attempts every extension in
 reverse registration order, reporting failures together.
@@ -99,7 +120,26 @@ transaction. This commit supplies and tests the contract; it does not claim that
 existing KetSuite production endpoints have been migrated. That adapter is tracked
 by D05/G03 in the implementation matrix.
 
+The native Core factory accepts injected `NativeServerExtension`s. Each extension
+declares database `effects`, task form `taskRoutes`, and may add disjoint typed
+`inputFields` to fully qualified core commands (for example `flow.issue.save`).
+It cannot replace core fields or policy.
+`readEffects` may narrow the extension's projection effects; mutation hooks retain
+`effects`. A projection that only reports delivery configuration therefore grants
+no queue or mail writes to Core read handlers.
+`projection(ctx, route, tasks, request)` receives authorized project/workspace IDs,
+the read input and optional opened-record detail. It owns folding that detail into
+its screen projection, so a full opened record cannot be overwritten by a summary.
+Core knows no private field names. `@ketvietlab/ketsuite/flow/server` exposes native
+policy/transaction primitives and scoped task services to a composed private module;
+the services retain capability, version, replay and extension checks.
+
 ## Atlas adapters
+
+An optional `prepareCommand(name, input, data)` hook captures extension-owned
+optimistic versions in the shared controller. It runs before `resolveCommand`
+maps a finite client vocabulary to a typed function. `atlasCommand` reverses that
+mapping only in the fixture transport. None of these hooks grants server rights.
 
 `atlas/extensions.mjs` is a synchronous fixture hook runner used only by the mock.
 It is deliberately separate from the transactional server contract. Core fixtures
@@ -107,6 +147,11 @@ contain no pro data. The private Atlas entry supplies additional seeds, reads,
 commands, guards, scoped fields and cleanup to the public fixture creators. Its
 `scope` hook adds fields to a screen read and `routeProjection({result, args})` trims
 them to what `args.route` shows, keeping the full record for `args.recordId`.
+Extension forms that address tasks declare `taskRecord: true`. This lets a deep
+link load task detail even when its task is outside the loaded collection page.
+Other record forms (goals, rules, automation) never trigger a task detail request
+merely because their URL has an `id`.
+
 `detail({view, result, args})` adds the opened task's own records from the
 unprojected `view` to `flow.issue.detail`, because a summary may omit them. On the
 client, `recordDetail(data, detail)` folds those records into the workspace data

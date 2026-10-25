@@ -45,6 +45,7 @@ import type { ListState } from '@ketvietlab/ketjs'
 import type { ProductListAnswer, ProductListFavorite, ProductListGroup, ProductListRow } from './read.ts'
 import type { ProductListLabels } from './messages.ts'
 import { productImageUrl } from '../../../ui/client/product-image.ts'
+import { HiddenPostForm, IslandRegion, PoliteStatus } from '../../../ui/client/island-markup.tsx'
 
 export type ProductListProps = IslandProps & {
   /** The read this viewer may call: stock's when it answers the list, product's otherwise. */
@@ -717,11 +718,9 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       const selected = selection().ids.length
       const action = confirming()
       return (
-        <div data-product-list-controls="true">
+        <IslandRegion marker="product-list-controls">
           {props.bulk ? (
-            <form id={BULK_FORM} method="post" action={props.bulk.action}>
-              <input type="hidden" name="returnTo" value={href()} autocomplete="off" />
-            </form>
+            <HiddenPostForm id={BULK_FORM} action={props.bulk.action} fields={{ returnTo: href() }} />
           ) : null}
           {ListChrome({
             query: search.view(),
@@ -769,7 +768,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                 confirmVariant: action === 'delete' ? 'destructive' : 'primary',
               })
             : null}
-        </div>
+        </IslandRegion>
       )
     },
     mount: (context) => {
@@ -794,7 +793,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       const view = viewOf(href())
       const shown = answer ? range(answer) : null
       return (
-        <div data-product-list="true" aria-busy={phase() === 'loading' ? 'true' : 'false'}>
+        <IslandRegion marker="product-list" busy={phase() === 'loading'}>
           {Stack({
             items: [
               ...(bulkError()
@@ -827,10 +826,8 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                       : table(answer),
             ].filter(Boolean),
           })}
-          <div role="status" aria-live="polite">
-            {Text({ children: announce(shown), visuallyHidden: true })}
-          </div>
-        </div>
+          <PoliteStatus>{Text({ children: announce(shown), visuallyHidden: true })}</PoliteStatus>
+        </IslandRegion>
       )
     },
     mount: (context) => {
@@ -898,7 +895,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       const answer = phase() === 'denied' ? null : result()
       const shown = answer ? range(answer) : null
       return (
-        <div data-product-list-footer="true">
+        <IslandRegion marker="product-list-footer">
           {answer && !answer.groups && answer.pages > 1 && shown
             ? ListChrome({
                 pager: {
@@ -911,7 +908,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                 },
               })
             : null}
-        </div>
+        </IslandRegion>
       )
     },
     mount: (context) => {

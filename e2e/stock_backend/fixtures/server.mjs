@@ -10,7 +10,7 @@ const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const runtime = mkdtempSync(join(tmpdir(), 'ketjs-stock-inventory-e2e-'))
 const database = join(runtime, 'stock.sqlite')
 const modules = [...ketsuite.modules, ...(ketsuite.theme ? [ketsuite.theme] : [])]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 const adapter = sqliteAdapter(database)
 const scope = {
   company: 'default',
@@ -82,10 +82,6 @@ const seed = async () => {
     listPrice: '1299000',
     saleOk: true,
     purchaseOk: true,
-  })
-  await call('product.saveVariant', {
-    id: 'stock-variant',
-    templateId: 'stock-template',
     defaultCode: 'STOCK-JACKET',
     barcode: '8938500000200',
   })
@@ -108,7 +104,7 @@ const seed = async () => {
   })
   await call('stock.adjustInventory', {
     id: 'opening-balance',
-    productId: 'stock-variant',
+    productId: 'stock-template:default',
     locationId: 'wh:stock',
     inventoryLocationId: 'inventory',
     countedQuantity: '12',
@@ -124,7 +120,7 @@ const seed = async () => {
     id: 'move-review',
     name: 'Áo khoác xuất kho',
     pickingId: 'transfer-review',
-    productId: 'stock-variant',
+    productId: 'stock-template:default',
     productUomId: 'unit',
     productUomQty: '3',
   })

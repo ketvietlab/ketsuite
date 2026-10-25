@@ -450,7 +450,11 @@ Emergency access is inside the Access panel's advanced disclosure. Only a fully 
 
 ### Sign-in assistance
 
-The Sign-in panel distinguishes invitations for a person who has not activated their account from password recovery. Deployment adapters can offer email, a one-time credential or both. A pending or failed external account shows its preparation status and an explicit status/retry action. Email acknowledgement is shown separately from activation; it never sets `passwordReady`. External adapters must supply verified identity state instead of inferring it from the local password hash. Temporary passwords are only displayed from the one-time claim response and disappear on leaving that layer.
+The Sign-in panel distinguishes invitations for a person who has not activated their account from password recovery. Deployment adapters can offer email, a one-time credential or both. External adapters must supply verified identity state (`externalCredential.state` and `activated`) instead of inferring it from the local password hash.
+
+An external account reads as one of four sign-in states, in the words the deployment's people list uses: active (signed in at least once), awaiting first sign-in (usable, never signed in), preparing (an earlier request is still preparing it) and cannot sign in yet (never made, or the last attempt did not finish). No state is a dead end and none offers a status probe or retry. Every account that may be reset offers the ordinary temporary-password command: *issue temporary password* while nobody can sign in yet, *issue new temporary password* once the account works. The adapter creates, links or re-keys the account within that request and answers with the password, so it appears at once, in one step, and its refusal appears in place in the administrator's words. The panel never names the sign-in service behind the account.
+
+Email acknowledgement is shown separately from activation; it never sets `passwordReady`. A temporary password is displayed only from the response that issued or claimed it, once, and disappears on leaving that layer.
 
 ### Choosing an automatic rule
 

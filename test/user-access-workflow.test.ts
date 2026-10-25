@@ -65,6 +65,7 @@ const manifest = compose(modules, {
     },
     'test.reader': { version: 1, labels: { vi: 'Tra cứu', en: 'Reader' }, bundles: ['workflow_probe.view'] },
   },
+  companies: true,
 })
 
 test('user workflow: atomic creation, batch assignment, preview, exact removal and email checks', async (t) => {

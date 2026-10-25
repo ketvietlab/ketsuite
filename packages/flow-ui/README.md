@@ -128,6 +128,8 @@ scroll region. Use `layout: 'tasks'` for six-column task lists with inline statu
 priority, assignee and due-date controls. Other tables retain native column sizing;
 having six columns does not opt a collection into task geometry. Task widths use
 named `--flow-task-*` dimensions, including sufficient space for date actions.
+Table cell sizing, spacing and row styles apply only to the table's own sections.
+Nested controls such as the DS DatePicker retain their independent grid geometry.
 
 `FlowStack({ inset: 'page', children })` owns the page gutter for a flush collection
 and its pagination. Nest its toolbar with `inset: 'none'`; inside a `FlowGroup`,
@@ -260,9 +262,21 @@ Flow's command search uses `flow.search` to group authorized tasks, body/comment
 
 `FlowChoiceField` is a controlled single-choice field with rich selected and option content. Pass `id`, `label`, `value`, `options: {value,label,content}[]`, `onChange(value)` and optional label icon/disabled state. Task details compose it with `FlowStatus` (including project-specific label/color) and `FlowPriority`. It uses a native popover listbox, selected indicator, Arrow/Home/End navigation, Enter/Space activation and Escape dismissal; it works inside the responsive task-properties popover. Keep label icons muted without overriding semantic icons inside field values.
 
+For server-paged single choices, `FlowChoiceField.remote` also accepts `query`,
+`onQuery` and optional `onMore`. Search and recovery controls stay outside the
+listbox; the consumer owns debounce/cancellation and cursor fences. `selected`
+retains the current label/content even when it is outside the displayed window.
+
 ### Multiple-user selection
 
 `FlowUserPicker` is exported from `@ketvietlab/flow-ui/workspace`. It is a controlled field with `id`, `label`, `value: string[]`, `options: {id,name,email?,avatarUrl?,disabled?,description?}[]`, `onChange(ids)`, and optional `disabled`, `placeholder`, `size`.
+
+For a paged directory, `remote` supplies `query`, `loading`, `error`, `total`,
+`onQuery`, `onRetry` and optional `onMore`. The consumer owns the scoped read,
+debounce, cancellation and selected identities. Remote search does not filter a
+previously cut options page in the DOM. Loading/error/empty and retry stay in the
+same popover; pagination never discards selected users. Local options retain the
+existing accent-insensitive filter. Both modes keep native checkbox keyboard paths.
 
 - `size: "md"` (default): 32px minimum control, overlapping avatars and the first name with a `+N` remaining-person count. Long names ellipsize on one line; full names remain in the tooltip and accessible label.
 - `size: "sm"`: 28px minimum inline list control, up to three overlapping avatars and a `+N` overflow count, full names in the accessible label/tooltip. Both sizes use 44px minimum touch targets on coarse pointers.
@@ -280,7 +294,7 @@ For SSR chrome, `FlowShell.header` can receive the same `FlowShellHeader` wrappe
 
 Rows must not prebuild their menus. `FlowChoiceField`, `FlowUserPicker` and `FlowDateField` accept `menu: {open, onToggle(open)}`: with it, the trigger, accessible name and empty popover render always, and options, people, search or date input render only while `open` is true. `onToggle(true)` runs before the popover shows, so content exists when focus moves in; `onToggle(false)` runs after it hid and returned focus to the trigger, so it may arrive after another menu reported open. Keep one open menu ID per screen in the controller and clear it only when the closing ID still matches. Sidebar fields omit `menu` and keep their options built.
 
-`FlowDateField` (workspace export) shows a compact day/month value or “Đặt hạn”; its tooltip and accessible name include the year. The popover uses `FlowInput` with the native date picker, optional `min`/`max`, “Bỏ hạn”, and “Xong”. Consumers supply `id`, `label`, `value`, `disabled?` and `onChange(value)`; an empty string removes the date. Values autosave through the same task controller as sidebar edits. Disabled fields keep their current values visible.
+`FlowDateField` (workspace export) shows a compact day/month value or “Đặt hạn”; its tooltip and accessible name include the year. Its editing popover composes the DS calendar through `FlowDateInput`, optional `min`/`max`, “Bỏ hạn”, and “Xong”. Consumers supply `id`, `label`, `value`, `disabled?` and `onChange(value)`; an empty string removes the date. Values autosave through the same task controller as sidebar edits. Disabled fields keep their current values visible.
 
 
 `FlowSection.description` groups supporting context with the section title (4px title/description gap) instead of a separate body hint. Header actions stay aligned with that heading group. Nested sections still use `inset: "none"`.
@@ -357,8 +371,11 @@ Call `attachFlowUI(root).sync()` after rendering and dispose the runtime on unmo
 Pass a stable owner-scoped ID, optional Yjs `snapshot` or legacy `blocks`/`text`,
 `readOnly`, `onChange` and optionally `onBlur`. Owners persist the returned snapshot;
 `FlowLiveDocText` and `FlowLiveDocLegacyBlocks` create plain/legacy projections.
-The editor is `@ketvietlab/ketsuite/livedoc` (local mode, tables, read-only).
-`FlowLiveDoc` imports that bundle when its first editor mounts, so screens without a
+The editor belongs to the host, which names its module once with
+`setFlowLiveDocEditor(url)`; the module exports `createLiveDocView`. KetSuite names its
+own editor (`@ketvietlab/ketsuite/livedoc`: local mode, tables, read-only), and
+`createFlowWorkspace` does so from its `liveDocEditor` prop. The kit never imports the
+suite. `FlowLiveDoc` imports that module when its first editor mounts, so screens without a
 document or task description never download it. `attachFlowUI` holds the editor's slot
 while it loads, disposes a late editor whose element is gone and frees the slot after
 a failed load so the next `sync()` retries.
@@ -376,6 +393,12 @@ server transport integration; this embedding uses the owner's existing save flow
 `FlowChoiceField.options` supports `disabled` and `description`. The explanation is shown on a separate line below option content, never in the selected trigger. Disabled options remain readable and cannot be selected; keyboard arrows skip them. `FlowTaskRow` accepts `statusHint` for reviewer context below the status control. `FlowDateField.overdue` colors the existing date red and includes overdue context in its accessible name, without adding a visible label.
 
 ### Overview visuals
+
+`FlowChoiceField.remote` adds consumer-owned loading and error/retry state. Its
+popover becomes a named dialog containing a listbox, with status and recovery
+outside the options. Arrow keys skip disabled choices; an empty/loading menu can
+receive focus until choices arrive. Use `menu` to avoid rendering closed content.
+Read cancellation, authorization and selected-value persistence stay in the client.
 
 Workspace exports for summary pages. They receive computed numbers only and own no data rules.
 
@@ -397,3 +420,19 @@ These components set tone through `data-state`, never `data-tone`: the shared `[
 It collapses to one column below a 1000px container. Its historical name is retained
 for compatibility; it contains no paid-feature policy or data. Both core workspace
 overviews and pro reports compose this presentation component.
+
+### Native select density and caret
+
+`FlowSelect({ size: 'sm' })` uses the 28px compact control contract; the default
+`md` stays 32px. Pair controls with buttons of the same size in a toolbar. The
+component keeps the native select (labels, form values and keyboard operation)
+and owns one decorative Lucide caret, its reserved end padding and 8px inset
+through spacing tokens. `FlowSelectField` reuses this same control.
+Pass `id` when a field is displayed over another form with the same `name`.
+Labels and error descriptions use that ID; submitted values keep the original name.
+Canonical record forms scope input, textarea, date and select IDs by route, so
+background and modal fields keep distinct associations during SSR and hydration.
+
+Date controls use `FlowDateInput` (also selected by `FlowInput({type:"date"})`). This adapter composes the public Két DS `DatePicker`; `attachFlowUI` acquires/disposes its canonical calendar runtime. Load the DS stylesheet as well as tokens and Flow styles. Core and Pro receive the same calendar, native ISO form values, validation and vi/en/ja commands; no product module owns calendar markup.
+
+The adapter selects 44px touch controls below 768px through public DS control-height tokens. Desktop fields retain the standard 32px density. The native date input remains the form value and no-JavaScript fallback; the enhanced calendar is owned by the DS.

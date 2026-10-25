@@ -26,7 +26,7 @@ permissions, native routes and form behavior while applying the visual contract.
   right for desktop, native fullscreen modal on mobile with focus/scroll return.
   MarkdownContent renders safe GFM through a host lexer. All ecosystem Mermaid
   diagrams use the public DS token-based light/dark theme and lazy rendering
-  lifetime: Inter 13px, semantic node states and consistent connectors. Content
+  lifetime: KÉT Sans 13px (`--kv-font-sans`), semantic node states and consistent connectors. Content
   may not override the theme; hosts supply pinned engines, the DS owns presentation. Below it, a settings
   gear opens a shared right-side Menu on click/touch or keyboard, never hover.
   Hosts supply `settings: { id, label, items }`; Escape closes this menu before the
@@ -77,6 +77,9 @@ permissions, native routes and form behavior while applying the visual contract.
   the query toolbar and cleared selection restores the query.
   Danger status badges use the component-owned `--kv-badge-danger-text` token for
   small-text AA contrast on table/record surfaces; do not override its color in a list.
+- Prefer column sorting through `KetTable`'s native `sortHref`/`sortLabel` and
+  `sort`; do not duplicate it in a separate `ListChrome.sort` field. Stacked tables
+  retain operable sortable headers on mobile. The list owns the allowed query values.
 - A filter `Menu` whose trigger shows the choice in effect is named for both
   (`label: 'Cơ sở: Holiday Inn'`), as `DatePresetPicker` names its own. Its panel
   stays in the viewport through the runtime; do not move panels with CSS.
@@ -201,7 +204,14 @@ Full contract: `packages/design-system/README.md` "Peek beside a spatial view".
   `RecordPage asideWhenStacked="before"`: once the page stacks it leads the
   record, in document and keyboard order; a wide page keeps it in the rail
   column. Reference rails keep the default `after`. Source: design-system
-  README "Facts and the rail on a record page".
+  README "Facts and the rail on a record page". A native record page chooses
+  this through its definition's `pageAsideWhenStacked` (the runtime keeps
+  `before` for existing pages, so a reference rail sets `after`).
+- The record runtime asks before discarding typed input, and before a command
+  whose `confirm` returns a question, in the shared small `ConfirmDialog`
+  with Cancel focused — never the browser's `confirm()`. A read the server
+  refuses (403) is titled as refused, without a retry. Source:
+  `docs/src/content/docs/ketsuite/record-modal.md`.
 
 - Define record modals with `RecordModalDefinition`; do not build a parallel overlay, history handler, loading state, or close flow in a module.
 - Use `RecordModalForm` for forms and named record commands for mutations. Views never call `fetch`, mutate history, query the document, or refresh the collection themselves.

@@ -42,6 +42,34 @@ test('failed saves retain the draft and accepted saves clear only the submitted 
   assert.equal(guard.hasChanges(), false)
 })
 
+test('a successful native reset rebases its form without clearing other unsaved edits', () => {
+  const first = { value: 'first' },
+    second = { value: 'second' }
+  const guard = createFormLeaveGuard({
+    context: () => 'check-in',
+    forms: () => [first, second],
+    snapshot: (f) => f.value,
+  })
+  guard.sync()
+  first.value = 'submitted'
+  guard.accept(guard.submission(first))
+  first.value = 'first'
+  second.value = 'unsaved elsewhere'
+  guard.reset(first)
+  assert.equal(guard.hasChanges(), true)
+  second.value = 'second'
+  assert.equal(guard.hasChanges(), false)
+})
+
+test('reset cannot accept a baseline belonging to an obsolete route', () => {
+  const f = fixture()
+  f.form.value = 'draft'
+  f.context('other-route')
+  f.guard.reset(f.form)
+  f.context('demo|product|goal-edit|g1')
+  assert.equal(f.guard.hasChanges(), true)
+})
+
 test('draft baselines cannot cross route or tenant context and autosaved views are excluded', () => {
   const f = fixture()
   f.form.value = 'draft'
@@ -82,4 +110,41 @@ test('accepting one native form does not discard an unsaved draft in a sibling f
   assert.equal(guard.hasChanges(), true)
   forms[1].value = 'b'
   assert.equal(guard.hasChanges(), false)
+})
+
+test('unselected file inputs do not create a draft as their synthetic timestamp changes', () => {
+  const previous = globalThis.FormData,
+    form = {},
+    forms = [form]
+  let timestamp = 10,
+    selected = false
+  globalThis.FormData = class {
+    constructor() {
+      this.values = [
+        [
+          'upload',
+          {
+            name: selected ? 'tasks.csv' : '',
+            size: selected ? 10 : 0,
+            type: 'text/csv',
+            lastModified: timestamp++,
+          },
+        ],
+      ]
+    }
+    [Symbol.iterator]() {
+      return this.values[Symbol.iterator]()
+    }
+  }
+  try {
+    const guard = createFormLeaveGuard({ context: () => 'exchange', forms: () => forms })
+    guard.sync()
+    assert.equal(guard.hasChanges(), false)
+    assert.equal(guard.hasChanges(), false)
+    selected = true
+    assert.equal(guard.hasChanges(), true)
+    guard.dispose()
+  } finally {
+    globalThis.FormData = previous
+  }
 })

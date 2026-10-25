@@ -4,7 +4,11 @@ const state = (form) =>
     [...new FormData(form)]
       .map(([name, value]) => [
         name,
-        typeof value === 'string' ? value : [value.name, value.size, value.type, value.lastModified],
+        typeof value === 'string'
+          ? value
+          : value.name || value.size
+            ? [value.name, value.size, value.type, value.lastModified]
+            : ['', 0, ''],
       ])
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
   )
@@ -35,6 +39,9 @@ export function createFormLeaveGuard({ context, forms, snapshot = state }) {
     accept(submitted) {
       if (submitted?.key === key && baseline.has(submitted.form))
         baseline.set(submitted.form, submitted.value)
+    },
+    reset(form) {
+      if (key && context() === key && baseline.has(form)) baseline.set(form, snapshot(form))
     },
     discard() {
       baseline.clear()

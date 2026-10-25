@@ -9,7 +9,7 @@ import { ordersScreen as posOrdersScreen } from '../packages/ketsuite/src/module
 import { purchaseOrdersListScreen } from '../packages/ketsuite/src/modules/purchase_backend/screens/purchase-orders-list.tsx'
 import { salesOrdersListScreen } from '../packages/ketsuite/src/modules/sale_backend/screens/sales-orders-list.tsx'
 
-const manifest = compose([backend], { headless: true })
+const manifest = compose([backend], { headless: true, companies: true })
 const vi = translator(manifest, 'vi')
 const en = translator(manifest, 'en')
 

@@ -1,6 +1,43 @@
 import type { ModelDef } from '@ketvietlab/ketjs'
 
 export const models: Record<string, ModelDef> = {
+  FolioPayment: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      folioId: 'ref:hospitality_core.Folio',
+      paymentId: 'ref:account.Payment',
+      kind: 'text',
+      active: 'bool?',
+      amount: 'decimal',
+      appliedAt: 'datetime?',
+      recordedAt: 'datetime',
+    },
+    indexes: {
+      payment: { fields: ['companyId', 'folioId', 'paymentId'], unique: true },
+      folio: { fields: ['companyId', 'folioId', 'recordedAt'] },
+    },
+  },
+  GuaranteePaymentLock: {
+    scope: 'company',
+    fields: { id: 'id', paymentId: 'ref:account.Payment', version: 'int' },
+    indexes: { payment: { fields: ['companyId', 'paymentId'], unique: true } },
+  },
+  GuaranteeAllocation: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      reservationId: 'ref:hospitality_core.Reservation',
+      paymentId: 'ref:account.Payment',
+      amount: 'decimal',
+      active: 'bool',
+      allocatedAt: 'datetime',
+    },
+    indexes: {
+      reservation_payment: { fields: ['companyId', 'reservationId', 'paymentId'], unique: true },
+      payment_active: { fields: ['companyId', 'paymentId', 'active'] },
+    },
+  },
   /**
    * What a kind of charge is, once it leaves the folio and becomes revenue.
    *
@@ -15,10 +52,24 @@ export const models: Record<string, ModelDef> = {
    * about the sale, not an absence of information. Refusing until somebody has
    * said what a minibar is worth taxing at is the only honest default.
    */
+  ChargeRuleChange: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      chargeRuleId: 'ref:hospitality_billing.ChargeRule',
+      actorId: 'text?',
+      before: 'json?',
+      after: 'json',
+      occurredAt: 'datetime',
+    },
+    indexes: { rule_time: { fields: ['companyId', 'chargeRuleId', 'occurredAt', 'id'] } },
+  },
   ChargeRule: {
     scope: 'company',
     fields: {
       id: 'id',
+      version: 'int?',
+      taxExemptReason: 'text?',
       /** One of `hospitality_core` CHARGE_TYPES. */
       chargeType: 'text',
       /** Left empty, the product's category decides, then the company default. */
@@ -54,6 +105,11 @@ export const models: Record<string, ModelDef> = {
       moveId: 'ref:account.Move',
       /** `invoiced` once the entry is posted. Kept for what comes after it. */
       state: 'text',
+      buyerType: 'text?',
+      buyerName: 'text?',
+      buyerTaxCode: 'text?',
+      buyerAddress: 'text?',
+      buyerEmail: 'text?',
       chargeCount: 'int',
       amountTotal: 'decimal',
       createdAt: 'datetime',

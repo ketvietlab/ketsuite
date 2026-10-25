@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const VERSION = '0.1.41'
+const VERSION = '0.1.42'
+// The KetJS release this package depends on; KetJS versions independently of KetSuite.
+const KETJS_VERSION = '0.6.1'
 const TEMPLATES = new URL('./templates/', import.meta.url)
 
 const LAYOUT: Array<[string, string]> = [
@@ -18,6 +20,7 @@ const render = (template: string, name: string, deployment: string): string =>
   readFileSync(new URL(template, TEMPLATES), 'utf8')
     .replaceAll('__NAME__', name)
     .replaceAll('__VERSION__', VERSION)
+    .replaceAll('__KETJS_VERSION__', KETJS_VERSION)
     .replaceAll('__DEPLOYMENT__', deployment)
 
 export function scaffoldKetsuite(name: string, dir: string, deployment = 'commerce'): string[] {

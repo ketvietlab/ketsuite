@@ -1425,3 +1425,33 @@ Custom JavaScript variables in existing containers require `unsafe-eval`; inline
 disallowed. Sites without a container and staff/preview pages keep their existing strict policy.
 See [Google's CSP guidance](https://developers.google.com/tag-platform/security/guides/csp).
 A loaded container does not prove that a conversion trigger matched or that Ads received an event.
+
+### Visit capture with visitor consent
+
+A visitor who lands from an ad usually calls or opens a chat instead of checking out. Settings →
+general information can therefore ask visitors before tracking them: `visitConsent` turns it on and
+`visitConsentNotice` is the wording they agree to (required when on, at most 2000 characters).
+`website.saveSite` raises `visitConsentVersion` whenever the wording changes; an agreement given to
+another version no longer counts and the visitor is asked again.
+
+While on, visitor pages (never preview or staff pages) render a consent bar and load
+`/_ket/asset/website_backend/visit.mjs`; such pages always send the strict content security policy,
+with no inline script. The answer is kept in the first-party `kv_visit_consent` cookie as
+`<version>:yes|no` for 180 days. When the site also has a Google Tag Manager container, the loader
+waits for agreement. Declining clears the browser's visitor key and current visit.
+
+After agreement the script posts, same-origin and without a staff session:
+
+- `POST /_website/visit` with `{ visitorKey, consentVersion, path, params, referrerHost, subjectType?,
+  subjectId? }` starts a visit. `params` keeps ad click ids (`gclid`, `gbraid`, `wbraid`, `fbclid`,
+  `ttclid`) and `utm_*` tags from the landing URL; paths are stored without query or fragment.
+- `POST /_website/visit/{id}/events` records a later page (`kind: page`) or a pressed contact link
+  (`kind: contact`, `channel`: `phone`, `zalo`, `messenger` or `email`, plus its target; phone
+  numbers are kept as digits). A product page names the product it shows as the subject.
+
+Replies are `200`, `404` (tracking off), `409` (the notice changed: ask again), `422` (invalid, or a
+visit that is not this browser's), `429` (more than 120 requests from one address and browser in 10 minutes) and
+`403` (cross-origin or staff). `website.Visit` stores only a SHA-256 digest of the browser's random
+visitor key, bound to the site. Visits and their events expire after 90 days; the daily
+`website.visitRetentionSweep` job queues `website.purgeExpiredVisits` per company to erase them.
+Linking a visit to a customer, call or order is staff work outside this module.

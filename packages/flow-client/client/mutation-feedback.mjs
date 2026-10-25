@@ -81,6 +81,8 @@ export function mutationFeedback(name, input, value, data) {
     target = { route: 'issue', params: { id, project: input.projectId } }
   } else if (action === 'inbox.read') key = 'read'
   else if (action === 'member.invite' || action === 'invitation.resend') key = 'invited'
+  // A grant names no single record: it may cover several people, and its id is internal.
+  else if (action === 'access.grant') key = 'granted'
   else if (action.includes('revoke')) key = 'revoked'
   else if (action === 'report') key = 'reportSent'
   else if (action === 'report.resolve') key = 'reportResult'

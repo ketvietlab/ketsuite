@@ -27,6 +27,12 @@ test('application switcher is SSR chrome with one active app and native new-tab 
   assert.match(html, /href="#settings-application"/)
   assert.match(html, /aria-label="Stay · Open in a new tab"/)
   assert.match(html, /data-ui="app-switcher-tooltip" aria-hidden="true">(?:<!--[^>]*-->)*Stay/)
+  // An app served inside this shell opens here, as a new document: no new tab, no fragment swap.
+  const phone = html.match(/<a data-ui="app-switcher-item" data-app-id="phone"[^>]*>/)?.[0] ?? ''
+  assert.match(phone, /aria-label="Phone"/)
+  assert.match(phone, /href="#app-phone"/)
+  assert.match(phone, /data-ket-reload=""/)
+  assert.doesNotMatch(phone, /target=|rel=|aria-disabled/)
   const escaped = renderToString(
     <AppSwitcher
       {...exampleApplications}

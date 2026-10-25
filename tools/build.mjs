@@ -23,6 +23,7 @@ import { buildBackendClients } from './build-backend-client.mjs'
 import { buildDesignSystemStyles } from './build-design-system-styles.mjs'
 import { buildDesignSystemAtlasRuntime } from './build-design-system-atlas-runtime.mjs'
 import { buildDesignSystemMermaid } from './build-design-system-mermaid.mjs'
+import { writeDesignSystemInventory } from './design-system-inventory.mjs'
 import { BACKEND_MERMAID_DIR, buildBackendMermaid } from './build-backend-mermaid.mjs'
 import { buildChartClient } from './build-chart-client.mjs'
 import { buildKetspecClient } from './build-ketspec-client.mjs'
@@ -149,7 +150,7 @@ function copyAssets(source, destinations) {
         visit(from)
         continue
       }
-      if (codeExtension.has(extname(entry.name))) continue
+      if (codeExtension.has(extname(entry.name)) && !entry.name.endsWith('.d.mts')) continue
       const suffix = relative(source, from)
       for (const destination of destinations) {
         const to = join(destination, suffix)
@@ -174,6 +175,7 @@ try {
   await buildDesignSystemAtlasRuntime()
   await buildDesignSystemMermaid()
   await buildKetspecClient()
+  writeDesignSystemInventory()
   const fingerprint = sourceFingerprint()
   const current = existsSync(join(BUILD, FINGERPRINT)) ? readFileSync(join(BUILD, FINGERPRINT), 'utf8') : null
   if (current === fingerprint && buildArtifactsExist(ROOT, packageNames)) {

@@ -3,8 +3,10 @@ import { attachMermaidDiagrams } from './mermaid.js'
 
 const TRIGGERS = '[data-ui="app-switcher-help"], button[name="screen-help"]'
 
-/** Native dialog lifetime: modeless desktop guidance, modal fullscreen mobile. @param {Document | HTMLElement} [root] */
-export const attachHelpDrawers = (root = document) => {
+/** Native dialog lifetime: modeless desktop guidance, modal fullscreen mobile.
+ * @param {Document | HTMLElement} [root]
+ * @param {{beforeOpen?:(trigger:HTMLElement)=>HTMLElement|undefined}} [options] */
+export const attachHelpDrawers = (root = document, options = {}) => {
   const drawers = () => [...root.querySelectorAll('[data-ui="help-drawer"]')]
   const media = window.matchMedia('(max-width: 767px)')
   /** @type {HTMLDialogElement | null} */
@@ -78,6 +80,8 @@ export const attachHelpDrawers = (root = document) => {
     close(false)
     invoker = trigger
     returnTo = trigger
+    const hostReturnTo = options.beforeOpen?.(trigger)
+    if (hostReturnTo instanceof HTMLElement) returnTo = hostReturnTo
     // Close navigation through its existing close control, so its inert/scroll state is restored.
     const navigation = trigger.closest('[data-ui="app-navigation"][open]')
     if (media.matches && navigation instanceof HTMLDetailsElement) {
@@ -100,6 +104,20 @@ export const attachHelpDrawers = (root = document) => {
   }
   /** @param {MouseEvent} event */
   const click = (event) => {
+    const trigger =
+      event.target instanceof Element
+        ? event.target.closest('[data-ui="app-switcher-help"], button[name="screen-help"]')
+        : null
+    if (trigger instanceof HTMLElement && root.contains(trigger) && !event.defaultPrevented) {
+      event.preventDefault()
+      trigger.dispatchEvent(
+        new CustomEvent('ket:screen-help-request', {
+          bubbles: true,
+          cancelable: true,
+          detail: { trigger },
+        }),
+      )
+    }
     if (
       event.target instanceof Element &&
       event.target.closest('[data-ui="help-close"]') &&

@@ -1,5 +1,5 @@
 import { defineModule } from '@ketvietlab/ketjs'
-import { functions } from './functions.ts'
+import { functions } from './functions/index.ts'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
 
@@ -35,5 +35,5 @@ export {
   POS_ORDER_STATES,
   POS_PAYMENT_SETTLEMENT_KINDS,
   POS_SESSION_STATES,
-} from './functions.ts'
-export { functions as posFunctionSpecs } from './functions.ts'
+} from './functions/index.ts'
+export { functions as posFunctionSpecs } from './functions/index.ts'

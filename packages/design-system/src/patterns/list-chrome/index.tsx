@@ -66,8 +66,10 @@ export type BulkActionsProps = {
 }
 
 export type PagerPage = {
+  /** Stable identity when the destination changes or becomes disabled. */
+  id?: string
   label: string
-  href: string
+  href: string | null
   active?: boolean
 }
 
@@ -112,6 +114,8 @@ export type ListChromeProps = {
   sort?: ListSort
   status?: JSXChild
   actions?: JSXChild
+  /** Full-width command form, separate from the inline toolbar actions. */
+  commands?: JSXChild
   bulk?: BulkActionsProps
   /** Replace the query toolbar while controlled page selection is nonempty. */
   bulkPresentation?: 'below' | 'replace'
@@ -140,6 +144,7 @@ export const HOOKS = [
   'list-sort-select',
   'list-status',
   'list-actions',
+  'list-commands',
   'bulk-actions',
   'bulk-summary',
   'bulk-count',
@@ -298,12 +303,16 @@ export const PagerBar = (props: PagerBarProps): TemplateResult => (
       <span data-ui="pager-pages">
         {each(
           props.pages,
-          (page) => page.href,
+          (page) => page.id ?? page.label,
           (page) => (
             <a
               data-ui="pager-page"
               data-active={page.active === true ? 'true' : null}
-              href={page.href}
+              data-disabled={page.href ? null : 'true'}
+              href={page.href || undefined}
+              role={page.href ? undefined : 'link'}
+              aria-disabled={page.href ? null : 'true'}
+              tabindex={page.href ? null : '-1'}
               aria-current={page.active === true ? 'page' : null}
             >
               {page.label}
@@ -420,6 +429,7 @@ export const ListChrome = (props: ListChromeProps): TemplateResult => {
           {tail}
         </div>
       )}
+      {props.commands !== undefined && <div data-ui="list-commands">{props.commands}</div>}
       {!replaceQuery && props.bulk && props.bulkPresentation !== 'replace' && <BulkActions {...props.bulk} />}
     </div>
   )

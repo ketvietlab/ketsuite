@@ -30,6 +30,7 @@ import { HOOKS as treeHooks } from '../data-display/tree/index.tsx'
 import { HOOKS as matrixHooks } from '../data-display/matrix/index.tsx'
 import { HOOKS as barChartHooks } from '../data-display/bar-chart/index.tsx'
 import { HOOKS as columnChartHooks } from '../data-display/column-chart/index.tsx'
+import { HOOKS as qrCodeHooks } from '../data-display/qr-code/index.tsx'
 import { HOOKS as timeframeHooks } from '../data-operations/timeframe-filter/index.tsx'
 import { HOOKS as recordDisplayHooks } from '../record/display/index.tsx'
 import { HOOKS as formattedValueHooks } from '../record/formatted-values/index.tsx'
@@ -47,11 +48,14 @@ import { HOOKS as formPageHooks } from '../patterns/form-page/index.tsx'
 import { HOOKS as recordPageHooks } from '../patterns/record-page/index.tsx'
 import { HOOKS as dashboardPageHooks } from '../patterns/dashboard-page/index.tsx'
 import { HOOKS as boardPageHooks } from '../patterns/board-page/index.tsx'
+import { SPLIT_HOOKS as workspaceSplitHooks } from '../patterns/workspace-page/index.tsx'
 import { HOOKS as modalHooks } from '../patterns/modal-sheet/index.tsx'
 import { HOOKS as helpDrawerHooks } from '../patterns/help-drawer/index.tsx'
 import { HOOKS as markdownHooks } from '../content/markdown/index.tsx'
 import { HOOKS as peekHooks } from '../patterns/peek/index.tsx'
+import { HOOKS as embeddedPageHooks } from '../patterns/embedded-page/index.tsx'
 import { HOOKS as settingsDirectoryHooks } from '../patterns/settings-directory/index.tsx'
+import { HOOKS as dockHooks } from '../patterns/dock/index.tsx'
 import { HOOKS as pipelineHooks } from '../patterns/pipeline/index.tsx'
 import { HOOKS as formHooks } from '../patterns/record-form/index.tsx'
 
@@ -88,6 +92,7 @@ const GROUPS = {
   matrix: matrixHooks,
   barChart: barChartHooks,
   columnChart: columnChartHooks,
+  qrCode: qrCodeHooks,
   timeframe: timeframeHooks,
   recordDisplay: recordDisplayHooks,
   formattedValues: formattedValueHooks,
@@ -105,11 +110,14 @@ const GROUPS = {
   recordPage: recordPageHooks,
   dashboardPage: dashboardPageHooks,
   boardPage: boardPageHooks,
+  workspaceSplit: workspaceSplitHooks,
   modal: modalHooks,
   helpDrawer: helpDrawerHooks,
   markdown: markdownHooks,
   peek: peekHooks,
+  embeddedPage: embeddedPageHooks,
   settingsDirectory: settingsDirectoryHooks,
+  dock: dockHooks,
   pipeline: pipelineHooks,
   form: formHooks,
 } as const

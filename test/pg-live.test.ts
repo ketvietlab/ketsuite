@@ -1,3 +1,4 @@
+import { roomFixtureCall } from './helpers/hospitality-room-fixture.ts'
 // Runs against a real Postgres when one is reachable, and skips otherwise so the
 // suite still passes on a machine without it. Everything above this line has been
 // proven against a stand-in; this is the part only a live server can settle.
@@ -58,7 +59,7 @@ const SCOPE = { company: 'c1', branch: 'main', branches: null }
 const URL =
   process.env.KET_TEST_PG ?? process.env.DATABASE_URL ?? 'postgres://dev:devpassword@127.0.0.1:5435/ketjs_dev'
 const mods = [catalog, inventory, checkout, theme]
-const manifest = compose(mods)
+const manifest = compose(mods, { companies: true })
 
 const decimalLive = defineModule({
   name: 'decimal_live',
@@ -122,7 +123,7 @@ const decimalLive = defineModule({
     },
   },
 })
-const decimalManifest = compose([decimalLive], { headless: true })
+const decimalManifest = compose([decimalLive], { headless: true, companies: true })
 
 const reachable = await (async () => {
   const a = postgresAdapter(URL)
@@ -509,7 +510,7 @@ test('live pg: a decimal column is NUMERIC, and gives back exactly what it was g
   const base = URL.replace(/\/[^/]*$/, '')
   const pool = createAdapterPool({ create: (key) => postgresAdapter(`${base}/${key}`), max: 2 })
   try {
-    const m = compose([uom], { headless: true })
+    const m = compose([uom], { headless: true, companies: true })
     await pool.with('ketjs_t2', async (a) => {
       // A clean slate, including the migration record: this database is left in
       // whatever shape the fleet test gave it, and the destructive guard rightly
@@ -547,7 +548,8 @@ test('live pg: a decimal column is NUMERIC, and gives back exactly what it was g
 
       // Values a double cannot hold. The point of the column type is that these
       // come back as themselves rather than as the nearest binary approximation.
-      const awkward = ['0.1', '0.001', '0.07', '12345.6789']
+      // A unit's factor takes at most three decimals (uom.error.factorDigits).
+      const awkward = ['0.1', '0.001', '0.07', '12345.678']
       for (const [i, factor] of awkward.entries()) {
         await callFn(
           'uom.saveUnit',
@@ -733,7 +735,7 @@ test('live pg: exact decimal queries and aggregates match the portable contract'
 test('live pg: concurrent partner defaults, roles and terms stay unique', live, async () => {
   await withPg(async (a) => {
     const partnerModules = [address, partner]
-    const partnerManifest = compose(partnerModules, { headless: true })
+    const partnerManifest = compose(partnerModules, { headless: true, companies: true })
     const partnerSchema = schemaFromManifest(partnerManifest)
     for (const tableName of Object.keys(partnerSchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -783,7 +785,7 @@ test('live pg: concurrent partner defaults, roles and terms stay unique', live, 
 test('live pg: concurrent company roots and user memberships stay unique', live, async () => {
   await withPg(async (a) => {
     const identityModules = [address, partner, company, user]
-    const identityManifest = compose(identityModules, { headless: true })
+    const identityManifest = compose(identityModules, { headless: true, companies: true })
     const identitySchema = schemaFromManifest(identityManifest)
     for (const tableName of Object.keys(identitySchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -841,10 +843,10 @@ test('live pg: concurrent company roots and user memberships stay unique', live,
   })
 })
 
-test('live pg: identity login, role edges, throttles and token CAS survive concurrency', live, async () => {
+test('live pg: identity login, role edges, throttles and token CAS survive concurrency', live, async (t) => {
   await withPg(async (a) => {
     const identityModules = [address, partner, company, user]
-    const identityManifest = compose(identityModules, { headless: true })
+    const identityManifest = compose(identityModules, { headless: true, companies: true })
     const identitySchema = schemaFromManifest(identityManifest)
     for (const tableName of Object.keys(identitySchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -914,6 +916,9 @@ test('live pg: identity login, role edges, throttles and token CAS survive concu
     const secondPod = postgresAdapter(URL)
     await secondPod.open()
     try {
+      // The third failure starts a one-second cooldown. CPU contention on CI must
+      // not let wall-clock time expire that cooldown before the assertion.
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
       for (let index = 0; index < 3; index++)
         await callFn(
           'user.authenticate',
@@ -927,6 +932,7 @@ test('live pg: identity login, role edges, throttles and token CAS survive concu
       )
       assert.equal((blocked.value as { ok: boolean }).ok, false)
     } finally {
+      t.mock.timers.reset()
       await secondPod.close()
     }
 
@@ -953,7 +959,7 @@ test('live pg: identity login, role edges, throttles and token CAS survive concu
 test('live pg: concurrent admin provisioning creates exactly one complete bootstrap', live, async () => {
   await withPg(async (a) => {
     const identityModules = [address, partner, company, user]
-    const identityManifest = compose(identityModules, { headless: true })
+    const identityManifest = compose(identityModules, { headless: true, companies: true })
     const identitySchema = schemaFromManifest(identityManifest)
     for (const tableName of Object.keys(identitySchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1006,7 +1012,7 @@ test(
   async () => {
     await withPg(async (a) => {
       const accountModules = [address, partner, company, uom, product, account]
-      const accountManifest = compose(accountModules, { headless: true })
+      const accountManifest = compose(accountModules, { headless: true, companies: true })
       const accountSchema = schemaFromManifest(accountManifest)
       for (const tableName of Object.keys(accountSchema.tables))
         await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1042,7 +1048,7 @@ test(
 test('live pg: concurrent stock reservations never over-reserve one quant', live, async () => {
   await withPg(async (a) => {
     const stockModules = [uom, product, stock]
-    const stockManifest = compose(stockModules, { headless: true })
+    const stockManifest = compose(stockModules, { headless: true, companies: true })
     const stockSchema = schemaFromManifest(stockManifest)
     for (const tableName of Object.keys(stockSchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1103,7 +1109,7 @@ test('live pg: concurrent stock reservations never over-reserve one quant', live
 test('live pg: concurrent accounting posts assign one gapless journal sequence', live, async () => {
   await withPg(async (a) => {
     const accountModules = [address, partner, company, uom, product, account]
-    const accountManifest = compose(accountModules, { headless: true })
+    const accountManifest = compose(accountModules, { headless: true, companies: true })
     const accountSchema = schemaFromManifest(accountManifest)
     for (const tableName of Object.keys(accountSchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1254,7 +1260,7 @@ test('live pg: concurrent accounting posts assign one gapless journal sequence',
 test('live pg: concurrent RFQs assign one gapless purchase sequence', live, async () => {
   await withPg(async (a) => {
     const purchaseModules = [address, partner, company, uom, product, stock, account, purchase]
-    const purchaseManifest = compose(purchaseModules, { headless: true })
+    const purchaseManifest = compose(purchaseModules, { headless: true, companies: true })
     const purchaseSchema = schemaFromManifest(purchaseManifest)
     for (const tableName of Object.keys(purchaseSchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1302,7 +1308,7 @@ test('live pg: concurrent RFQs assign one gapless purchase sequence', live, asyn
 test('live pg: concurrent quotations assign one gapless sales sequence', live, async () => {
   await withPg(async (a) => {
     const saleModules = [address, partner, company, uom, product, pricing, stock, account, sale]
-    const saleManifest = compose(saleModules, { headless: true })
+    const saleManifest = compose(saleModules, { headless: true, companies: true })
     const saleSchema = schemaFromManifest(saleManifest)
     for (const tableName of Object.keys(saleSchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1331,7 +1337,7 @@ test('live pg: concurrent quotations assign one gapless sales sequence', live, a
 
 const setupLivePos = async (a: Adapter) => {
   const posModules = [address, partner, company, user, uom, product, pricing, stock, account, pos]
-  const posManifest = compose(posModules, { headless: true })
+  const posManifest = compose(posModules, { headless: true, companies: true })
   const posSchema = schemaFromManifest(posManifest)
   for (const tableName of Object.keys(posSchema.tables))
     await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1454,7 +1460,21 @@ test(
         call('pos.openSession', { id: 'race-shift', expectedRevision: 0 }),
         call('pos.openSession', { id: 'race-shift', expectedRevision: 0 }),
       ])
-      assert.equal(opened.filter((result) => (result.value as Row).ok === true).length, 2)
+      // Both calls can observe opening_control before either CAS completes.
+      // A losing revision claim must be explicit and a retry must converge.
+      assert.ok(opened.some((result) => (result.value as Row).ok === true))
+      for (const result of opened) {
+        const value = result.value as Row
+        if (value.ok !== true) {
+          assert.equal(value.ok, false)
+          assert.deepEqual(value.errors, [
+            { field: 'expectedRevision', message: 'the shift changed; reload it before continuing' },
+          ])
+        }
+      }
+      const retried = await call('pos.openSession', { id: 'race-shift', expectedRevision: 0 })
+      assert.equal((retried.value as Row).ok, true)
+      assert.equal((retried.value as Row).revision, 1)
       const [shift] = await a.all('SELECT state, revision FROM pos_session WHERE id = $1', ['race-shift'])
       assert.equal(shift?.state, 'opened')
       assert.equal(shift?.revision, '1')
@@ -1584,7 +1604,7 @@ test('live pg: concurrent POS partial returns reserve one quantity budget', live
 test('live pg: OAuth provider, identity and transaction races settle atomically', live, async () => {
   await withPg(async (a) => {
     const oauthModules = [address, partner, company, user, oauth]
-    const oauthManifest = compose(oauthModules, { headless: true })
+    const oauthManifest = compose(oauthModules, { headless: true, companies: true })
     const oauthSchema = schemaFromManifest(oauthManifest)
     for (const tableName of Object.keys(oauthSchema.tables))
       await a.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1757,7 +1777,7 @@ test('live pg: concurrent online reservations admit one winner without overselli
   await second.open()
   try {
     const hospitalityModules = [address, partner, company, storage, backend, uom, product, hospitalityCore]
-    const hospitalityManifest = compose(hospitalityModules, { headless: true })
+    const hospitalityManifest = compose(hospitalityModules, { headless: true, companies: true })
     const schema = schemaFromManifest(hospitalityManifest)
     for (const tableName of Object.keys(schema.tables))
       await first.exec(`DROP TABLE IF EXISTS "${tableName}" CASCADE`)
@@ -1806,7 +1826,7 @@ test('live pg: concurrent online reservations admit one winner without overselli
       },
       options(first),
     )
-    await callFn(
+    await roomFixtureCall(
       'hospitality_core.saveRoom',
       { id: '101', propertyId: 'hotel', roomTypeId: 'deluxe', code: '101', name: '101' },
       options(first),

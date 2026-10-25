@@ -1,3 +1,4 @@
+import { mailWithTargets } from '@ketvietlab/ketsuite'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -9,7 +10,7 @@ import {
   sqliteAdapter,
 } from '@ketvietlab/ketjs'
 import type { Adapter, Ctx, Row } from '@ketvietlab/ketjs'
-import { company, mail, partner, storage, user } from '@ketvietlab/ketsuite'
+import { company, partner, storage, user } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
 import {
   ensureThread,
@@ -124,8 +125,23 @@ const bridge = defineModule({
   },
 })
 
-const modules = [address, partner, company, storage, user, mail, bridge]
-const manifest = compose(modules, { headless: true })
+const modules = [
+  address,
+  partner,
+  company,
+  storage,
+  user,
+  mailWithTargets([
+    {
+      resModel: 'stock.Picking',
+      readFunction: 'mail.listInbox',
+      effects: [],
+      visible: async (_ctx, ids) => new Set(ids),
+    },
+  ]),
+  bridge,
+]
+const manifest = compose(modules, { headless: true, companies: true })
 const acme = { company: 'acme', branches: null }
 const beta = { company: 'beta', branches: null }
 

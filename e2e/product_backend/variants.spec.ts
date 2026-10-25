@@ -36,15 +36,27 @@ test('cancelling the configuration asks first, then leaves the product as it was
   await page.getByRole('button', { name: 'Cấu hình thuộc tính' }).click()
   const dialog = page.getByRole('dialog', { name: 'Cấu hình thuộc tính' })
   await dialog.getByRole('group', { name: 'Giá trị' }).getByRole('checkbox', { name: '50ml' }).check()
-  // The record runtime asks with the browser's own confirm before it drops a change.
-  const asked: string[] = []
-  page.once('dialog', async (question) => {
-    asked.push(question.message())
-    await question.accept()
+  // The record runtime asks in the shared ConfirmDialog, never with the browser's own confirm.
+  const native: string[] = []
+  page.on('dialog', async (prompt) => {
+    native.push(prompt.message())
+    await prompt.dismiss()
   })
+  const question = page.getByRole('dialog', { name: 'Bỏ các thay đổi chưa lưu?' })
   await dialog.getByRole('button', { name: 'Hủy' }).click()
-  await expect.poll(() => asked).toEqual(['Bỏ các thay đổi chưa lưu?'])
+  await expect(question).toContainText('Đóng lúc này sẽ mất nội dung vừa nhập.')
+  // Keeping on editing leaves the configuration open with what was chosen.
+  // The close × carries the same name; the action is the button that says it.
+  await question.getByRole('button', { name: 'Tiếp tục nhập' }).filter({ hasText: 'Tiếp tục nhập' }).click()
+  await expect(question).toBeHidden()
+  await expect(
+    dialog.getByRole('group', { name: 'Giá trị' }).getByRole('checkbox', { name: '50ml' }),
+  ).toBeChecked()
+  await dialog.getByRole('button', { name: 'Hủy' }).click()
+  await question.getByRole('button', { name: 'Bỏ nội dung' }).click()
+  await expect(question).toBeHidden()
   await expect(dialog).toBeHidden()
+  expect(native).toEqual([])
   await expect(page.getByRole('table', { name: 'Biến thể' }).getByRole('link', { name: '50ml' })).toHaveCount(
     0,
   )

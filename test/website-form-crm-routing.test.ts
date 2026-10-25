@@ -58,7 +58,7 @@ test('form routing: the visitor answers become a lead, labelled as the visitor r
 })
 
 test('form routing: only a composed receiver is a destination', () => {
-  const bare = compose([address, partner, website, websiteForm], { headless: true })
+  const bare = compose([address, partner, website, websiteForm], { headless: true, companies: true })
   assert.deepEqual(destinationsOf(bare), [])
 })
 

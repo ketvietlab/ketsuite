@@ -42,4 +42,6 @@ const assemble = (sources: Record<string, Record<string, FnSpec>>): Record<strin
 
 export const functions: Record<string, FnSpec> = assemble(groups)
 
-export { caseFormSchema, caseWriteEffects, createCaseId } from './shared.ts'
+export { caseFormSchema, caseReadEffects, caseWriteEffects, createCaseId } from './shared.ts'
+export { logInteraction } from './reporting.ts'
+export type { InteractionInput } from './reporting.ts'

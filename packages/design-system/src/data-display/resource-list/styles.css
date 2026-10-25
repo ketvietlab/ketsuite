@@ -17,12 +17,24 @@
     border-bottom: 1px solid var(--kv-panel-border);
   }
 
+  /* Without a selection box the link takes the free column, not the leading auto one. */
+  :where([data-kv-design-system])
+  [data-ui="resource-list-item"]:not(:has(> [data-ui="resource-list-select"])) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   :where([data-kv-design-system]) [data-ui="resource-list-item"]:last-child {
     border-bottom: 0;
   }
 
   :where([data-kv-design-system]) [data-ui="resource-list-item"][data-selected="true"] {
     background: var(--kv-nav-selected);
+  }
+
+  /* The item being worked on: the selected fill and a leading bar, so it does not rely on colour alone. */
+  :where([data-kv-design-system]) [data-ui="resource-list-item"][data-current="true"] {
+    background: var(--kv-nav-selected);
+    box-shadow: inset 3px 0 0 var(--kv-color-accent);
   }
 
   :where([data-kv-design-system]) [data-ui="resource-list-select"] {
@@ -35,5 +47,14 @@
     gap: 2px;
     color: inherit;
     text-decoration: none;
+  }
+
+  :where([data-kv-design-system]) [data-ui="resource-list-link"] > span {
+    overflow: hidden;
+    color: var(--kv-text-secondary);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }

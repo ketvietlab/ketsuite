@@ -48,9 +48,15 @@ export type RelationEditorField = {
 
 export type RelationManager = {
   listFunction: string
+  /** Encoded same-origin RPC context (tenant, branch, locale); supplied by the application. */
+  requestQuery?: string
+  /** Resolve a selected id absent from primed options through listFunction. */
+  resolveParam?: string
   /** Read the server while typing in the inline picker, rather than filtering only primed options. */
   searchInDropdown?: boolean
   listInput?: Record<string, unknown>
+  /** Required RPC inputs bound to named controls in the same native form. Changing a parent clears this selection. */
+  listInputFields?: Record<string, string>
   searchParam?: string
   limitParam?: string
   limit?: number
@@ -134,14 +140,22 @@ type ApiPayload = {
 const array = <Value,>(value: unknown): Value[] => (Array.isArray(value) ? (value as Value[]) : [])
 const string = (value: unknown): string => (value == null ? '' : String(value))
 
-const callApi = async (name: string, input: unknown, requestSignal?: AbortSignal): Promise<unknown> => {
-  const response = await fetch(`/_ket/fn/${encodeURIComponent(name)}`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-    signal: requestSignal,
-  })
+const callApi = async (
+  name: string,
+  input: unknown,
+  requestSignal?: AbortSignal,
+  requestQuery?: string,
+): Promise<unknown> => {
+  const response = await fetch(
+    `/_ket/fn/${encodeURIComponent(name)}${requestQuery ? `?${requestQuery.replace(/^\?/, '')}` : ''}`,
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: requestSignal,
+    },
+  )
   const payload = (await response.json()) as ApiPayload
   if (!response.ok || payload.ok === false) {
     const domainError = array<{ message?: unknown; code?: unknown }>(payload.errors)[0]
@@ -176,7 +190,7 @@ const forgetOption = (key: string, id: string): void => {
 export function createRelationSelectView(
   props: RelationSelectIslandProps,
   callbacks: RelationSelectCallbacks = {},
-): IslandController {
+): IslandController & { getSelectedValues(): string[] } {
   const { id: islandId, config } = props
   const labels = config.labels
   const manager = config.manager
@@ -200,8 +214,15 @@ export function createRelationSelectView(
     ...primed.map((entry) => learnedAs(entry.value) ?? entry),
     ...learned.filter((entry) => !primed.some((held) => string(held.value) === string(entry.value))),
   ])
+  const unresolved = manager?.resolveParam
+    ? chosen().filter((id) => !options().some((option) => option.value === id))
+    : []
+  if (unresolved.length)
+    options.set([...options(), ...unresolved.map((value) => ({ value, label: config.labels.loading }))])
   const availableOptions = (): RelationOption[] => callbacks.options?.() ?? options()
-  const disabled = (): boolean => callbacks.disabled?.() ?? config.disabled === true
+  const dependenciesReady = signal(!Object.keys(manager?.listInputFields ?? {}).length)
+  let readListInput = (): Record<string, unknown> => ({ ...manager?.listInput })
+  const disabled = (): boolean => !dependenciesReady() || (callbacks.disabled?.() ?? config.disabled === true)
   const open = signal(false)
   const dialog = signal(false)
   const query = signal('')
@@ -212,6 +233,7 @@ export function createRelationSelectView(
   const editor = signal<RelationEditor | null>(null)
   const pendingRemove = signal('')
   let activeRequest: AbortController | null = null
+  let resolveRequest: AbortController | null = null
   let searchTimer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
 
@@ -267,17 +289,17 @@ export function createRelationSelectView(
     options().find((entry) => string(entry.value) === string(value))?.label ?? string(value)
 
   const loadRows = async (): Promise<void> => {
-    if (!manager?.listFunction) return
+    if (!manager?.listFunction || !dependenciesReady()) return
     activeRequest?.abort()
     const request = new AbortController()
     activeRequest = request
     loading.set(true)
     error.set('')
     try {
-      const input: Record<string, unknown> = { ...(manager.listInput ?? {}) }
+      const input = readListInput()
       input[manager.searchParam ?? 'search'] = query().trim()
       input[manager.limitParam ?? 'limit'] = manager.limit ?? 80
-      const value = await callApi(manager.listFunction, input, request.signal)
+      const value = await callApi(manager.listFunction, input, request.signal, manager.requestQuery)
       if (disposed || activeRequest !== request) return
       const excluded = new Set(array<unknown>(manager.excludeIds).map(string))
       const result = array<RelationRow>(value).filter((row) => !excluded.has(rowId(row)))
@@ -339,7 +361,7 @@ export function createRelationSelectView(
     loading.set(true)
     error.set('')
     try {
-      await callApi(manager.saveFunction, payload)
+      await callApi(manager.saveFunction, payload, undefined, manager.requestQuery)
       const label = string(payload[manager.labelField ?? 'name'])
       if (!editing?.id) {
         choose(id, label)
@@ -375,7 +397,12 @@ export function createRelationSelectView(
     loading.set(true)
     error.set('')
     try {
-      await callApi(manager.removeFunction, { ...(manager.removeDefaults ?? {}), id })
+      await callApi(
+        manager.removeFunction,
+        { ...(manager.removeDefaults ?? {}), id },
+        undefined,
+        manager.requestQuery,
+      )
       unchoose(id)
       options.set(options().filter((entry) => string(entry.value) !== id))
       forgetOption(learnedKey, id)
@@ -613,6 +640,7 @@ export function createRelationSelectView(
   }
 
   return {
+    getSelectedValues: () => [...chosen()],
     view: () => (
       <div data-ui="relation-select" role="group" aria-label={config.ariaLabel} onKeydown={handleKeydown}>
         {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: the off-tab native control preserves form submission and constraint validation while the adjacent trigger is the accessible interactive control. */}
@@ -794,6 +822,108 @@ export function createRelationSelectView(
     // island) re-enter this instance's own `choose()` while it was still on the
     // stack — deferring runs it only once the choice has fully settled.
     mount: ({ root, lifetime }) => {
+      if (typeof Element !== 'undefined' && root instanceof Element) {
+        const form = root.closest('form')
+        ;(form ?? root).addEventListener(
+          'reset',
+          (event) => {
+            const target = event.target
+            if (
+              target !== form &&
+              (!(target instanceof Element) ||
+                ![...root.querySelectorAll('[data-ui="relation-native"]')].some(
+                  (native) =>
+                    native instanceof HTMLSelectElement &&
+                    native.name === config.name &&
+                    target.contains(native),
+                ))
+            )
+              return
+            queueMicrotask(() => {
+              if (!disposed && !lifetime.aborted && !event.defaultPrevented)
+                chosen.set(
+                  multiple
+                    ? array<unknown>(config.values).map(string).filter(Boolean)
+                    : [string(config.value)].filter(Boolean),
+                )
+            })
+          },
+          { signal: lifetime, capture: true },
+        )
+      }
+      const bindings = Object.entries(manager?.listInputFields ?? {})
+      if (bindings.length) {
+        const form = (root as unknown as Element).closest('form')
+        readListInput = () => ({
+          ...manager?.listInput,
+          ...Object.fromEntries(
+            bindings.map(([key, name]) => {
+              const control = form?.elements.namedItem(name)
+              return [key, control && 'value' in control ? string(control.value) : '']
+            }),
+          ),
+        })
+        const dependencyValues = () => bindings.map(([key]) => string(readListInput()[key]))
+        let previous = dependencyValues()
+        dependenciesReady.set(previous.every(Boolean))
+        const changed = () => {
+          const next = dependencyValues()
+          if (next.every((value, index) => value === previous[index])) return
+          previous = next
+          activeRequest?.abort()
+          activeRequest = null
+          resolveRequest?.abort()
+          clearTimeout(searchTimer)
+          loading.set(false)
+          error.set('')
+          query.set('')
+          open.set(false)
+          dialog.set(false)
+          rows.set([])
+          dropdownRows.set(null)
+          options.set([])
+          chosen.set([])
+          dependenciesReady.set(next.every(Boolean))
+        }
+        form?.addEventListener('change', changed, { signal: lifetime })
+        form?.addEventListener('input', changed, { signal: lifetime })
+      }
+      if (unresolved.length && manager?.resolveParam) {
+        const request = new AbortController()
+        resolveRequest = request
+        lifetime.addEventListener('abort', () => request.abort(), { once: true })
+        void Promise.all(
+          unresolved.map(async (id) => {
+            const value = await callApi(
+              manager.listFunction,
+              { ...readListInput(), [manager.resolveParam!]: id, [manager.limitParam ?? 'limit']: 1 },
+              request.signal,
+              manager.requestQuery,
+            )
+            return array<RelationRow>(value).find((row) => rowId(row) === id)
+          }),
+        )
+          .then((results) => {
+            if (disposed || request.signal.aborted) return
+            const byId = new Map(
+              results.filter((row): row is RelationRow => !!row).map((row) => [rowId(row), row]),
+            )
+            options.set(
+              options().map((option) => {
+                if (!unresolved.includes(option.value)) return option
+                const row = byId.get(option.value)
+                return {
+                  value: option.value,
+                  label: row ? rowLabel(row) : labels.noRecords,
+                  description: row ? rowDescription(row) : null,
+                }
+              }),
+            )
+          })
+          .catch(() => {
+            if (!disposed && !request.signal.aborted) error.set(labels.loadError)
+          })
+      }
       let first = true
       const stop = effect(() => {
         chosen()
@@ -917,6 +1047,7 @@ export function createRelationSelectView(
       disposed = true
       clearTimeout(searchTimer)
       activeRequest?.abort()
+      resolveRequest?.abort()
     },
   }
 }

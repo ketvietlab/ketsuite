@@ -6,6 +6,9 @@ import { recordForm } from './form.tsx'
 import { notice } from './state.tsx'
 import { stack, surface } from './surfaces.tsx'
 
+/** The sign-in document's tab icon, for a deployment that renders this screen itself. */
+export { applicationIcon } from './brand.ts'
+
 export const HOOKS = [
   'login',
   'login-panel',
@@ -66,84 +69,114 @@ export const loginScreen = (
     next?: string
     failed?: boolean
     oauthFailed?: boolean
+    /** The configured provider cannot start a sign-in right now. */
+    unavailable?: boolean
     providers?: Array<{ code: string; name: string; href: string }>
     locales?: string[]
     locale?: string
     brand?: string
+    /**
+     * `false` for a deployment that signs in only through its identity provider: the
+     * card keeps its heading, errors and provider links, and has no field to post.
+     */
+    password?: boolean
   } = {},
-): TemplateResult => (
-  <div data-ui="login">
-    <main data-ui="login-panel">
-      <picture data-ui="login-brand">
-        <source srcset={`${o.brand ?? BRAND}/logo-dark.png`} media="(prefers-color-scheme: dark)" />
-        <img
-          data-ui="login-logo"
-          src={`${o.brand ?? BRAND}/logo-light.png`}
-          alt={_('user.login.brand')}
-          width="600"
-          height="160"
-        />
-      </picture>
-      <form data-ui="login-form" method="post" action="/login">
-        <div data-ui="login-heading">
-          <h1 data-ui="login-title">{_('user.login.title')}</h1>
-          <p data-ui="login-subtitle">{_('user.login.subtitle')}</p>
-        </div>
-        {o.failed === true && (
-          <p data-ui="login-error" role="alert">
-            {_('user.login.failed')}
-          </p>
+): TemplateResult => {
+  const password = o.password !== false
+  const heading = (
+    <div data-ui="login-heading">
+      <h1 data-ui="login-title">{_('user.login.title')}</h1>
+      <p data-ui="login-subtitle">{_('user.login.subtitle')}</p>
+    </div>
+  )
+  const errors = [
+    o.failed === true && (
+      <p data-ui="login-error" role="alert">
+        {_('user.login.failed')}
+      </p>
+    ),
+    o.oauthFailed === true && (
+      <p data-ui="login-error" role="alert">
+        {_('oauth.login.failed')}
+      </p>
+    ),
+    o.unavailable === true && (
+      <p data-ui="login-error" role="alert">
+        {_('oauth.login.providerUnavailable')}
+      </p>
+    ),
+  ]
+  const providers = (o.providers?.length ?? 0) > 0 && (
+    <div data-ui="login-providers">
+      {password && <span data-ui="login-divider">{_('oauth.login.or')}</span>}
+      {each(
+        o.providers ?? [],
+        (provider) => provider.code,
+        (provider) => (
+          <a data-ui="login-provider" href={provider.href}>
+            {_('oauth.login.continueWith', { provider: provider.name })}
+          </a>
+        ),
+      )}
+    </div>
+  )
+  return (
+    <div data-ui="login">
+      <main data-ui="login-panel">
+        <picture data-ui="login-brand">
+          <source srcset={`${o.brand ?? BRAND}/logo-dark.png`} media="(prefers-color-scheme: dark)" />
+          <img
+            data-ui="login-logo"
+            src={`${o.brand ?? BRAND}/logo-light.png`}
+            alt={_('user.login.brand')}
+            width="600"
+            height="160"
+          />
+        </picture>
+        {password ? (
+          <form data-ui="login-form" method="post" action="/login">
+            {heading}
+            {errors}
+            <label data-ui="field">
+              <span data-ui="field-label">{_('user.login.login')}</span>
+              <input data-ui="field-input" name="login" autocomplete="off" autofocus required />
+            </label>
+            <label data-ui="field">
+              <span data-ui="field-label">{_('user.login.password')}</span>
+              <input data-ui="field-input" name="password" type="password" autocomplete="off" required />
+            </label>
+            {o.next !== undefined && <input type="hidden" name="next" value={o.next} autocomplete="off" />}
+            <button data-ui="login-submit" type="submit">
+              {_('user.login.submit')}
+            </button>
+            {providers}
+          </form>
+        ) : (
+          <div data-ui="login-form">
+            {heading}
+            {errors}
+            {providers}
+          </div>
         )}
-        {o.oauthFailed === true && (
-          <p data-ui="login-error" role="alert">
-            {_('oauth.login.failed')}
-          </p>
-        )}
-        <label data-ui="field">
-          <span data-ui="field-label">{_('user.login.login')}</span>
-          <input data-ui="field-input" name="login" autocomplete="off" autofocus required />
-        </label>
-        <label data-ui="field">
-          <span data-ui="field-label">{_('user.login.password')}</span>
-          <input data-ui="field-input" name="password" type="password" autocomplete="off" required />
-        </label>
-        {o.next !== undefined && <input type="hidden" name="next" value={o.next} autocomplete="off" />}
-        <button data-ui="login-submit" type="submit">
-          {_('user.login.submit')}
-        </button>
-        {(o.providers?.length ?? 0) > 0 && (
-          <div data-ui="login-providers">
-            <span data-ui="login-divider">{_('oauth.login.or')}</span>
+        {/* Beside the card, not in it: picking a language is navigation away from
+          this form, not a field of it. */}
+        {(o.locales?.length ?? 0) > 1 && (
+          <p data-ui="login-locales">
             {each(
-              o.providers ?? [],
-              (provider) => provider.code,
-              (provider) => (
-                <a data-ui="login-provider" href={provider.href}>
-                  {_('oauth.login.continueWith', { provider: provider.name })}
+              o.locales ?? [],
+              (l) => l,
+              (l) => (
+                <a data-ui="login-locale" data-active={String(l === o.locale)} href={`/login?lang=${l}`}>
+                  {l}
                 </a>
               ),
             )}
-          </div>
+          </p>
         )}
-      </form>
-      {/* Beside the card, not in it: picking a language is navigation away from
-          this form, not a field of it. */}
-      {(o.locales?.length ?? 0) > 1 && (
-        <p data-ui="login-locales">
-          {each(
-            o.locales ?? [],
-            (l) => l,
-            (l) => (
-              <a data-ui="login-locale" data-active={String(l === o.locale)} href={`/login?lang=${l}`}>
-                {l}
-              </a>
-            ),
-          )}
-        </p>
-      )}
-    </main>
-  </div>
-)
+      </main>
+    </div>
+  )
+}
 
 export const authTokenScreen = (
   _: Translator,

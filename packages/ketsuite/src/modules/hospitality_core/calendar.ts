@@ -22,6 +22,12 @@ export const dateKeyIn = (value: Date, timezone: string): string => {
   return `${parts.year}-${parts.month}-${parts.day}`
 }
 
+/** The wall-clock time of an instant in a timezone, `HH:MM`. */
+export const timeKeyIn = (value: Date, timezone: string): string => {
+  const parts = partsIn(value, timezone, true)
+  return `${parts.hour}:${parts.minute}`
+}
+
 export const addCalendarDays = (key: string, count: number): string => {
   const [year, month, day] = key.split('-').map(Number)
   return new Date(Date.UTC(year!, month! - 1, day! + count)).toISOString().slice(0, 10)

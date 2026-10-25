@@ -124,7 +124,7 @@ export type {
   ProductMediaVariantView,
 } from './product-media.tsx'
 export { recordForm, recordActions, formCluster, formField, formFields } from './form.tsx'
-export { authTokenScreen, loginScreen } from './auth.tsx'
+export { applicationIcon, authTokenScreen, loginScreen } from './auth.tsx'
 export type { FormField, FormOption, RecordFormOptions } from './form.tsx'
 export { datePicker } from './date-picker.tsx'
 export type { DatePickerField, DatePickerOptions } from './date-picker.tsx'
@@ -290,6 +290,5 @@ export {
 export { navGroup as NavGroup } from './nav.tsx'
 export { barChart as BarChart, chart as Chart, delta as Delta } from './charts.tsx'
 export { definitionList as DefinitionList } from './layout.tsx'
-export { UserWorkflow, UserSummary, RoleSelection } from './user-workflow.tsx'
+export { UserWorkflow, userWorkflowPath } from './user-workflow.tsx'
 export type { UserWorkflowOptions, UserWorkflowValues, UserRoleOption } from './user-workflow.tsx'
-export { AccessScope, AccessContext, CredentialDelivery } from './user-workflow.tsx'

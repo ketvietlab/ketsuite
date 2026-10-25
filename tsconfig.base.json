@@ -14,13 +14,34 @@
     "skipLibCheck": true,
     "types": ["node"],
     "paths": {
+      "@ketvietlab/flow-client/exchange-contract.mjs": [
+        "./packages/flow-client/client/exchange-contract.d.mts"
+      ],
+      "@ketvietlab/flow-client/server": ["./packages/flow-client/client/server-extensions.d.mts"],
+      "@ketvietlab/flow-client/command-contract.mjs": [
+        "./packages/flow-client/client/command-contract.d.mts"
+      ],
+      "@ketvietlab/flow-client/workspace.mjs": ["./packages/flow-client/client/workspace.d.mts"],
+      "@ketvietlab/flow-client/shell-model.mjs": ["./packages/flow-client/client/shell-model.d.mts"],
+      "@ketvietlab/flow-client/i18n.mjs": ["./packages/flow-client/client/i18n.d.mts"],
+      "@ketvietlab/flow-client/navigation.mjs": ["./packages/flow-client/client/navigation.d.mts"],
+      "@ketvietlab/flow-client/custom-fields.mjs": ["./packages/flow-client/client/custom-fields.d.mts"],
+      "@ketvietlab/flow-client/catalog-contract.mjs": [
+        "./packages/flow-client/client/catalog-contract.d.mts"
+      ],
       "@ketvietlab/design-system": ["./packages/design-system/src/index.ts"],
       "@ketvietlab/design-system/contract": ["./packages/design-system/src/contract/index.ts"],
       "@ketvietlab/design-system/catalogue": ["./packages/design-system/src/catalogue/index.tsx"],
       "@ketvietlab/design-system/runtime": ["./packages/design-system/src/runtime/index.js"],
+      "@ketvietlab/design-system/help/runtime": ["./packages/design-system/src/runtime/help.js"],
+      "@ketvietlab/design-system/date-picker": ["./packages/design-system/src/forms/date-time/index.tsx"],
+      "@ketvietlab/design-system/date-picker/runtime": [
+        "./packages/design-system/src/forms/date-time/runtime.js"
+      ],
       "@ketvietlab/ketspec": ["./packages/ketspec/src/index.ts"],
       "@ketvietlab/website-client": ["./packages/website-client/client/index.ts"],
       "@ketvietlab/ketsuite": ["./packages/ketsuite/src/index.ts"],
+      "@ketvietlab/ketsuite/flow/server": ["./packages/ketsuite/src/modules/flow/server.ts"],
       "@ketvietlab/ketsuite/deployment": ["./packages/ketsuite/src/deployment.ts"],
       "@ketvietlab/ketsuite/ui": ["./packages/ketsuite/src/ui/index.ts"],
       "@ketvietlab/ketsuite/ui/application-switcher": ["./packages/ketsuite/src/ui/application-switcher.ts"],

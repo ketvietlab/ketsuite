@@ -846,6 +846,15 @@
     padding: 1.375rem 1.75rem 3rem;
   }
 
+  /* An embedded page is the whole screen: the slot passes the main column's remaining height to it. */
+  [data-ui="content"]:has(> [data-ui="embedded-page"]) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0;
+  }
+
   /* Screens that are reading rather than scanning keep their measure. */
   [data-ui="content"]:has([data-ui="tokens"]) {
     inline-size: min(100%, var(--admin-page-max));

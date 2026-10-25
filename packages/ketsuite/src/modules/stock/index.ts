@@ -11,6 +11,8 @@ export default defineModule({
   name: 'stock',
   version: '0.1.0',
   depends: ['product', 'uom'],
+  // Receipt and delivery reports print the company and partner names.
+  optional: ['company', 'partner'],
   title: 'Kho',
   summary: 'Tồn kho, dịch chuyển và bổ sung hàng.',
   category: 'Kho vận',

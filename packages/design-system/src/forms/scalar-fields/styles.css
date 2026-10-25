@@ -31,7 +31,7 @@
     width: 0.875rem;
     height: 0.875rem;
     border-radius: 50%;
-    background: var(--kv-panel-bg);
+    background: var(--kv-color-on-accent);
     box-shadow: var(--kv-shadow-sm);
     content: "";
     transition: transform var(--kv-motion-fast);

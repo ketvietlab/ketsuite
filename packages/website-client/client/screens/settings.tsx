@@ -48,7 +48,7 @@ export function createSettings(ctx: StudioContext) {
   const tr = ctx.tr
   let current: ResourceRecord
   let mailVersion: number | null = null
-  const save = async (changes: Record<string, string>) => {
+  const save = async (changes: Record<string, string | boolean>) => {
     const values = Object.fromEntries(
       resourceSchemas.sites.fields.map(({ name }) => [name, current[name] ?? '']),
     )
@@ -132,6 +132,25 @@ export function createSettings(ctx: StudioContext) {
                     label={tr('website.settings.googleTagManagerId')}
                     value={resourceValue(value.readiness.site.googleTagManagerId)}
                     placeholder="GTM-XXXXXXX"
+                    disabled={!canManage}
+                  />,
+                  <Checkbox
+                    id="site-visit-consent"
+                    name="visitConsent"
+                    value="yes"
+                    checked={value.readiness.site.visitConsent === true}
+                    label={tr('website.settings.visitConsent')}
+                    help={tr('website.settings.visitConsentHelp')}
+                    disabled={!canManage}
+                  />,
+                  <TextArea
+                    id="site-visit-consent-notice"
+                    name="visitConsentNotice"
+                    label={tr('website.settings.visitConsentNotice')}
+                    value={resourceValue(value.readiness.site.visitConsentNotice)}
+                    rows={4}
+                    maxLength={2000}
+                    help={tr('website.settings.visitConsentNoticeHelp')}
                     disabled={!canManage}
                   />,
                 ]}
@@ -420,11 +439,19 @@ export function createSettings(ctx: StudioContext) {
           })
         const name = String(form.get('name') ?? '').trim()
         if (!name) throw Object.assign(new Error(tr('website.settings.nameRequired')), { code: 'validation' })
+        const visitConsent = form.has('visitConsent')
+        const visitConsentNotice = String(form.get('visitConsentNotice') ?? '').trim()
+        if (visitConsent && !visitConsentNotice)
+          throw Object.assign(new Error(tr('website.settings.visitConsentNoticeRequired')), {
+            code: 'validation',
+          })
         await save({
           title: name,
           code: String(form.get('code') ?? '').trim(),
           defaultLocale: String(form.get('defaultLocale') ?? ''),
           googleTagManagerId,
+          visitConsent,
+          visitConsentNotice,
         })
       },
     },

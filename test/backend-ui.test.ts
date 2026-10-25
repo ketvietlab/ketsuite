@@ -91,6 +91,7 @@ import type { ListChrome, PageRow } from '@ketvietlab/ketsuite/backend'
 import { DashboardPage as KetSuiteDashboardPage } from '../packages/ketsuite/src/ui/dashboard-page.tsx'
 import { BoardPage as KetSuiteBoardPage } from '../packages/ketsuite/src/ui/board-page.tsx'
 import { FormPage as KetSuiteFormPage } from '../packages/ketsuite/src/ui/form-page.tsx'
+import { catalogueRecords } from '../packages/ketsuite/src/modules/hospitality_core/records/config.ts'
 import { ListPage as KetSuiteListPage } from '../packages/ketsuite/src/ui/list-page.tsx'
 
 /**
@@ -197,7 +198,7 @@ const CHROME: ListChrome = {
   ],
 }
 
-const _ = translator(compose([backend], { headless: true }), 'vi')
+const _ = translator(compose([backend], { headless: true, companies: true }), 'vi')
 
 test('KetSuite ListPage leaves navigation and company context to the shell', () => {
   const output = renderToString(
@@ -1089,7 +1090,7 @@ test('routes: the segment after /admin names the section, so a path says where i
     'access-policies',
     'permission-presets',
   ])
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const stray = Object.keys(manifest.routes)
     .filter((path) => path === '/admin' || path.startsWith('/admin/'))
     .filter((path) => {
@@ -1106,8 +1107,8 @@ test('routes: every path a screen builds is a path some module serves', () => {
   // actions and redirects on the old one, every last of them written as
   // `` `/admin/taxes${localeQuery(url)}` `` — a template hole away from the search
   // that found the rest. The route table is the answer; this asks it.
-  const routes = Object.keys(compose(ketsuite.modules, { headless: true }).routes).map((route) =>
-    route.split('/'),
+  const routes = Object.keys(compose(ketsuite.modules, { headless: true, companies: true }).routes).map(
+    (route) => route.split('/'),
   )
   const served = (path: string): boolean => {
     const parts = path.split('/')
@@ -1148,6 +1149,14 @@ test('routes: every path a screen builds is a path some module serves', () => {
     return out
   }
 
+  // Hospitality hands a property's channels and its service stock to extensions a
+  // deployment may add; KetSuite serves neither, and its screens offer them only
+  // where the extension answers.
+  const EXTENSIONS = ['/admin/hospitality/ota/connections', '/admin/hospitality/product-fulfillments']
+  // One hospitality record context per catalogue entry, built from the entry's
+  // path; checked against the routes entry by entry below.
+  const BY_DEFINITION =
+    'modules/hospitality_core/records/catalogue-modal.tsx: /admin/hospitality/{}/{}/record-context'
   const stray: string[] = []
   for (const file of globSync('packages/ketsuite/src/**/*.{ts,tsx}')) {
     // the design harness names paths for screens it renders without a server
@@ -1156,12 +1165,25 @@ test('routes: every path a screen builds is a path some module serves', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
     for (const match of source.matchAll(/[`'](\/admin\/[^`'\n]*)[`']/g)) {
+      // A prefix a URL is compared against is not a link.
+      if (source.slice(0, match.index).endsWith('startsWith(')) continue
       const path = shape(match[1] as string).replace(/\/$/, '')
-      if (!path.startsWith('/admin/') || served(path)) continue
+      if (!path.startsWith('/admin/') || served(path) || EXTENSIONS.includes(path)) continue
       stray.push(`${file.split('/src/')[1]}: ${path}`)
     }
   }
-  assert.deepEqual([...new Set(stray)].sort(), [], 'a screen links somewhere no route answers')
+  assert.deepEqual(
+    [...new Set(stray)].filter((entry) => entry !== BY_DEFINITION).sort(),
+    [],
+    'a screen links somewhere no route answers',
+  )
+  assert.deepEqual(
+    catalogueRecords
+      .map((entry) => `/admin/hospitality/${entry.path}/{}/record-context`)
+      .filter((path) => !served(path)),
+    [],
+    'every hospitality catalogue entry has its record context',
+  )
 })
 
 test('sidebar: every menu entry says where it goes in the list', () => {
@@ -1169,7 +1191,7 @@ test('sidebar: every menu entry says where it goes in the list', () => {
   // tie-break is the label — so a Vietnamese menu came out in the order its English
   // message keys happened to sort in. Purchasing read Đơn mua · RFQ · Bảng giá,
   // which is the workflow backwards.
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const entries = Object.entries(manifest.menus)
   assert.deepEqual(
     entries
@@ -1193,7 +1215,7 @@ test('sidebar: every menu entry says where it goes in the list', () => {
 })
 
 test('sidebar: equal sequences fall back to the language being read, not the message key', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const order = (locale: string) =>
     buildMenu(manifest, {
       translate: (key) => translator(manifest, locale)(key),
@@ -1206,7 +1228,7 @@ test('sidebar: equal sequences fall back to the language being read, not the mes
 })
 
 test('sidebar: every KetSuite root declares a glyph carried by the design system', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const missing = Object.entries(manifest.menus)
     .filter(([, entry]) => !entry.parent)
     .filter(([, entry]) => !entry.icon || !hasIcon(entry.icon))
@@ -1600,7 +1622,7 @@ test('design tokens: the native date picker glyph follows the theme', () => {
 })
 
 test('backend layout: a workspace screen uses one identity band with navigation context', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const vi = translator(manifest, 'vi')
   const menu = buildMenu(manifest, {
     translate: (key) => vi(key),
@@ -2198,4 +2220,26 @@ test('a squeezed page context gives up the branch before the company', () => {
     content,
     /\n {2}\[data-ui="app-location-bar"\] \[data-ui="page-context-viewer"\] \{\s*max-inline-size: min\(24rem, 100%\);/u,
   )
+})
+
+test('loginScreen without passwords keeps the card, errors and providers but posts nothing', () => {
+  const markup = renderToString(
+    loginScreen(_, {
+      password: false,
+      oauthFailed: true,
+      unavailable: true,
+      providers: [{ code: 'company', name: 'Company', href: '/auth/oauth/company/start?next=%2Fadmin' }],
+    }),
+  )
+  assert.doesNotMatch(markup, /<form/)
+  assert.doesNotMatch(markup, /name="(login|password)"/)
+  assert.doesNotMatch(markup, /data-ui="login-(submit|divider)"/)
+  assert.match(markup, /<div data-ui="login-form"/)
+  assert.equal(markup.match(/data-ui="login-error"/g)?.length, 2)
+  assert.match(markup, /data-ui="login-provider" href="\/auth\/oauth\/company\/start\?next=%2Fadmin"/)
+  // The default is unchanged: one form with both fields, and the divider before providers.
+  const classic = renderToString(loginScreen(_, { providers: [{ code: 'c', name: 'C', href: '/c' }] }))
+  assert.match(classic, /<form data-ui="login-form" method="post" action="\/login"/)
+  assert.match(classic, /name="password"/)
+  assert.match(classic, /data-ui="login-divider"/)
 })

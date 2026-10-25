@@ -15,19 +15,11 @@ export const taskAssigneeNames = (data, task) =>
     .map((u) => u.name)
     .join(', ') || tr('flow.ui.unassigned.1f3799')
 export const isAssignedTo = (data, task, id) => taskAssigneeIds(data, task).includes(id)
-export function assignableUsers(data, projectId) {
+/** Whether the actor may take a task in this project. Others' eligibility is the
+ * server's (`flow.member.options`); the client holds only the actor's grants. */
+export function assignableSelf(data, projectId) {
   const project = data.projects.find((p) => p.id === projectId)
-  if (!project) return []
-  return (data.members ?? [])
-    .filter((m) => m.status === 'active' && (!data.grants || accessFor(data, project, m.id).role))
-    .map((m) => ({ id: m.id, name: m.name, email: m.email, avatarUrl: m.avatarUrl }))
-}
-export function taskUserOptions(data, task) {
-  const options = assignableUsers(data, task.projectId)
-  for (const user of taskUsers(data, task))
-    if (!options.some((o) => o.id === user.id))
-      options.push({ ...user, disabled: true, description: tr('flow.ui.project.access.removed.can.remove') })
-  return options
+  return Boolean(project && accessFor(data, project, data.user.id).role)
 }
 // Group the exact set of assignees, once per task. No implicit primary assignee.
 export const assigneeGroupKey = (task) =>

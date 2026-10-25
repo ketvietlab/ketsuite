@@ -10,7 +10,7 @@ const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const runtime = mkdtempSync(join(tmpdir(), 'ketjs-loyalty-tier-e2e-'))
 const database = join(runtime, 'loyalty.sqlite')
 const modules = [...ketsuite.modules, ...(ketsuite.theme ? [ketsuite.theme] : [])]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 const adapter = sqliteAdapter(database)
 const scope = {
   company: 'default',

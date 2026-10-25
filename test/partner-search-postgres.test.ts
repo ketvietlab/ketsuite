@@ -11,7 +11,7 @@ test(
   async () => {
     // These producer modules are both dependencies of Cosmetic; never connect to a tenant database.
     const modules = [address, partner]
-    const manifest = compose(modules, { headless: true })
+    const manifest = compose(modules, { headless: true, companies: true })
     const database = `ket_partner_search_${process.pid}_${Date.now()}`
     const url = new URL(adminUrl)
     url.pathname = `/${database}`

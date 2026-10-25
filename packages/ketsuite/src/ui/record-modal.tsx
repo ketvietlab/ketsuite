@@ -153,6 +153,8 @@ export type RecordPageIslandProps = {
   loading?: string
   back?: string
   tab?: string
+  /** Server-owned initial step, read from the destination URL before fragment hydration. */
+  dialog?: string | null
   width?: string
   /** From the collection to the record itself. */
   trail?: readonly RecordPageTrailItem[] | null
@@ -195,6 +197,8 @@ export const recordPageFrame = (o: {
   actions?: JSXChild
   aside?: JSXChild
   asideLabel?: string
+  /** `before` (default) leads with the rail in reading and keyboard order; `after` follows the record. */
+  asideWhenStacked?: 'before' | 'after'
   body: JSXChild
 }): TemplateResult => (
   <div data-record-layer="page">
@@ -208,7 +212,7 @@ export const recordPageFrame = (o: {
       actions: o.actions,
       aside: o.aside,
       asideLabel: o.asideLabel,
-      asideWhenStacked: 'before',
+      asideWhenStacked: o.asideWhenStacked ?? 'before',
       body: o.body,
     })}
   </div>
@@ -277,6 +281,7 @@ export const defineRecordPageIsland = (options: {
       loading: 'text?',
       back: 'text?',
       tab: 'text?',
+      dialog: 'text?',
       width: 'text?',
       trail: 'json?',
       trailLabel: 'text?',

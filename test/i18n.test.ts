@@ -27,19 +27,19 @@ const shop = defineModule({
 
 test('i18n: keys are prefixed by module, so two modules may both own a name', () => {
   const other = defineModule({ name: 'blog', messages: { vi: { greeting: 'Chào bạn' } } })
-  const m = compose([shop, other], { headless: true })
+  const m = compose([shop, other], { headless: true, companies: true })
   assert.equal(m.messages!.vi!['shop.greeting'], 'Xin chào {name}')
   assert.equal(m.messages!.vi!['blog.greeting'], 'Chào bạn')
 })
 
 test('i18n: placeholders are filled, and a missing one stays visible', () => {
-  const _ = translator(compose([shop], { headless: true }), 'vi')
+  const _ = translator(compose([shop], { headless: true, companies: true }), 'vi')
   assert.equal(_('shop.greeting', { name: 'Duy' }), 'Xin chào Duy')
   assert.equal(_('shop.greeting'), 'Xin chào {name}', 'a blank is worse than a visible hole')
 })
 
 test('i18n: plural categories come from Intl, not from a hand-rolled rule', () => {
-  const m = compose([shop], { headless: true })
+  const m = compose([shop], { headless: true, companies: true })
   const en = translator(m, 'en'),
     vi = translator(m, 'vi')
   assert.equal(en('shop.cart', { count: 1 }), '1 item')
@@ -49,7 +49,7 @@ test('i18n: plural categories come from Intl, not from a hand-rolled rule', () =
 })
 
 test('i18n: a missing key falls back, then shows itself — never blank', () => {
-  const m = compose([shop], { headless: true })
+  const m = compose([shop], { headless: true, companies: true })
   const missed: Array<[string, string]> = []
   const _ = translator(m, 'vi', { fallback: 'en', onMissing: (k, l) => missed.push([k, l]) })
 
@@ -64,7 +64,7 @@ test('i18n: a missing key falls back, then shows itself — never blank', () => 
 })
 
 test('i18n: gaps are reported rather than raised', () => {
-  const m = compose([shop], { headless: true })
+  const m = compose([shop], { headless: true, companies: true })
   const gaps = missingMessages(m)
   assert.deepEqual(gaps, { vi: ['shop.extra'] }, 'a build must not break because one string is untranslated')
   assert.match(formatMissing(gaps), /vi: 1 missing/)
@@ -72,7 +72,9 @@ test('i18n: gaps are reported rather than raised', () => {
 })
 
 test('i18n: the pseudo-locale expands text so a layout can be tested before translation exists', () => {
-  const _ = translator(compose([shop], { headless: true }), PSEUDO_LOCALE, { fallback: 'vi' })
+  const _ = translator(compose([shop], { headless: true, companies: true }), PSEUDO_LOCALE, {
+    fallback: 'vi',
+  })
   const out = _('shop.greeting', { name: 'Duy' })
   assert.match(out, /^⟦.*⟧$/, 'bracketed, so truncation is obvious')
   assert.ok(out.length > 'Xin chào Duy'.length, 'and longer, which is what breaks a layout')
@@ -89,7 +91,7 @@ test('i18n: a theme translates through the _ filter, because scope holds no func
     depends: ['site'],
     templates: { home: `<h1>{{ 'site.welcome' | _ }}</h1>` },
   })
-  const m = compose([mod, theme], { headless: true })
+  const m = compose([mod, theme], { headless: true, companies: true })
 
   for (const [locale, expected] of [
     ['vi', 'Chào mừng'],
@@ -101,12 +103,12 @@ test('i18n: a theme translates through the _ filter, because scope holds no func
 })
 
 test('i18n: the backend catalogue is complete in both languages', () => {
-  const m = compose([backend], { headless: true })
+  const m = compose([backend], { headless: true, companies: true })
   assert.deepEqual(missingMessages(m), {}, formatMissing(missingMessages(m)))
 })
 
 test('i18n: has() and resolves() answer different questions', () => {
-  const m = compose([shop], { headless: true })
+  const m = compose([shop], { headless: true, companies: true })
   const vi = translator(m, 'vi', { fallback: 'en' })
   assert.equal(vi.has('shop.extra'), false, 'vi does not own this key')
   assert.equal(vi.resolves('shop.extra'), true, 'but it still produces a translation, via en')

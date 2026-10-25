@@ -118,7 +118,7 @@ export type {
   SearchGroupByOption,
 } from './interactions/search-filter/index.tsx'
 export { createKetTableView, ketTable, KetTable } from './interactions/ket-table/index.tsx'
-export type { KetTableServerProps } from './interactions/ket-table/index.tsx'
+export type { KetTableRowEmphasis, KetTableServerProps } from './interactions/ket-table/index.tsx'
 export type {
   KetTableCellFormat,
   KetTableColumn,
@@ -143,6 +143,8 @@ export {
   rowAnchorHref,
   takeRowAnchor,
 } from './runtime/row-anchor.js'
+// A form that posts with fetch shows the server's message on the Field, as Field's `error` renders it.
+export { clearFieldError, showFieldError } from './runtime/field-error.js'
 export { ContextButton } from './interactions/context-button/index.tsx'
 export type { ContextButtonProps } from './interactions/context-button/index.tsx'
 
@@ -237,6 +239,8 @@ export type {
   ColumnChartProps,
   ColumnChartReference,
 } from './data-display/column-chart/index.tsx'
+export { QrCode } from './data-display/qr-code/index.tsx'
+export type { QrCodeProps, QrErrorCorrection } from './data-display/qr-code/index.tsx'
 export { TimeframeFilter } from './data-operations/timeframe-filter/index.tsx'
 export type { TimeframeFilterProps, TimeframeOption } from './data-operations/timeframe-filter/index.tsx'
 
@@ -347,7 +351,11 @@ export type { HelpDrawerProps } from './patterns/help-drawer/index.tsx'
 export { MarkdownContent, MermaidDiagram } from './content/markdown/index.tsx'
 export type { MarkdownContentProps, MarkdownLabels, MarkdownToken } from './content/markdown/index.tsx'
 export { Peek, PeekLayout } from './patterns/peek/index.tsx'
+export { Dock, DockRegion } from './patterns/dock/index.tsx'
+export type { DockProps, DockRegionProps } from './patterns/dock/index.tsx'
 export type { PeekLayoutProps, PeekProps, PeekStep } from './patterns/peek/index.tsx'
+export { EmbeddedPage } from './patterns/embedded-page/index.tsx'
+export type { EmbeddedPageProps } from './patterns/embedded-page/index.tsx'
 export { Pipeline } from './patterns/pipeline/index.tsx'
 export type { PipelineStep } from './patterns/pipeline/index.tsx'
 export { SettingsDirectory } from './patterns/settings-directory/index.tsx'
@@ -357,8 +365,8 @@ export type {
   SettingsDirectoryProps,
   SettingsDirectorySection,
 } from './patterns/settings-directory/index.tsx'
-export { FormGrid, RecordForm } from './patterns/record-form/index.tsx'
-export type { FormGridProps, RecordFormProps } from './patterns/record-form/index.tsx'
+export { FormActions, FormGrid, RecordForm } from './patterns/record-form/index.tsx'
+export type { FormActionsProps, FormGridProps, RecordFormProps } from './patterns/record-form/index.tsx'
 
 export { HOOKS, OWNERS } from './contract/index.ts'
 

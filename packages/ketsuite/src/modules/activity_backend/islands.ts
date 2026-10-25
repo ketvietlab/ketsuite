@@ -10,14 +10,14 @@ export const islands = {
   'activity.record': defineIsland<RecordActivityProps>()({
     props: { resModel: 'text', resId: 'id', lang: 'text?' },
     key: ['resModel', 'resId'],
-    client: 'activity.mjs',
+    client: 'activity-bundle.mjs',
     export: 'record',
     view: (props) => createRecordActivityView(runtime, props),
   }),
   'activity.indicator': defineIsland<IndicatorProps>()({
     props: { lang: 'text?' },
     key: [],
-    client: 'activity.mjs',
+    client: 'activity-bundle.mjs',
     export: 'indicator',
     view: (props) => createActivityIndicatorView(runtime, props),
   }),

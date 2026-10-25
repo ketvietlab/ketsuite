@@ -41,6 +41,14 @@
   :where([data-kv-design-system]) [data-ui="relation-trigger"][data-empty="true"] {
     color: var(--kv-text-muted);
   }
+  /* A locked picker reads as a disabled field control does: the same stroke, fill, ink
+     and cursor, so a value that can no longer change does not look like an open choice. */
+  :where([data-kv-design-system]) [data-ui="relation-trigger"]:disabled {
+    box-shadow: inset 0 0 0 1px var(--kv-panel-border);
+    background: var(--kv-interactive-disabled);
+    color: var(--kv-text-disabled);
+    cursor: not-allowed;
+  }
   :where([data-kv-design-system]) [data-ui="relation-trigger"]:focus-visible {
     border-color: var(--kv-focus-border);
     box-shadow: 0 0 0 3px var(--kv-color-focus-ring);

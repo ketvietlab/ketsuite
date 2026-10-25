@@ -19,6 +19,7 @@ test('partner search: both phone formats find legacy and canonical rows without 
   // Focused producer contract for partner/address, both composed by Cosmetic.
   const deployment = defineDeployment({
     name: 'cosmetic',
+    companies: true,
     modules: [address, partner],
   })
   const e2e = await createTestDeployment(deployment, { worker: false })

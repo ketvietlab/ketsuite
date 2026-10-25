@@ -62,7 +62,7 @@ export type DatePickerLabels = {
 }
 type CalendarOptions = {
   /** Native inputs retain the browser's date format. Calendar labels default to Vietnamese. */
-  locale?: 'vi' | 'en'
+  locale?: 'vi' | 'en' | 'ja'
   /** Business-timezone civil date; omit for the browser's local today at opening. */
   today?: string
   weekStartsOn?: 0 | 1
@@ -131,31 +131,57 @@ const labelsFor = (props: CalendarOptions, range: boolean): DatePickerLabels => 
             last90: 'Last 90 days',
           },
         }
-      : {
-          open: range ? 'Chọn khoảng ngày' : 'Chọn ngày',
-          title: range ? 'Khoảng ngày' : 'Chọn ngày',
-          previous: 'Tháng trước',
-          next: 'Tháng sau',
-          apply: 'Áp dụng',
-          cancel: 'Hủy',
-          close: 'Đóng lịch',
-          chooseStart: 'Chọn ngày bắt đầu',
-          chooseEnd: 'Chọn ngày kết thúc',
-          chooseDate: 'Chọn một ngày',
-          invalidRange: 'Ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
-          presets: 'Khoảng thời gian',
-          customRange: 'Tùy chỉnh',
-          invalidSelection: 'Vui lòng chọn khoảng ngày hợp lệ.',
-          presetLabels: {
-            today: 'Hôm nay',
-            yesterday: 'Hôm qua',
-            last7: '7 ngày qua',
-            thisMonth: 'Tháng này',
-            lastMonth: 'Tháng trước',
-            last30: '30 ngày qua',
-            last90: '90 ngày qua',
-          },
-        }
+      : props.locale === 'ja'
+        ? {
+            open: range ? '期間を選択' : '日付を選択',
+            title: range ? '期間' : '日付を選択',
+            previous: '前の月',
+            next: '次の月',
+            apply: '適用',
+            cancel: 'キャンセル',
+            close: 'カレンダーを閉じる',
+            chooseStart: '開始日を選択',
+            chooseEnd: '終了日を選択',
+            chooseDate: '日付を選択',
+            invalidRange: '終了日は開始日以降にしてください。',
+            presets: '期間',
+            customRange: 'カスタム',
+            invalidSelection: '有効な期間を選択してください。',
+            presetLabels: {
+              today: '今日',
+              yesterday: '昨日',
+              last7: '過去7日間',
+              thisMonth: '今月',
+              lastMonth: '先月',
+              last30: '過去30日間',
+              last90: '過去90日間',
+            },
+          }
+        : {
+            open: range ? 'Chọn khoảng ngày' : 'Chọn ngày',
+            title: range ? 'Khoảng ngày' : 'Chọn ngày',
+            previous: 'Tháng trước',
+            next: 'Tháng sau',
+            apply: 'Áp dụng',
+            cancel: 'Hủy',
+            close: 'Đóng lịch',
+            chooseStart: 'Chọn ngày bắt đầu',
+            chooseEnd: 'Chọn ngày kết thúc',
+            chooseDate: 'Chọn một ngày',
+            invalidRange: 'Ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
+            presets: 'Khoảng thời gian',
+            customRange: 'Tùy chỉnh',
+            invalidSelection: 'Vui lòng chọn khoảng ngày hợp lệ.',
+            presetLabels: {
+              today: 'Hôm nay',
+              yesterday: 'Hôm qua',
+              last7: '7 ngày qua',
+              thisMonth: 'Tháng này',
+              lastMonth: 'Tháng trước',
+              last30: '30 ngày qua',
+              last90: '90 ngày qua',
+            },
+          }
   return {
     ...defaults,
     ...props.calendarLabels,
@@ -257,6 +283,7 @@ export const DatePicker = (props: DatePickerProps): TemplateResult => {
     <div
       data-ui="date-picker"
       data-date-mode="single"
+      data-date-value={String(props.value ?? '')}
       data-date-apply-on-close={props.applyOnClose === false ? null : 'true'}
       data-span={props.span ?? 'half'}
       data-date-locale={props.locale ?? 'vi'}
