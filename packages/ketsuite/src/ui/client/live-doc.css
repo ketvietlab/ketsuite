@@ -18,6 +18,42 @@
     border-block-end: 1px solid var(--admin-line);
   }
 
+  [data-ui="flow-editor"][data-surface="plain"] {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  [data-ui="flow-editor"][data-surface="plain"] [data-ui="flow-editor-content"] {
+    padding: 0;
+  }
+
+  [data-ui="flow-editor"][data-toolbar="floating"] {
+    overflow: visible;
+  }
+
+  [data-ui="flow-editor"][data-toolbar="floating"] [data-ui="flow-editor-toolbar"] {
+    position: fixed;
+    z-index: var(--kv-z-dropdown);
+    inline-size: max-content;
+    max-inline-size: calc(100vw - var(--admin-gap-sm) * 2);
+    box-sizing: border-box;
+    border: 1px solid var(--admin-line);
+    border-radius: var(--admin-radius);
+    background: var(--admin-surface);
+    box-shadow: var(--kv-shadow-popover);
+  }
+
+  [data-ui="flow-editor-toolbar"][hidden] {
+    display: none;
+  }
+
+  [data-ui="flow-editor"][data-surface="plain"]
+    [data-ui="flow-editor-presence"]:empty
+    + [data-ui="flow-editor-content"] {
+    padding: 0;
+  }
+
   [data-ui="flow-editor-toolbar"] [data-ui="form-control"] {
     inline-size: auto;
     min-inline-size: 9rem;

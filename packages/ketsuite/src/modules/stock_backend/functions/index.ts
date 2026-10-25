@@ -10,6 +10,7 @@ import {
   transferListSearch,
   warehouseListSearch,
 } from '../search.ts'
+import { productListFunctions } from './product-list.ts'
 
 /**
  * The search-filter bar's functions, once for every stock list.
@@ -18,17 +19,20 @@ import {
  * them. They read nothing but the viewer's own saved searches: a stock list
  * narrows rows it has already been authorised to read.
  */
-export const functions: Record<string, FnSpec> = listSearchFilterFunctions(
-  (
-    [
-      [inventoryListSearch, '/admin/stock/inventory'],
-      [warehouseListSearch, '/admin/stock/warehouses'],
-      [transferListSearch, '/admin/stock/transfers'],
-      [locationListSearch, '/admin/stock/locations'],
-      [pickingTypeListSearch, '/admin/stock/picking-types'],
-      [lotListSearch, '/admin/stock/lots'],
-      [stockRouteListSearch, '/admin/stock/routes'],
-      [replenishmentListSearch, '/admin/stock/replenishment'],
-    ] as const
-  ).map(([spec, path]) => ({ key: spec.key, path, spec: () => spec })),
-)
+export const functions: Record<string, FnSpec> = {
+  ...listSearchFilterFunctions(
+    (
+      [
+        [inventoryListSearch, '/admin/stock/inventory'],
+        [warehouseListSearch, '/admin/stock/warehouses'],
+        [transferListSearch, '/admin/stock/transfers'],
+        [locationListSearch, '/admin/stock/locations'],
+        [pickingTypeListSearch, '/admin/stock/picking-types'],
+        [lotListSearch, '/admin/stock/lots'],
+        [stockRouteListSearch, '/admin/stock/routes'],
+        [replenishmentListSearch, '/admin/stock/replenishment'],
+      ] as const
+    ).map(([spec, path]) => ({ key: spec.key, path, spec: () => spec })),
+  ),
+  ...productListFunctions,
+}

@@ -9,35 +9,17 @@ translate.locale = 'en'
 translate.has = () => true
 translate.resolves = () => true
 
-test('activity queue uses ListPage and keeps route-owned actions and destinations', () => {
+test('activity worklist exposes three collection regions and contextual Help', () => {
   const html = renderToString(
     activitiesScreen(
       translate,
       {},
-      {
-        rows: [
-          {
-            id: 'activity/a',
-            summary: 'Confirm quantity',
-            typeName: 'To-do',
-            targetName: 'Product A',
-            dueDate: '2026-08-27',
-            state: 'today',
-            active: true,
-            targetHref: '/admin/product/templates/product%2Fa?lang=en',
-          },
-        ],
-        action: '/admin/activities?lang=en&done=1',
-        toggleHref: '/admin/activities?lang=en&today=2026-08-27',
-        includeDone: true,
-        today: '2026-08-27',
-      },
+      { controls: 'ACTIVITY_CONTROLS', results: 'ACTIVITY_RESULTS', footer: 'ACTIVITY_FOOTER' },
     ),
   )
   assert.match(html, /data-ui="list-page"/)
-  assert.match(html, /href="\/admin\/product\/templates\/product%2Fa\?lang=en"/)
-  assert.match(html, /action="\/admin\/activities\?lang=en&amp;done=1"/)
-  assert.match(html, /name="action" value="complete"/)
-  assert.match(html, /name="action" value="reschedule"/)
-  assert.match(html, /name="action" value="cancel"/)
+  assert.match(html, /data-ui="help-drawer"/)
+  assert.ok(html.indexOf('ACTIVITY_FOOTER') < html.indexOf('ACTIVITY_RESULTS'), 'pager precedes results')
+  for (const part of ['ACTIVITY_CONTROLS', 'ACTIVITY_RESULTS', 'ACTIVITY_FOOTER'])
+    assert.ok(html.includes(part))
 })

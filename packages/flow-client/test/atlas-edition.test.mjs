@@ -54,7 +54,11 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
       source = join(packages, name)
     await cp(source, target, {
       recursive: true,
-      filter: (path) => !['node_modules', 'vendor'].includes(path.split('/').at(-1)),
+      // browser-bundle.test writes and removes a contract file in dist while files run in parallel.
+      filter: (path) => {
+        const name = path.split('/').at(-1)
+        return !['node_modules', 'vendor'].includes(name) && !name.startsWith('.browser-contract-')
+      },
     })
     await mkdir(join(target, 'node_modules'))
     const { createRequire } = await import('node:module')
@@ -62,7 +66,13 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
     const manifest = JSON.parse(
       await (await import('node:fs/promises')).readFile(join(source, 'package.json'), 'utf8'),
     )
-    for (const name of [...Object.keys(manifest.dependencies), ...Object.keys(manifest.devDependencies)]) {
+    // Atlas is a host like KetSuite, and vendors KetSuite's live document editor;
+    // the kit itself never depends on the suite.
+    for (const name of [
+      ...Object.keys(manifest.dependencies),
+      ...Object.keys(manifest.devDependencies),
+      '@ketvietlab/ketsuite',
+    ]) {
       const { dirname } = await import('node:path')
       let base = dirname(require.resolve(name))
       const fs = await import('node:fs')
@@ -111,6 +121,24 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
     assert.equal((await fetch(base + '/flow/' + route)).status, 404, route)
   const page = await (await fetch(base + '/flow/my-work')).text()
   assert.doesNotMatch(page, /flow-pro|ketatlas/)
+  // Transport: compressed bodies, and a document loads only its own language catalog.
+  const viPage = await fetch(base + '/flow/my-work?lang=vi', { headers: { 'accept-encoding': 'br' } })
+  assert.equal(viPage.headers.get('content-encoding'), 'br')
+  assert.match(viPage.headers.get('vary'), /Accept-Encoding/)
+  const viImports = JSON.parse((await viPage.text()).match(/<script type="importmap">([^<]+)</)[1]).imports
+  for (const spec of [
+    '/flow-ui/messages.mjs',
+    '/flow-client/messages.mjs',
+    '@ketvietlab/flow-client/messages.mjs',
+  ])
+    assert.equal(viImports[spec], spec.replace('@ketvietlab', '') + '?locale=vi', spec)
+  const plain = await fetch(base + '/flow-client/messages.mjs?locale=vi', {
+    headers: { 'accept-encoding': 'identity' },
+  })
+  assert.equal(plain.headers.get('content-encoding'), null)
+  const catalog = await import('data:text/javascript,' + encodeURIComponent(await plain.text()))
+  assert.deepEqual(Object.keys(catalog.flowClientMessages), ['vi'])
+  assert.equal(catalog.flowClientMessages.vi['ui.change.history'], 'Lịch sử thay đổi')
   for (const path of ['/flow-pro-client/index.mjs', '/flow-pro-ui/styles.css', '/atlas/store.mjs'])
     assert.equal((await fetch(base + path)).status, 404)
   const session = JSON.parse(page.match(/id="flow-environment">(.*?)<\/script>/)[1]).session

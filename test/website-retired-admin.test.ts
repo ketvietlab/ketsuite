@@ -18,22 +18,25 @@ import {
   websiteSeo,
 } from '@ketvietlab/ketsuite'
 
-const manifest = compose([
-  address,
-  partner,
-  company,
-  storage,
-  backend,
-  website,
-  websiteMenu,
-  websiteSeo,
-  websiteSearch,
-  websiteForm,
-  livedoc,
-  user,
-  websiteBackend,
-  paperTheme,
-])
+const manifest = compose(
+  [
+    address,
+    partner,
+    company,
+    storage,
+    backend,
+    website,
+    websiteMenu,
+    websiteSeo,
+    websiteSearch,
+    websiteForm,
+    livedoc,
+    user,
+    websiteBackend,
+    paperTheme,
+  ],
+  { companies: true },
+)
 
 /**
  * The Studio at /website replaced a server-rendered admin under /admin/website. Its

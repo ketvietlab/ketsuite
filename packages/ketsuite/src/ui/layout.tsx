@@ -1,5 +1,8 @@
 // The frame a screen sits in, and the shared arrangements inside it.
 
+import { suiteApplications, suiteMainMenu } from './application-switcher.ts'
+import { applicationIcon } from './brand.ts'
+import type { AppSwitcherProps } from '@ketvietlab/design-system'
 import { each, html } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { NAVIGATION_TYPE, fragment, isNavigationRequest, page, withHeaders } from '@ketvietlab/ketjs'
@@ -17,6 +20,7 @@ import { listChrome } from './chrome.tsx'
 import type { ListChrome } from './chrome.tsx'
 import { viewerContext } from './navigation.tsx'
 import { ListPage } from './list-page.tsx'
+import { rememberShell } from './route-modal.ts'
 import { collectionActions, collectionControls } from './collection.tsx'
 
 export const HOOKS = [
@@ -31,6 +35,8 @@ export const HOOKS = [
 ] as const
 
 export type Extras = {
+  /** One screen-owned guide inside the replaced content slot and design-system scope. */
+  'screen.help'?: JSXChild
   runtime?: JSXChild
   'topbar.end'?: JSXChild
   'sidebar.foot'?: JSXChild
@@ -38,6 +44,14 @@ export type Extras = {
 }
 
 export type Frame = {
+  counts?: Readonly<Record<string, number>>
+  locale?: string
+  /**
+   * The rail app this screen belongs to (`sales` by default). Another app, such as `phone`, is
+   * lit on the rail, names the sidebar, and fills it with its own menu root alone.
+   */
+  app?: string
+  applications?: AppSwitcherProps
   globalSearchQuery?: string
   /** Server request URL for native collection controls; never browser state. */
   collectionUrl?: string
@@ -123,12 +137,33 @@ export const shell = (
   title: string,
   body: TemplateResult,
   frame: Frame = {},
-): TemplateResult => {
-  const { viewer = null, extras = {}, menu = [], indicators = [] } = frame
+): TemplateResult =>
+  rememberShell(renderShell(_, title, body, frame), (modal) =>
+    renderShell(
+      _,
+      title,
+      <>
+        {body}
+        {modal}
+      </>,
+      frame,
+    ),
+  )
+
+const renderShell = (_: Translator, title: string, body: TemplateResult, frame: Frame): TemplateResult => {
+  const { viewer = null, extras = {}, menu = [], indicators = [], app = 'sales' } = frame
+  const screenBody = (
+    <>
+      {body}
+      {extras['screen.help'] ?? ''}
+    </>
+  )
   const sidebarOptions = {
-    menu,
+    menu: app === 'sales' ? suiteMainMenu(menu) : menu.filter((node) => node.id === app),
+    app,
     viewer,
     indicators,
+    counts: frame.counts,
     rootList: frame.rootList,
     navItems: extras['nav.items'],
     footItems: extras['sidebar.foot'],
@@ -141,26 +176,26 @@ export const shell = (
         </template>
         <template data-ket-slot="backend.topbar">{topbarRegion(_, title, frame)}</template>
         <template data-ket-slot="backend.global-topbar">{locationBar(_, frame)}</template>
-        <template data-ket-slot="backend.content">{body}</template>
+        <template data-ket-slot="backend.content">{screenBody}</template>
       </ket-fragments>
     )
   // The design-system application shell. The theme scope sits above it, as the
   // shell's own styles expect, in the grouped presentation the product mocks use:
   // one page gutter token (`--kv-page-padding-x`) for context, header, toolbar and
-  // body. The island runtime stays outside the swapped slots, and the four slots
-  // keep the names fragment navigation reconciles.
+  // body. The four slots keep the names fragment navigation reconciles; the island
+  // runtime belongs to the document, so `backendPage` places it.
   return (
     <div data-kv-design-system data-presentation="grouped" data-density="compact">
       {AppShell({
+        applications: frame.applications ?? suiteApplications(menu, _, app),
         mode: 'viewport',
         location: <div data-ket-slot="backend.global-topbar">{locationBar(_, frame)}</div>,
         sidebar: sidebarMain(_, sidebarOptions),
         main: (
           <>
-            {extras.runtime ?? ''}
             <div data-ket-slot="backend.topbar">{topbarRegion(_, title, frame)}</div>
             <div data-ui="content" data-ket-slot="backend.content">
-              {body}
+              {screenBody}
             </div>
           </>
         ),
@@ -169,10 +204,33 @@ export const shell = (
   )
 }
 
+/**
+ * The document's island runtime: every `backend:runtime` fill, such as the record
+ * modals that open from a `?record=` link on any screen.
+ *
+ * Fragment navigation never replaces it, so whichever screen loads the document
+ * decides whether it exists. It used to come from each screen's frame, and a module
+ * that assembled its own frame left it out: after opening that screen first, every
+ * record link elsewhere changed the URL and opened nothing until a reload. Placing it
+ * with the document gives every full load exactly one runtime. It sits in its own
+ * design-system scope beside the shell, because its dialogs open in the top layer.
+ */
+const documentRuntime = async (ctx: ServeContext, req: Parameters<Route>[1], url?: URL) => (
+  <div data-kv-design-system data-presentation="grouped" data-density="compact" data-ui="document-runtime">
+    {
+      await ctx.joint(
+        url ?? new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`),
+        req,
+        'backend:runtime',
+      )
+    }
+  </div>
+)
+
 export const backendPage = async (
   ctx: ServeContext,
   req: Parameters<Route>[1],
-  options: { lang: string; title: string; body: TemplateResult; status?: number },
+  options: { lang: string; title: string; body: TemplateResult; status?: number; url?: URL },
 ) => {
   if (isNavigationRequest(req))
     return withHeaders(fragment(options.body, { status: options.status, type: NAVIGATION_TYPE }), {
@@ -183,8 +241,8 @@ export const backendPage = async (
       body: ctx.document({
         lang: options.lang,
         title: options.title,
-        head: html`${prepaintTheme}${await ctx.styles(req)}`,
-        body: options.body,
+        head: html`${applicationIcon}${prepaintTheme}${await ctx.styles(req)}`,
+        body: html`${options.body}${await documentRuntime(ctx, req, options.url)}`,
       }),
       status: options.status,
     }),

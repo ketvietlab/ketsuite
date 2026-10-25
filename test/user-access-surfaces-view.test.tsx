@@ -556,8 +556,9 @@ test('external sign-in offers both delivery choices without treating acknowledge
   assert.match(html, /action\.sendInvite/)
   assert.match(html, /action\.claimPassword/)
   assert.match(html, /login\.emailState\.accepted/)
-  assert.match(html, /login\.preparing/)
-  assert.doesNotMatch(html, /login\.ready/)
+  // Ready but never signed in: waiting for its first sign-in, not "not activated" as if broken.
+  assert.match(html, /login\.awaitingFirstSignIn/)
+  assert.doesNotMatch(html, /login\.ready|login\.preparing/)
   const revealed = render(
     viewOf(userModalDefinition, 'login').view(
       user(data, {
@@ -585,5 +586,68 @@ test('external sign-in offers both delivery choices without treating acknowledge
     ),
   )
   assert.match(preparing, /login\.externalState\.pending/)
+  assert.match(preparing, /login\.externalPreparing/)
   assert.doesNotMatch(preparing, /login\.readOnlyHint/)
+})
+
+test('an account nobody can sign in to yet is issued its first password, shown at once, never left waiting', () => {
+  const data = (state: 'unprovisioned' | 'failed' | 'cancelled' | 'pending') =>
+    userData({
+      credentialDelivery: 'both',
+      permissions: { ...userData().permissions, sendLink: false, resetPassword: true },
+      externalCredential: { state, activated: false, operationId: null, claimable: false, emailState: null },
+    })
+  for (const state of ['unprovisioned', 'failed', 'cancelled'] as const) {
+    const html = render(viewOf(userModalDefinition, 'login').view(user(data(state))))
+    assert.match(html, /login\.cannotSignIn/, state)
+    assert.match(html, /login\.firstTemporaryHint/, state)
+    assert.match(html, /action\.firstTemporaryPassword/, state)
+    assert.match(html, /name="__command" value="resetPassword"/, state)
+    assert.doesNotMatch(
+      html,
+      /externalState\.handling|provisionCredential|retryCredential|refreshAccount/,
+      state,
+    )
+    // Nothing is under way for it, so nothing says so: the password section is the whole answer.
+    assert.doesNotMatch(html, /login\.externalState\.pending|login\.externalPendingHint/, state)
+  }
+  // An earlier, queued request still out says so, and the password can be issued all the same.
+  const pending = render(viewOf(userModalDefinition, 'login').view(user(data('pending'))))
+  assert.match(pending, /login\.externalState\.pending/)
+  assert.match(pending, /name="__command" value="resetPassword"/)
+  // The answer carries the password: it is shown once and the account reads as waiting for its first sign-in.
+  const issued = render(
+    viewOf(userModalDefinition, 'login').view(
+      user(data('unprovisioned'), {
+        outcome: {
+          command: 'resetPassword',
+          value: { ok: true, temporaryPassword: 'fixture-only-issued-password' },
+        },
+      }),
+    ),
+  )
+  assert.match(issued, /fixture-only-issued-password/)
+  assert.match(issued, /login\.awaitingFirstSignIn/)
+  assert.doesNotMatch(issued, /login\.cannotSignIn|name="__command" value="resetPassword"/)
+  // Someone who already signs in is re-keyed with a new password, and stays active.
+  const active = render(
+    viewOf(userModalDefinition, 'login').view(
+      user(
+        userData({
+          credentialDelivery: 'both',
+          permissions: { ...userData().permissions, resetPassword: true },
+          externalCredential: {
+            state: 'ready',
+            activated: true,
+            operationId: 'op',
+            claimable: false,
+            emailState: null,
+          },
+        }),
+      ),
+    ),
+  )
+  assert.match(active, /login\.ready/)
+  assert.match(active, /action\.temporaryPassword/)
+  assert.doesNotMatch(active, /action\.firstTemporaryPassword/)
 })

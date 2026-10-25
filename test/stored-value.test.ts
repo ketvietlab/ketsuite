@@ -17,7 +17,7 @@ import {
 } from '@ketvietlab/ketsuite'
 
 const modules = [address, partner, company, user, uom, product, pricing, stock, account, pos, loyalty]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = (adapter: Adapter, name: string, input: Record<string, unknown>) =>
   callFn(name, input, { adapter, manifest, scope })

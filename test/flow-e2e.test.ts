@@ -6,14 +6,17 @@ import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { address, company, mail, partner, storage, user } from '@ketvietlab/ketsuite'
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import { emptyIssueListState } from '../packages/ketsuite/src/modules/flow/search.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const errorCode = (row: Row): unknown => (row.errors as Array<{ code: string }> | undefined)?.[0]?.code
 
 const app = defineDeployment({
   name: 'flow_headless_e2e',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, flow],
   headless: true,
   serve: {
+    permissions: everyFunction,
     sessions: { anonymous: { company: 'acme' } },
   },
 })

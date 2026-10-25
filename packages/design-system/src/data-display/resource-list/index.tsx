@@ -20,6 +20,8 @@ export type ResourceListProps<Row> = {
   secondary?: (row: Row) => JSXChild
   meta?: (row: Row) => JSXChild
   selectedIds?: readonly string[]
+  /** The item open beside the list (master-detail): marked for sight and as `aria-current`. */
+  currentId?: string | null
   selectionName?: string
   selectionForm?: string
   loading?: boolean
@@ -44,7 +46,11 @@ export const ResourceList = <Row,>(props: ResourceListProps<Row>): TemplateResul
         {each(props.rows, props.id, (row) => {
           const id = props.id(row)
           return (
-            <li data-ui="resource-list-item" data-selected={props.selectedIds?.includes(id) ? 'true' : null}>
+            <li
+              data-ui="resource-list-item"
+              data-selected={props.selectedIds?.includes(id) ? 'true' : null}
+              data-current={props.currentId === id ? 'true' : null}
+            >
               {props.selectedIds !== undefined && (
                 <input
                   data-ui="resource-list-select"
@@ -56,7 +62,11 @@ export const ResourceList = <Row,>(props: ResourceListProps<Row>): TemplateResul
                   aria-label={`Select ${id}`}
                 />
               )}
-              <a data-ui="resource-list-link" href={props.href(row)}>
+              <a
+                data-ui="resource-list-link"
+                href={props.href(row)}
+                aria-current={props.currentId === id ? 'true' : undefined}
+              >
                 <strong>{props.primary(row)}</strong>
                 {props.secondary && <span>{props.secondary(row)}</span>}
               </a>

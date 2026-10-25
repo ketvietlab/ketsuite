@@ -1,29 +1,47 @@
+import { clearFieldError, showFieldError } from '@ketvietlab/design-system'
+
+type EmailMessages = Record<'checking' | 'available' | 'taken' | 'invalid' | 'unknown', string>
+
+/**
+ * The create-user form (`ui/user-workflow.tsx`): checks the email while it is typed. The result is said in the
+ * email field's help line; an email someone already uses is the field's error, as the server would render it.
+ * The server checks the email again when the step is submitted, so a check that could not run leaves the
+ * form free to submit. The words come from the form, in the page's language.
+ */
 export function installUserWorkflow(lifetime: AbortSignal): () => void {
   let abort: AbortController | undefined,
     timer: ReturnType<typeof setTimeout> | undefined,
     sequence = 0
-  async function check(form: HTMLFormElement) {
+  async function check(form: HTMLFormElement, edited = false) {
     const input = form.querySelector<HTMLInputElement>('input[type=email]'),
-      status = form.querySelector<HTMLElement>('[data-email-status]')
+      status = input && document.getElementById(`${input.id}-help`)
     if (!input || !status) return
     abort?.abort()
     clearTimeout(timer)
     const request = ++sequence
     const value = input.value.trim(),
-      next = form.querySelector<HTMLButtonElement>('button[type="submit"][name="step"]'),
-      retry = form.querySelector<HTMLElement>('[data-email-retry]')
-    const paint = (message: string, valid: boolean) => {
+      next = form.querySelector<HTMLButtonElement>('[data-ui="form-actions"] button[type="submit"]'),
+      words = JSON.parse(form.dataset.emailMessages ?? '{}') as Partial<EmailMessages>
+    // The server's message about the email is about what was submitted, not what is typed now.
+    if (edited) clearFieldError(input)
+    /** `taken` stops the step; `unknown` lets it through for the server to decide. */
+    const paint = (message: string, state: 'available' | 'taken' | 'checking' | 'unknown') => {
+      if (next) next.disabled = state === 'taken' || state === 'checking'
+      form.dataset.emailAvailable = state === 'taken' ? 'false' : 'true'
+      if (state === 'taken') {
+        // The help line goes back to what it said; the answer is the field's error, read out at once.
+        status.textContent = status.dataset.help ?? ''
+        showFieldError(input, message, { focus: false, announce: true })
+        return
+      }
       status.textContent = message
-      if (next) next.disabled = !valid
-      input.setAttribute('aria-invalid', String(!valid))
-      form.dataset.emailAvailable = valid ? 'true' : 'false'
     }
-    if (retry) retry.hidden = true
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-      paint(value ? 'Email chưa đúng định dạng.' : 'Nhập email để kiểm tra.', false)
+      // An empty field keeps the help the page was drawn with.
+      paint(value ? (words.invalid ?? '') : (status.dataset.help ?? ''), 'unknown')
       return
     }
-    paint('Đang kiểm tra email…', false)
+    paint(words.checking ?? '', 'checking')
     timer = setTimeout(async () => {
       abort = new AbortController()
       try {
@@ -39,57 +57,27 @@ export function installUserWorkflow(lifetime: AbortSignal): () => void {
         if (request !== sequence || !form.isConnected) return
         if (!result.ok) throw new Error('email-check-failed')
         paint(
-          result.available ? 'Email có thể sử dụng.' : 'Email đã được sử dụng. Nhập email khác.',
-          result.available,
+          (result.available ? words.available : words.taken) ?? '',
+          result.available ? 'available' : 'taken',
         )
       } catch {
         if (request !== sequence || !form.isConnected) return
-        paint('Chưa kiểm tra được email. Vui lòng thử lại.', false)
-        if (retry) retry.hidden = false
+        paint(words.unknown ?? '', 'unknown')
       }
     }, 400)
-  }
-  function scope(form: HTMLFormElement, changed = false) {
-    const company = form.querySelector<HTMLSelectElement>('select[name="companyId"]'),
-      branch = form.querySelector<HTMLSelectElement>('select[name="branchId"]'),
-      kind = form.querySelector<HTMLSelectElement>('select[name="scopeKind"]')?.value
-    if (branch && company) {
-      if (changed) branch.value = ''
-      for (const option of branch.options) {
-        if (option.value) {
-          option.hidden = option.dataset.companyId !== company.value
-          option.disabled = option.hidden
-        }
-      }
-    }
-    const key =
-      kind === 'tenant'
-        ? 'tenant'
-        : kind === 'branch'
-          ? `branch:${company?.value}:${branch?.value}`
-          : `company:${company?.value}`
-    for (const input of form.querySelectorAll<HTMLInputElement>('[data-assigned-scopes]')) {
-      const scopes = JSON.parse(input.dataset.assignedScopes ?? '[]') as string[]
-      const assigned = scopes.includes(key)
-      input.disabled = input.dataset.roleDisabled === 'true' || assigned
-      const row = input.closest('[data-role-option]')
-      const assignedLabel = row?.querySelector<HTMLElement>('[data-role-assigned]')
-      const description = row?.querySelector<HTMLElement>('[data-role-description]')
-      if (assignedLabel) assignedLabel.hidden = !assigned
-      if (description) description.hidden = assigned
-      if (input.disabled) input.checked = false
-    }
-    const companyField = company?.closest<HTMLElement>('[data-ui="form-field"]')
-    const branchField = branch?.closest<HTMLElement>('[data-ui="form-field"]')
-    if (companyField) companyField.hidden = kind === 'tenant'
-    if (branchField) branchField.hidden = kind === 'tenant' || kind === 'company'
   }
   function scan() {
     for (const form of document.querySelectorAll<HTMLFormElement>('form[data-user-workflow]'))
       if (!form.dataset.initialized) {
         form.dataset.initialized = 'true'
-        scope(form)
-        void check(form)
+        const input = form.querySelector<HTMLInputElement>('input[type=email]'),
+          status = input && document.getElementById(`${input.id}-help`)
+        if (!input || !status) continue
+        status.dataset.help = status.textContent ?? ''
+        status.setAttribute('role', 'status')
+        status.setAttribute('aria-live', 'polite')
+        // A refused email keeps the server's reason in view until the person edits it.
+        if (input.getAttribute('aria-invalid') !== 'true') void check(form)
       }
   }
   document.addEventListener(
@@ -97,36 +85,7 @@ export function installUserWorkflow(lifetime: AbortSignal): () => void {
     (event) => {
       const input = event.target as HTMLInputElement,
         form = input.closest<HTMLFormElement>('form[data-user-workflow]')
-      if (!form) return
-      if (input.type === 'email') void check(form)
-      if (input.matches('[data-role-search]')) {
-        let n = 0
-        for (const row of form.querySelectorAll<HTMLElement>('[data-role-option]')) {
-          row.hidden = !row.textContent?.toLocaleLowerCase('vi').includes(input.value.toLocaleLowerCase('vi'))
-          if (!row.hidden) n++
-        }
-        const empty = form.querySelector<HTMLElement>('[data-role-empty]')
-        if (empty) empty.hidden = n > 0
-      }
-    },
-    { signal: lifetime },
-  )
-  document.addEventListener(
-    'change',
-    (event) => {
-      const input = event.target as HTMLElement,
-        form = input.closest<HTMLFormElement>('form[data-user-workflow]')
-      if (form && input.matches('select[name="companyId"],select[name="branchId"],select[name="scopeKind"]'))
-        scope(form, input.matches('select[name="companyId"]'))
-    },
-    { signal: lifetime },
-  )
-  document.addEventListener(
-    'click',
-    (event) => {
-      const target = event.target as HTMLElement
-      const retry = target.closest<HTMLElement>('[data-email-retry]')
-      if (retry) void check(retry.closest('form')!)
+      if (form && input.type === 'email') void check(form, true)
     },
     { signal: lifetime },
   )
@@ -134,11 +93,7 @@ export function installUserWorkflow(lifetime: AbortSignal): () => void {
     'submit',
     (event) => {
       const form = event.target as HTMLFormElement
-      if (
-        form.matches('form[data-user-workflow]') &&
-        form.querySelector('input[type=email]') &&
-        form.dataset.emailAvailable !== 'true'
-      )
+      if (form.matches('form[data-user-workflow]') && form.dataset.emailAvailable === 'false')
         event.preventDefault()
     },
     { signal: lifetime },

@@ -59,5 +59,6 @@ export function productMediaWithWebsiteCatalog() {
         }),
     }
   }
-  return { ...productMedia, functions }
+  // Website catalog builds on product media, so the wrapped commands name it optional.
+  return { ...productMedia, optional: [...(productMedia.optional ?? []), 'website_catalog'], functions }
 }

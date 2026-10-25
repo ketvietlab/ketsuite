@@ -27,7 +27,7 @@ for (const viewport of [
     test(`renders forecast in ${locale} correctly on ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await page.goto(`/admin/stock/forecast?lang=${locale}`)
-      await expect(page.locator('[data-ui="main"]')).toBeVisible()
+      await expect(page.locator('[data-ui="app-main"]')).toBeVisible()
       await expect(page.locator('form[action="/login"]')).toHaveCount(0)
       await expect(page.locator('select[name="productId"]')).toContainText('STOCK-JACKET')
 
@@ -57,17 +57,15 @@ for (const viewport of [
 
 test('calculates forecast for a selected product and warehouse', async ({ page }) => {
   await page.goto('/admin/stock/forecast?lang=vi')
-  await page.locator('select[name="productId"]').selectOption('stock-variant')
+  await page.locator('select[name="productId"]').selectOption('stock-template:default')
   await page.locator('select[name="warehouseId"]').selectOption('wh')
   await page.getByRole('button', { name: 'Tính dự báo' }).click()
 
-  await expect(page).toHaveURL(/productId=stock-variant/)
+  await expect(page).toHaveURL(/productId=stock-template%3Adefault/)
   await expect(page).toHaveURL(/warehouseId=wh/)
-  await expect(page.locator('[data-ui="metric"]')).toHaveCount(4)
-  await expect(page.locator('[data-ui="metric"]')).toContainText([
-    'Tồn thực tế12',
-    'Sắp nhận0',
-    'Sắp xuất0',
-    'Dự báo12',
-  ])
+  const forecast = page.locator('[data-ui="row"][data-row="stock-template:default"]')
+  await expect(forecast.locator('[data-col="onHand"]')).toHaveText('12')
+  await expect(forecast.locator('[data-col="incoming"]')).toHaveText('0')
+  await expect(forecast.locator('[data-col="outgoing"]')).toHaveText('0')
+  await expect(forecast.locator('[data-col="forecasted"]')).toHaveText('12')
 })

@@ -1,3 +1,4 @@
+import { roomFixtureCall } from './helpers/hospitality-room-fixture.ts'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,6 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   bootWorker,
-  callFn,
   compose,
   createQueue,
   defineDeployment,
@@ -15,6 +15,11 @@ import {
 } from '@ketvietlab/ketjs'
 import type { Adapter, Row } from '@ketvietlab/ketjs'
 import { address, company, hospitalityCore, partner, product, storage, uom } from '@ketvietlab/ketsuite'
+import {
+  addCalendarDays,
+  dateKeyIn,
+  zonedDateTime,
+} from '../packages/ketsuite/src/modules/hospitality_core/calendar.ts'
 import backend from '@ketvietlab/ketsuite/backend'
 import {
   stayNoticeDueAt,
@@ -22,18 +27,27 @@ import {
 } from '../packages/ketsuite/src/modules/hospitality_core/stay-notices.ts'
 
 const modules = [address, partner, company, storage, backend, uom, product, hospitalityCore]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
+const noticeDay = dateKeyIn(new Date(), 'Asia/Ho_Chi_Minh')
+const noticeArrival = zonedDateTime(noticeDay, 0, 0, 'Asia/Ho_Chi_Minh').toISOString()
+const noticeDeparture = zonedDateTime(addCalendarDays(noticeDay, 2), 12, 0, 'Asia/Ho_Chi_Minh').toISOString()
 const scope = { company: 'acme', branches: null }
 const call = (
   name: string,
   args: Record<string, unknown>,
   adapter: Adapter,
   actor: string | null = 'frontdesk',
-) => callFn(name, args, { adapter, manifest, scope, actor })
+) => roomFixtureCall(name, args, { adapter, manifest, scope, actor })
 
 const seedStay = async (adapter: Adapter): Promise<void> => {
   await migrateOne(adapter, manifest)
   registerFunctions(modules)
+  await call('partner.savePartner', { id: 'company-party', name: 'Hotel company', kind: 'company' }, adapter)
+  await call(
+    'company.saveCompany',
+    { id: 'acme', code: 'ACME', partnerId: 'company-party', currency: 'VND' },
+    adapter,
+  )
   await call('partner.savePartner', { id: 'primary', kind: 'person', name: 'Nguyễn An' }, adapter)
   await call('partner.savePartner', { id: 'companion', kind: 'person', name: 'Trần Bình' }, adapter)
   await call(
@@ -59,6 +73,38 @@ const seedStay = async (adapter: Adapter): Promise<void> => {
     { id: '101', propertyId: 'hotel', roomTypeId: 'deluxe', code: '101', name: '101' },
     adapter,
   )
+  await call(
+    'hospitality_core.completeRoomCleaning',
+    { roomId: '101', expectedVersion: 1, requestKey: 'notice-fixture-clean' },
+    adapter,
+  )
+  await call(
+    'hospitality_core.saveRatePlan',
+    {
+      id: 'bar',
+      propertyId: 'hotel',
+      roomTypeId: 'deluxe',
+      code: 'BAR',
+      name: 'Best rate',
+      rateType: 'nightly',
+      amount: '100',
+    },
+    adapter,
+  )
+  const profile = (await call('hospitality_core.getPropertyProfile', { id: 'hotel' }, adapter)).value as Row
+  const opened = (
+    await call(
+      'hospitality_core.setPropertyLifecycle',
+      {
+        propertyId: 'hotel',
+        lifecycle: 'active',
+        expectedVersion: (profile.property as Row | null)?.version ?? 0,
+        requestKey: 'notice-fixture-open',
+      },
+      adapter,
+    )
+  ).value as Row
+  assert.equal(opened.ok, true, JSON.stringify(opened))
   const booked = await call(
     'hospitality_core.createReservation',
     {
@@ -67,8 +113,8 @@ const seedStay = async (adapter: Adapter): Promise<void> => {
       roomTypeId: 'deluxe',
       partnerId: 'primary',
       bookingType: 'nightly',
-      checkIn: '2026-08-20T16:30:00.000Z',
-      checkOut: '2026-08-22T05:00:00.000Z',
+      checkIn: noticeArrival,
+      checkOut: noticeDeparture,
       rate: '100',
     },
     adapter,
@@ -80,9 +126,25 @@ const seedStay = async (adapter: Adapter): Promise<void> => {
       stayId: 'late-arrival:stay',
       roomId: '101',
       assignmentId: 'late-arrival:assignment',
-      at: '2026-08-20T16:30:00.000Z',
+      at: noticeArrival,
+      // A midnight arrival is before the property's check-in time.
+      earlyFee: 'waived',
+      earlyReason: 'Synthetic late-night arrival',
+      // Every adult is declared on arrival, with the document the notice is made from.
+      guests: [
+        {
+          fullName: 'Nguyễn An',
+          type: 'cccd',
+          number: '079203001234',
+          birth: '1990-05-12',
+          gender: 'female',
+          nationality: 'VN',
+        },
+      ],
     },
     adapter,
+    // Who may declare guests is a user-module grant, and this composition has no users.
+    null,
   )
   assert.equal((checkedIn.value as Row).ok, true, JSON.stringify(checkedIn.value))
 }
@@ -94,11 +156,12 @@ test('hospitality stay notices: deadline follows the property-local 23:00 rule',
   assert.equal(stayNoticeDurationValid('2026-08-01T07:00:00.000Z', '2026-08-31T07:00:01.000Z'), false)
 })
 
-test('hospitality stay notices: physical SQLite worker prepares, repairs and records evidence without PII payloads', async () => {
+test('hospitality stay notices: physical SQLite worker prepares and records evidence without PII payloads', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ket-hospitality-stay-notices-'))
   const file = join(dir, 'hospitality.db')
   const app = defineDeployment({
     name: 'hospitality_stay_notice_test',
+    companies: true,
     modules,
     headless: true,
     serve: {},
@@ -124,8 +187,8 @@ test('hospitality stay notices: physical SQLite worker prepares, repairs and rec
         roomTypeId: 'deluxe',
         partnerId: 'companion',
         bookingType: 'nightly',
-        checkIn: '2026-09-20T07:00:00.000Z',
-        checkOut: '2026-09-21T05:00:00.000Z',
+        checkIn: zonedDateTime(addCalendarDays(noticeDay, 20), 14, 0, 'Asia/Ho_Chi_Minh').toISOString(),
+        checkOut: zonedDateTime(addCalendarDays(noticeDay, 21), 12, 0, 'Asia/Ho_Chi_Minh').toISOString(),
         rate: '100',
       },
       producer,
@@ -149,50 +212,28 @@ test('hospitality stay notices: physical SQLite worker prepares, repairs and rec
     })
     assert.equal(await worker.drain(), 1)
 
-    const inspector = sqliteAdapter(file)
-    await inspector.open()
+    const readyAdapter = sqliteAdapter(file)
+    await readyAdapter.open()
     registerFunctions(modules)
-    const attention = (
-      await inspector.all('SELECT * FROM hospitality_core_stay_notice WHERE id = ?', [
+    const prepared = (
+      await readyAdapter.all('SELECT * FROM hospitality_core_stay_notice WHERE id = ?', [
         'late-arrival:stay:notice:late-arrival:guest',
       ])
     )[0]!
     assert.deepEqual(
       {
-        state: attention.state,
-        dueAt: attention.dueAt,
-        issueCodes: JSON.parse(String(attention.issueCodes)),
-        documentLast4: attention.documentLast4,
+        state: prepared.state,
+        dueAt: prepared.dueAt,
+        issueCodes: JSON.parse(String(prepared.issueCodes)),
+        documentLast4: prepared.documentLast4,
       },
       {
-        state: 'attention',
-        dueAt: '2026-08-21T01:00:00.000Z',
-        issueCodes: ['document_missing'],
-        documentLast4: null,
+        state: 'ready',
+        dueAt: stayNoticeDueAt(noticeArrival, 'Asia/Ho_Chi_Minh'),
+        issueCodes: [],
+        documentLast4: '1234',
       },
     )
-
-    const savedDocument = await call(
-      'hospitality_core.saveGuestDocument',
-      {
-        id: 'primary-document',
-        stayId: 'late-arrival:stay',
-        partnerId: 'primary',
-        type: 'cccd',
-        number: '079203001234',
-        fullName: 'Nguyễn An',
-        dateOfBirth: '1990-05-12T00:00:00.000Z',
-        ocrState: 'done',
-      },
-      inspector,
-    )
-    assert.equal((savedDocument.value as Row).ok, true, JSON.stringify(savedDocument.value))
-    await inspector.close()
-    assert.equal(await worker.drain(), 1)
-
-    const readyAdapter = sqliteAdapter(file)
-    await readyAdapter.open()
-    registerFunctions(modules)
     const listed = (await call('hospitality_core.listStayNotices', { propertyId: 'hotel' }, readyAdapter))
       .value as Row[]
     assert.deepEqual(
@@ -244,6 +285,24 @@ test('hospitality stay notices: physical SQLite worker prepares, repairs and rec
       'hospitality_core.validation.authentication_required',
     )
 
+    const invalidTime = (
+      await call(
+        'hospitality_core.recordStayNoticeSubmission',
+        {
+          id: listed[0]!.id,
+          reason: 'business',
+          channel: 'online',
+          evidenceRef: 'too-early',
+          submittedAt: '2000-01-01T00:00:00Z',
+          expectedVersion: 0,
+          requestKey: 'notice-invalid-sent-time',
+        },
+        readyAdapter,
+        'frontdesk-user',
+      )
+    ).value as Row
+    assert.equal(invalidTime.ok, false)
+    assert.equal((invalidTime.errors as Row[])[0]?.code, 'stay_notice_submission_time')
     const submitted = (
       await call(
         'hospitality_core.recordStayNoticeSubmission',
@@ -252,6 +311,8 @@ test('hospitality stay notices: physical SQLite worker prepares, repairs and rec
           reason: 'business',
           channel: 'online',
           evidenceRef: 'DVC-2026-0001',
+          submittedLocal: `${noticeDay}T00:01`,
+          submissionNote: 'Submitted through the official portal',
         },
         readyAdapter,
         'frontdesk-user',
@@ -260,11 +321,13 @@ test('hospitality stay notices: physical SQLite worker prepares, repairs and rec
     assert.equal(submitted.ok, true, JSON.stringify(submitted))
     const firstEvidence = (
       await readyAdapter.all(
-        'SELECT state, "packageHash", "submittedBy", "receiptRef" FROM hospitality_core_stay_notice WHERE id = ?',
+        'SELECT state, "packageHash", "submittedBy", "receiptRef", "submittedAt", "submissionNote" FROM hospitality_core_stay_notice WHERE id = ?',
         [listed[0]!.id],
       )
     )[0]!
     assert.equal(firstEvidence.state, 'submitted')
+    assert.equal(firstEvidence.submittedAt, zonedDateTime(noticeDay, 0, 1, 'Asia/Ho_Chi_Minh').toISOString())
+    assert.equal(firstEvidence.submissionNote, 'Submitted through the official portal')
     assert.match(String(firstEvidence.packageHash), /^[a-f0-9]{64}$/)
     assert.equal(firstEvidence.submittedBy, 'frontdesk-user')
     assert.equal(firstEvidence.receiptRef, 'DVC-2026-0001')
@@ -313,30 +376,36 @@ test('hospitality stay notices: physical SQLite worker prepares, repairs and rec
       'supervisor-user',
     )
 
-    await call(
-      'hospitality_core.addStayGuest',
+    // A guest who joins the stay is declared with a document, as on arrival.
+    const stay = (
+      await readyAdapter.all('SELECT version FROM hospitality_core_stay WHERE id = ?', ['late-arrival:stay'])
+    )[0]!
+    const booking = (
+      await readyAdapter.all('SELECT version FROM hospitality_core_reservation WHERE id = ?', [
+        'late-arrival',
+      ])
+    )[0]!
+    const added = await call(
+      'hospitality_core.addInHouseGuest',
       {
-        id: 'companion-guest',
         stayId: 'late-arrival:stay',
-        partnerId: 'companion',
-        displayName: 'Trần Bình',
+        guest: {
+          partnerId: 'companion',
+          fullName: 'Trần Bình',
+          type: 'passport',
+          number: 'P1234567',
+          birth: '1988-04-20',
+          gender: 'male',
+          nationality: 'VN',
+        },
+        expectedVersion: Number(stay.version),
+        expectedReservationVersion: Number(booking.version),
+        requestKey: 'notice-companion',
       },
       readyAdapter,
+      null,
     )
-    await call(
-      'hospitality_core.saveGuestDocument',
-      {
-        id: 'companion-document',
-        stayId: 'late-arrival:stay',
-        partnerId: 'companion',
-        type: 'passport',
-        number: 'P1234567',
-        fullName: 'Trần Bình',
-        dateOfBirth: '1988-04-20T00:00:00.000Z',
-        ocrState: 'done',
-      },
-      readyAdapter,
-    )
+    assert.equal((added.value as Row).ok, true, JSON.stringify(added.value))
     await readyAdapter.close()
     assert.equal(await worker.drain(), 1)
 

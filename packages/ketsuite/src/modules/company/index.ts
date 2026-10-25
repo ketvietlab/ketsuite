@@ -22,3 +22,5 @@ export default defineModule({
   functions,
   messages,
 })
+
+export { civilDate, companyCivilDate } from './civil-date.ts'

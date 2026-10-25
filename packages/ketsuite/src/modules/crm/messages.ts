@@ -24,6 +24,7 @@ const vi = {
   'error.actorRequired': 'Thao tác yêu cầu người dùng đã đăng nhập.',
   'error.idempotencyRequired': 'Thao tác cần khóa chống xử lý lặp.',
   'error.notFound': 'Không tìm thấy hồ sơ CRM.',
+  'error.activityClosed': 'Công việc không còn mở.',
   'error.invalidKind': 'Loại hồ sơ không hợp lệ.',
   'error.invalidStage': 'Giai đoạn không dùng được cho loại hồ sơ này.',
   'error.stageConflict': 'Hồ sơ vừa được thay đổi ở nơi khác. Hãy tải lại.',
@@ -33,6 +34,8 @@ const vi = {
   'error.alreadyMerged': 'Hồ sơ này đã được hợp nhất hoặc lưu trữ.',
   'error.duplicateName': 'Tên này đã được dùng.',
   'error.duplicateCode': 'Mã này đã được dùng.',
+  'error.stageInUse': 'Giai đoạn đang có hồ sơ; chuyển hồ sơ trước khi đổi khả năng tiếp nhận.',
+  'error.outOfRange': 'Giá trị nằm ngoài khoảng cho phép.',
   'error.duplicateMember': 'Người này đã là thành viên của đội.',
   'error.invalidOperator': 'Toán tử không dùng được cho trường đã chọn.',
   'error.notTeamMember': 'Người này không thuộc đội đã chọn. Hãy thêm họ vào đội trong phần cấu hình.',
@@ -51,6 +54,7 @@ const vi = {
   'timeline.activity_scheduled': 'Đã đặt lịch hoạt động',
   'timeline.activity_completed': 'Đã hoàn thành hoạt động',
   'timeline.activity_cancelled': 'Đã hủy hoạt động',
+  'timeline.activity_rescheduled': 'Đã dời lịch hoạt động',
   'timeline.plan_applied': 'Đã áp dụng kế hoạch',
 } as const
 
@@ -80,6 +84,7 @@ const en: Record<keyof typeof vi, string> = {
   'error.actorRequired': 'This operation requires a signed-in user.',
   'error.idempotencyRequired': 'This command requires an idempotency key.',
   'error.notFound': 'The CRM record was not found.',
+  'error.activityClosed': 'The activity is no longer open.',
   'error.invalidKind': 'The record kind is invalid.',
   'error.invalidStage': 'The stage does not accept this record kind.',
   'error.stageConflict': 'The record changed elsewhere. Reload and try again.',
@@ -89,6 +94,8 @@ const en: Record<keyof typeof vi, string> = {
   'error.alreadyMerged': 'This record was already merged or archived.',
   'error.duplicateName': 'That name is already in use.',
   'error.duplicateCode': 'That code is already in use.',
+  'error.stageInUse': 'Records sit in this stage; move them before changing what it accepts.',
+  'error.outOfRange': 'The value is out of range.',
   'error.duplicateMember': 'This person is already a member of the team.',
   'error.invalidOperator': 'That operator does not apply to the chosen field.',
   'error.notTeamMember':
@@ -108,6 +115,7 @@ const en: Record<keyof typeof vi, string> = {
   'timeline.activity_scheduled': 'Activity scheduled',
   'timeline.activity_completed': 'Activity completed',
   'timeline.activity_cancelled': 'Activity cancelled',
+  'timeline.activity_rescheduled': 'Activity rescheduled',
   'timeline.plan_applied': 'Plan applied',
 }
 

@@ -29,7 +29,7 @@ for (const viewport of [
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await page.goto(`${transferPath}?lang=${locale}`)
       await expect(page.getByRole('heading', { level: 1 })).toHaveText('WH/OUT/REVIEW')
-      await expect(page.locator('select[name="productId"]')).toHaveValue('stock-variant')
+      await expect(page.locator('select[name="productId"]')).toHaveValue('stock-template:default')
       await expect(page.locator('[data-ui="chatter-loading"], [data-ui="activity-loading"]')).toHaveCount(0)
 
       const metrics = await page.evaluate(() => ({
@@ -58,10 +58,10 @@ for (const viewport of [
 
 test('adds, reserves, processes, and validates transfer lines', async ({ page }) => {
   await page.goto(`${transferPath}?lang=vi`)
-  const stateBadge = page.locator('[data-ui="record-badges"] [data-ui="badge"]')
+  const stateBadge = page.locator('[data-ui="form-page-status"] [data-ui="badge"]')
   const addMove = page.locator('form:has(input[name="action"][value="add-move"])')
   await addMove.locator('input[name="name"]').fill('Áo khoác bổ sung')
-  await addMove.locator('select[name="productId"]').selectOption('stock-variant')
+  await addMove.locator('select[name="productId"]').selectOption('stock-template:default')
   await addMove.locator('select[name="productUomId"]').selectOption('unit')
   await addMove.locator('input[name="productUomQty"]').fill('2')
   await addMove.getByRole('button', { name: 'Thêm dòng hàng' }).click()

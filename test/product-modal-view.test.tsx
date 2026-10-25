@@ -1,27 +1,26 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { countingHost, mount, renderToString } from '@ketvietlab/ketjs-view'
-import type { HostNode } from '@ketvietlab/ketjs-view'
-import { createVariantAttributeForm } from '../packages/ketsuite/src/ui/client/variant-attribute-create.tsx'
-import { relationSelectDemoConfig } from '../packages/design-system/src/interactions/relation-select/demo.ts'
+import { renderToString } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import type { RecordModalContext } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
+import type { VariantEditorSetup } from '../packages/ketsuite/src/ui/client/variant-editor-view.tsx'
 import {
-  createVariantEditorView,
-  type VariantEditorSetup,
-} from '../packages/ketsuite/src/ui/client/variant-editor-view.tsx'
-import {
+  configureInput,
+  parseNumber,
   templateModalDefinition,
   type TemplateModalData,
   type TemplateRecord,
+  type WarehouseRow,
 } from '../packages/ketsuite/src/modules/product_backend/modal/product-modal-view.tsx'
+import { workspaceMessages } from '../packages/ketsuite/src/modules/product_backend/workspace-messages.ts'
+
+// The product page (product_backend/modal/product-modal-view.tsx): what it renders
+// for whom, and what each command sends.
 
 type Options = {
   creating?: boolean
-  state?: Record<string, string>
   dialog?: { name: string; params: Record<string, string> } | null
-  tab?: string
-  presentation?: 'modal' | 'page'
+  state?: Record<string, string>
 }
 
 const contextOf = (
@@ -31,9 +30,9 @@ const contextOf = (
   kind: 'product.template',
   id: options.creating ? 'new' : data.record.id,
   creating: options.creating === true,
-  tab: options.tab ?? '',
+  tab: '',
   data,
-  t: (key) => key,
+  t: (key, params) => (params ? `${key}${JSON.stringify(params)}` : key),
   outcome: () => null,
   fieldError: () => null,
   draft: (_name, fallback = '') => fallback,
@@ -41,814 +40,863 @@ const contextOf = (
   busy: false,
   dialog: options.dialog ?? null,
   href: () => '',
-  presentation: options.presentation,
+  presentation: 'page',
   state: (key, fallback = '') => options.state?.[key] ?? fallback,
 })
 
 const record = (overrides: Partial<TemplateRecord> = {}): TemplateRecord => ({
   id: 'tpl-1',
-  name: 'Áo thun',
+  revisionId: 'rev-1',
+  name: 'Serum',
   type: 'goods',
   categoryId: null,
   brandId: null,
-  uomId: 'unit',
+  uomId: 'bottle',
   origin: null,
   description: null,
-  listPrice: '100000',
+  listPrice: '250000',
+  compareAtPrice: null,
+  hsCode: null,
   saleOk: true,
   purchaseOk: true,
-  defaultCode: null,
+  defaultCode: 'SR-01',
   barcode: null,
+  weight: null,
+  volume: null,
+  costPrice: '100000',
+  defaultVariantId: 'tpl-1:default',
+  updatedAt: null,
   active: true,
-  isStorable: false,
+  isStorable: true,
   tracking: 'none',
-  taxId: null,
   ...overrides,
 })
 
-const templateData = (overrides: Partial<TemplateModalData> = {}): TemplateModalData => ({
+const warehouse = (overrides: Partial<WarehouseRow> = {}): WarehouseRow => ({
+  id: 'wh',
+  name: 'Kho chính',
+  code: 'WH',
+  onHand: 10,
+  reserved: 2,
+  available: 8,
+  incoming: 5,
+  outgoing: 0,
+  forecasted: 15,
+  orderpoints: [],
+  ...overrides,
+})
+
+const setup = (): VariantEditorSetup => ({
+  templateId: 'tpl-1',
+  listPrice: '250000',
+  lines: [
+    {
+      attributeId: 'size',
+      name: 'Dung tích',
+      createVariant: 'always',
+      displayType: 'select',
+      values: [
+        { valueId: '30', name: '30 ml', priceExtra: '0' },
+        { valueId: '50', name: '50 ml', priceExtra: '80000' },
+      ],
+    },
+  ],
+  catalogue: [
+    {
+      attributeId: 'size',
+      name: 'Dung tích',
+      createVariant: 'always',
+      values: [
+        { valueId: '30', name: '30 ml' },
+        { valueId: '50', name: '50 ml' },
+        { valueId: '100', name: '100 ml' },
+      ],
+    },
+    { attributeId: 'color', name: 'Màu', createVariant: 'always', values: [{ valueId: 'red', name: 'Đỏ' }] },
+  ],
+  variants: [
+    {
+      id: 'v30',
+      valueIds: { size: '30' },
+      defaultCode: 'SR-30',
+      barcode: '8930000000301',
+      weight: '0.1',
+      volume: '0',
+      active: true,
+      images: [],
+    },
+    {
+      id: 'v50',
+      valueIds: { size: '50' },
+      defaultCode: 'SR-50',
+      barcode: null,
+      weight: '0',
+      volume: '0',
+      active: true,
+      images: [],
+    },
+  ],
+})
+
+const data = (overrides: Partial<TemplateModalData> = {}): TemplateModalData => ({
   record: record(),
   images: [],
   hasVariants: false,
-  variantSetup: null,
+  variantSetup: { ...setup(), lines: [], variants: [] },
   types: ['goods', 'service'],
-  categories: [],
-  uoms: [{ value: 'unit', label: 'Cái' }],
+  categories: [{ value: 'care', label: 'Chăm sóc da' }],
+  uoms: [
+    { value: 'bottle', label: 'Chai' },
+    { value: 'box6', label: 'Hộp 6 · 6 Chai' },
+  ],
+  uomName: 'Chai',
   brands: [],
-  taxes: [],
   stockEnabled: true,
-  taxEnabled: true,
   permissions: {
     save: true,
     archive: true,
-    delete: true,
-    saveVariantSetup: true,
+    duplicate: true,
+    money: true,
+    setCost: true,
     configureStock: true,
-    setTax: true,
+    uploadImage: true,
+    removeImage: true,
+    saveVariantSetup: true,
+    configureAttributes: true,
+    orderpoints: true,
   },
   lang: 'vi',
+  extensionTabs: [
+    { id: 'cosmetic_usage_care', label: 'Chu kỳ sử dụng', island: 'cosmetic-care.product-cycle' },
+  ],
+  collaboration: [{ id: 'product_mail_backend', island: 'mail.chatter' }],
+  packagings: [{ id: 'box6', name: 'Hộp 6', quantity: 6 }],
+  variants: [],
+  stock: {
+    tracked: true,
+    tracking: 'none',
+    warehouses: [warehouse()],
+    totals: { onHand: 10, reserved: 2, available: 8, incoming: 5, outgoing: 0, forecasted: 15 },
+    inUse: true,
+  },
+  sales: { days: 30, quantity: 4, revenue: 1000000, orders: 3, lastAt: null },
+  vendors: [],
+  margin: { profit: 150000, percent: 60 },
+  uomLocked: false,
+  issues: [],
+  completeness: {
+    score: 50,
+    items: [
+      { key: 'image', done: false },
+      { key: 'categoryId', done: true },
+    ],
+  },
+  links: {
+    forecast: '/admin/stock/forecast?productId=tpl-1%3Adefault',
+    orders: '/admin/sales/orders?q=Serum',
+    vendorPricelists: '/admin/purchase/vendor-pricelists?q=Serum',
+    list: '/admin/product/templates',
+  },
   ...overrides,
 })
 
-const generalTab = templateModalDefinition.tabs!.find((tab) => tab.id === 'general')!.view
-const variantsTab = templateModalDefinition.tabs!.find((tab) => tab.id === 'variants')!.view
+const render = (child: JSXChild | undefined): string => renderToString(child as TemplateResult)
+const form = (values: Record<string, string | string[]>): FormData => {
+  const body = new FormData()
+  for (const [name, value] of Object.entries(values))
+    for (const item of Array.isArray(value) ? value : [value]) body.append(name, item)
+  return body
+}
 const commands = templateModalDefinition.commands!
+const dialogs = templateModalDefinition.dialogs!
+/** The opening tag of the control a field renders, by its name. */
+const control = (html: string, name: string): string =>
+  new RegExp(`<(?:input|select|textarea)[^>]*name="${name.replace(/[.[\]]/gu, '\\$&')}"[^>]*>`, 'u').exec(
+    html,
+  )?.[0] ?? ''
 
-const render = (child: JSXChild): string => renderToString(child as TemplateResult)
-
-test('variant editor: quick creation preserves input on failure and reuses IDs on retry before selecting the new values', async (t) => {
-  class Input {
-    name: string
-    value: string
-    constructor(name: string, value: string) {
-      this.name = name
-      this.value = value
-    }
+test('product page: one form spans the record cards; cards other modules add follow it with their own islands', () => {
+  const html = render(templateModalDefinition.body!(contextOf(data())))
+  const formStart = html.indexOf('id="product-record"')
+  const formEnd = html.indexOf('</form>', formStart)
+  assert.ok(formStart > 0, 'the record form renders')
+  for (const title of ['ws.general', 'ws.media', 'ws.pricing', 'ws.inventory', 'ws.variants', 'ws.vendors']) {
+    const at = html.indexOf(title)
+    assert.ok(at > formStart && at < formEnd, `${title} sits inside the record form`)
   }
-  class Target {
-    closest() {
-      return { name: 'createAttribute', disabled: false }
-    }
-  }
-  let click: (event: { target: Target }) => void = () => {}
-  const calls: Record<string, unknown>[] = []
-  const added: unknown[] = []
-  let fail = true
-  t.mock.method(globalThis, 'fetch', async (_url: string, init?: RequestInit) => {
-    calls.push(JSON.parse(String(init?.body)))
-    if (fail) throw new Error('offline')
-    return Response.json({ value: { ok: true } })
-  })
-  const globals = globalThis as unknown as Record<string, unknown>
-  const replacements = {
-    Element: Target,
-    HTMLInputElement: Input,
-    HTMLTextAreaElement: Input,
-    document: { getElementById: () => null, dispatchEvent: () => true },
-  }
-  const previous = Object.fromEntries(Object.keys(replacements).map((key) => [key, globals[key]]))
-  Object.assign(globals, replacements)
-  const settle = async () => {
-    for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve))
-  }
-  const form = createVariantAttributeForm({
-    id: 'quick',
-    kind: 'product.template',
-    enabled: true,
-    disabled: () => false,
-    t: (key) => key,
-    added: (attribute) => added.push(attribute),
-  })
-  const host = countingHost()
-  const root = host.root()
-  const mounted = mount(host, root, () => <>{form.view()}</>)
-  const lifetime = new AbortController()
-  form.attach(
-    {
-      addEventListener: (_name: string, handler: typeof click) => {
-        click = handler
-      },
-    } as unknown as HTMLElement,
-    lifetime.signal,
+  // The usage-cycle joint keeps its card, outside the form: its island carries forms of its own.
+  const cycle = html.indexOf('data-island="cosmetic-care.product-cycle"')
+  assert.ok(cycle > formEnd, 'the usage cycle card follows the form')
+  assert.match(
+    html,
+    /data-island="cosmetic-care.product-cycle" data-props="\{&quot;templateId&quot;:&quot;tpl-1&quot;,&quot;locale&quot;:&quot;vi&quot;\}"/,
   )
-  const wrapper = (): HostNode => root.children!.find((node) => node.tag === 'div')!
-  const type = (name: string, value: string) =>
-    host.fire(wrapper(), 'input', { target: new Input(name, value) })
-  const submit = async () => {
-    host.fire(wrapper(), 'submit', { preventDefault() {}, stopPropagation() {} })
-    await settle()
-  }
-  try {
-    click({ target: new Target() })
-    type('attributeName', ' Capacity ')
-    type('attributeValues', '30 ml\n30 ml')
-    await submit()
-    assert.equal(calls.length, 0, 'duplicate values must not write anything')
-    assert.match(render(form.view()), /attributeValuesDuplicate/)
-    type('attributeValues', '30 ml\n50 ml')
-    await submit()
-    assert.match(render(form.view()), /attributeCreateFailed/)
-    assert.match(render(form.view()), /Capacity/)
-    assert.match(render(form.view()), /30 ml/)
-    assert.equal(added.length, 0)
-    fail = false
-    await submit()
-    assert.deepEqual(calls[1], calls[0], 'retry reuses IDs, avoiding duplicate shared attributes')
-    assert.equal(added.length, 1)
-    assert.equal(form.open(), false)
-    assert.deepEqual(
-      (added[0] as { values: Array<{ name: string }> }).values.map((value) => value.name),
-      ['30 ml', '50 ml'],
-    )
-  } finally {
-    lifetime.abort()
-    mounted.dispose()
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete globals[key]
-      else globals[key] = value
-    }
-  }
+  assert.match(html, />Chu kỳ sử dụng</)
+  assert.match(
+    html,
+    /data-island="mail.chatter" data-props="\{&quot;resModel&quot;:&quot;product.Template&quot;,&quot;resId&quot;:&quot;tpl-1&quot;/,
+  )
 })
 
-test('variant editor: quick creation is absent without its separate permission', () => {
-  const form = createVariantAttributeForm({
-    id: 'quick',
-    kind: 'product.template',
-    enabled: false,
-    disabled: () => false,
-    t: (key) => key,
-    added: () => assert.fail('readers cannot create attributes'),
-  })
-  assert.equal(form.view(), null)
+test('product page: a reader who may not save sees facts, not controls, and no save or duplicate', () => {
+  const c = contextOf(data({ permissions: { money: true } }))
+  const html = render(templateModalDefinition.body!(c))
+  assert.doesNotMatch(html, /id="product-record"/)
+  assert.doesNotMatch(html, /name="listPrice"/)
+  assert.match(html, /data-ui="description-list"/)
+  const actions = render(templateModalDefinition.pageActions!(c))
+  assert.doesNotMatch(actions, /ws\.save|ws\.duplicate|ws\.archive/)
+  assert.match(actions, /ws\.back/)
 })
 
-test('product modal: General has no submit button of its own — the header submits its form by id, with tracking/tax fields only when installed', () => {
-  const full = render(generalTab(contextOf(templateData())))
-  assert.doesNotMatch(full, /type="submit"/, 'the header owns the one Save button, not the tab body')
-  assert.match(full, /id="product-template-general-form"/)
-  assert.match(full, /name="isStorable"/)
-  assert.match(full, /name="taxId"/)
-
-  const bare = render(generalTab(contextOf(templateData({ stockEnabled: false, taxEnabled: false }))))
-  assert.doesNotMatch(bare, /name="isStorable"/)
-  assert.doesNotMatch(bare, /name="taxId"/)
-})
-
-test('product modal: a reader without save permission sees a read-only General form and no buttons', () => {
-  const data = templateData({ permissions: { ...templateData().permissions, save: false } })
-  const html = render(generalTab(contextOf(data)))
-  assert.doesNotMatch(html, /type="submit"/)
-  assert.match(html, /product_backend\.readOnly\.title/)
-  assert.match(html, /<input[^>]*name="name"[^>]*disabled/)
-})
-
-test('product modal: identity fields move off General once a template has variants', () => {
-  const withoutVariants = render(generalTab(contextOf(templateData())))
-  assert.match(withoutVariants, /name="defaultCode"/)
-  assert.match(withoutVariants, /name="barcode"/)
-
-  const withVariants = render(generalTab(contextOf(templateData({ hasVariants: true }))))
-  assert.doesNotMatch(withVariants, /name="defaultCode"/)
-  assert.doesNotMatch(withVariants, /name="barcode"/)
-})
-
-const teeSetup = (): VariantEditorSetup => ({
-  templateId: 'tpl-1',
-  listPrice: '200000',
-  lines: [
-    {
-      attributeId: 'color',
-      name: 'Màu',
-      createVariant: 'always',
-      displayType: 'select',
-      values: [
-        { valueId: 'red', name: 'Đỏ', priceExtra: '0' },
-        { valueId: 'black', name: 'Đen', priceExtra: '0' },
-      ],
-    },
-    {
-      attributeId: 'size',
-      name: 'Size',
-      createVariant: 'always',
-      displayType: 'select',
-      values: [
-        { valueId: 's', name: 'S', priceExtra: '0' },
-        { valueId: 'l', name: 'L', priceExtra: '20000' },
-      ],
-    },
-  ],
-  catalogue: [],
-  variants: [
-    {
-      id: 'v1',
-      valueIds: { color: 'red', size: 'l' },
-      defaultCode: 'TEE-RL',
-      barcode: null,
-      weight: '0',
-      volume: '0',
-      active: true,
-      images: [],
-    },
-    {
-      id: 'v2',
-      valueIds: { color: 'red', size: 'l' },
-      defaultCode: null,
-      barcode: null,
-      weight: '0',
-      volume: '0',
-      active: true,
-      images: [],
-    },
-  ],
-})
-
-test('product modal: Attributes & variants mounts the editor island with the setup and whether the viewer may save', () => {
-  const html = render(variantsTab(contextOf(templateData({ variantSetup: teeSetup() }))))
-  assert.match(html, /data-island="product.variant-editor"/)
-  assert.match(html, /&quot;saveFunction&quot;:&quot;product.saveVariantSetup&quot;/)
-  assert.match(html, /&quot;editable&quot;:true/)
-  assert.match(html, /&quot;save&quot;:&quot;product_backend.variantEditor.save&quot;/)
-
-  const readOnly = render(
-    variantsTab(
+test('product page: a product with variants edits identity, measures and cost per variant, not on the template', () => {
+  const variants = setup()
+  const html = render(
+    templateModalDefinition.body!(
       contextOf(
-        templateData({
-          variantSetup: teeSetup(),
-          permissions: { ...templateData().permissions, saveVariantSetup: false },
+        data({
+          hasVariants: true,
+          variantSetup: variants,
+          variants: [
+            {
+              id: 'v30',
+              label: '30 ml',
+              defaultCode: 'SR-30',
+              barcode: '8930000000301',
+              weight: '0.1',
+              volume: null,
+              active: true,
+              price: '250000',
+              costPrice: '90000',
+              image: null,
+              available: 3,
+            },
+            {
+              id: 'v50',
+              label: '50 ml',
+              defaultCode: 'SR-50',
+              barcode: null,
+              weight: null,
+              volume: null,
+              active: true,
+              price: '330000',
+              costPrice: null,
+              image: null,
+              available: 0,
+            },
+          ],
         }),
       ),
     ),
   )
-  assert.match(readOnly, /&quot;editable&quot;:false/)
-})
-
-test('variant editor: rows price from list price plus value extras, and a shared combination is flagged on both rows', () => {
-  const view = createVariantEditorView({
-    id: 'editor',
-    kind: 'product.template',
-    setup: teeSetup(),
-    editable: true,
-    saveFunction: 'product.saveVariantSetup',
-    labels: { duplicate: 'dup #{row}', missing: '{count} missing' },
-    relationLabels: relationSelectDemoConfig.labels,
-    lightboxLabels: {
-      open: 'Open {alt}',
-      close: 'Close',
-      previous: 'Previous',
-      next: 'Next',
-      zoomIn: 'Zoom in',
-      zoomOut: 'Zoom out',
-      counter: '{index} / {total}',
-    },
-    media: { upload: true, remove: true },
-  })
-  const html = renderToString(view.view())
-  assert.match(html, /220\.000/, 'L adds 20.000 to the 200.000 list price')
-  assert.match(html, /dup #2/)
-  assert.match(html, /dup #1/)
-  assert.match(html, /3 missing/, 'red·S, black·S and black·L have no variant yet')
-  assert.match(html, /data-ui="relation-select"/, 'attributes use the shared searchable relation selector')
-  assert.doesNotMatch(html, /data-ui="variant-editor-add-attribute"/, 'no parallel native attribute picker')
-  // Step 1 ticks values in a design-system checkbox group; step 2 rows open with a disclosure button.
-  assert.match(html, /stepAttributes/)
-  assert.match(html, /stepVariants/)
-  assert.match(html, /data-kind="checkbox-group"/)
-  assert.match(html, /name="values\|color\[\]" value="red" checked/)
-  assert.match(html, /name="variantAction" value="toggleRow\|v1"[^>]*aria-expanded="false"/)
-  assert.match(html, /name="variantAction" value="generate"/, 'the missing notice offers to create them')
-  assert.match(html, /Đỏ \/ L/, 'a row reads as its combination')
-  assert.doesNotMatch(html, /name="combo\|/, 'a collapsed row shows its combination as text, not selects')
-})
-
-test('variant editor: ticking values, generating the missing combinations and fixing extras keep one draft', async () => {
-  class FakeElement {
-    button: unknown
-    constructor(button: unknown = null) {
-      this.button = button
-    }
-    closest() {
-      return this.button
-    }
-  }
-  class FakeInput extends FakeElement {
-    name: string
-    value: string
-    type: string
-    checked: boolean
-    constructor(name: string, value: string, type = 'text', checked = false) {
-      super()
-      this.name = name
-      this.value = value
-      this.type = type
-      this.checked = checked
-    }
-  }
-  class FakeSelect extends FakeElement {}
-  const globals = globalThis as unknown as Record<string, unknown>
-  const replacements = {
-    Element: FakeElement,
-    HTMLInputElement: FakeInput,
-    HTMLSelectElement: FakeSelect,
-  }
-  const previous = Object.fromEntries(Object.keys(replacements).map((key) => [key, globals[key]]))
-  Object.assign(globals, replacements)
-  const setup = teeSetup()
-  setup.catalogue = [
-    {
-      attributeId: 'color',
-      name: 'Màu',
-      createVariant: 'always',
-      values: [
-        { valueId: 'red', name: 'Đỏ' },
-        { valueId: 'black', name: 'Đen' },
-        { valueId: 'white', name: 'Trắng' },
-      ],
-    },
-    {
-      attributeId: 'size',
-      name: 'Size',
-      createVariant: 'always',
-      values: [
-        { valueId: 's', name: 'S' },
-        { valueId: 'l', name: 'L' },
-      ],
-    },
-  ]
-  // One row per combination already exists except the duplicate, so only new values are missing.
-  setup.variants = [
-    ['red', 's'],
-    ['red', 'l'],
-    ['black', 's'],
-    ['black', 'l'],
-  ].map(([color, size]) => ({
-    id: `${color}-${size}`,
-    valueIds: { color: color!, size: size! },
-    defaultCode: null,
-    barcode: null,
-    weight: '0',
-    volume: '0',
-    active: true,
-    images: [],
-  }))
-  const view = createVariantEditorView({
-    id: 'editor',
-    kind: 'product.template',
-    setup,
-    editable: true,
-    saveFunction: 'product.saveVariantSetup',
-    labels: {
-      missing: '{count} missing',
-      generate: 'Create {count}',
-      valuesSelected: '{count}/{total} selected',
-      invalidNumber: 'bad number',
-      rowInvalid: 'row bad',
-      incomplete: 'incomplete',
-      new: 'new',
-      summaryInvalid: 'fix numbers',
-    },
-    relationLabels: relationSelectDemoConfig.labels,
-    lightboxLabels: {
-      open: 'Open {alt}',
-      close: 'Close',
-      previous: 'Previous',
-      next: 'Next',
-      zoomIn: 'Zoom in',
-      zoomOut: 'Zoom out',
-      counter: '{index} / {total}',
-    },
-    media: { upload: true, remove: true },
-  })
-  const host = countingHost()
-  const root = host.root()
-  const mounted = mount(host, root, () => view.view())
-  const editor = (): HostNode => root.children!.find((node) => node.tag === 'div')!
-  const html = () => render(view.view())
-  const tick = (attributeId: string, valueId: string, checked: boolean) =>
-    host.fire(editor(), 'change', {
-      target: new FakeInput(`values|${attributeId}[]`, valueId, 'checkbox', checked),
-    })
-  const press = (value: string) =>
-    host.fire(editor(), 'click', {
-      target: new FakeElement({ name: 'variantAction', value, disabled: false }),
-    })
-  try {
-    assert.match(html(), /2\/3 selected/)
-    assert.doesNotMatch(html(), /missing/, 'every ticked combination has a row')
-
-    tick('color', 'white', true)
-    assert.match(html(), /name="values\|color\[\]" value="white" checked/)
-    assert.match(html(), /3\/3 selected/)
-    assert.match(html(), /2 missing/, 'white·S and white·L')
-    assert.match(html(), /Create 2/)
-
-    press('generate')
-    assert.doesNotMatch(html(), /missing/)
-    assert.equal((html().match(/data-ui="variant-editor-row"/g) ?? []).length, 6)
-    assert.match(html(), /Trắng \/ S/)
-    assert.match(html(), /Trắng \/ L/)
-    assert.equal((html().match(/>new</g) ?? []).length, 2)
-
-    // Unticking a value in use leaves its rows without a combination instead of deleting them.
-    tick('color', 'white', false)
-    assert.equal((html().match(/>incomplete</g) ?? []).length, 2)
-    tick('color', 'white', true)
-    assert.doesNotMatch(html(), />incomplete</)
-
-    // Price extras keep typed text, flag it, and put it back on Reset.
-    host.fire(editor(), 'input', { target: new FakeInput('extra|size|l', 'abc') })
-    assert.match(html(), /bad number/)
-    assert.match(html(), /fix numbers/)
-    host.fire(editor(), 'input', { target: new FakeInput('extra|size|l', '25000') })
-    assert.match(html(), /225\.000/, 'L now adds 25.000 to the 200.000 list price')
-
-    press('reset')
-    assert.match(html(), /2\/3 selected/)
-    assert.equal((html().match(/data-ui="variant-editor-row"/g) ?? []).length, 4)
-    assert.match(html(), /220\.000/)
-
-    // A row opens to edit its combination and fields, announced on its toggle.
-    press('toggleRow|red-s')
-    assert.match(html(), /value="toggleRow\|red-s"[^>]*aria-expanded="true" aria-controls="editor-row-red-s"/)
-    assert.match(html(), /name="combo\|red-s\|color"/)
-    assert.match(html(), /name="field\|red-s\|defaultCode"/)
-    // Every row's Sửa/Lưu trữ repeat the same words, so each is described by its combination.
-    assert.match(html(), /<strong id="editor-row-red-s-title"[^>]*>(?:<!--k\[-->)*Đỏ \/ S</)
-    assert.equal((html().match(/aria-describedby="editor-row-red-s-title"/g) ?? []).length, 2)
-
-    // A bad weight stays flagged on the row after it is closed, not only inside it.
-    host.fire(editor(), 'input', { target: new FakeInput('field|red-s|weight', '1,5') })
-    press('toggleRow|red-s')
-    assert.doesNotMatch(html(), /name="field\|red-s\|weight"/)
-    assert.match(html(), />row bad</)
-    assert.match(html(), /fix numbers/)
-
-    // A saved row takes its image through the design-system drop zone, with the drop hint inside it.
-    press('toggleRow|black-l')
-    assert.match(html(), /data-ui="image-drop-zone"/)
-    assert.match(html(), /data-ui="image-drop-picker" title="dropImage"/)
-    assert.doesNotMatch(html(), /data-ui="file-upload"|data-ui="lightbox-empty" data-size="large"/)
-    assert.match(html(), /id="editor-row-black-l-image" type="file"[^>]*name="image\|black-l"/)
-    const descendants = (node: HostNode): HostNode[] => [node, ...(node.children ?? []).flatMap(descendants)]
-    const target = () => descendants(root).find((node) => node.attrs?.['data-ui'] === 'variant-editor-image')!
-    let requests = 0
-    const originalFetch = globalThis.fetch
-    let finish!: (response: Response) => void
-    globalThis.fetch = (() => {
-      requests++
-      return new Promise<Response>((resolve) => {
-        finish = resolve
-      })
-    }) as typeof fetch
-    try {
-      let prevented = 0
-      const drop = (file: File) =>
-        host.fire(target(), 'drop', {
-          preventDefault: () => {
-            prevented++
-          },
-          dataTransfer: { files: [file] },
-        })
-      drop(new File(['text'], 'notes.txt', { type: 'text/plain' }))
-      assert.equal(requests, 0, 'non-image drops do not upload')
-      host.fire(target(), 'dragover', { preventDefault() {} })
-      assert.match(html(), /data-ui="image-drop-zone"[^>]*data-drag="true"/)
-      const photo = new File(['image'], 'photo.png', { type: 'image/png' })
-      drop(photo)
-      assert.equal(requests, 1, 'dropping on the image frame starts upload')
-      assert.match(html(), /data-ui="image-drop-zone"[^>]*aria-busy="true"/)
-      drop(photo)
-      assert.equal(requests, 1, 'a second drop is ignored while uploading')
-      assert.equal(prevented, 3, 'drop never navigates away from the form')
-      finish(new Response('{}', { status: 400 }))
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      assert.match(html(), /imageFailed/)
-      assert.doesNotMatch(html(), /data-ui="image-drop-zone"[^>]*aria-busy="true"/)
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  } finally {
-    mounted.dispose()
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete globals[key]
-      else globals[key] = value
-    }
-  }
-})
-
-test('variant editor: a viewer without the save permission reads the setup but cannot change it', () => {
-  const view = createVariantEditorView({
-    id: 'editor',
-    kind: 'product.template',
-    setup: teeSetup(),
-    editable: false,
-    saveFunction: 'product.saveVariantSetup',
-    labels: {},
-    relationLabels: relationSelectDemoConfig.labels,
-    lightboxLabels: {
-      open: 'Open {alt}',
-      close: 'Close',
-      previous: 'Previous',
-      next: 'Next',
-      zoomIn: 'Zoom in',
-      zoomOut: 'Zoom out',
-      counter: '{index} / {total}',
-    },
-    media: { upload: true, remove: true },
-  })
-  const html = renderToString(view.view())
-  assert.match(html, /readOnly/)
-  assert.doesNotMatch(html, /data-ui="relation-select"/, 'no attribute picker')
-  assert.doesNotMatch(html, /value="(generate|addRow|reset|selectAll\||removeLine\||removeRow\|)/)
-  assert.match(html, /name="values\|color\[\]" value="red" checked="true" disabled/)
-  assert.match(html, /value="toggleRow\|v1"/, 'rows can still be opened to read')
-})
-
-test("product modal: the footer's More menu names archive vs restore by the record's state, and stays empty while creating", () => {
-  const active = render(templateModalDefinition.actions!(contextOf(templateData())) as JSXChild)
-  assert.match(active, /name="__command" value="archive"/)
-  assert.match(active, /product_backend\.archive\.action/)
-  assert.doesNotMatch(active, /product_backend\.archive\.restore/)
-  // Delete lives in the same menu, gated by its own permission.
-  assert.match(active, /name="__command" value="delete"/)
-  // Its label is shortened for the footer row — the menu's own aria-label stays the fuller phrase.
-  assert.match(active, /product_backend\.action\.moreShort/)
-  // The trigger sits at the sheet's bottom edge, which clips overflow — opening
-  // downward like the design system's default would run the panel past it.
-  assert.match(active, /data-ui="menu"[^>]*data-placement="top"/)
-
-  const archived = render(
-    templateModalDefinition.actions!(
-      contextOf(templateData({ record: record({ active: false, revisionId: 'rev-2' }) })),
-    ) as JSXChild,
-  )
-  assert.match(archived, /product_backend\.archive\.restore/)
-
-  const archiveOnly = render(
-    templateModalDefinition.actions!(
-      contextOf(templateData({ permissions: { ...templateData().permissions, delete: false } })),
-    ) as JSXChild,
-  )
-  assert.match(archiveOnly, /name="__command" value="archive"/)
-  assert.doesNotMatch(archiveOnly, /name="__command" value="delete"/)
-
-  const noPermission = render(
-    templateModalDefinition.actions!(
-      contextOf(
-        templateData({ permissions: { ...templateData().permissions, archive: false, delete: false } }),
-      ),
-    ) as JSXChild,
-  )
-  // Save and Close still show — only the More menu itself has nothing left to offer.
-  assert.doesNotMatch(noPermission, /name="__command" value="archive"|name="__command" value="delete"/)
-  assert.doesNotMatch(noPermission, /product_backend\.action\.moreShort/)
-  // No second title line — the record's own name and state already sit in the modal's chrome.
-  assert.doesNotMatch(active, /data-ui="record-summary"/)
-  assert.doesNotMatch(active, /product_backend\.type\.goods/)
-
-  // Creating has no footer at all — ModalSheet renders none when `actions` is undefined,
-  // not an empty bar — and the create form owns its own submit button in the body.
-  assert.equal(templateModalDefinition.actions!(contextOf(templateData(), { creating: true })), undefined)
-})
-
-test('product modal: the footer carries Save (the General form, or the variant editor form on its tab) and Close beside More, outside the scrolling body', () => {
-  const onGeneral = render(
-    templateModalDefinition.actions!(contextOf(templateData(), { tab: 'general' })) as JSXChild,
-  )
-  assert.match(onGeneral, /name="__command" value="save"/)
-  assert.match(onGeneral, /form="product-template-general-form"/)
-  assert.doesNotMatch(onGeneral.match(/name="__command" value="save"[^>]*/)?.[0] ?? '', /disabled/)
-  assert.match(onGeneral, /data-record-close="true"/)
-  assert.match(onGeneral, /product_backend\.action\.close/)
-
-  // On Attributes & variants, Save submits the editor island's own form instead, and
-  // starts disabled until the island has a valid change to send.
-  const onVariants = render(
-    templateModalDefinition.actions!(
-      contextOf(templateData({ variantSetup: teeSetup() }), { tab: 'variants' }),
-    ) as JSXChild,
-  )
-  assert.doesNotMatch(onVariants, /name="__command" value="save"/)
-  const variantSave = onVariants.match(/<button[^>]*form="product-variant-editor-[^"]*-save"[^>]*/)?.[0] ?? ''
-  assert.match(variantSave, /disabled/)
-
-  const readOnly = render(
-    templateModalDefinition.actions!(
-      contextOf(templateData({ permissions: { ...templateData().permissions, save: false } }), {
-        tab: 'general',
-      }),
-    ) as JSXChild,
-  )
-  assert.doesNotMatch(readOnly, /name="__command" value="save"/)
-  assert.match(readOnly, /data-record-close="true"/, 'Close still shows without save permission')
-})
-
-test('product modal: a tab another module adds renders its island with the template, and none while creating', () => {
-  const data = templateData({
-    extensionTabs: [
-      { id: 'cosmetic_usage_care', label: 'Chu kỳ sử dụng', island: 'cosmetic-care.product-cycle-record' },
-    ],
-  })
-  const [tab] = templateModalDefinition.extensionTabs!(contextOf(data))
-  assert.equal(tab?.id, 'cosmetic_usage_care')
-  assert.equal(tab?.label(contextOf(data)), 'Chu kỳ sử dụng')
-  const html = render(tab!.view(contextOf(data)))
-  assert.match(html, /<ket-island data-island="cosmetic-care\.product-cycle-record"/u)
+  for (const name of ['defaultCode', 'barcode', 'weight', 'volume', 'costPrice'])
+    assert.equal(control(html, name), '', `${name} is per variant`)
+  assert.match(html, /ws\.identityVariants/)
+  assert.match(html, /ws\.measureVariants/)
+  assert.match(html, /ws\.costVariants/)
+  assert.match(html, /50 ml \(\+/, 'the attribute line shows its extra')
+  assert.match(html, /ws\.missing/, 'a selling variant without barcode is flagged')
   assert.match(
     html,
-    /data-props="\{&quot;templateId&quot;:&quot;tpl-1&quot;,&quot;locale&quot;:&quot;vi&quot;\}"/u,
+    /data-ui="row-link" href="[^"]*\?dialog=editVariant&amp;dialogId=v50"/,
+    'the whole variant row opens its editor',
   )
-  assert.deepEqual(templateModalDefinition.extensionTabs!(contextOf(data, { creating: true })), [])
-  assert.deepEqual(templateModalDefinition.extensionTabs!(contextOf(templateData())), [])
+  assert.doesNotMatch(html, /data-record-dialog="editVariant"/, 'no separate edit button')
+  assert.match(
+    html,
+    /<th data-ui="col" data-col="label" data-align="start" data-kind="text" data-width="medium"/,
+    'the variant name is a text column with room to read, not a picture-wide media column',
+  )
+  assert.doesNotMatch(html, /ws\.editNamed/)
+  const reader = render(
+    templateModalDefinition.body!(
+      contextOf(
+        data({
+          hasVariants: true,
+          variantSetup: variants,
+          permissions: { ...data().permissions, saveVariantSetup: false },
+        }),
+      ),
+    ),
+  )
+  assert.doesNotMatch(reader, /dialog=editVariant/, 'a role that may not edit variants gets plain rows')
 })
 
-test("product modal: the modal's own chrome carries the active/archived badge, not a body line", () => {
-  const badge = render(templateModalDefinition.status!(contextOf(templateData())))
-  assert.match(badge, /product_backend\.state\.active/)
-  assert.equal(templateModalDefinition.status!(contextOf(templateData(), { creating: true })), '')
+test('product page: the image dialog shows the chosen picture before it is sent', () => {
+  const empty = render(dialogs.addImage!.view(contextOf(data())))
+  assert.match(empty, /name="image"/)
+  assert.doesNotMatch(empty, /data-ui="upload-preview"/, 'nothing is chosen yet')
+  const chosen = render(
+    dialogs.addImage!.view(
+      contextOf(data(), {
+        state: { 'file:image': 'blob:http://ket.local/1', 'file:image:name': 'serum.png' },
+      }),
+    ),
+  )
+  assert.match(chosen, /<img data-ui="upload-preview" src="blob:http:\/\/ket\.local\/1" alt="serum\.png"/)
+  assert.match(chosen, /data-ui="upload-status"[^>]*>(?:<!--k\[-->)?serum\.png</)
 })
 
-test('product modal: creating renders the create form; an existing record has no body of its own', () => {
-  const html = render(templateModalDefinition.body!(contextOf(templateData(), { creating: true })))
-  assert.match(html, /name="__command" value="create"/)
-  assert.match(html, /name="name"/)
-  assert.match(html, /name="type"/)
-
-  assert.equal(templateModalDefinition.body!(contextOf(templateData())), '')
+test('product page: fields another role or the stock own are locked with the reason, and left out of the save', () => {
+  const c = contextOf(
+    data({
+      uomLocked: true,
+      permissions: { ...data().permissions, configureStock: false, setCost: false },
+    }),
+  )
+  const html = render(templateModalDefinition.body!(c))
+  for (const name of ['uomId', 'isStorable', 'tracking'])
+    assert.match(control(html, name), /disabled/, `${name} is locked`)
+  assert.match(html, /ws\.uomLocked/)
+  assert.match(html, /ws\.stockSetup/)
+  assert.match(control(html, 'type'), /disabled/, 'the type is chosen once, at creation')
+  const input = commands.save!.input(form({ name: 'Serum', listPrice: '250.000' }), c, {})
+  assert.equal(Object.hasOwn(input, 'uomId'), false, 'a locked unit is not sent, so it is kept')
+  for (const name of ['costPrice']) assert.match(control(html, name), /disabled/, `${name} is locked`)
+  const skipped = commands.save!.also!.filter(
+    (step) => step.when && !step.when(c, form({ costPrice: '1', isStorable: '1' })),
+  )
+  assert.deepEqual(
+    skipped.map((step) => step.fn),
+    ['product.setCost', 'stock.configureProduct'],
+  )
 })
 
-test('product modal commands: create mints its own id and opens the created record on General', () => {
-  assert.equal(commands.create!.after, 'open')
-  assert.equal(commands.create!.openTab, 'general')
-  assert.equal(commands.create!.created!({ id: 'tpl-9' }), 'tpl-9')
-  assert.equal(commands.create!.created!({}), null)
+test('product page: the sales tax is left to accounting, so no field shows it and no step writes it', () => {
+  const html = render(templateModalDefinition.body!(contextOf(data())))
+  assert.doesNotMatch(html, /name="taxId"/)
+  // A save that sent an empty tax would clear the one accounting set.
+  for (const name of ['create', 'save', 'duplicate'] as const)
+    assert.deepEqual(
+      (commands[name]!.also ?? []).filter((step) => step.fn.startsWith('account.')),
+      [],
+      `${name} writes nothing of accounting`,
+    )
+})
 
-  const form = new FormData()
-  form.set('name', 'Áo mới')
-  form.set('type', 'goods')
-  form.set('listPrice', '250000')
-  const input = commands.create!.input(form, contextOf(templateData(), { creating: true }), {})
-  assert.equal(input.name, 'Áo mới')
-  assert.equal(input.type, 'goods')
+test('product page: save reads numbers as the reader typed them and sets the cost only when it changed', () => {
+  const c = contextOf(data())
+  const typed = form({
+    name: 'Serum',
+    type: 'goods',
+    uomId: 'bottle',
+    listPrice: '250.000',
+    compareAtPrice: '300.000',
+    weight: '0,25',
+    hsCode: '3304.99',
+    saleOk: '1',
+    costPrice: '100.000',
+  })
+  const input = commands.save!.input(typed, c, {})
   assert.equal(input.listPrice, '250000')
-  assert.equal(typeof input.id, 'string')
-  assert.notEqual(input.id, '')
+  assert.equal(input.compareAtPrice, '300000')
+  assert.equal(input.weight, '0.25')
+  assert.equal(input.expectedRevisionId, 'rev-1')
+  assert.equal(input.saleOk, true)
+  assert.equal(input.purchaseOk, false)
+  const cost = commands.save!.also!.find((step) => step.fn === 'product.setCost')!
+  assert.equal(cost.when!(c, typed), false, 'the same cost is not written again')
+  assert.equal(cost.when!(c, form({ name: 'Serum' })), false, 'a form without the cost leaves it alone')
+  assert.equal(
+    cost.when!(c, form({ costPrice: '' })),
+    true,
+    'clearing a saved cost is sent, and refused on its field',
+  )
+  const changed = form({ costPrice: '120.000' })
+  assert.equal(cost.when!(c, changed), true)
+  assert.deepEqual(cost.input(changed, c, {}), { productId: 'tpl-1:default', standardPrice: '120000' })
+  assert.equal(commands.save!.issueField!('standardPrice', changed, c), 'costPrice')
 })
 
-test('product modal commands: save carries defaultCode/barcode only for a single-variant template', () => {
-  const form = new FormData()
-  form.set('name', 'Áo thun')
-  form.set('type', 'goods')
-  form.set('defaultCode', 'AO-01')
-  form.set('barcode', '8900000000000')
-  form.set('saleOk', '1')
-
-  const single = commands.save!.input(form, contextOf(templateData()), {})
-  assert.equal(single.defaultCode, 'AO-01')
-  assert.equal(single.barcode, '8900000000000')
-  assert.equal(single.saleOk, true)
-  assert.equal(single.purchaseOk, false)
-
-  const withVariants = commands.save!.input(form, contextOf(templateData({ hasVariants: true })), {})
-  assert.equal(Object.hasOwn(withVariants, 'defaultCode'), false)
-  assert.equal(Object.hasOwn(withVariants, 'barcode'), false)
-  assert.equal(commands.save!.after, 'refresh')
+test('product page: numbers parse in the reader’s language', () => {
+  assert.equal(parseNumber('1.250.000', 'vi'), '1250000')
+  assert.equal(parseNumber('0,25', 'vi'), '0.25')
+  assert.equal(parseNumber('0.25', 'vi'), '0.25', 'a dot that groups no thousands is a decimal point')
+  assert.equal(parseNumber('1.250,5', 'vi'), '1250.5')
+  assert.equal(parseNumber('1,250,000', 'en'), '1250000')
+  assert.equal(parseNumber('  ', 'vi'), null)
+  assert.equal(parseNumber('120.000 ₫', 'vi'), '120000')
 })
 
-test('product modal commands: save runs template, stock and tax in sequence, each side call gated by its own condition', () => {
-  assert.equal(commands.save!.fn, 'product.saveTemplate')
-  const also = commands.save!.also!
-  assert.equal(also.length, 2)
-  assert.equal(also[0]!.fn, 'stock.configureProduct')
-  assert.equal(also[1]!.fn, 'account.setProductTax')
+test('product page: stock by warehouse shows the min/max rules and sets them per warehouse', () => {
+  const ruled = warehouse({
+    orderpoints: [{ id: 'op', productId: 'tpl-1:default', minQuantity: 12, maxQuantity: 30, available: 8 }],
+  })
+  const c = contextOf(
+    data({ stock: { ...data().stock!, warehouses: [ruled, warehouse({ id: 'wh2', name: 'Kho 2' })] } }),
+  )
+  const html = render(templateModalDefinition.body!(c))
+  assert.match(html, /ws\.minStock/)
+  assert.match(html, />12</)
+  assert.match(html, />30</)
+  assert.match(html, /ws\.levelsNone/, 'a warehouse without a rule says so')
+  assert.match(html, /data-record-dialog="levels" data-record-param-id="wh2"/)
+  const readOnly = render(
+    templateModalDefinition.body!(
+      contextOf(data({ permissions: { ...data().permissions, orderpoints: false } })),
+    ),
+  )
+  assert.doesNotMatch(readOnly, /data-record-dialog="levels"/)
 
-  const form = new FormData()
-  form.set('isStorable', '1')
-  form.set('tracking', 'lot')
-  form.set('taxId', 'vat-10')
-  const ctx = contextOf(templateData())
-  assert.deepEqual(also[0]!.input(form, ctx, {}), {
+  const dialog = contextOf(c.data, { dialog: { name: 'levels', params: { id: 'wh' } } })
+  const view = render(dialogs.levels!.view(dialog))
+  assert.match(control(view, 'min.tpl-1:default'), /value="12"/)
+  const input = commands.levels!.input(
+    form({ 'min.tpl-1:default': '10', 'max.tpl-1:default': '' }),
+    dialog,
+    {},
+  )
+  assert.deepEqual(input, {
     templateId: 'tpl-1',
-    isStorable: true,
-    tracking: 'lot',
+    warehouseId: 'wh',
+    rules: [{ productId: 'tpl-1:default', minQuantity: '10', maxQuantity: null }],
   })
-  assert.deepEqual(also[1]!.input(form, ctx, {}), { templateId: 'tpl-1', taxId: 'vat-10' })
-
-  // Neither side call runs without its module installed and its own permission.
-  assert.equal(also[0]!.when!(ctx), true)
-  assert.equal(also[1]!.when!(ctx), true)
-  const noStock = contextOf(templateData({ stockEnabled: false }))
-  const noPermission = contextOf(
-    templateData({ permissions: { ...templateData().permissions, configureStock: false, setTax: false } }),
-  )
-  assert.equal(also[0]!.when!(noStock), false)
-  assert.equal(also[0]!.when!(noPermission), false)
-  assert.equal(also[1]!.when!(noPermission), false)
+  assert.equal(commands.levels!.issueField!('rules.0.maxQuantity', form({}), dialog), 'max.tpl-1:default')
 })
 
-test('product modal commands: archive carries the current revision and confirmation', () => {
-  assert.deepEqual(
-    commands.archive!.input(
-      new FormData(),
-      contextOf(templateData({ record: record({ revisionId: 'rev-1' }) })),
-      {},
-    ),
+test('product page: configuring attributes sends every row at once and maps refusals back to their controls', () => {
+  const c = contextOf(data({ hasVariants: true, variantSetup: setup() }), {
+    dialog: { name: 'configureAttributes', params: {} },
+    state: { lines: 'size,new-1', 'added.size': '1' },
+  })
+  const view = render(dialogs.configureAttributes!.view(c))
+  assert.match(view, /name="lines" value="size,new-1"/)
+  assert.match(view, /name="attributeName\.new-1"/)
+  assert.match(view, /name="newValue\.size\.0"/)
+  assert.match(view, /name="extra\.50"[^>]*value="80\.000"/, 'a chosen value shows its saved extra')
+  const submitted = form({
+    lines: 'size,new-1',
+    'values[size][]': ['30', '100'],
+    'extra.30': '0',
+    'extra.100': '150.000',
+    'newValue.size.0': '200 ml',
+    'newExtra.size.0': '-20.000',
+    'attributeName.new-1': 'Màu',
+    'newValue.new-1.0': 'Hồng',
+  })
+  const { lines, paths } = configureInput(submitted, c)
+  assert.deepEqual(lines, [
     {
-      id: 'tpl-1',
-      active: false,
-      expectedRevisionId: 'rev-1',
-      confirmed: true,
+      attributeId: 'size',
+      values: [
+        { valueId: '30', priceExtra: '0' },
+        { valueId: '100', priceExtra: '150000' },
+        { name: '200 ml', priceExtra: '-20000' },
+      ],
     },
-  )
-  assert.deepEqual(
-    commands.archive!.input(
-      new FormData(),
-      contextOf(templateData({ record: record({ active: false, revisionId: 'rev-2' }) })),
-      {},
-    ),
-    { id: 'tpl-1', active: true, expectedRevisionId: 'rev-2', confirmed: true },
-  )
+    { name: 'Màu', values: [{ name: 'Hồng', priceExtra: '0' }] },
+  ])
+  assert.equal(paths.get('lines.0.values.2.name'), 'newValue.size.0')
+  assert.equal(paths.get('lines.0.values.1.priceExtra'), 'extra.100')
+  assert.equal(commands.configureAttributes!.issueField!('lines.1.name', submitted, c), 'attributeName.new-1')
+  assert.deepEqual(commands.configureAttributes!.input(submitted, c, {}), { templateId: 'tpl-1', lines })
 })
 
-test('product modal commands: delete removes only this template and asks before running', () => {
-  assert.deepEqual(commands.delete!.input(new FormData(), contextOf(templateData()), {}), { ids: ['tpl-1'] })
-  assert.equal(commands.delete!.after, 'close')
-  assert.equal(typeof commands.delete!.confirm, 'function')
-  assert.match(commands.delete!.confirm!(contextOf(templateData()))!, /archive\.deleteConfirm/)
-})
-
-test('product page: all record blocks render in peer cards without tabs, with independent save targets', () => {
-  const data = templateData({
-    extensionTabs: [{ id: 'extra', label: 'Extra', island: 'product.extra' }],
+test('product page: editing a variant sends the whole setup with only that variant changed', () => {
+  const variants = setup()
+  const c = contextOf(
+    data({
+      hasVariants: true,
+      variantSetup: variants,
+      variants: [
+        {
+          id: 'v30',
+          label: '30 ml',
+          defaultCode: 'SR-30',
+          barcode: '8930000000301',
+          weight: '0.1',
+          volume: null,
+          active: true,
+          price: '250000',
+          costPrice: '90000',
+          image: null,
+        },
+        {
+          id: 'v50',
+          label: '50 ml',
+          defaultCode: 'SR-50',
+          barcode: null,
+          weight: null,
+          volume: null,
+          active: true,
+          price: '330000',
+          costPrice: null,
+          image: null,
+        },
+      ],
+    }),
+    { dialog: { name: 'editVariant', params: { id: 'v50' } } },
+  )
+  const submitted = form({
+    defaultCode: 'SR-50',
+    barcode: '8930000000509',
+    weight: '0,15',
+    volume: '',
+    costPrice: '110.000',
   })
-  const page = contextOf(data, { presentation: 'page', tab: 'variants' })
-  const body = render(templateModalDefinition.body!(page))
-  assert.equal((body.match(/data-ui="surface"/g) ?? []).length, 3)
-  assert.match(body, /product-template-general-form/)
-  assert.match(body, /product\.extra/)
-  assert.doesNotMatch(body, /data-ui="tabbed-view"/)
-  assert.ok(templateModalDefinition.tabs!.every((tab) => !tab.visible!(page)))
-  assert.deepEqual(templateModalDefinition.extensionTabs!(page), [])
-  const creating = render(
-    templateModalDefinition.body!(contextOf(data, { creating: true, presentation: 'page' })),
-  )
-  assert.match(creating, /^<div data-ui="surface"/)
-  assert.equal((creating.match(/data-ui="surface"/g) ?? []).length, 1)
-  const header = render(templateModalDefinition.actions!(page) as JSXChild)
-  assert.match(header, /form="product-template-general-form"/)
-  assert.match(header, /product_backend\.action\.saveGeneral/)
-  assert.doesNotMatch(header, / disabled|product-variant-editor-tpl-1-save/)
-  assert.doesNotMatch(render(generalTab(contextOf(data))), /data-ui="surface"/)
-  assert.doesNotMatch(
-    render(templateModalDefinition.body!(contextOf(data, { creating: true }))),
-    /data-ui="surface"/,
-  )
+  const input = commands.editVariant!.input(submitted, c, {}) as {
+    variants: Array<Record<string, unknown>>
+    lines: unknown[]
+  }
+  assert.deepEqual(input.lines, [
+    {
+      attributeId: 'size',
+      values: [
+        { valueId: '30', priceExtra: '0' },
+        { valueId: '50', priceExtra: '80000' },
+      ],
+    },
+  ])
+  assert.deepEqual(input.variants[0], {
+    id: 'v30',
+    valueIds: { size: '30' },
+    defaultCode: 'SR-30',
+    barcode: '8930000000301',
+    weight: '0.1',
+    volume: '0',
+    active: true,
+  })
+  assert.deepEqual(input.variants[1], {
+    id: 'v50',
+    valueIds: { size: '50' },
+    defaultCode: 'SR-50',
+    barcode: '8930000000509',
+    weight: '0.15',
+    volume: '0',
+    active: false,
+  })
+  assert.equal(commands.editVariant!.issueField!('variants.1.barcode', submitted, c), 'barcode')
+  assert.equal(commands.editVariant!.issueField!('variants.0.barcode', submitted, c), 'variants.0.barcode')
+  const cost = commands.editVariant!.also![0]!
+  assert.equal(cost.when!(c, submitted), true)
+  assert.deepEqual(cost.input(submitted, c, {}), { productId: 'v50', standardPrice: '110000' })
 })
 
-test('product page: the header goes back to the catalogue and More opens downward, create included', () => {
-  const page = render(
-    templateModalDefinition.actions!(
-      contextOf(templateData(), { tab: 'general', presentation: 'page' }),
-    ) as JSXChild,
+test('product page: create and duplicate keep the id they minted until they succeed', () => {
+  const creating = contextOf(data({ record: record({ id: '', defaultVariantId: null }) }), { creating: true })
+  const route = templateModalDefinition.context
+  assert.ok('route' in route)
+  route.route('new', true)
+  const first = commands.create!.input(
+    form({
+      name: 'Toner',
+      type: 'goods',
+      uomId: 'bottle',
+      listPrice: '90.000',
+      costPrice: '40.000',
+    }),
+    creating,
+    {},
   )
-  assert.match(page, /data-record-close="true"/)
-  assert.match(page, /product_backend\.action\.back/)
-  assert.doesNotMatch(page, /product_backend\.action\.close/)
-  // A page's actions sit in its header, so the menu has room below the trigger.
-  assert.match(page, /data-ui="menu"[^>]*data-placement="bottom"/)
+  const retry = commands.create!.input(
+    form({ name: 'Toner', type: 'goods', uomId: 'bottle', listPrice: '90.000' }),
+    creating,
+    {},
+  )
+  assert.equal(retry.id, first.id, 'a retry after a refused side step addresses the same product')
+  const cost = commands.create!.also!.find((step) => step.fn === 'product.setCost')!
+  assert.deepEqual(cost.input(form({ costPrice: '40.000' }), creating, {}), {
+    productId: `${first.id}:default`,
+    standardPrice: '40000',
+  })
+  assert.equal(
+    commands.create!.created!({ ok: true, id: 'cost-row' }),
+    first.id,
+    'the created id is the template, not a side step’s value',
+  )
+  const next = commands.create!.input(form({ name: 'Mask' }), creating, {})
+  assert.notEqual(next.id, first.id, 'the next create mints a new id')
 
-  const creating = render(
-    templateModalDefinition.actions!(
-      contextOf(templateData(), { creating: true, presentation: 'page' }),
-    ) as JSXChild,
-  )
-  assert.match(creating, /data-record-close="true"/)
-  assert.match(creating, /product_backend\.action\.back/)
-  assert.doesNotMatch(creating, /name="__command"/, 'the create form submits from its body')
+  const open = contextOf(data(), {
+    dialog: { name: 'duplicate', params: {} },
+  })
+  const copy = commands.duplicate!.input(form({ name: 'Serum (bản sao)' }), open, {})
+  assert.equal(copy.sourceId, 'tpl-1')
+  const stock = commands.duplicate!.also!.find((step) => step.fn === 'stock.configureProduct')!
+  assert.equal(stock.input(form({}), open, {}).templateId, copy.id, 'the copy keeps the stock setup')
+  assert.equal(commands.duplicate!.navigate!({}, open), `/admin/product/templates/${copy.id}`)
 })
 
-test("product page: runtime copy is in the reader's language before and after the read", () => {
-  const labels = templateModalDefinition.labels as () => Record<string, string>
-  // The test environment has no document language, so the definition falls back to Vietnamese.
-  assert.equal(labels()['recordModal.saved'], 'Thay đổi đã được ghi nhận.')
-  assert.equal(labels()['recordModal.loading'], 'Đang tải…')
+test('product page: archive and image removal ask in a small confirmation; a role without the right is told why', () => {
+  const archive = dialogs.archive!
+  const c = contextOf(data(), { dialog: { name: 'archive', params: {} } })
+  assert.equal(archive.confirmation!.variant, 'destructive')
+  assert.equal(archive.confirmation!.message(c), 'product_backend.ws.archiveBody')
+  assert.equal(archive.confirmation!.disabled!(c), false)
+  const denied = contextOf(data({ permissions: { save: true } }), { dialog: { name: 'archive', params: {} } })
+  assert.equal(archive.confirmation!.message(denied), 'product_backend.ws.denied')
+  assert.equal(archive.confirmation!.disabled!(denied), true)
+  const restore = commands.restore!.input(
+    form({}),
+    contextOf(data({ record: record({ active: false }) })),
+    {},
+  )
+  assert.equal(restore.active, true)
+  const removing = contextOf(data(), { dialog: { name: 'removeImage', params: { id: 'media-2' } } })
+  assert.deepEqual(commands.removeImage!.input(form({}), removing, {}), { id: 'media-2' })
+  const blocked = render(dialogs.configureAttributes!.view(contextOf(data({ permissions: { save: true } }))))
+  assert.match(blocked, /ws\.denied/)
+})
+
+test('product page: the rail words each issue and links what is missing to its control', () => {
+  const c = contextOf(
+    data({
+      issues: [
+        {
+          code: 'belowMinimum',
+          tone: 'warning',
+          params: { warehouse: 'Kho chính', available: 8, minimum: 12, others: 0 },
+        },
+        { code: 'belowCost', tone: 'critical' },
+        { code: 'variantBarcodes', tone: 'warning', params: { count: 2 } },
+      ],
+      completeness: {
+        score: 60,
+        items: [
+          { key: 'image', done: false },
+          { key: 'description', done: false },
+          { key: 'categoryId', done: true },
+        ],
+      },
+    }),
+  )
+  const html = render(templateModalDefinition.pageAside!(c))
+  assert.match(
+    html,
+    /ws\.issue\.belowMinimumHelp\{&quot;warehouse&quot;:&quot;Kho chính&quot;,&quot;available&quot;:&quot;8&quot;,&quot;minimum&quot;:&quot;12&quot;/,
+  )
+  assert.doesNotMatch(html, /belowMinimumMore/, 'one warehouse short names it alone')
+  const many = render(
+    templateModalDefinition.pageAside!(
+      contextOf(
+        data({
+          issues: [
+            {
+              code: 'belowMinimum',
+              tone: 'warning',
+              params: { warehouse: 'Kho chính', available: 8, minimum: 12, others: 2 },
+            },
+          ],
+        }),
+      ),
+    ),
+  )
+  assert.match(
+    many,
+    /ws\.issue\.belowMinimumMore\{&quot;count&quot;:2\}/,
+    'the other short warehouses are counted',
+  )
+  assert.match(html, /ws\.issue\.belowCost</)
+  assert.match(html, /ws\.issue\.variantBarcodesHelp\{&quot;count&quot;:2/)
+  assert.doesNotMatch(html, /variantBarcodesMore/, 'a counted issue has no line for others')
+  assert.match(html, /data-record-dialog="addImage"/)
+  assert.match(html, /href="#product-record-description"/)
+  assert.equal(templateModalDefinition.pageAside!(contextOf(data(), { creating: true })), undefined)
+})
+
+test('product page: a fact each variant holds points at the variants card, so the list keeps one edge', () => {
+  const missing = {
+    score: 40,
+    items: [
+      { key: 'description', done: false },
+      { key: 'barcode', done: false },
+      { key: 'costPrice', done: false },
+    ],
+  }
+  const withVariants = data({
+    hasVariants: true,
+    variantSetup: setup(),
+    variants: [
+      {
+        id: 'v30',
+        label: '30 ml',
+        defaultCode: null,
+        barcode: null,
+        listPrice: '100000',
+        costPrice: null,
+        active: true,
+      } as never,
+    ],
+    completeness: missing,
+  })
+  const rail = render(templateModalDefinition.pageAside!(contextOf(withVariants)))
+  assert.match(rail, /href="#product-record-description"/)
+  assert.equal([...rail.matchAll(/href="#product-record-variants"/g)].length, 2, 'barcode and cost')
+  assert.doesNotMatch(rail, /href="#product-record-(barcode|costPrice)"/)
+  // Every entry is the same compact link: none falls back to bare text beside them.
+  const section = rail.slice(rail.indexOf('ws.missing'))
+  assert.equal([...section.matchAll(/data-ui="action"[^>]*data-size="compact"/g)].length, 3)
+  const page = render(templateModalDefinition.body!(contextOf(withVariants)))
+  assert.match(
+    page,
+    /data-ui="surface"[^>]*id="product-record-variants"|id="product-record-variants"[^>]*data-ui="surface"/,
+  )
+  // Without the right to change variants there is nowhere to send the reader: plain words.
+  const reader = render(
+    templateModalDefinition.pageAside!(
+      contextOf({ ...withVariants, permissions: { ...withVariants.permissions, saveVariantSetup: false } }),
+    ),
+  )
+  assert.doesNotMatch(reader, /href="#product-record-variants"/)
+})
+
+test('product page: a stock figure is not named like the flag that lets a product sell', () => {
+  // "Có thể bán" once named both, so the figure read as a yes/no about selling.
+  for (const lang of ['vi', 'en'] as const) {
+    const words = workspaceMessages[lang]
+    for (const key of ['ws.available', 'ws.metricAvailable'] as const)
+      assert.notEqual(words[key], words['ws.field.saleOk'], `${lang} ${key}`)
+  }
+  assert.equal(workspaceMessages.vi['ws.metricAvailable'], 'Tồn kho')
+  assert.equal(workspaceMessages.vi['ws.available'], 'Tồn kho')
+})
+
+test('product page: the margin slot stays without a cost, and a role without costs sees no money', () => {
+  const noCost = render(
+    templateModalDefinition.body!(contextOf(data({ margin: null, record: record({ costPrice: null }) }))),
+  )
+  assert.match(noCost, /ws\.detailNoCost/)
+  assert.match(noCost, /href="#product-record-costPrice"/)
+  const noMoney = contextOf(
+    data({
+      margin: null,
+      sales: { days: 30, quantity: 4, revenue: null, orders: 3, lastAt: null },
+      permissions: { ...data().permissions, money: false },
+    }),
+  )
+  const html = render(templateModalDefinition.body!(noMoney))
+  assert.equal(control(html, 'costPrice'), '')
+  assert.doesNotMatch(html, /ws\.detailNoCost|ws\.metricMargin/)
+  assert.match(html, /ws\.detailSoldQty/)
+  assert.match(html, /ws\.noMoney/)
+})
+
+test('product page: packagings list their units and barcodes, and add, edit and remove them through dialogs', () => {
+  const packed = data({
+    permissions: {
+      ...data().permissions,
+      addPackaging: true,
+      removePackaging: true,
+      packagingBarcodes: true,
+    },
+    packagings: [{ id: 'box6', name: 'Hộp 6', quantity: 6, active: true, barcode: '8930000000024' }],
+    packagingChoices: [{ value: 'carton', label: 'Thùng 24 · 24 Chai' }],
+    links: { ...data().links!, uoms: '/admin/product/uoms' },
+  })
+  const c = contextOf(packed)
+  const html = render(templateModalDefinition.body!(c)).replace(/<!--[\s\S]*?-->/g, '')
+  assert.match(
+    html,
+    /href="\/admin\/product\/uoms"[^>]*>[\s\S]*?ws\.manageUoms/,
+    'the units screen is one link away',
+  )
+  assert.match(html, /data-record-dialog="addPackaging"/)
+  assert.match(html, /6 Chai/, 'a packaging counts the product’s unit')
+  assert.match(html, /8930000000024/, 'a product without variants shows its packaging barcode')
+  assert.match(html, /data-record-dialog="packagingBarcode" data-record-param-id="box6"/)
+  assert.match(html, /data-record-dialog="removePackaging" data-record-param-id="box6"/)
+
+  const reader = render(
+    templateModalDefinition.body!(
+      contextOf({
+        ...packed,
+        permissions: {
+          ...packed.permissions,
+          addPackaging: false,
+          removePackaging: false,
+          packagingBarcodes: false,
+        },
+      }),
+    ),
+  )
+  assert.doesNotMatch(reader, /data-record-dialog="(addPackaging|packagingBarcode|removePackaging)"/)
+  const empty = render(templateModalDefinition.body!(contextOf(data({ packagings: [] }))))
+  assert.match(empty, /ws\.noPackagings\{&quot;uom&quot;:&quot;Chai&quot;\}/)
+
+  const adding = contextOf(packed, { dialog: { name: 'addPackaging', params: {} } })
+  const dialog = render(dialogs.addPackaging!.view(adding)).replace(/<!--[\s\S]*?-->/g, '')
+  assert.match(dialog, /<option value="carton"[^>]*>Thùng 24 · 24 Chai<\/option>/)
+  assert.match(dialog, /name="barcode"/, 'a product without variants names the barcode as it adds the unit')
+  const submitted = form({ uomId: 'carton', barcode: '8930000000031' })
+  assert.deepEqual(commands.addPackaging!.input(submitted, adding, {}), {
+    templateId: 'tpl-1',
+    uomId: 'carton',
+  })
+  const barcode = commands.addPackaging!.also![0]!
+  assert.equal(barcode.when!(adding, submitted), true)
+  assert.deepEqual(barcode.input(submitted, adding, {}), {
+    productId: 'tpl-1:default',
+    barcodes: [{ uomId: 'carton', barcode: '8930000000031' }],
+  })
+  assert.equal(barcode.when!(adding, form({ uomId: 'carton', barcode: '' })), false)
+  assert.equal(commands.addPackaging!.issueField!('barcodes.0.barcode', submitted, adding), 'barcode')
+  assert.match(
+    render(dialogs.addPackaging!.view(contextOf({ ...packed, packagingChoices: [] }))),
+    /ws\.noPackagingChoice/,
+    'with every unit added the dialog says where new units are made',
+  )
+
+  const editing = contextOf(packed, { dialog: { name: 'packagingBarcode', params: { id: 'box6' } } })
+  assert.match(render(dialogs.packagingBarcode!.view(editing)), /value="8930000000024"/)
+  assert.deepEqual(commands.packagingBarcode!.input(form({ barcode: '' }), editing, {}), {
+    productId: 'tpl-1:default',
+    barcodes: [{ uomId: 'box6', barcode: null }],
+  })
+  const removing = contextOf(packed, { dialog: { name: 'removePackaging', params: { id: 'box6' } } })
+  assert.deepEqual(commands.removePackaging!.input(form({}), removing, {}), {
+    templateId: 'tpl-1',
+    uomId: 'box6',
+  })
+})
+
+test('product page: a variant sets its barcode in each packaging in its own dialog', () => {
+  const variant = {
+    id: 'v50',
+    label: '50 ml',
+    defaultCode: 'SR-50',
+    barcode: null,
+    weight: null,
+    volume: null,
+    active: true,
+    price: '330000',
+    costPrice: null,
+    image: null,
+    packagingBarcodes: { box6: '8930000000024' },
+  }
+  const c = contextOf(
+    data({
+      hasVariants: true,
+      permissions: { ...data().permissions, packagingBarcodes: true },
+      variantSetup: setup(),
+      variants: [variant],
+      packagings: [
+        { id: 'box6', name: 'Hộp 6', quantity: 6, active: true, barcode: null },
+        { id: 'carton', name: 'Thùng 24', quantity: 24, active: true, barcode: null },
+      ],
+    }),
+    { dialog: { name: 'editVariant', params: { id: 'v50' } } },
+  )
+  const html = render(dialogs.editVariant!.view(c))
+  assert.match(
+    html,
+    /name="packaging\.box6"[^>]*value="8930000000024"|value="8930000000024"[^>]*name="packaging\.box6"/,
+  )
+  assert.match(html, /name="packaging\.carton"/)
+  const body = render(templateModalDefinition.body!(c))
+  assert.match(body, /ws\.packagingVariantHelp/, 'with variants the barcodes live with each variant')
+  assert.doesNotMatch(body, /data-record-dialog="packagingBarcode"/)
+
+  const step = commands.editVariant!.also!.find((one) => one.fn === 'product.setPackagingBarcodes')!
+  const unchanged = form({ 'packaging.box6': '8930000000024', 'packaging.carton': '' })
+  assert.equal(step.when!(c, unchanged), false, 'an untouched barcode is not written again')
+  const changed = form({ 'packaging.box6': '8930000000024', 'packaging.carton': '8930000000031' })
+  assert.equal(step.when!(c, changed), true)
+  assert.deepEqual(step.input(changed, c, {}), {
+    productId: 'v50',
+    barcodes: [
+      { uomId: 'box6', barcode: '8930000000024' },
+      { uomId: 'carton', barcode: '8930000000031' },
+    ],
+  })
+  assert.equal(commands.editVariant!.issueField!('barcodes.1.barcode', changed, c), 'packaging.carton')
 })

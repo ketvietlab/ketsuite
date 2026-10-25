@@ -76,7 +76,7 @@
     border-right: 1px solid var(--kv-panel-border);
     border-bottom: 1px solid var(--kv-panel-border);
     vertical-align: top;
-    text-align: left;
+    text-align: start;
   }
 
   :where([data-kv-design-system]) [data-ui="data-matrix-table"] :is(th, td):last-child {

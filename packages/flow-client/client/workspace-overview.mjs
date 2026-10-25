@@ -2,6 +2,7 @@ import { html, signal } from '@ketvietlab/ketjs-view'
 import { tr, flowDateFormatter } from './i18n.mjs'
 import { FlowButton, FlowTag, FlowProgress } from '@ketvietlab/flow-ui'
 import {
+  FlowLoading,
   FlowSection,
   FlowStack,
   FlowInline,
@@ -22,6 +23,7 @@ import { addDays, todayDate } from './timeline.mjs'
 import { statusKind, statusKinds } from './project-catalogs.mjs'
 import { taskAssigneeNames, taskAssigneeIds } from './task-assignees.mjs'
 import { gettingStarted } from './getting-started.mjs'
+import { createDeadlinePreview } from './deadline-preview.mjs'
 import { routes } from './routes.mjs'
 
 export const HORIZON_DAYS = 14
@@ -36,67 +38,128 @@ export function workspaceOverviewModel(data, workspaceId, today) {
     byId = new Map(data.tasks.map((t) => [t.id, t]))
   const kind = (t) => statusKind(data, t),
     open = tasks.filter((t) => kind(t) !== 'done')
-  const count = (list) =>
-    Object.fromEntries(statusKinds.map((k) => [k, list.filter((t) => kind(t) === k).length]))
-  const isBlocked = (t) => t.blockedBy?.some((id) => byId.has(id) && kind(byId.get(id)) !== 'done')
+  // Grouped once; per-project, per-day and per-person figures read these lists.
+  const groupBy = (list, keyOf) => {
+    const groups = new Map()
+    for (const t of list) {
+      const key = keyOf(t)
+      if (groups.has(key)) groups.get(key).push(t)
+      else groups.set(key, [t])
+    }
+    return groups
+  }
+  const byProject = groupBy(tasks, (t) => t.projectId),
+    openByProject = groupBy(open, (t) => t.projectId),
+    openByDue = groupBy(open, (t) => t.dueDate)
+  const count = (list) => {
+    const out = Object.fromEntries(statusKinds.map((k) => [k, 0]))
+    for (const t of list) if (Object.hasOwn(out, kind(t))) out[kind(t)]++
+    return out
+  }
+  const isBlocked = (t) =>
+    typeof t.blocked === 'boolean'
+      ? t.blocked
+      : t.blockedBy?.some((id) => byId.has(id) && kind(byId.get(id)) !== 'done')
   const overdue = open
       .filter((t) => t.dueDate && t.dueDate < today)
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
     blocked = open.filter(isBlocked),
     review = tasks.filter((t) => kind(t) === 'review')
+  const deadlines = data.deadlineCounts?.today === today ? data.deadlineCounts : null
   const horizon = [
-    { id: 'overdue', date: null, tasks: overdue },
+    { id: 'overdue', date: null, tasks: overdue, total: deadlines?.overdue ?? overdue.length },
     ...Array.from({ length: HORIZON_DAYS }, (_, i) => {
       const date = addDays(today, i)
-      return { id: date, date, tasks: open.filter((t) => t.dueDate === date) }
+      return {
+        id: date,
+        date,
+        tasks: openByDue.get(date) ?? [],
+        total: deadlines?.days[date] ?? openByDue.get(date)?.length ?? 0,
+      }
     }),
   ]
   const activeSprints = (data.sprints ?? [])
     .filter((s) => s.state === 'active' && inScope.has(s.projectId))
     .map((s) => {
-      const list = tasks.filter((t) => t.projectId === s.projectId && t.sprint === s.title)
+      const list = (byProject.get(s.projectId) ?? []).filter((t) => t.sprint === s.title)
       return {
         sprint: s,
         project: projects.find((p) => p.id === s.projectId),
-        total: list.length,
-        done: list.filter((t) => kind(t) === 'done').length,
+        total: s.taskTotals?.total ?? list.length,
+        done: s.taskTotals?.done ?? list.filter((t) => kind(t) === 'done').length,
         daysLeft: days(today, s.end),
       }
     })
     .sort((a, b) => a.daysLeft - b.daysLeft)
   const rows = projects.map((project) => {
-    const list = tasks.filter((t) => t.projectId === project.id),
-      own = open.filter((t) => t.projectId === project.id)
+    const list = byProject.get(project.id) ?? [],
+      own = openByProject.get(project.id) ?? []
+    const full = data.projectMetrics?.[project.id]
     return {
       project,
-      counts: count(list),
-      total: list.length,
-      overdue: own.filter((t) => t.dueDate && t.dueDate < today).length,
-      blocked: own.filter(isBlocked).length,
+      counts: full
+        ? { todo: full.todo, progress: full.progress, review: full.review, done: full.done }
+        : count(list),
+      total: full?.total ?? list.length,
+      overdue: full?.overdue ?? own.filter((t) => t.dueDate && t.dueDate < today).length,
+      blocked: data.blockedCounts
+        ? (data.blockedCounts.projects?.[project.id] ?? 0)
+        : own.filter(isBlocked).length,
       sprint: activeSprints.find((s) => s.sprint.projectId === project.id) ?? null,
     }
   })
-  const people = data.members
-    .filter((m) => m.status === 'active')
-    .map((member) => {
-      const mine = open.filter((t) => taskAssigneeIds(data, t).includes(member.id))
-      return { member, open: mine.length, overdue: mine.filter((t) => t.dueDate && t.dueDate < today).length }
-    })
-    .filter((x) => x.open)
-    .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
+  const load = new Map()
+  for (const t of open)
+    for (const id of new Set(taskAssigneeIds(data, t))) {
+      const x = load.get(id) ?? { open: 0, overdue: 0 }
+      x.open++
+      if (t.dueDate && t.dueDate < today) x.overdue++
+      load.set(id, x)
+    }
+  const people =
+    data.peopleMetrics ??
+    data.members
+      .filter((m) => m.status === 'active')
+      .map((member) => ({ member, open: 0, overdue: 0, ...load.get(member.id) }))
+      .filter((x) => x.open)
+      .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
   const ids = new Set(tasks.map((t) => t.id))
-  const activity = (data.history ?? [])
-    .filter((h) => ids.has(h.taskId))
-    .sort((a, b) => b.time.localeCompare(a.time))
-    .slice(0, 6)
+  // The six latest entries in one pass; sorting the whole history only to keep six grows with it.
+  const activity = []
+  for (const h of data.history ?? []) {
+    if (!ids.has(h.taskId) || (activity.length === 6 && h.time <= activity[5].time)) continue
+    const at = activity.findIndex((x) => h.time > x.time)
+    activity.splice(at < 0 ? activity.length : at, 0, h)
+    if (activity.length > 6) activity.pop()
+  }
   return {
     projects,
     tasks,
+    total: data.counts?.metrics?.total ?? tasks.length,
+    projectTotal: data.counts?.projects ?? projects.length,
+    openTotal: data.counts?.metrics ? data.counts.metrics.total - data.counts.metrics.done : open.length,
+    overdueTotal: data.counts?.metrics?.overdue ?? overdue.length,
+    blockedTotal: data.blockedCounts?.total ?? blocked.length,
+    reviewTotal: data.counts?.metrics?.review ?? review.length,
     open,
-    counts: count(tasks),
+    counts: data.counts?.metrics
+      ? {
+          todo:
+            data.counts.metrics.total -
+            data.counts.metrics.progress -
+            data.counts.metrics.review -
+            data.counts.metrics.done,
+          progress: data.counts.metrics.progress,
+          review: data.counts.metrics.review,
+          done: data.counts.metrics.done,
+        }
+      : count(tasks),
     overdue,
     blocked,
     review,
+    dueSoonTotal:
+      deadlines?.dueSoon ??
+      open.filter((t) => t.dueDate && t.dueDate >= today && t.dueDate < addDays(today, 7)).length,
     dueSoon: open.filter((t) => t.dueDate && t.dueDate >= today && t.dueDate < addDays(today, 7)),
     horizon,
     rows,
@@ -111,16 +174,34 @@ export function createWorkspaceOverview(ctx) {
   const d = ctx.data,
     selected = signal(''),
     hiddenStart = signal(/** @type {string[]} */ ([]))
+  const preview = createDeadlinePreview({
+    data: d,
+    workspaceId: ctx.workspaceId,
+    scope: () => JSON.stringify([d()?.company?.id, ctx.workspaceId?.(), ctx.route?.()]),
+    read: ctx.call ? (input, signal) => ctx.call('flow.issue.list', input, { signal }) : null,
+    refused: ctx.refused,
+  })
   const t = (key, values = []) => tr('flow.overview.' + key, values)
-  const kindLabel = {
-    todo: tr('flow.ui.to.do'),
-    progress: tr('flow.ui.in.progress'),
-    review: tr('flow.ui.awaiting.acceptance.9782f0'),
-    done: tr('flow.ui.done'),
-  }
+  // Read at render time: the overview outlives a locale switch.
+  const kindLabel = (/** @type {string} */ kind) =>
+    ({
+      todo: tr('flow.ui.to.do'),
+      progress: tr('flow.ui.in.progress'),
+      review: tr('flow.ui.awaiting.acceptance.9782f0'),
+      done: tr('flow.ui.done'),
+    })[kind]
   const kindTone = { todo: 'neutral', progress: 'blue', review: 'yellow', done: 'green' }
   const short = (date) =>
     flowDateFormatter({ day: 'numeric', month: 'short', timeZone: 'UTC' }).format(
+      new Date(date + 'T00:00:00Z'),
+    )
+  const columnLabel = (task) => {
+    const column = d().columns.find((c) => c.id === task.status)
+    return column?.labelKey ? tr(column.labelKey) : column?.label
+  }
+  // Chart ticks are numeric so fourteen columns fit; the selected day's table title spells the date out.
+  const tick = (date) =>
+    flowDateFormatter({ day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(
       new Date(date + 'T00:00:00Z'),
     )
   const weekday = (date) =>
@@ -134,7 +215,7 @@ export function createWorkspaceOverview(ctx) {
       legend,
       segments: ['done', 'review', 'progress', 'todo'].map((k) => ({
         id: k,
-        label: kindLabel[k],
+        label: kindLabel(k),
         value: counts[k],
         tone: kindTone[k],
       })),
@@ -148,31 +229,31 @@ export function createWorkspaceOverview(ctx) {
         {
           id: 'progress',
           label: t('progress'),
-          value: `${m.counts.done} / ${m.tasks.length}`,
+          value: `${m.counts.done} / ${m.total}`,
           visual: statusBar(t('progress'), m.counts),
-          detail: t('progressDetail', [pct(m.counts.done, m.tasks.length)]),
+          detail: t('progressDetail', [pct(m.counts.done, m.total)]),
           onClick: () => ctx.navigate('all-issues'),
         },
         {
           id: 'overdue',
           label: tr('flow.ui.overdue'),
-          value: String(m.overdue.length),
-          tone: m.overdue.length ? 'red' : 'neutral',
-          detail: t('overdueDetail', [m.dueSoon.length]),
+          value: String(m.overdueTotal),
+          tone: m.overdueTotal ? 'red' : 'neutral',
+          detail: t('overdueDetail', [m.dueSoonTotal]),
           onClick: () => ctx.navigate('dashboard', { risk: 'overdue' }),
         },
         {
           id: 'blocked',
           label: tr('flow.ui.blocked'),
-          value: String(m.blocked.length),
-          tone: m.blocked.length ? 'yellow' : 'neutral',
+          value: String(m.blockedTotal),
+          tone: m.blockedTotal ? 'yellow' : 'neutral',
           detail: t('blockedDetail'),
           onClick: () => ctx.navigate('dashboard', { risk: 'blocked' }),
         },
         {
           id: 'review',
           label: tr('flow.ui.awaiting.acceptance.9782f0'),
-          value: String(m.review.length),
+          value: String(m.reviewTotal),
           detail: t('reviewDetail'),
           onClick: () => ctx.navigate(routes['quality-inbox'] ? 'quality-inbox' : 'dashboard'),
         },
@@ -183,9 +264,12 @@ export function createWorkspaceOverview(ctx) {
     const current =
       selected() && m.horizon.some((x) => x.id === selected())
         ? selected()
-        : (m.horizon.find((x) => x.tasks.length)?.id ?? 'overdue')
+        : (m.horizon.find((x) => x.total)?.id ?? 'overdue')
     const day = m.horizon.find((x) => x.id === current),
-      shown = day.tasks.slice(0, 8)
+      remote = d().deadlineCounts && ctx.call,
+      page = preview.state()?.id === current ? preview.state() : null,
+      shown = (remote ? (page?.tasks ?? []) : day.tasks).slice(0, 8),
+      total = remote && page && !page.loading && !page.error ? page.total : day.total
     const title = day.date ? t('dueOn', [short(day.date)]) : t('overdueTasks')
     return FlowSection({
       inset: 'none',
@@ -193,48 +277,76 @@ export function createWorkspaceOverview(ctx) {
       description: t('horizonDetail'),
       children: FlowStack({
         children: html`
-   ${FlowColumnChart({ label: t('horizon'), selected: current, onSelect: (id) => selected.set(id), items: m.horizon.map((x) => (x.date ? { id: x.id, label: short(x.date), sublabel: weekday(x.date), value: x.tasks.length, muted: [0, 6].includes(new Date(x.date + 'T00:00:00Z').getUTCDay()), current: x.date === m.today } : { id: x.id, label: t('overdueColumn'), value: x.tasks.length, tone: 'red', outlier: true })) })}
+   ${FlowColumnChart({
+     label: t('horizon'),
+     selected: current,
+     onSelect: (id) => {
+       selected.set(id)
+       void preview.load(id)
+     },
+     items: m.horizon.map((x) =>
+       x.date
+         ? {
+             id: x.id,
+             label: tick(x.date),
+             sublabel: weekday(x.date),
+             value: x.total,
+             muted: [0, 6].includes(new Date(x.date + 'T00:00:00Z').getUTCDay()),
+             current: x.date === m.today,
+           }
+         : { id: x.id, label: t('overdueColumn'), value: x.total, tone: 'red', outlier: true },
+     ),
+   })}
    ${
-     day.tasks.length
-       ? FlowEvidenceTable({
-           label: title,
-           columns: [
-             { id: 'task', label: title, size: 'wide' },
-             { id: 'project', label: t('project') },
-             { id: 'assignee', label: t('assignee') },
-             { id: 'status', label: t('status') },
-           ],
-           rows: shown.map((task) => ({
-             id: task.id,
-             cells: {
-               task: FlowEvidenceTask({
+     remote && (!page || page.loading)
+       ? FlowLoading({ label: tr('flow.ui.opening.flow') })
+       : page?.error
+         ? FlowStack({
+             children: html`${FlowHint({ children: tr('flow.ui.unable.to.open.flow') })}${button(tr('flow.exchange.retry'), () => preview.load(current))}`,
+           })
+         : total
+           ? FlowEvidenceTable({
+               label: title,
+               columns: [
+                 { id: 'task', label: title, size: 'wide' },
+                 { id: 'project', label: t('project') },
+                 { id: 'assignee', label: t('assignee') },
+                 { id: 'status', label: t('status') },
+               ],
+               rows: shown.map((task) => ({
                  id: task.id,
-                 title: task.title,
-                 meta: day.date ? null : t('dueShort', [short(task.dueDate)]),
-                 onOpen: openTask(task),
-               }),
-               project: FlowEvidenceValue({
-                 value: m.projects.find((p) => p.id === task.projectId)?.title ?? '',
-               }),
-               assignee: FlowEvidenceValue({ value: taskAssigneeNames(d(), task) }),
-               status: FlowTag({
-                 label: kindLabel[statusKind(d(), task)] ?? task.status,
-                 tone: { review: 'yellow', done: 'green' }[statusKind(d(), task)] ?? 'neutral',
-               }),
-             },
-           })),
-           more:
-             day.tasks.length > shown.length
-               ? button(
-                   t(day.date ? 'more' : 'moreOverdue', [day.tasks.length - shown.length]),
-                   () =>
-                     day.date ? ctx.navigate('all-issues') : ctx.navigate('dashboard', { risk: 'overdue' }),
-                   'ghost',
-                 )
-               : null,
-           total: t('taskCount', [day.tasks.length]),
-         })
-       : FlowHint({ children: t('noneDue') })
+                 cells: {
+                   task: FlowEvidenceTask({
+                     id: task.id,
+                     title: task.title,
+                     meta: day.date ? null : t('dueShort', [short(task.dueDate)]),
+                     onOpen: openTask(task),
+                   }),
+                   project: FlowEvidenceValue({
+                     value: m.projects.find((p) => p.id === task.projectId)?.title ?? '',
+                   }),
+                   assignee: FlowEvidenceValue({ value: taskAssigneeNames(d(), task) }),
+                   status: FlowTag({
+                     // The project's own status name, as on the task list and board.
+                     label: columnLabel(task) ?? kindLabel(statusKind(d(), task)) ?? task.status,
+                     tone: { review: 'yellow', done: 'green' }[statusKind(d(), task)] ?? 'neutral',
+                   }),
+                 },
+               })),
+               more:
+                 total > shown.length
+                   ? button(
+                       t(day.date ? 'more' : 'moreOverdue', [total - shown.length]),
+                       () =>
+                         day.date
+                           ? ctx.navigate('all-issues')
+                           : ctx.navigate('dashboard', { risk: 'overdue' }),
+                       'ghost',
+                     )
+                   : null,
+               total: t(total === 1 ? 'taskCountOne' : 'taskCount', [total]),
+             })
+           : FlowHint({ children: t('noneDue') })
 }
   `,
       }),
@@ -308,7 +420,7 @@ export function createWorkspaceOverview(ctx) {
                   : FlowEvidenceValue({ value: '—', hint: t('noSprint') }),
               },
             })),
-            total: t('projectTotals', [m.projects.length, m.tasks.length, m.open.length]),
+            total: t('projectTotals', [m.projectTotal, m.total, m.openTotal]),
           })
         : empty,
     })
@@ -416,16 +528,44 @@ export function createWorkspaceOverview(ctx) {
   }
 
   /** `today` is injectable so the view is testable without the wall clock. */
-  const view = ({ workspace, empty, canCreate, today = todayDate(d().timezone) }) => {
-    const m = { ...workspaceOverviewModel(d(), workspace.id, today), today }
+  // Re-renders (menus, theme, toasts) reuse the model until the data, Workspace or day changes.
+  let last = null
+  const model = (data, id, today) => {
+    if (last?.data !== data || last.id !== id || last.today !== today)
+      last = { data, id, today, value: { ...workspaceOverviewModel(data, id, today), today } }
+    return last.value
+  }
+  const view = ({
+    workspace,
+    empty,
+    canCreate,
+    today = d().deadlineCounts?.today ?? todayDate(d().timezone),
+  }) => {
+    const m = model(d(), workspace.id, today)
     // Until the workspace has a task, counts and the due-date chart would only show zeros.
-    const main = m.tasks.length
-      ? html`${horizon(m)}${projects(m, empty, canCreate)}`
-      : projects(m, empty, canCreate)
+    const main = m.total ? html`${horizon(m)}${projects(m, empty, canCreate)}` : projects(m, empty, canCreate)
     return FlowStack({
       gap: 'lg',
-      children: html`${canCreate ? start(workspace, today) : null}${m.tasks.length ? stats(m) : null}${FlowQualityColumns({ main: FlowStack({ gap: 'lg', children: main }), aside: aside(m) })}`,
+      children: html`${canCreate ? start(workspace, today) : null}${m.total ? stats(m) : null}${FlowQualityColumns({ main: FlowStack({ gap: 'lg', children: main }), aside: aside(m) })}`,
     })
   }
-  return { view, reset: () => selected.set('') }
+  return {
+    view,
+    prepare() {
+      const counts = d()?.deadlineCounts
+      if (!counts) return
+      const id =
+        selected() && (selected() === 'overdue' || Object.hasOwn(counts.days, selected()))
+          ? selected()
+          : counts.overdue
+            ? 'overdue'
+            : (Object.keys(counts.days).find((day) => counts.days[day]) ?? 'overdue')
+      selected.set(id)
+      preview.prepare(id)
+    },
+    reset() {
+      selected.set('')
+      preview.reset()
+    },
+  }
 }

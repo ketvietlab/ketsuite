@@ -85,14 +85,14 @@ test('Commerce favorite redirect retains the list query and its explicit or inhe
 })
 
 test('Commerce modal width depends on record purpose, not active tab', () => {
-  for (const definition of [
-    purchaseOrderModalDefinition,
-    saleOrderModalDefinition,
-    templateModalDefinition,
-  ]) {
+  for (const definition of [purchaseOrderModalDefinition, saleOrderModalDefinition]) {
     assert.equal(size(definition as RecordModalDefinition<unknown>, true), 'default')
     assert.equal(size(definition as RecordModalDefinition<unknown>, false), 'large')
   }
+  // A product opens on its own page: wide (`size: 'large'`) whether new or saved, its
+  // cards and rail side by side.
+  assert.equal(size(templateModalDefinition as RecordModalDefinition<unknown>, true), 'large')
+  assert.equal(size(templateModalDefinition as RecordModalDefinition<unknown>, false), 'large')
   assert.equal(size(vendorPricelistDefinition, true), 'default')
   assert.equal(size(vendorPricelistDefinition, false), 'small')
   assert.equal(size(invoicingPolicyDefinition, false), 'small')

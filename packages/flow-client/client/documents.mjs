@@ -1,17 +1,9 @@
-import { documentAccess } from './document-access.mjs'
+import { createPagedOptions } from './paged-options.mjs'
 import { auditChange } from './audit-display.mjs'
 import { FlowInput, FlowLiveDoc, FlowLiveDocLegacyBlocks } from '@ketvietlab/flow-ui'
 import { tr, flowLocaleTag } from './i18n.mjs'
 import { html, each, signal } from '@ketvietlab/ketjs-view'
-import {
-  FlowShell,
-  FlowButton,
-  FlowSearch,
-  FlowSelect,
-  FlowSegmented,
-  FlowAvatar,
-  FlowEmpty,
-} from '@ketvietlab/flow-ui'
+import { FlowShell, FlowButton, FlowSelect, FlowSegmented, FlowAvatar, FlowEmpty } from '@ketvietlab/flow-ui'
 import {
   FlowUserPicker,
   FlowActivity,
@@ -22,6 +14,7 @@ import {
   FlowNotice,
   FlowSection,
   FlowToolbar,
+  FlowLoading,
 } from '@ketvietlab/flow-ui/workspace'
 import {
   FlowDocBlank,
@@ -34,8 +27,16 @@ import {
 
 import { pagesInScope } from './navigation.mjs'
 import { documentSiblings, filterDocumentTree } from './document-tree.mjs'
+import { documentTitle, noteInput, untitledDocument } from './document-notes.mjs'
 
-export const documentRoutes = new Set(['pages', 'all-pages', 'page', 'page-archived'])
+export const documentRoutes = new Set([
+  'pages',
+  'all-pages',
+  'page',
+  'page-archived',
+  'page-new',
+  'page-child',
+])
 export const documentBlocks = (page) =>
   structuredClone(page.blocks ?? [{ id: 'intro', type: 'paragraph', text: page.content ?? '' }])
 const normalize = (text) =>
@@ -48,16 +49,24 @@ const normalize = (text) =>
 // text edits are collected without rerendering on every keystroke or losing selection.
 export function createDocuments(ctx) {
   const search = signal(''),
-    scope = signal('shared'),
+    scope = signal(ctx.libraryVisibility?.() ?? 'shared'),
     inspector = signal('outline'),
     inspectorHidden = signal(false),
     collapsed = signal([]),
     active = signal(''),
     revision = signal(0),
     dirty = signal(false),
-    favorites = signal([])
+    favorites = signal([]),
+    creating = signal(false)
+  const liveControllers = new Map()
   const drafts = new Map(),
-    sharing = new Map()
+    sharing = new Map(),
+    saveTimers = new Map(),
+    saving = new Map()
+  let creationEntry = '',
+    focusPage = '',
+    focusPending = !!ctx.focusDocument,
+    disposed = false
   const canEdit = () => ctx.canWrite() && current()?.access?.write !== false
   const editAccess = (page) => {
     if (!sharing.has(page.id))
@@ -79,21 +88,68 @@ export function createDocuments(ctx) {
       (p) => p.projectId || !ctx.data().workspaces || p.workspaceId === ctx.workspaceId(),
     )
   const current = () => {
-    if (ctx.screen() === 'all-pages') return null
+    if (['all-pages', 'page-new', 'page-child'].includes(ctx.screen())) return null
     if (ctx.screen() === 'page') return owned().find((p) => p.id === ctx.record() && !p.archived)
     return owned().find(
       (p) => !p.archived && (scope() === 'private' ? p.visibility === 'private' : p.visibility !== 'private'),
     )
   }
+  // Readers are searched on the server among the people who can open the page's project
+  // or Workspace; the client never derives others' access.
+  const knownReaders = new Map()
+  const readers = ctx.call
+    ? createPagedOptions({
+        scope: () =>
+          JSON.stringify([ctx.data()?.company?.id, current()?.id, ctx.data()?.organizationRevision]),
+        refused: ctx.refused,
+        read: async (input, signal) => {
+          const page = current(),
+            companyId = ctx.data().company.id
+          const value = page.projectId
+            ? await ctx.call(
+                'flow.member.options',
+                { ...input, companyId, projectId: page.projectId },
+                { signal },
+              )
+            : await ctx.call(
+                'flow.access.list',
+                { ...input, companyId, scope: 'workspace', targetId: page.workspaceId },
+                { signal },
+              )
+          return { ...value, items: value.items.map((m) => ({ id: m.id, name: m.name, email: m.email })) }
+        },
+        accept: (items) => {
+          for (const m of items) knownReaders.set(m.id, m)
+        },
+      })
+    : null
+  // A chosen reader keeps their row of the read, email included, so choosing moves nothing;
+  // one outside the loaded people is named after it.
+  const readerOptions = (page) => {
+    const found = (readers?.state().items ?? []).filter((m) => m.id !== page.ownerId)
+    const missing = editAccess(page)
+      .readerIds.filter((id) => !found.some((m) => m.id === id))
+      .map((id) => {
+        const known =
+          knownReaders.get(id) ??
+          page.readers?.find((r) => r.id === id) ??
+          ctx.data().members.find((m) => m.id === id)
+        return { id, name: known?.name ?? tr('flow.ui.user.no.longer.available'), email: known?.email }
+      })
+    return [...found, ...missing]
+  }
   const draftFor = (page) => {
-    if (!drafts.has(page.id))
-      drafts.set(page.id, {
+    const key = `${ctx.data().company.id}:${page.id}`
+    if (!drafts.has(key))
+      drafts.set(key, {
         title: page.title,
         blocks: documentBlocks(page),
         liveDoc: page.liveDoc,
         dirty: false,
+        revision: 0,
+        syncStatus: 'saved',
       })
-    return drafts.get(page.id)
+    return drafts.get(key)
   }
   const refresh = () => revision.set(revision() + 1)
   const changed = () => {
@@ -115,25 +171,220 @@ export function createDocuments(ctx) {
       ...(ctx.screen() === 'all-pages' ? { returnTo: ctx.libraryURL() } : {}),
     })
   }
-  const save = async () => {
-    const page = current(),
-      draft = draftFor(page)
-    const ok = await ctx.mutate('flow.entity.save', {
-      collection: 'pages',
-      entityId: page.id,
-      expectedVersion: page.version,
-      title: draft.title,
-      description: draft.blocks
-        .map((b) => b.text ?? b.rows?.map((row) => row.join(' | ')).join('\n') ?? '')
-        .join('\n\n'),
-      blocks: structuredClone(draft.blocks),
-      liveDoc: draft.liveDoc,
-      parentId: page.parentId,
-      projectId: page.projectId,
+  const scheduleSave = (id) => {
+    const company = ctx.data().company.id,
+      key = `${company}:${id}`
+    clearTimeout(saveTimers.get(key))
+    saveTimers.set(
+      key,
+      setTimeout(() => {
+        saveTimers.delete(key)
+        void save(id, company)
+      }, 600),
+    )
+  }
+  const save = async (id = current()?.id, company = ctx.data().company.id) => {
+    if (company !== ctx.data()?.company.id) return false
+    const key = `${company}:${id}`
+    const page = ctx.data().pages.find((p) => p.id === id)
+    if (!page || disposed) return false
+    if (page.documentTransport) return liveControllers.get(key)?.flush() ?? false
+    if (!ctx.canWrite() || page.access?.write === false) return false
+    if (saving.has(key)) return saving.get(key)
+    clearTimeout(saveTimers.get(key))
+    saveTimers.delete(key)
+    const draft = draftFor(page)
+    const savedRevision = draft.revision
+    const operation = ctx
+      .mutate(
+        'flow.entity.save',
+        {
+          collection: 'pages',
+          entityId: page.id,
+          expectedVersion: page.version,
+          title: draft.title,
+          description: draft.blocks
+            .map((b) => b.text ?? b.rows?.map((row) => row.join(' | ')).join('\n') ?? '')
+            .join('\n\n'),
+          blocks: structuredClone(draft.blocks),
+          liveDoc: draft.liveDoc,
+          titleSource: page.titleSource,
+          parentId: page.parentId,
+          projectId: page.projectId,
+          workspaceId: page.workspaceId,
+        },
+        undefined,
+        { quiet: true },
+      )
+      .then((ok) => {
+        if (ok && draft.revision === savedRevision) draft.dirty = false
+        dirty.set([...drafts.values()].some((item) => item.dirty))
+        // Edits made while the request was in flight belong to a later save.
+        if (draft.revision !== savedRevision && !disposed && company === ctx.data()?.company.id)
+          scheduleSave(id)
+        return ok
+      })
+      .finally(() => saving.delete(key))
+    saving.set(key, operation)
+    return operation
+  }
+  const edit = (id, value, company = ctx.data().company.id) => {
+    const page = ctx.data()?.pages.find((p) => p.id === id)
+    if (
+      disposed ||
+      company !== ctx.data().company.id ||
+      !page ||
+      !ctx.canWrite() ||
+      page.access?.write === false
+    )
+      return
+    const draft = draftFor(page)
+    draft.liveDoc = value.snapshot
+    draft.blocks = FlowLiveDocLegacyBlocks(value)
+    if (page.titleSource === 'content') draft.title = documentTitle(draft.blocks)
+    draft.dirty = true
+    draft.revision++
+    dirty.set(true)
+    if (!page.documentTransport && page.titleSource === 'content') scheduleSave(page.id)
+  }
+  const syncDocument = (id, company, state) => {
+    if (disposed || company !== ctx.data()?.company.id) return
+    const page = ctx.data().pages.find((p) => p.id === id)
+    if (!page) return
+    const draft = draftFor(page)
+    draft.syncStatus = state.status
+    if (state.record?.page)
+      ctx.data.set({
+        ...ctx.data(),
+        pages: ctx
+          .data()
+          .pages.map((p) =>
+            p.id === id && Number(state.record.page.version) >= Number(p.version)
+              ? { ...p, ...state.record.page }
+              : p,
+          ),
+      })
+    if (state.status === 'saved') draft.dirty = false
+    dirty.set([...drafts.values()].some((item) => item.dirty))
+    refresh()
+  }
+  const pendingNotes = () =>
+    ctx
+      .data()
+      ?.pages.filter(
+        (page) =>
+          (page.documentTransport || page.titleSource === 'content') &&
+          drafts.get(`${ctx.data().company.id}:${page.id}`)?.dirty,
+      ) ?? []
+  const flush = async () => {
+    while (pendingNotes().length) {
+      for (const page of pendingNotes()) if (!(await save(page.id))) return false
+      if (disposed) return false
+    }
+    return true
+  }
+  const discardPendingNotes = () => {
+    for (const page of pendingNotes()) {
+      const key = `${ctx.data().company.id}:${page.id}`
+      clearTimeout(saveTimers.get(key))
+      saveTimers.delete(key)
+      drafts.delete(key)
+    }
+    dirty.set([...drafts.values()].some((draft) => draft.dirty))
+  }
+  const requestArchive = (id = current()?.id) => {
+    const company = ctx.data()?.company.id
+    const page = ctx.data()?.pages.find((p) => p.id === id)
+    if (disposed || !ctx.canWrite() || !page || page.archived || page.access?.write === false) return false
+    let operation
+    return ctx.confirmAction({
+      title: tr('flow.review.archive'),
+      message: tr('flow.documents.archiveHelp', [draftFor(page).title]),
+      label: tr('flow.review.archive'),
+      action: () => {
+        if (operation) return operation
+        operation = (async () => {
+          if (disposed || company !== ctx.data()?.company.id) return false
+          while (draftFor(page).dirty) if (!(await save(page.id, company))) return false
+          if (disposed || company !== ctx.data()?.company.id) return false
+          return command(page, 'archive')
+        })().finally(() => {
+          operation = null
+        })
+        return operation
+      },
     })
-    if (ok) {
-      draft.dirty = false
-      dirty.set(false)
+  }
+  const create = async () => {
+    if (creating() || ctx.busy() || !ctx.canWrite() || disposed) return false
+    const parent = ctx.screen() === 'page-child' ? ctx.data().pages.find((p) => p.id === ctx.record()) : null
+    if (ctx.screen() === 'page-child' && (!parent || parent.archived || parent.access?.write === false))
+      return false
+    const input = noteInput({
+      projectId: ctx.project() || null,
+      parent,
+      visibility: ctx.libraryVisibility?.() ?? scope(),
+    })
+    const entry = ctx.screen(),
+      entryRecord = ctx.record()
+    creating.set(true)
+    try {
+      return await ctx.mutate(
+        'flow.entity.save',
+        input,
+        (value) => {
+          if (disposed || ctx.screen() !== entry || ctx.record() !== entryRecord) return
+          inspector.set('outline')
+          if (parent) collapsed.set(collapsed().filter((id) => id !== parent.id))
+          focusPage = value.id
+          ctx.navigate(
+            'page',
+            {
+              id: value.id,
+              project: input.projectId ?? '',
+              scope: input.projectId ? 'project' : 'workspace',
+              returnTo: ctx.documentReturn(),
+              ...(ctx.serverShell ? { focus: 'content' } : {}),
+            },
+            { replace: true },
+          )
+        },
+        { quiet: true },
+      )
+    } finally {
+      creating.set(false)
+    }
+  }
+  const enter = () => {
+    if (['pages', 'page-new'].includes(ctx.screen()) && ctx.libraryVisibility)
+      scope.set(ctx.libraryVisibility())
+    if (!['page-new', 'page-child'].includes(ctx.screen())) {
+      if (focusPending && ctx.screen() === 'page') {
+        focusPage = ctx.record()
+        focusPending = false
+      }
+      creationEntry = ''
+      return
+    }
+    const key = `${ctx.data().company.id}:${ctx.screen()}:${ctx.record()}:${ctx.project()}:${ctx.workspaceId()}`
+    if (creationEntry === key) return
+    creationEntry = key
+    void create()
+  }
+  const afterRender = () => {
+    if (!focusPage || ctx.screen() !== 'page' || ctx.record() !== focusPage) return
+    const target = ctx.root()?.querySelector('[data-flow="live-doc"] [contenteditable="true"]')
+    if (target) {
+      target.focus({ preventScroll: true })
+      const heading = target.querySelector('[data-block="h1"]')
+      if (heading?.textContent === untitledDocument) {
+        const range = target.ownerDocument.createRange()
+        range.selectNodeContents(heading)
+        const selection = target.ownerDocument.defaultView.getSelection()
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+      focusPage = ''
     }
   }
   const library = () => {
@@ -156,16 +407,16 @@ export function createDocuments(ctx) {
       { id: 'workspace', title: tr('flow.ui.workspace.documents.52c25b'), projectId: null },
       ...workspaceProjects.map((p) => ({ ...p, projectId: p.id })),
     ].filter((p) => filter === 'all' || p.id === filter)
-    return FlowShell({
+    const groups = owners.map((owner) => ({
+      ...owner,
+      pages: filterDocumentTree(pagesInScope(items, owner.projectId), (page) =>
+        normalize(page.title).includes(normalize(ctx.librarySearch())),
+      ),
+    }))
+    const shell = {
       navigation: ctx.managementViews(),
       contentWidth: 'wide',
       title: tr('flow.ui.document.library'),
-      search: FlowSearch({
-        label: tr('flow.ui.search.documents'),
-        placeholder: tr('flow.ui.search.library'),
-        value: ctx.librarySearch(),
-        onInput: (e) => ctx.updateLibrary({ docq: e.target.value }),
-      }),
       breadcrumb: ctx.data().company.name,
       sidebar: ctx.sidebar(),
       actions: FlowButton({
@@ -173,7 +424,12 @@ export function createDocuments(ctx) {
         icon: 'plus',
         size: 'sm',
         disabled: !ctx.canWrite(),
-        onClick: () => ctx.navigate('page-new', { scope: 'workspace', returnTo: ctx.libraryURL() }),
+        onClick: () =>
+          ctx.navigate('page-new', {
+            scope: 'workspace',
+            visibility: ctx.libraryVisibility(),
+            returnTo: ctx.libraryURL(),
+          }),
       }),
       children: FlowStack({
         children: html`
@@ -203,50 +459,83 @@ export function createDocuments(ctx) {
             }),
         }),
       })}
-      ${each(
-        owners,
-        (o) => o.id,
-        (o) => {
-          const pages = filterDocumentTree(pagesInScope(items, o.projectId), (p) =>
-            normalize(p.title).includes(normalize(ctx.librarySearch())),
-          )
-          return FlowSection({
-            title: o.title,
-            actions: FlowButton({
-              label: tr('flow.ui.open.document'),
-              size: 'sm',
-              onClick: () =>
-                ctx.navigate('pages', {
-                  project: o.projectId ?? '',
-                  scope: o.projectId ? 'project' : 'workspace',
-                  returnTo: ctx.libraryURL(),
-                }),
-            }),
-            children: pages.length
-              ? FlowDocTree({
-                  items: pages,
-                  active: '',
-                  collapsed: collapsed(),
-                  onOpen: open,
-                  onToggle: (id) =>
-                    collapsed.set(
-                      collapsed().includes(id) ? collapsed().filter((x) => x !== id) : [...collapsed(), id],
-                    ),
+      ${
+        !groups.some((group) => group.pages.length)
+          ? FlowEmpty({
+              title: ctx.librarySearch()
+                ? tr('flow.ui.no.documents.match.your.search')
+                : tr('flow.ui.no.documents.yet'),
+              description: tr('flow.ui.documents.in.this.scope.will.appear.here'),
+              action:
+                filter !== 'all' || ctx.librarySearch()
+                  ? FlowButton({
+                      label: tr('flow.ui.clear.filters'),
+                      size: 'sm',
+                      onClick: () => ctx.navigate('all-pages', { visibility: ctx.libraryVisibility() }),
+                    })
+                  : null,
+            })
+          : each(
+              groups,
+              (o) => o.id,
+              (o) => {
+                const pages = o.pages
+                return FlowSection({
+                  title: o.title,
+                  actions: FlowButton({
+                    label: tr('flow.ui.open.document'),
+                    size: 'sm',
+                    onClick: () =>
+                      ctx.navigate('pages', {
+                        project: o.projectId ?? '',
+                        scope: o.projectId ? 'project' : 'workspace',
+                        returnTo: ctx.libraryURL(),
+                      }),
+                  }),
+                  children: pages.length
+                    ? FlowDocTree({
+                        items: pages,
+                        active: '',
+                        collapsed: collapsed(),
+                        onOpen: open,
+                        onToggle: (id) =>
+                          collapsed.set(
+                            collapsed().includes(id)
+                              ? collapsed().filter((x) => x !== id)
+                              : [...collapsed(), id],
+                          ),
+                      })
+                    : FlowEmpty({
+                        title: tr('flow.ui.no.documents.yet'),
+                        description: ctx.librarySearch()
+                          ? tr('flow.ui.no.documents.match.your.search')
+                          : tr('flow.ui.documents.in.this.scope.will.appear.here'),
+                      }),
                 })
-              : FlowEmpty({
-                  title: tr('flow.ui.no.documents.yet'),
-                  description: ctx.librarySearch()
-                    ? tr('flow.ui.no.documents.match.your.search')
-                    : tr('flow.ui.documents.in.this.scope.will.appear.here'),
-                }),
-          })
-        },
-      )}`,
+              },
+            )
+      }`,
       }),
-    })
+    }
+    return ctx.serverShell ? shell.children : FlowShell(shell)
   }
+  const getDocumentActions = (project) =>
+    FlowInline({
+      children: html`${
+        ctx.documentReturn() || !project
+          ? FlowButton({
+              label: tr(ctx.documentReturn() ? 'flow.documents.backToLibrary' : 'flow.ui.document.library'),
+              icon: 'book',
+              iconOnly: Boolean(ctx.documentReturn()),
+              size: 'sm',
+              onClick: ctx.returnToLibrary,
+            })
+          : null
+      }${project ? ctx.projectActions() : FlowAvatar({ name: ctx.data().user.name })}`,
+    })
   const view = () => {
     revision()
+    const documentCompany = ctx.data().company.id
     if (ctx.screen() === 'all-pages') return library()
     const page = current(),
       draft = page ? draftFor(page) : null
@@ -259,25 +548,18 @@ export function createDocuments(ctx) {
         : !p.archived && (visibility === 'private' ? p.visibility === 'private' : p.visibility !== 'private'),
     )
     const visible = filterDocumentTree(eligible, (p) => normalize(p.title).includes(normalize(search())))
-    const selected = draft?.blocks.find((b) => b.id === active())
     const headers =
       draft?.blocks
-        .filter((b) => ['heading', 'subheading'].includes(b.type))
-        .map((b) => ({ id: b.id, text: b.text, level: b.type === 'heading' ? 2 : 3 })) ?? []
+        .filter((b) => ['h1', 'heading', 'subheading'].includes(b.type))
+        .map((b) => ({
+          id: b.id,
+          text: b.text,
+          level: b.type === 'h1' ? 1 : b.type === 'heading' ? 2 : 3,
+        })) ?? []
     const button = (label, fn, icon, variant = 'ghost') =>
       FlowButton({ label, onClick: fn, icon, variant, size: 'sm' })
     const project = ctx.data().projects.find((p) => p.id === ctx.project())
-    const documentSearch = FlowSearch({
-      label: tr('flow.ui.search.documents'),
-      value: search(),
-      placeholder: tr('flow.ui.search.documents.711e40'),
-      onInput: (e) => search.set(e.target.value),
-    })
-    const documentActions = project
-      ? ctx.projectActions()
-      : FlowInline({
-          children: html`${button(tr('flow.ui.document.library'), () => ctx.navigate('all-pages'), 'book')}${FlowAvatar({ name: ctx.data().user.name })}`,
-        })
+    const documentActions = getDocumentActions(project)
     const tree = html`${FlowSegmented({
       label: tr('flow.ui.document.scope'),
       appearance: 'underline',
@@ -296,12 +578,12 @@ export function createDocuments(ctx) {
               !p.archived && (value === 'private' ? p.visibility === 'private' : p.visibility !== 'private'),
           )
           if (target) open(target.id)
-          else ctx.navigate('pages', { scope: ctx.project() ? 'project' : 'workspace' })
+          else ctx.navigate('pages', { scope: ctx.project() ? 'project' : 'workspace', visibility: value })
         }
       },
     })}${!visible.length ? FlowEmpty({ title: tr('flow.ui.no.documents.yet'), description: search() ? tr('flow.ui.try.another.search.term') : tr('flow.ui.your.team.s.documents.will.appear.here') }) : null}${FlowDocTree(
       {
-        onCreate: ctx.canWrite() && !isArchive ? () => ctx.navigate('page-new') : undefined,
+        onCreate: ctx.canWrite() && !isArchive ? () => ctx.navigate('page-new', { visibility }) : undefined,
         onAddChild:
           ctx.canWrite() && !isArchive
             ? (id) =>
@@ -321,7 +603,7 @@ export function createDocuments(ctx) {
             ? (id, targetId, position) => {
                 const source = ctx.data().pages.find((p) => p.id === id)
                 if (!source || source.access?.write === false) return
-                void ctx.mutate('flow.page.reorder', {
+                return ctx.mutate('flow.page.reorder', {
                   id,
                   targetId,
                   position,
@@ -336,23 +618,29 @@ export function createDocuments(ctx) {
       page && !isArchive
         ? FlowDocEditor({
             title: draft.title,
+            titleInContent: page.titleSource === 'content',
             subtitle: html`${FlowAvatar({ name: ctx.data().user.name })}<span
                 >${ctx.data().user.name} ·
-                ${draft.dirty ? tr('flow.ui.unsaved.changes') : tr('flow.ui.saved.in.this.session')}</span
-              >${FlowButton({ label: ctx.busy() ? tr('flow.ui.saving') : tr('flow.ui.save.document'), size: 'sm', disabled: !canEdit() || ctx.busy(), onClick: save })}${FlowScopeMenu(
+                ${draft.syncStatus === 'offline' || draft.syncStatus === 'error' ? tr('flow.document.sync.' + draft.syncStatus) : draft.dirty ? tr('flow.ui.unsaved.changes') : tr(page.documentTransport ? 'flow.ui.saved' : 'flow.ui.saved.in.this.session')}</span
+              >${FlowButton({ label: ctx.busy() ? tr('flow.ui.saving') : tr('flow.ui.save.document'), size: 'sm', disabled: (!canEdit() && draft.syncStatus !== 'error') || ctx.busy(), onClick: () => save() })}${FlowScopeMenu(
                 {
                   label: tr('flow.ui.document.options'),
+                  align: 'start',
                   items: [
                     ...(canEdit()
                       ? [
-                          {
-                            label: tr('flow.review.rename'),
-                            onClick: () => {
-                              inspector.set('rename')
-                              inspectorHidden.set(false)
-                            },
-                          },
-                          { label: tr('flow.review.archive'), onClick: () => command(page, 'archive') },
+                          ...(page.titleSource !== 'content'
+                            ? [
+                                {
+                                  label: tr('flow.review.rename'),
+                                  onClick: () => {
+                                    inspector.set('rename')
+                                    inspectorHidden.set(false)
+                                  },
+                                },
+                              ]
+                            : []),
+                          { label: tr('flow.review.archive'), onClick: () => requestArchive(page.id) },
                         ]
                       : []),
                     {
@@ -386,21 +674,24 @@ export function createDocuments(ctx) {
             children: FlowLiveDoc({
               id: `${ctx.data().company.id}-page-${page.id}`,
               label: tr('flow.ui.content'),
+              toolbar: 'floating',
+              surface: 'plain',
+              hideLabel: true,
               snapshot: draft.liveDoc,
+              transport: page.documentTransport,
+              onReady: (editor) => liveControllers.set(`${documentCompany}:${page.id}`, editor),
+              onDispose: () => liveControllers.delete(`${documentCompany}:${page.id}`),
+              onSync: (state) => syncDocument(page.id, documentCompany, state),
               blocks: draft.blocks,
               readOnly: !canEdit(),
-              onChange: (value) => {
-                draft.liveDoc = value.snapshot
-                draft.blocks = FlowLiveDocLegacyBlocks(value)
-                draft.dirty = true
-                dirty.set(true)
-              },
+              onChange: (value) => edit(page.id, value, documentCompany),
               onBlur: refresh,
             }),
             readOnly: !canEdit(),
             onTitle: (text) => {
               draft.title = text
               draft.dirty = true
+              draft.revision++
             },
             onText: (id, text, row, col) => {
               const b = draft.blocks.find((b) => b.id === id)
@@ -419,10 +710,29 @@ export function createDocuments(ctx) {
               refresh()
             },
           })
-        : FlowDocBlank({
-            title: isArchive ? tr('flow.ui.archived.document') : tr('flow.ui.document.library'),
-            children: html`<div>
-              ${FlowEmpty({ title: isArchive ? tr('flow.ui.archived.document') : ctx.screen() === 'page' ? tr('flow.ui.document.not.found') : tr('flow.ui.no.documents.yet'), description: isArchive ? tr('flow.ui.restore.this.document.to.continue.editing') : tr('flow.ui.select.a.document.in.the.tree.or.create.one.here'), action: button(tr('flow.ui.create.document'), () => ctx.navigate('page-new'), 'plus', 'primary') })}${
+        : ['page-new', 'page-child'].includes(ctx.screen())
+          ? FlowDocBlank({
+              title: untitledDocument,
+              children: FlowEmpty({
+                title: creating() ? tr('flow.ui.saving') : tr('flow.ui.create.document'),
+                description: creating()
+                  ? tr('flow.ui.opening.flow')
+                  : tr('flow.ui.select.a.document.in.the.tree.or.create.one.here'),
+                action:
+                  !creating() && ctx.canWrite()
+                    ? FlowButton({ label: tr('flow.ui.try.again'), onClick: create })
+                    : null,
+              }),
+            })
+          : ctx.loading?.() && ctx.screen() === 'page'
+            ? FlowDocBlank({
+                title: tr('flow.ui.document.library'),
+                children: FlowLoading({ label: tr('flow.ui.opening.flow') }),
+              })
+            : FlowDocBlank({
+                title: isArchive ? tr('flow.ui.archived.document') : tr('flow.ui.document.library'),
+                children: html`<div>
+              ${FlowEmpty({ title: isArchive ? tr('flow.ui.archived.document') : ctx.screen() === 'page' ? tr('flow.ui.document.not.found') : tr('flow.ui.no.documents.yet'), description: isArchive ? tr('flow.ui.restore.this.document.to.continue.editing') : tr('flow.ui.select.a.document.in.the.tree.or.create.one.here'), action: ctx.canWrite() ? button(tr('flow.ui.create.document'), () => ctx.navigate('page-new', { visibility }), 'plus', 'primary') : null })}${
                 isArchive
                   ? html`${each(
                       visible,
@@ -448,19 +758,14 @@ export function createDocuments(ctx) {
                           action: FlowButton({
                             label: tr('flow.ui.restore'),
                             disabled: !ctx.canWrite() || p.access?.write === false,
-                            onClick: () =>
-                              ctx.mutate('flow.entity.action', {
-                                collection: 'pages',
-                                entityId: p.id,
-                                action: 'restore',
-                              }),
+                            onClick: () => command(p, 'restore'),
                           }),
                         }),
                     )}`
                   : null
               }
             </div>`,
-          })
+              })
     const inspectorContent = html`${FlowSegmented({
       label: tr('flow.ui.page.details'),
       value: inspector(),
@@ -471,7 +776,7 @@ export function createDocuments(ctx) {
       ],
       onChange: (value) => inspector.set(value),
     })}${
-      inspector() === 'rename' && page
+      inspector() === 'rename' && page && page.titleSource !== 'content'
         ? FlowDocPanel({
             title: tr('flow.review.rename'),
             children: FlowStack({
@@ -482,8 +787,9 @@ export function createDocuments(ctx) {
                 onInput: (e) => {
                   draft.title = e.target.value
                   draft.dirty = true
+                  draft.revision++
                 },
-              })}${FlowButton({ label: tr('flow.ui.save'), disabled: !canEdit(), onClick: save })}`,
+              })}${FlowButton({ label: tr('flow.ui.save'), disabled: !canEdit(), onClick: () => save() })}`,
             }),
           })
         : inspector() === 'history' && page
@@ -543,19 +849,24 @@ export function createDocuments(ctx) {
                                 label: tr('flow.review.readers'),
                                 size: 'sm',
                                 value: editAccess(page).readerIds,
-                                options: ctx
-                                  .data()
-                                  .members.filter(
-                                    (m) =>
-                                      m.status === 'active' &&
-                                      m.id !== page.ownerId &&
-                                      documentAccess(
-                                        ctx.data(),
-                                        { ...page, visibility: 'shared', readerIds: [m.id] },
-                                        m.id,
-                                      ).read,
-                                  )
-                                  .map((m) => ({ id: m.id, name: m.name })),
+                                options: readerOptions(page),
+                                ...(readers
+                                  ? {
+                                      menu: {
+                                        open: readers.state().open,
+                                        onToggle: (open) => (open ? void readers.open() : readers.close()),
+                                      },
+                                      remote: {
+                                        query: readers.state().query,
+                                        loading: readers.state().loading,
+                                        error: readers.state().error,
+                                        total: readers.state().total,
+                                        onQuery: readers.query,
+                                        onRetry: readers.retry,
+                                        ...(readers.state().cursor ? { onMore: readers.more } : {}),
+                                      },
+                                    }
+                                  : {}),
                                 onChange: (ids) => {
                                   editAccess(page).readerIds = ids
                                   refresh()
@@ -591,9 +902,9 @@ export function createDocuments(ctx) {
                 })
     }`
     return FlowDocsShell({
+      bodyOnly: !!ctx.serverShell,
       sidebar: ctx.sidebar(),
       title: project?.title ?? ctx.data().company.name,
-      search: documentSearch,
       actions: documentActions,
       navigation: project ? ctx.projectViews() : null,
       tree,
@@ -604,5 +915,57 @@ export function createDocuments(ctx) {
       notice: ctx.notices(),
     })
   }
-  return { view }
+  const chrome = () => {
+    const project = ctx.data().projects.find((p) => p.id === ctx.project())
+    if (ctx.screen() === 'all-pages')
+      return {
+        title: tr('flow.ui.document.library'),
+        breadcrumb: ctx.data().company.name,
+        navigation: ctx.managementViews(),
+        contentWidth: 'wide',
+        actions: FlowButton({
+          label: tr('flow.ui.create.workspace.document'),
+          icon: 'plus',
+          size: 'sm',
+          disabled: !ctx.canWrite(),
+          onClick: () =>
+            ctx.navigate('page-new', {
+              scope: 'workspace',
+              visibility: ctx.libraryVisibility(),
+              returnTo: ctx.libraryURL(),
+            }),
+        }),
+      }
+    return {
+      title: project?.title ?? ctx.data().company.name,
+      documentTitle: true,
+      navigation: project ? ctx.projectViews() : null,
+      actions: getDocumentActions(project),
+      contentWidth: 'full',
+      contentMode: 'documents',
+    }
+  }
+  return {
+    chrome,
+    requestFocus() {
+      focusPending = true
+    },
+    view,
+    enter,
+    afterRender,
+    create,
+    edit,
+    save,
+    requestArchive,
+    flush,
+    hasPendingNotes: () => pendingNotes().length > 0,
+    discardPendingNotes,
+    hasChanges: () => [...drafts.values()].some((draft) => draft.dirty),
+    dispose: () => {
+      disposed = true
+      readers?.dispose()
+      for (const timer of saveTimers.values()) clearTimeout(timer)
+      saveTimers.clear()
+    },
+  }
 }

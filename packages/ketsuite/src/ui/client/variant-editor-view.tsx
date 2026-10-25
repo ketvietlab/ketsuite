@@ -24,6 +24,7 @@ import type {
   JSXChild,
   TemplateResult,
 } from '@ketvietlab/ketjs-view'
+import { variantCombinationPreview } from './variant-combinations.ts'
 import {
   Badge,
   Button,
@@ -44,6 +45,7 @@ import {
 } from '@ketvietlab/design-system'
 import type { LightboxLabels, RelationSelectLabels } from '@ketvietlab/design-system'
 import { icon } from '../icons.ts'
+import { productImageUrl } from './product-image.ts'
 import { callRecordFunction } from './record-modal.tsx'
 import { createVariantAttributeForm } from './variant-attribute-create.tsx'
 
@@ -114,10 +116,6 @@ const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const label = (labels: Record<string, string>, key: string, params: Record<string, unknown> = {}): string =>
   (labels[key] ?? key).replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`))
-
-/** The stored file at a rendition size; the original is served until the render job made it. */
-const imageUrl = (attachmentId: string, size: 'thumb' | 'medium' | 'large'): string =>
-  `/files/${encodeURIComponent(attachmentId)}?size=${size}`
 
 const IMAGE_TYPES = 'image/avif,image/gif,image/jpeg,image/png,image/webp'
 
@@ -247,13 +245,7 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
   const missingCombinations = (): Array<Record<string, string>> => {
     const groups = variantLines()
     if (!groups.length) return []
-    const all = groups.reduce<Array<Record<string, string>>>(
-      (acc, line) =>
-        acc.flatMap((prefix) =>
-          line.values.map((value) => ({ ...prefix, [line.attributeId]: value.valueId })),
-        ),
-      [{}],
-    )
+    const all = variantCombinationPreview(groups).combinations
     const taken = new Set(
       rows()
         .filter((row) => row.active)
@@ -573,8 +565,8 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
   const openImages = (row: Row, trigger: EventTarget | null): void =>
     viewer.open(
       row.images.map((image) => ({
-        src: imageUrl(image.attachmentId, 'large'),
-        thumbnail: imageUrl(image.attachmentId, 'thumb'),
+        src: productImageUrl(image.attachmentId, 'large'),
+        thumbnail: productImageUrl(image.attachmentId, 'thumb'),
         alt: image.alt || t('image'),
         caption: image.alt,
       })),
@@ -851,6 +843,13 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
       ) : undefined,
       body: (
         <div data-ui="variant-editor-body">
+          {editable && variantCombinationPreview(variantLines()).overflow
+            ? Notice({
+                tone: 'warning',
+                title: t('combinationLimitTitle'),
+                message: t('combinationLimitHint'),
+              })
+            : null}
           {lines().length ? (
             <ul data-ui="variant-editor-lines">
               {each(
@@ -875,8 +874,8 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
     return image ? (
       LightboxThumb({
         item: {
-          src: imageUrl(image.attachmentId, 'large'),
-          thumbnail: imageUrl(image.attachmentId, 'thumb'),
+          src: productImageUrl(image.attachmentId, 'large'),
+          thumbnail: productImageUrl(image.attachmentId, 'thumb'),
           alt: image.alt || t('image'),
         },
         labels: props.lightboxLabels,
@@ -1159,8 +1158,16 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
             </div>
           ) : missing.length ? null : (
             EmptyState({
-              title: t('variantsEmpty'),
-              message: variantLines().length ? t('variantsEmptyHint') : t('variantsNeedAttributes'),
+              title:
+                lines().length && !variantLines().length
+                  ? (props.labels.noExtraVariants ?? t('variantsEmpty'))
+                  : t('variantsEmpty'),
+              message:
+                lines().length && !variantLines().length
+                  ? (props.labels.noExtraVariantsHint ?? t('noVariantHint'))
+                  : variantLines().length
+                    ? t('variantsEmptyHint')
+                    : t('variantsNeedAttributes'),
             })
           )}
         </div>

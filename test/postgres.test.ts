@@ -19,7 +19,7 @@ import { postgresAdapter } from '@ketvietlab/ketjs-postgres'
 import { catalog, checkout, defaultTheme as theme, inventory } from '@ketvietlab/ketsuite'
 
 const mods = [catalog, inventory, checkout, theme]
-const manifest = compose(mods)
+const manifest = compose(mods, { companies: true })
 
 // A recording stand-in for the driver. The adapter is exercised for real; only the
 // socket is replaced, so no live server is needed to prove the SQL it emits.
@@ -290,7 +290,7 @@ test('idempotency: a key claimed but not finished is reported, not silently re-r
       },
     },
   })
-  const pendingManifest = compose([...mods, pending])
+  const pendingManifest = compose([...mods, pending], { companies: true })
   registerFunctions([...mods, pending])
   const first = callFn(
     'pending.hold',

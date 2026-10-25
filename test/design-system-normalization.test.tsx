@@ -1,3 +1,4 @@
+import { exampleApplications } from '../packages/design-system/src/catalogue/application-switcher.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -10,6 +11,7 @@ import {
   Checkbox,
   CheckboxGroup,
   CountBadge,
+  EmptyState,
   Field,
   Grid,
   Icon,
@@ -86,6 +88,11 @@ test('Lucide icons have one geometry and explicit decorative or informative sema
   const informative = render(<Icon name="triangle-alert" label="Needs review" tone="warning" />)
   assert.match(informative, /role="img" aria-label="Needs review"/)
   assert.doesNotMatch(informative, /aria-hidden/)
+})
+
+test('money in and money out have their Lucide arrows', () => {
+  assert.match(render(<Icon name="arrow-down-left" />), /<path d="M17 7 7 17"[^>]*>.*<path d="M17 17H7V7"/s)
+  assert.match(render(<Icon name="arrow-up-right" />), /<path d="M7 7h10v10"[^>]*>.*<path d="M7 17 17 7"/s)
 })
 
 test('action emphasis and tone are independent while legacy aliases still work', () => {
@@ -258,6 +265,45 @@ test('layout exposes token roles and tooltip associates the actual focus target 
   assert.doesNotMatch(tooltip, /<span data-ui="tooltip-trigger" aria-describedby/)
 })
 
+test('a table scroll region is the boundary, so a wrapping Stack keeps its cells at their own width', () => {
+  // The region contains its inline size: its table scrolls inside it instead of widening the page.
+  for (const [file, selector] of [
+    ['interactions/ket-table/styles.css', '[data-ui="kt-scroll"] {'],
+    ['patterns/data-table/styles.css', '[data-ui="table-scroll"][data-pattern="data-table"] {'],
+  ]) {
+    const css = readFileSync(`packages/design-system/src/${file}`, 'utf8')
+    const region = css.split('}').find((rule) => rule.includes(selector))
+    assert.ok(region, `${file} must own its scroll region`)
+    assert.match(region, /overflow-x: auto;/)
+    assert.match(region, /contain: inline-size;/)
+  }
+  // Shrinking the Stack instead takes the min-content of a two-line cell, so its lines collapse and overlap.
+  const layout = readFileSync('packages/design-system/src/layouts/layout/styles.css', 'utf8')
+  const stack = layout.split('}').find((rule) => rule.includes('[data-ui="stack"][data-pattern="stack"] {'))
+  assert.ok(stack, 'the public Stack must own its layout')
+  assert.doesNotMatch(stack, /grid-template-columns/)
+  assert.doesNotMatch(layout, /\[data-ui="stack"\]\[data-pattern="stack"\] > \*/)
+  const specimen = readFileSync('packages/design-system/src/catalogue/specimens.tsx', 'utf8')
+  assert.ok(specimen.includes("id: 'stack-scroll-boundary'"))
+})
+
+test('EmptyState preserves long search terms without widening or clipping a narrow layout', () => {
+  const value = 'W'.repeat(100)
+  const markup = render(<EmptyState title={value} message={`No match for ${value}`} />)
+  assert.ok(markup.includes(value), 'the reader must still see the complete search term')
+  assert.match(markup, /data-ui="empty" data-visual="empty" role="status"/)
+  const css = readFileSync('packages/design-system/src/primitives/feedback/styles.css', 'utf8')
+  const rule = css.split('}').find((rule) => rule.includes('[data-ui="empty"][data-visual] {'))!
+  assert.match(rule, /grid-template-columns: minmax\(0, 1fr\);/)
+  assert.match(rule, /overflow-wrap: anywhere;/)
+  assert.doesNotMatch(rule, /overflow:\s*(hidden|clip)/)
+  assert.ok(
+    readFileSync('packages/design-system/src/catalogue/specimens.tsx', 'utf8').includes(
+      "id: 'empty-long-content'",
+    ),
+  )
+})
+
 test('stacked data tables override desktop fixed row height at the owning selector', () => {
   const css = readFileSync('packages/design-system/src/patterns/data-table/styles.css', 'utf8')
   const row = css
@@ -295,7 +341,9 @@ test('page gutter and card gaps share the responsive layout token', () => {
 })
 
 test('a mobile location shell reserves no grid height for its closed navigation', () => {
-  const html = render(<AppShell sidebar="Navigation" location="Location" main="Content" />)
+  const html = render(
+    <AppShell applications={exampleApplications} sidebar="Navigation" location="Location" main="Content" />,
+  )
   assert.match(html, /data-has-location="true"/)
   assert.doesNotMatch(html, /data-has-topbar="true"/)
   assert.match(

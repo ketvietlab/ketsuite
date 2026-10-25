@@ -16,6 +16,63 @@ const USER_BACKEND_DIR = join(ROOT, 'packages/ketsuite/src/modules/user_backend'
 const PRODUCT_BACKEND_DIR = join(ROOT, 'packages/ketsuite/src/modules/product_backend')
 const entries = [
   {
+    source: join(UI_CLIENT_DIR, 'communication-collections.tsx'),
+    output: join(UI_CLIENT_DIR, 'communication-collections-bundle.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/screens/charge-rule-modal.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/client/charge-rule-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/desk-booking-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/desk-booking-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/folio-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/folio-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/reservation-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/reservation-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/cleaning-task-page.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/cleaning-task-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/service-unit.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/service-unit.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/plan/room-plan.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/room-plan.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/collection.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/reservation-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/reservation-book.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/stay-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/stay-book.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/collections/folio-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/folio-book.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/collections/billing-book.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_billing/client/billing-book.mjs'),
+  },
+
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/records/catalogue-modal.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/catalogue-modal.mjs'),
+  },
+  {
     source: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/modal/pricelist-view.tsx'),
     output: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/client/vendor-pricelist-modal.mjs'),
   },
@@ -67,14 +124,18 @@ const entries = [
     source: join(UI_CLIENT_DIR, 'mail-entry.mjs'),
     output: join(UI_CLIENT_DIR, 'mail-bundle.mjs'),
   },
-  // The CRM configuration record modals: one bundle, one export per record kind.
   {
-    source: join(CRM_BACKEND_DIR, 'modal/case-modal-view.tsx'),
-    output: join(CRM_BACKEND_DIR, 'client/crm-case-modal.mjs'),
+    source: join(UI_CLIENT_DIR, 'activity-entry.mjs'),
+    output: join(UI_CLIENT_DIR, 'activity-bundle.mjs'),
+  },
+  // The CRM sales screens: one island draws each of them whole.
+  {
+    source: join(CRM_BACKEND_DIR, 'sales/client-entry.mjs'),
+    output: join(CRM_BACKEND_DIR, 'client/crm-sales-screen.mjs'),
   },
   {
-    source: join(CRM_BACKEND_DIR, 'modal/configuration-modal-view.tsx'),
-    output: join(CRM_BACKEND_DIR, 'client/crm-configuration-modal.mjs'),
+    source: join(CRM_BACKEND_DIR, 'import-island.tsx'),
+    output: join(CRM_BACKEND_DIR, 'client/crm-import.mjs'),
   },
   // The user record modal, including the users collection's create action.
   {
@@ -100,6 +161,20 @@ const entries = [
     source: join(PRODUCT_BACKEND_DIR, 'modal/attribute-modal-view.tsx'),
     output: join(PRODUCT_BACKEND_DIR, 'client/attribute-modal.mjs'),
   },
+  // The catalogue's list island.
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'list/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/product-list.mjs'),
+  },
+  // The Units of measure list, and a unit's record modal over any admin page.
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'units/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/uom-list.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/uom-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/uom-modal.mjs'),
+  },
   // Loaded when the template modal opens its Attributes & variants tab.
   {
     source: join(UI_CLIENT_DIR, 'variant-editor-view.tsx'),
@@ -122,8 +197,12 @@ const ketViewRuntime = {
   },
 }
 
-export async function buildBackendClients() {
-  const available = entries.filter(({ source }) => existsSync(source))
+/** @param {{ only?: string }} [options] */
+export async function buildBackendClients(options = {}) {
+  const available = entries.filter(
+    ({ source, output }) =>
+      existsSync(source) && (!options.only || output.endsWith(`/client/${options.only}.mjs`)),
+  )
   await Promise.all(
     available.map(({ source, output }) =>
       esbuild.build({

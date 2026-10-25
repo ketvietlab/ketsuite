@@ -20,6 +20,7 @@ import {
 } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Placement, PlacementChange, Row } from '@ketvietlab/ketjs'
 import { studioAppearance } from './studio-style.ts'
+import { VISIT_NOTICE_LIMIT, visitConsentOf } from './visits.ts'
 
 import {
   canAccessSite,
@@ -45,7 +46,16 @@ const liveSiteAppearance = (published: unknown, site: Row): Row | null => {
   const appearance = hasPublished ? (published as Row) : {}
   const style = hasStyle ? (site.studioStyle as Row) : {}
   const { theme: _old, ...rest } = appearance
-  return { ...rest, ...style }
+  // Asking before tracking is site-wide and live like the style. It rides here because the page
+  // renderer is handed only a fixed few site fields, and this is what the page resolver owns.
+  const consent = visitConsentOf(site)
+  return {
+    ...rest,
+    ...style,
+    visitConsent: consent.visitConsent
+      ? { notice: consent.visitConsentNotice, version: consent.visitConsentVersion }
+      : null,
+  }
 }
 /**
  * What a person typed in the title box, as a literal.
@@ -633,6 +643,9 @@ export const cmsFunctions: Record<string, FnSpec> = {
       theme: 'text',
       tokens: 'json?',
       googleTagManagerId: 'text?',
+      visitConsent: 'bool?',
+      visitConsentNotice: 'text?',
+      visitConsentVersion: 'int?',
     },
     effects: ['read:website.Site', 'read:website.SiteDomain'],
     handler: async (ctx: Ctx, args) => {
@@ -664,6 +677,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
             theme: site.theme,
             tokens: site.tokens ?? null,
             googleTagManagerId: site.googleTagManagerId ?? null,
+            ...visitConsentOf(site),
           }
         : null
     },
@@ -726,6 +740,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
       theme: 'text',
       tokens: 'json?',
       googleTagManagerId: 'text?',
+      visitConsent: 'bool?',
+      visitConsentNotice: 'text?',
       siteGroup: 'text?',
       active: 'bool?',
     },
@@ -753,6 +769,23 @@ export const cmsFunctions: Record<string, FnSpec> = {
           : String(args.googleTagManagerId ?? '').trim() || null
       if (googleTagManagerId && !/^GTM-[A-Z0-9]{4,20}$/.test(String(googleTagManagerId)))
         return invalid('googleTagManagerId', 'website.error.invalidGoogleTagManagerId')
+      const visitConsent =
+        args.visitConsent === undefined ? existing?.visitConsent === true : args.visitConsent === true
+      const visitConsentNotice =
+        args.visitConsentNotice === undefined
+          ? ((existing?.visitConsentNotice as string | null | undefined) ?? null)
+          : String(args.visitConsentNotice ?? '').trim() || null
+      // Tracking that asks nothing is not consent: the switch needs words to show.
+      if (visitConsent && !visitConsentNotice)
+        return invalid('visitConsentNotice', 'website.error.visitConsentNoticeRequired')
+      if (visitConsentNotice && visitConsentNotice.length > VISIT_NOTICE_LIMIT)
+        return invalid('visitConsentNotice', 'website.error.visitConsentNoticeTooLong')
+      // A new wording is a new question. Agreements to the old one stop counting.
+      const previousVersion = Number(existing?.visitConsentVersion ?? 0)
+      const visitConsentVersion =
+        visitConsentNotice && visitConsentNotice !== (existing?.visitConsentNotice ?? null)
+          ? previousVersion + 1
+          : previousVersion || null
       const name = String(args.name ?? '').trim()
       const title = String(args.title ?? '').trim()
       const locale = String(args.defaultLocale ?? '').trim()
@@ -773,7 +806,20 @@ export const cmsFunctions: Record<string, FnSpec> = {
       )
       if (duplicate) return invalid('name', 'website.error.duplicateName')
       const cs = ctx
-        .change('website.Site', { ...args, name, title, defaultLocale: locale, googleTagManagerId }, existing)
+        .change(
+          'website.Site',
+          {
+            ...args,
+            name,
+            title,
+            defaultLocale: locale,
+            googleTagManagerId,
+            visitConsent,
+            visitConsentNotice,
+            visitConsentVersion,
+          },
+          existing,
+        )
         .cast([
           'id',
           'name',
@@ -784,6 +830,9 @@ export const cmsFunctions: Record<string, FnSpec> = {
           'siteGroup',
           'active',
           'googleTagManagerId',
+          'visitConsent',
+          'visitConsentNotice',
+          'visitConsentVersion',
         ])
         .required(['name', 'title', 'defaultLocale', 'theme'])
         .put('active', args.active ?? existing?.active ?? true)

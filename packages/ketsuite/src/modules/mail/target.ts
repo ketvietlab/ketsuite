@@ -1,5 +1,6 @@
-import { asc, defineFn, eq, from, inArray, KetError } from '@ketvietlab/ketjs'
+import { asc, defineFn, eq, from, inArray, KetError, like } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
+import { AUTHORIZATION_READ_EFFECTS, effectiveFunctionKeys } from '../user/authorization.ts'
 import {
   ensureThread,
   followThread,
@@ -7,7 +8,7 @@ import {
   listTimeline,
   postMessage,
   unfollowThread,
-} from './operations.ts'
+} from './collaboration.ts'
 
 export type CollaborationTarget = {
   id: string
@@ -20,7 +21,7 @@ export type TargetBridge = {
   verify(ctx: Ctx, targetId: string): Promise<CollaborationTarget>
 }
 
-const actorPartner = async (ctx: Ctx): Promise<Row> => {
+const actorUser = async (ctx: Ctx): Promise<Row> => {
   if (!ctx.actor)
     throw new KetError({
       code: 'E_MAIL_ACTOR_REQUIRED',
@@ -29,11 +30,22 @@ const actorPartner = async (ctx: Ctx): Promise<Row> => {
     })
   const U = ctx.table('user.User')
   const user = await ctx.db.one(from(U).where(eq(U.id, ctx.actor), eq(U.active, true)))
-  if (!user?.partnerId)
+  if (!user)
+    throw new KetError({
+      code: 'E_MAIL_ACTOR_REQUIRED',
+      module: 'mail',
+      message: 'the signed-in user is inactive or missing',
+    })
+  return user
+}
+
+const actorPartner = async (ctx: Ctx): Promise<Row> => {
+  const user = await actorUser(ctx)
+  if (!user.partnerId)
     throw new KetError({
       code: 'E_MAIL_ACTOR_PARTNER',
       module: 'mail',
-      message: 'the signed-in user has no active partner identity',
+      message: 'following requires a partner identity',
     })
   return user
 }
@@ -49,7 +61,7 @@ const ensureTargetThread = async (
   target: CollaborationTarget,
 ): Promise<Row> =>
   ensureThread(ctx, {
-    id: `thread:${bridge.resModel}:${target.id}`,
+    id: `thread:${encodeURIComponent(String(ctx.scope.company))}:${bridge.resModel}:${target.id}`,
     resModel: bridge.resModel,
     resId: target.id,
     displayName: target.displayName,
@@ -92,7 +104,7 @@ const pageOf = async (
   offset: number,
 ) => {
   const thread = await threadFor(ctx, bridge, target.id)
-  const actor = await actorPartner(ctx)
+  const actor = await actorUser(ctx)
   if (!thread)
     return {
       threadId: null,
@@ -101,6 +113,7 @@ const pageOf = async (
       messages: [],
       followers: [],
       following: false,
+      canFollow: Boolean(actor.partnerId),
     }
 
   const messages = await listTimeline(ctx, String(thread.id), { limit, offset })
@@ -171,6 +184,7 @@ const pageOf = async (
       partnerId: follower.partnerId,
       name: partnerById.get(String(follower.partnerId))?.name ?? follower.partnerId,
     })),
+    canFollow: Boolean(actor.partnerId),
     following: followers.some((follower) => follower.partnerId === actor.partnerId),
   }
 }
@@ -181,6 +195,36 @@ const pageOf = async (
  */
 export function targetFunctions(bridge: TargetBridge): Record<string, FnSpec> {
   return {
+    mentionCandidates: defineFn({
+      input: { targetId: 'id', search: 'text?', limit: 'int?' },
+      output: { id: 'id', name: 'text' },
+      effects: [...readEffects(bridge.targetEffect), ...AUTHORIZATION_READ_EFFECTS],
+      handler: async function mentionCandidatesHandler(ctx: Ctx, args) {
+        await actorUser(ctx)
+        const keys = ctx.manifest.permissions.coverageRequired
+          ? await effectiveFunctionKeys(ctx, ctx.actor!)
+          : null
+        if (keys && !keys.includes('partner.listPartners'))
+          throw new KetError({
+            code: 'E_MAIL_MENTION_PERMISSION',
+            module: 'mail',
+            message: 'mention selection requires contact read permission',
+          })
+        await bridge.verify(ctx, String(args.targetId))
+        const P = ctx.table('partner.Partner')
+        return (
+          await ctx.db.all(
+            from(P)
+              .where(
+                eq(P.active, true),
+                ...(args.search ? [like(P.name, `%${String(args.search).replace(/[%_]/g, '')}%`)] : []),
+              )
+              .orderBy(asc(P.name), asc(P.id))
+              .limit(Math.max(1, Math.min(50, Number(args.limit ?? 20)))),
+          )
+        ).map((row) => ({ id: row.id, name: row.name }))
+      },
+    }),
     timeline: defineFn({
       input: { targetId: 'id', limit: 'int?', offset: 'int?' },
       output: {
@@ -190,6 +234,7 @@ export function targetFunctions(bridge: TargetBridge): Record<string, FnSpec> {
         messages: 'json',
         followers: 'json',
         following: 'bool',
+        canFollow: 'bool',
       },
       effects: readEffects(bridge.targetEffect),
       handler: async (ctx: Ctx, args) => {

@@ -6,6 +6,7 @@ import { catalog, inventory, checkout, defaultTheme as theme } from '@ketvietlab
 
 export const storefront = defineDeployment({
   name: 'storefront',
+  companies: true,
   modules: [catalog, inventory],
   theme,
   datastore: 'main',
@@ -13,6 +14,7 @@ export const storefront = defineDeployment({
 
 export const admin = defineDeployment({
   name: 'admin',
+  companies: true,
   modules: [catalog, inventory, checkout],
   datastore: 'main',
   headless: true,

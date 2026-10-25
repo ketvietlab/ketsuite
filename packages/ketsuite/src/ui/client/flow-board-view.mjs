@@ -1,5 +1,5 @@
 // @ts-nocheck Dependency-free shared browser/SSR view.
-// Direct port of crm_backend/client/crm-kanban-view.mjs's shape: server
+// Ported from the CRM's former kanban view (since replaced by the sales island): server
 // resolves columns + issues into one JSON prop, this renders it and drags
 // cards with native HTML5 DnD, calling flow.issue.move directly on drop —
 // same conflict-reload-on-mismatch behavior, same no-JS <form> fallback.

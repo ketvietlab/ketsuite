@@ -30,7 +30,7 @@
     border-right: 1px solid var(--kv-panel-border);
     border-bottom: 1px solid var(--kv-panel-border);
     background: var(--kv-panel-bg);
-    text-align: left;
+    text-align: start;
     white-space: nowrap;
   }
 

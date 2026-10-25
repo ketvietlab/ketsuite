@@ -22,6 +22,9 @@ import { buildArtifactsExist } from './build-artifacts.mjs'
 import { buildBackendClients } from './build-backend-client.mjs'
 import { buildDesignSystemStyles } from './build-design-system-styles.mjs'
 import { buildDesignSystemAtlasRuntime } from './build-design-system-atlas-runtime.mjs'
+import { buildDesignSystemMermaid } from './build-design-system-mermaid.mjs'
+import { writeDesignSystemInventory } from './design-system-inventory.mjs'
+import { BACKEND_MERMAID_DIR, buildBackendMermaid } from './build-backend-mermaid.mjs'
 import { buildChartClient } from './build-chart-client.mjs'
 import { buildKetspecClient } from './build-ketspec-client.mjs'
 import { buildFlowClient } from './build-flow-client.mjs'
@@ -147,7 +150,7 @@ function copyAssets(source, destinations) {
         visit(from)
         continue
       }
-      if (codeExtension.has(extname(entry.name))) continue
+      if (codeExtension.has(extname(entry.name)) && !entry.name.endsWith('.d.mts')) continue
       const suffix = relative(source, from)
       for (const destination of destinations) {
         const to = join(destination, suffix)
@@ -166,10 +169,13 @@ try {
   // no-op rebuild both land on a self-consistent state.
   await buildBackendClients()
   await buildChartClient()
+  await buildBackendMermaid()
   await buildFlowClient()
   await buildWebsiteClient()
   await buildDesignSystemAtlasRuntime()
+  await buildDesignSystemMermaid()
   await buildKetspecClient()
+  writeDesignSystemInventory()
   const fingerprint = sourceFingerprint()
   const current = existsSync(join(BUILD, FINGERPRINT)) ? readFileSync(join(BUILD, FINGERPRINT), 'utf8') : null
   if (current === fingerprint && buildArtifactsExist(ROOT, packageNames)) {
@@ -226,6 +232,13 @@ try {
         if (!existsSync(declarations)) throw new Error(`TypeScript emitted no declarations for ${name}`)
         cpSync(declarations, dist, { recursive: true })
         copyAssets(join(PACKAGES, name, 'src'), [emitted, dist])
+        // Generated Mermaid is kept out of TypeScript (declarations and maps for 100 minified chunks)
+        // and goes out as it was bundled.
+        if (name === 'ketsuite' && existsSync(BACKEND_MERMAID_DIR)) {
+          const relativeDir = relative(join(PACKAGES, name, 'src'), BACKEND_MERMAID_DIR)
+          for (const destination of [emitted, dist])
+            cpSync(BACKEND_MERMAID_DIR, join(destination, relativeDir), { recursive: true })
+        }
       }
       await buildDesignSystemStyles(join(stageDist, 'design-system', 'styles.css'))
       writeFileSync(join(stageBuild, FINGERPRINT), fingerprint)

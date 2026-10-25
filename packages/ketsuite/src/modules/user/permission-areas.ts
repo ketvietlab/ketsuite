@@ -80,6 +80,7 @@ export const permissionAreas: Record<string, Area> = {
   oauth: { group: 'system', vi: 'Ứng dụng kết nối', en: 'Connected apps' },
   mail: { group: 'system', vi: 'Thư và thông báo', en: 'Mail' },
   mail_transport: { group: 'system', vi: 'Kênh gửi thư', en: 'Mail delivery' },
+  mail_inbound: { group: 'system', vi: 'Thư đến', en: 'Inbound mail' },
   flow: { group: 'system', vi: 'Quy trình', en: 'Flows' },
   website: { group: 'system', vi: 'Website', en: 'Website' },
   website_catalog: { group: 'system', vi: 'Website · Danh mục sản phẩm', en: 'Website · Product catalogue' },

@@ -1,9 +1,8 @@
+import { WorkspacePage, RecordPage } from '../page-regions.tsx'
 import { renderEntryBody } from '../post-document.tsx'
 import { ArchiveActions } from '../archive-actions.tsx'
 import { postFields, readPostFields } from './post-fields.tsx'
 import {
-  WorkspacePage,
-  RecordPage,
   Surface,
   Stack,
   Grid,

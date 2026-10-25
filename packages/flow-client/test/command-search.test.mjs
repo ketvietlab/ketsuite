@@ -47,3 +47,39 @@ test('recent commands stay within authorized bootstrap and do not duplicate resu
   )
   assert.equal(groups.flatMap((g) => g.items).filter((x) => x.id === 'task:KV-142').length, 1)
 })
+
+test('a large authorized collection yields a bounded set of distinct destinations', () => {
+  const large = {
+    ...data,
+    tasks: Array.from({ length: 10000 }, (_, i) => ({
+      id: `KV-${i}`,
+      title: `Large match ${i}`,
+      projectId: 'p',
+    })),
+  }
+  const rows = search('Large match', large)
+  assert.equal(rows.filter((x) => x.id.startsWith('task:')).length, 6)
+  assert.equal(new Set(rows.map((x) => JSON.stringify([x.route, x.params]))).size, rows.length)
+})
+test('a saved view opens as the saved views screen opens it, for members and guests alike', async () => {
+  const { routes } = await import('../dist/routes.mjs')
+  const { organizationRoutes } = await import('../dist/organization-routes.mjs')
+  const { operationRoutes } = await import('../dist/operations-state.mjs')
+  const views = [{ id: 'v', title: 'Việc của tôi', projectId: 'p', query: 'tồn', status: 'progress' }]
+  // A project opens on its default view, as from the sidebar.
+  const listed = { ...data, projects: [{ ...data.projects[0], defaultView: 'project-issues' }] }
+  assert.equal(search('Core', listed).find((x) => x.id === 'project:p')?.route, 'project-issues')
+  assert.equal(search('Core').find((x) => x.id === 'project:p')?.route, 'board')
+  for (const members of [data.members, [{ id: 'u', role: 'guest' }]]) {
+    const items = search('', { ...data, members, views })
+    const view = items.find((x) => x.id === 'view:v')
+    assert.equal(view?.route, 'project-issues')
+    assert.deepEqual(view.params, { project: 'p', view: 'v', q: 'tồn', status: 'progress' })
+    // Every result opens a screen the client has.
+    for (const item of items)
+      assert.ok(
+        routes[item.route] || organizationRoutes[item.route] || operationRoutes.has(item.route),
+        `${item.id} opens ${item.route}`,
+      )
+  }
+})

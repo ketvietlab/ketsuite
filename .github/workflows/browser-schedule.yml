@@ -1,0 +1,59 @@
+name: browser schedule
+
+# Runs the browser lane on a schedule rather than as a merge gate, while the product is still
+# settling. Every four hours this starts `browser.yml` on integration and develop, each only when
+# its head is a commit no earlier run has covered, so an idle repository costs one short job. Each
+# run uses that branch's own `browser.yml`, and its checks land on the commit it ran. A commit whose
+# run failed is not run again until the branch moves; start this by hand with `force` to rerun
+# every head, or start `browser.yml` on one branch.
+#
+# GitHub runs a schedule, and starts a workflow by hand, from the default branch's copy of these
+# files, so this takes effect once it reaches develop. A branch that does not have `browser.yml`
+# yet is skipped and said so.
+
+on:
+  schedule:
+    # Off the hour, when GitHub's scheduler is least crowded.
+    - cron: "23 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run every branch head, even one that already has a result.
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: browser-schedule
+  cancel-in-progress: false
+
+jobs:
+  start:
+    name: start the browser lane on the branches that moved
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          for branch in integration develop; do
+            if ! gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/browser.yml?ref=$branch" --silent; then
+              echo "$branch: has no browser.yml yet, skipped"
+              continue
+            fi
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$branch" --jq .sha)
+            # A run on this commit that is still going, or that passed, failed or timed out, is its
+            # result; a cancelled one, or one that never started, is not.
+            known=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/browser.yml/runs?head_sha=$sha&per_page=30" \
+              --jq '[.workflow_runs[] | select(.status != "completed" or .conclusion == "success" or .conclusion == "failure" or .conclusion == "timed_out")] | length')
+            if [ "$FORCE" != true ] && [ "$known" -gt 0 ]; then
+              echo "$branch ${sha:0:9}: already run, skipped"
+              continue
+            fi
+            gh workflow run browser.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+            echo "$branch ${sha:0:9}: started"
+          done

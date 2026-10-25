@@ -46,6 +46,7 @@ const manifest = compose([probe], {
       bundles: ['surface_probe.lookup', 'surface_probe.write'],
     },
   },
+  companies: true,
 })
 
 test('surfaces diagnose required lookups, deduplicate gaps and never suggest unrelated authority', () => {

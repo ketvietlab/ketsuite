@@ -14,7 +14,7 @@ export function gettingStarted(data, workspaceId, today) {
     ids = new Set(projects.map((p) => p.id))
   const done = {
     project: projects.length > 0,
-    task: data.tasks.some((t) => ids.has(t.projectId)),
+    task: data.tasks.some((t) => !t.archived && ids.has(t.projectId)),
     invite:
       data.members.some((m) => m.id !== data.user.id && m.status === 'active') ||
       (data.invitations ?? []).length > 0,
@@ -24,6 +24,10 @@ export function gettingStarted(data, workspaceId, today) {
     goal: (data.goals ?? []).some((g) => g.workspaceId === workspaceId && !g.archived),
     github: (data.github?.connections ?? []).some((c) => ids.has(c.projectId)),
   }
+  const state = data.gettingStartedState
+  if (state?.workspaceId === workspaceId)
+    for (const id of ['project', 'task', 'invite', 'page'])
+      if (typeof state[id] === 'boolean') done[id] = state[id]
   const steps = gettingStartedSteps
     .filter((id) => (id !== 'goal' || routes['goal-new']) && (id !== 'github' || routes.github))
     .map((id) => ({ id, done: done[id] }))

@@ -51,9 +51,9 @@ export const routes: Record<string, RouteEntry> = {
         const type = String(file.type)
         if (req.method === 'HEAD') {
           const meta = await storage.head(String(file.storeKey))
-          return meta
-            ? withHeaders(text('', { type }), { ...IMMUTABLE, 'content-length': String(meta.size) })
-            : missing()
+          // An SVG is markup, which only raw() may answer with, even without a body.
+          const empty = type === 'image/svg+xml' ? raw('', { type }) : text('', { type })
+          return meta ? withHeaders(empty, { ...IMMUTABLE, 'content-length': String(meta.size) }) : missing()
         }
         const object = await storage.get(String(file.storeKey))
         if (!object) return missing()

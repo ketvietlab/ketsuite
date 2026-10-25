@@ -1,3 +1,4 @@
+import { deploymentRoomFixture } from './helpers/hospitality-room-fixture.ts'
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import type { Row } from '@ketvietlab/ketjs'
@@ -26,7 +27,7 @@ const boot = async (t: TestContext) => {
   t.after(() => e2e.close())
   const scope = { company: 'acme', branches: null }
   const fixture = (name: string, input: Record<string, unknown>) =>
-    e2e.fixture.call<Row>(name, input, { scope })
+    deploymentRoomFixture<Row>(e2e.fixture, name, input, { scope })
 
   await fixture('partner.savePartner', { id: 'acme-party', kind: 'company', name: 'Kết Việt' })
   await fixture('company.saveCompany', {
@@ -76,6 +77,24 @@ const boot = async (t: TestContext) => {
       code: id,
       name: `Phòng ${id}`,
     })
+  // The desk books only an open property, and opening needs a rate.
+  await fixture('hospitality_core.saveRatePlan', {
+    id: 'bar',
+    propertyId: 'hotel',
+    roomTypeId: 'deluxe',
+    code: 'BAR',
+    name: 'Best rate',
+    rateType: 'nightly',
+    amount: '100',
+  })
+  const property = await fixture('hospitality_core.getProperty', { id: 'hotel' })
+  const opened = await fixture('hospitality_core.setPropertyLifecycle', {
+    propertyId: 'hotel',
+    lifecycle: 'active',
+    expectedVersion: property.value.version,
+    requestKey: 'staff-channel-open-property',
+  })
+  assert.equal(opened.value.ok, true, JSON.stringify(opened.value))
   const reservation = await fixture('hospitality_core.createReservation', {
     id: 'reservation-a',
     propertyId: 'hotel',
@@ -219,10 +238,13 @@ test('staff hospitality housekeeping workflow enforces CSRF, replay keys and str
         'idempotency-key': 'hospitality-complete-1',
         'if-match': `"${nextVersion}"`,
       },
-      body: JSON.stringify({ expectedVersion: nextVersion }),
+      body: JSON.stringify({
+        expectedVersion: nextVersion,
+        checklist: ['linen', 'bathroom', 'supplies', 'final'],
+      }),
     },
   )
-  assert.equal(completed.status, 200)
+  assert.equal(completed.status, 200, await completed.clone().text())
   assert.equal(((await completed.json()) as Envelope<Row>).data.outcome, 'completed')
 })
 
@@ -272,7 +294,7 @@ test('staff hospitality names the assignee a task actually points at', async (t)
   const { e2e } = await boot(t)
   const scope = { company: 'acme', branches: null }
   const fixture = (name: string, input: Record<string, unknown>) =>
-    e2e.fixture.call<Row>(name, input, { scope })
+    deploymentRoomFixture<Row>(e2e.fixture, name, input, { scope })
 
   // A housekeeper who has since left. The task still points at them, so the
   // screen still has to say who it was: the label is read by id rather than by
@@ -287,15 +309,28 @@ test('staff hospitality names the assignee a task actually points at', async (t)
     name: 'Trần Thu Dọn',
     defaultCompanyId: 'acme',
   })
-  await fixture('user.archiveUser', { id: 'housekeeper-left', active: false })
+  // The task was given to them while they still worked at the property's branch.
+  const property = await fixture('hospitality_core.getProperty', { id: 'hotel' })
+  await fixture('user.grantCompany', {
+    id: 'housekeeper-left:acme',
+    userId: 'housekeeper-left',
+    companyId: 'acme',
+  })
+  await fixture('user.grantBranch', {
+    id: 'housekeeper-left:branch',
+    userId: 'housekeeper-left',
+    branchId: property.value.branchId,
+  })
   const created = await fixture('hospitality_core.createCleaningTask', {
     id: 'task-left',
     code: 'HK-002',
-    roomId: '102',
+    // Room 102 already has its open daily clean.
+    roomId: '101',
     taskType: 'daily_clean',
     assigneeId: 'housekeeper-left',
   })
   assert.equal(created.value.ok, true, JSON.stringify(created.value))
+  await fixture('user.archiveUser', { id: 'housekeeper-left', active: false })
 
   const listed = await e2e.client.json<Envelope<{ items: Row[] }>>(
     '/api/staff/v1/hospitality/housekeeping/tasks?propertyId=hotel&status=todo',

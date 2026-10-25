@@ -1,4 +1,9 @@
 @layer ket.app {
+  :where([data-kv-design-system]) [data-ui="action-label"][data-truncate="true"] {
+    min-width: 0;
+    overflow: hidden;
+  }
+
   :where([data-kv-design-system]) [data-ui="action"] {
     position: relative;
     display: inline-flex;
@@ -112,6 +117,12 @@
     cursor: not-allowed;
   }
 
+  /* A chromeless action stays chromeless when disabled: a fill would read as pressed. */
+  :where([data-kv-design-system]) [data-ui="action"][data-variant="tertiary"]:disabled {
+    --kv-action-stroke: transparent;
+    background: transparent;
+  }
+
   :where([data-kv-design-system]) [data-ui="action-leading"] {
     display: inline-grid;
     flex: none;
@@ -120,6 +131,38 @@
     margin-block: calc(-1 * var(--kv-space-0-5));
     place-items: center;
     font-family: var(--kv-font-mono);
+  }
+
+  /* Brand choices deliberately use a larger visual stage than a 20px Lucide icon.
+     Keep the original brand colours readable in both themes without recolouring assets. */
+  :where([data-kv-design-system]) [data-ui="action"][data-logo="true"] {
+    min-height: 3rem;
+    min-width: 7rem;
+    padding: var(--kv-space-2) var(--kv-space-4);
+    background: #fff;
+  }
+
+  :where([data-kv-design-system]) [data-ui="action-logo"] {
+    width: 5rem;
+    height: 1.5rem;
+    object-fit: contain;
+  }
+
+  :where([data-kv-design-system]) [data-ui="action-selection"] {
+    position: absolute;
+    inset-block-start: var(--kv-space-0-5);
+    inset-inline-end: var(--kv-space-0-5);
+    color: var(--kv-color-accent);
+    visibility: hidden;
+  }
+
+  :where([data-kv-design-system]) [data-ui="action"][aria-pressed="true"] [data-ui="action-selection"] {
+    visibility: visible;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="action"][data-logo="true"]:is(:hover, :active, [aria-pressed="true"]):not(:disabled) {
+    background: #fff;
   }
 
   :where([data-kv-design-system])
@@ -215,7 +258,7 @@
     --kv-action-stroke: transparent;
   }
   :where([data-kv-design-system]) [data-ui="link"] {
-    color: var(--kv-accent);
+    color: var(--kv-accent-text);
     text-decoration: underline;
     text-underline-offset: var(--kv-space-0-5);
   }

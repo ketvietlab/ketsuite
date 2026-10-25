@@ -23,4 +23,11 @@ export const menus: Record<string, MenuDef> = {
     needs: 'product.listAttributes',
     sequence: 1020,
   },
+  'product.uoms': {
+    parent: 'product',
+    label: 'menu.uoms',
+    path: '/admin/product/uoms',
+    needs: 'product_backend.searchUnits',
+    sequence: 1030,
+  },
 }

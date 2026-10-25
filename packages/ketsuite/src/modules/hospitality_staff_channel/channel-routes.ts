@@ -16,6 +16,7 @@ import {
   CLEANING_TASK_TYPES,
   RESERVATION_STATES,
 } from '../hospitality_core/types.ts'
+import { CLEANING_CHECKS } from '../hospitality_core/cleaning-checklist.ts'
 
 type Req = Parameters<Route>[1]
 type Row = Record<string, unknown>
@@ -634,6 +635,18 @@ const expectedVersionBody = {
   required: ['expectedVersion'],
 }
 
+/** Completing a task confirms every cleaning check, as the desk's checklist does. */
+const completeTaskBody = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    expectedVersion: string,
+    checklist: { type: 'array', items: { type: 'string', enum: [...CLEANING_CHECKS] } },
+    completionNotes: { type: 'string', maxLength: 2000 },
+  },
+  required: ['expectedVersion', 'checklist'],
+}
+
 export const channelRoutes = routesOf(
   defineChannelRoute({
     profile: 'staff',
@@ -931,7 +944,7 @@ export const channelRoutes = routesOf(
     summary: 'Complete a housekeeping task with replay and optimistic-concurrency protection.',
     auth: 'required',
     capability: { key: 'hospitality.housekeeping.tasks', action: 'complete' },
-    request: { params: idParams, query: propertyQuery, body: expectedVersionBody },
+    request: { params: idParams, query: propertyQuery, body: completeTaskBody },
     responses: {
       '200': envelope(mutation),
       '404': envelope({ type: 'null' }),
@@ -1040,7 +1053,15 @@ function housekeepingMutation(action: 'start' | 'complete') {
       action === 'start' ? 'hospitality_core.startCleaningTask' : 'hospitality_core.completeCleaningTask'
     const result = (await ctx.call(
       fn,
-      { id: params.id, ...(action === 'start' ? { assigneeId: request.identity!.userId } : {}) },
+      action === 'start'
+        ? { id: params.id, assigneeId: request.identity!.userId }
+        : {
+            id: params.id,
+            checklist: request.body.checklist,
+            ...(request.body.completionNotes === undefined
+              ? {}
+              : { completionNotes: request.body.completionNotes }),
+          },
       url,
       req,
       {

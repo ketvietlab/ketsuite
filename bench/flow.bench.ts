@@ -23,6 +23,7 @@ const ROUNDS = Number(process.env.KET_BENCH_FLOW_ROUNDS ?? 7)
 
 const app = defineDeployment({
   name: 'flow_bench',
+  companies: true,
   modules: [
     suite.website,
     suite.address,
@@ -39,6 +40,7 @@ const app = defineDeployment({
   ],
   theme: suite.paperTheme,
   serve: {
+    permissions: async () => null,
     // The driver comes from the app rather than the framework, which cannot
     // depend on one without becoming a cycle.
     openStore,

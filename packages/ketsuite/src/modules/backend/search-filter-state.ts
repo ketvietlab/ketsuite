@@ -239,6 +239,9 @@ export const listSearchFilterFunctions = (
     favoriteId: 'text?',
     customFilters: 'json?',
   } as const
+  // The list sends its whole apply input (list key and the route it returns to) with every saved-search
+  // call, so the calls that only need the list accept the route and ignore it.
+  const favoriteInput = { id: 'id', listKey: 'text?', returnTo: 'text?' } as const
   const defaultKeyOf = (actor: string, listKey: string): string => `${actor}:${listKey}`
   /** At most one saved search per viewer and list may be the default one. */
   const clearCurrentDefault = async (
@@ -298,7 +301,7 @@ export const listSearchFilterFunctions = (
     }),
 
     deleteSearchFavorite: defineFn({
-      input: { id: 'id', listKey: 'text?' },
+      input: favoriteInput,
       output: { ok: 'bool' },
       effects: ['read:backend.SavedSearch', 'write:backend.SavedSearch'],
       handler: async (ctx, args) => {
@@ -314,7 +317,7 @@ export const listSearchFilterFunctions = (
     }),
 
     setDefaultSearchFavorite: defineFn({
-      input: { id: 'id', listKey: 'text?' },
+      input: favoriteInput,
       output: { ok: 'bool' },
       effects: ['read:backend.SavedSearch', 'write:backend.SavedSearch'],
       handler: async (ctx, args) => {

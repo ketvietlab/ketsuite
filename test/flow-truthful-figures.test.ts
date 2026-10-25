@@ -14,12 +14,14 @@ import { address, company, mail, partner, storage, user } from '@ketvietlab/kets
 import flow from '../packages/ketsuite/src/modules/flow/index.ts'
 import { FIELD_FILTER_MATCHES } from '../packages/ketsuite/src/modules/flow/index.ts'
 import { emptyIssueListState } from '../packages/ketsuite/src/modules/flow/search.ts'
+import { everyFunction } from './helpers/permissions.ts'
 
 const app = defineDeployment({
   name: 'flow_truthful_figures',
+  companies: true,
   modules: [address, partner, company, storage, user, mail, flow],
   headless: true,
-  serve: { sessions: { anonymous: { company: 'acme' } } },
+  serve: { permissions: everyFunction, sessions: { anonymous: { company: 'acme' } } },
 })
 
 const insert = async (
@@ -31,13 +33,16 @@ const insert = async (
   const sql = `INSERT INTO ${adapter.quoteIdent(tableNameFor(model))} (${columns
     .map((name) => adapter.quoteIdent(name))
     .join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
-  for (const row of values) await adapter.run(sql, row as never[])
+  // Bulk fixture setup must not pay one disk sync per row on CI storage.
+  await adapter.tx(async (tx) => {
+    for (const row of values) await tx.run(sql, row as never[])
+  })
 }
 
 const stamp = '2026-09-05T00:00:00.000Z'
 
 const boot = async (timezone?: string) => {
-  const e2e = await createTestDeployment(app, { worker: false })
+  const e2e = await createTestDeployment(app, { worker: false, client: { headers: { connection: 'close' } } })
   await e2e.fixture.call('partner.savePartner', { id: 'p-company', kind: 'company', name: 'ACME' })
   await e2e.fixture.call('company.saveCompany', {
     id: 'acme',

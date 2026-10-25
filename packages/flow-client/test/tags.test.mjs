@@ -3,6 +3,49 @@ setFlowLocale('vi')
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createFixtureSession } from '../atlas/store.mjs'
+import { createOrganizationSession } from '../atlas/organization-store.mjs'
+
+test('archived labels restore with stable identity and refuse duplicate active names or unsupported actions', () => {
+  const f = createFixtureSession()
+  const label = f.data.tags.find((tag) => tag.id === 'tech')
+  const task = f.data.tasks.find((task) => task.tags?.includes(label.id))
+  const apply = (action, key) =>
+    f.call('flow.entity.action', {
+      collection: 'tags',
+      entityId: label.id,
+      action,
+      idempotencyKey: key,
+    }).value
+  assert.equal(apply('archive', 'archive').ok, true)
+  assert.ok(task.tags.includes(label.id))
+  const duplicate = { ...label, id: 'replacement', archived: false }
+  f.data.tags.push(duplicate)
+  assert.equal(apply('restore', 'duplicate').ok, false)
+  assert.equal(label.archived, true)
+  duplicate.title = 'Replacement'
+  assert.equal(apply('restore', 'restore').ok, true)
+  assert.equal(label.archived, false)
+  assert.ok(task.tags.includes(label.id))
+  assert.equal(apply('restore', 'restore').ok, true)
+  assert.equal(apply('delete', 'unsupported').ok, false)
+  assert.equal(f.data.tags.filter((tag) => tag.id === label.id).length, 1)
+})
+
+test('organization member cannot archive or restore shared labels through the fixture command', () => {
+  const f = createOrganizationSession('member', 'tags')
+  const label = f.sessions.get('demo').data.tags.find((tag) => tag.id === 'tech')
+  for (const action of ['archive', 'restore']) {
+    const result = f.call('flow.entity.action', {
+      collection: 'tags',
+      entityId: label.id,
+      action,
+      idempotencyKey: action,
+    }).value
+    assert.equal(result.ok, false)
+    assert.equal(result.errors[0].code, 'forbidden')
+  }
+  assert.ok(!label.archived)
+})
 
 test('task labels keep identity across rename/color changes and reject invalid selection', () => {
   const f = createFixtureSession()

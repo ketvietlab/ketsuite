@@ -273,6 +273,10 @@ test('the sign-in tab offers a reset and nothing else, and shows what it gets ba
   )
   assert.match(after, /k3t-9f2x/, 'the one-time credential reaches the reader')
   assert.match(after, /login\.oneTimeHint/)
+  // The credential, or where the link went, is the answer: no generic "saved" notice beside it.
+  assert.equal(userModalDefinition.commands?.resetPassword?.showsOutcome, true)
+  assert.equal(userModalDefinition.commands?.sendResetLink?.showsOutcome, true)
+  assert.notEqual(userModalDefinition.commands?.save?.showsOutcome, true, 'a save still says it saved')
 })
 
 test('a viewer who may not reset sees the account without the action', () => {
@@ -429,7 +433,7 @@ test('user tabs and nested dialogs never ask for a change reason', () => {
   }
 })
 
-test('an account Két Việt is still preparing tells the administrator to wait, with no identity operation to run', () => {
+test('an account nobody can sign in to yet offers its first password, never an identity operation to run', () => {
   const html = render(
     tabView('login')(
       contextOf(
@@ -443,17 +447,19 @@ test('an account Két Việt is still preparing tells the administrator to wait,
           },
           permissions: {
             ...dataOf().permissions,
-            provisionCredential: true,
-            resetPassword: false,
+            resetPassword: true,
             sendLink: false,
           },
         }),
       ),
     ),
   )
-  assert.match(html, /login\.externalState\.handling/u)
-  assert.doesNotMatch(html, /provisionCredential|retryCredential|refreshAccount|oauth\/identities/u)
-  assert.doesNotMatch(html, /data-record-command="resetPassword"/u)
+  assert.match(html, /login\.cannotSignIn/u)
+  assert.match(html, /name="__command" value="resetPassword"/u)
+  assert.doesNotMatch(
+    html,
+    /externalState\.handling|provisionCredential|retryCredential|refreshAccount|oauth\/identities/u,
+  )
 })
 
 // ── The person as a page ──────────────────────────────────────────────────────

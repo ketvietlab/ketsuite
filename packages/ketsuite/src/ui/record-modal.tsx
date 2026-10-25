@@ -1,7 +1,7 @@
 // The record-modal contract, server half.
 //
-// A collection row opens its record in a modal island (design-system contract
-// "Collections open records in a modal"). The server's part is small on purpose:
+// A collection row whose record opens in a modal (design-system contract
+// "Opening a record from a collection") gets a modal island. The server's part is small on purpose:
 // it writes links that name a record, and it renders a closed host. Everything a
 // reader does inside the modal — opening, switching tabs, submitting, closing —
 // happens in the browser, through the runtime in `client/record-modal.tsx`.
@@ -19,7 +19,7 @@
 // and the server renders only the page's loading state.
 
 import type { IslandDefinition, JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
-import { Breadcrumbs, LoadingState, RecordPage } from '@ketvietlab/design-system'
+import { Breadcrumbs, Inline, LoadingState, RecordPage, Stack } from '@ketvietlab/design-system'
 
 export const HOOKS = ['record-modal-host'] as const
 
@@ -153,6 +153,8 @@ export type RecordPageIslandProps = {
   loading?: string
   back?: string
   tab?: string
+  /** Server-owned initial step, read from the destination URL before fragment hydration. */
+  dialog?: string | null
   width?: string
   /** From the collection to the record itself. */
   trail?: readonly RecordPageTrailItem[] | null
@@ -193,6 +195,10 @@ export const recordPageFrame = (o: {
   meta?: JSXChild
   status?: JSXChild
   actions?: JSXChild
+  aside?: JSXChild
+  asideLabel?: string
+  /** `before` (default) leads with the rail in reading and keyboard order; `after` follows the record. */
+  asideWhenStacked?: 'before' | 'after'
   body: JSXChild
 }): TemplateResult => (
   <div data-record-layer="page">
@@ -204,6 +210,9 @@ export const recordPageFrame = (o: {
       meta: o.meta,
       status: o.status,
       actions: o.actions,
+      aside: o.aside,
+      asideLabel: o.asideLabel,
+      asideWhenStacked: o.asideWhenStacked ?? 'before',
       body: o.body,
     })}
   </div>
@@ -228,8 +237,29 @@ export const recordPageLoading = (props: RecordPageIslandProps): TemplateResult 
     variant: 'operational',
     width: props.width === 'wide' ? 'wide' : 'default',
     title: props.title,
+    context: recordPageTrail(props.trail, props.trailLabel ?? props.title),
     body: LoadingState({ label: props.loading ?? props.loadingLabel ?? props.title }),
   })
+
+/** Embedded records keep the enclosing SSR page, title and navigation intact. */
+export const recordPanelFrame = (props: {
+  body: JSXChild
+  actions?: JSXChild
+  aside?: JSXChild
+}): TemplateResult => (
+  <section data-record-layer="panel">
+    {Stack({
+      items: [
+        ...(props.actions !== undefined ? [Inline({ align: 'end', items: [props.actions] })] : []),
+        props.body,
+        ...(props.aside !== undefined ? [props.aside] : []),
+      ],
+    })}
+  </section>
+)
+
+export const recordPanelLoading = (props: RecordPageIslandProps): TemplateResult =>
+  recordPanelFrame({ body: LoadingState({ label: props.loading ?? props.loadingLabel ?? props.title }) })
 
 /**
  * The island declaration of a record page. The route places it through a joint
@@ -251,6 +281,7 @@ export const defineRecordPageIsland = (options: {
       loading: 'text?',
       back: 'text?',
       tab: 'text?',
+      dialog: 'text?',
       width: 'text?',
       trail: 'json?',
       trailLabel: 'text?',

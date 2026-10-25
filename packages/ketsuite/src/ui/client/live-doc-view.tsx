@@ -20,7 +20,10 @@
 // browser-served /_ket/view/index.js) — the same split mail_backend's own
 // chatter view uses.
 import * as Y from 'yjs'
+import { createLiveDocTransport } from './live-doc-transport.ts'
+import type { LiveDocSyncState } from './live-doc-transport.ts'
 import { ensureTrailingParagraph } from './live-doc-tail.ts'
+import { floatingToolbarPosition } from './live-doc-floating.ts'
 import type { IslandController, IslandProps, TemplateResult } from '@ketvietlab/ketjs-view'
 // The shell's markup and the document serializer, which belong to the kit and
 // not to a module — see the header of that file, and tools/ui-audit.ts for the
@@ -49,6 +52,10 @@ export type LiveDocValue = {
 }
 
 export type LiveDocProps = {
+  /** Top toolbar remains the compatible default; floating opens on selection or Alt+F10. */
+  toolbar?: 'top' | 'floating'
+  /** Plain removes the editor frame and inset; the containing document owns spacing. */
+  surface?: 'framed' | 'plain'
   /** The record this document belongs to. */
   docId: string
   /**
@@ -70,6 +77,8 @@ export type LiveDocProps = {
   /** Renders the document without letting anyone change it. */
   readOnly?: boolean
   onChange?: (value: LiveDocValue) => void
+  /** Remote updates stay pending until the owner acknowledges durable storage. */
+  onSync?: (state: LiveDocSyncState) => void
   /** Host owns the upload dialog and storage; insertion retains the current block anchor. */
   onImageRequest?: (insert: (image: { src: string; alt: string }) => boolean, trigger: HTMLElement) => void
   imageDisabled?: boolean
@@ -312,6 +321,12 @@ export function createLiveDocView(props: LiveDocProps) {
   let pending: Span | null = null
   /** The selection the link dialog was opened over, since focusing its input destroys it. */
   let linkSpan: Span | null = null
+  let toolbarSpan: Span | null = null
+  let floatingKeyboard = false
+  let floatingDismissed = false
+  let floatingFrame = 0
+  let floatingAnchor: DOMRect | null = null
+  let floatingEvents: AbortController | null = null
   /**
    * Everyone else with this description open, by user id.
    *
@@ -590,7 +605,7 @@ export function createLiveDocView(props: LiveDocProps) {
    */
   function syncToolbar() {
     if (!shell) return
-    const span = selectionSpan()
+    const span = toolbarElement()?.contains(document.activeElement) ? toolbarSpan : selectionSpan()
     const block = span ? blocksOf()[span.start.index] : undefined
     const select = shell.querySelector('[data-flow-editor-block]') as HTMLSelectElement | null
     if (select && block) select.value = LIST_TYPES.includes(block.type as BlockType) ? 'p' : block.type
@@ -600,7 +615,152 @@ export function createLiveDocView(props: LiveDocProps) {
         ? block?.type === name
         : span && !isCollapsed(span) && spanHasMark(span, name as MarkName)
       button.setAttribute('aria-pressed', String(active === true))
+      if (props.toolbar === 'floating' && ['bold', 'italic', 'strike', 'code', 'link'].includes(name)) {
+        ;(button as HTMLButtonElement).disabled = !span || isCollapsed(span)
+      }
     }
+    scheduleFloatingToolbar()
+  }
+
+  const toolbarElement = () => shell?.querySelector<HTMLElement>('[data-ui="flow-editor-toolbar"]')
+
+  function scheduleFloatingToolbar() {
+    if (props.toolbar !== 'floating' || props.readOnly || floatingFrame || disposed) return
+    floatingFrame = requestAnimationFrame(() => {
+      floatingFrame = 0
+      positionFloatingToolbar()
+    })
+  }
+
+  function positionFloatingToolbar() {
+    const toolbar = toolbarElement()
+    if (!toolbar || !container) return
+    const span = selectionSpan()
+    const focused = toolbar.contains(document.activeElement)
+    if (
+      linkDialog()?.open ||
+      composing ||
+      floatingDismissed ||
+      inCell() ||
+      (!span && !focused) ||
+      (span && isCollapsed(span) && !floatingKeyboard && !focused)
+    ) {
+      toolbar.hidden = true
+      return
+    }
+    if (span && !focused) toolbarSpan = span
+    const range = document.getSelection()?.rangeCount ? document.getSelection()!.getRangeAt(0) : null
+    const rect = span && !focused ? range?.getBoundingClientRect() : floatingAnchor
+    if (!rect) {
+      toolbar.hidden = true
+      return
+    }
+    floatingAnchor = rect
+    const editorRect = container.getBoundingClientRect()
+    const viewport = window.visualViewport
+    const bounds = {
+      left: Math.max(viewport?.offsetLeft ?? 0, editorRect.left),
+      top: Math.max(viewport?.offsetTop ?? 0, editorRect.top),
+      right: Math.min((viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth), editorRect.right),
+      bottom: (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight),
+    }
+    // Keep the anchor while a native select owns focus; still clamp after viewport resize.
+    if (
+      !focused &&
+      !floatingKeyboard &&
+      (rect.bottom < Math.max(bounds.top, editorRect.top) ||
+        rect.top > Math.min(bounds.bottom, editorRect.bottom))
+    ) {
+      toolbar.hidden = true
+      return
+    }
+    // Computed padding resolves rem-based kit tokens into CSS pixels.
+    const gap = Number.parseFloat(getComputedStyle(toolbar).paddingInlineStart) || 8
+    toolbar.style.maxWidth = `${Math.max(0, bounds.right - bounds.left - gap * 2)}px`
+    toolbar.hidden = false
+    const position = floatingToolbarPosition(rect, toolbar.getBoundingClientRect(), bounds, gap)
+    toolbar.style.left = `${position.left}px`
+    toolbar.style.top = `${position.top}px`
+  }
+
+  function restoreToolbarSelection() {
+    const span = toolbarElement()?.contains(document.activeElement)
+      ? toolbarSpan
+      : (selectionSpan() ?? toolbarSpan)
+    if (span) {
+      container?.focus({ preventScroll: true })
+      restoreSelection(span)
+    }
+  }
+
+  function wireFloatingToolbar(root: HTMLElement, el: HTMLElement) {
+    if (props.toolbar !== 'floating') return
+    floatingEvents = new AbortController()
+    const signal = floatingEvents.signal
+    const toolbar = toolbarElement()
+    el.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.altKey && event.key === 'F10' && !composing && !inCell()) {
+          event.preventDefault()
+          toolbarSpan = selectionSpan()
+          if (!toolbarSpan) return
+          floatingKeyboard = true
+          floatingDismissed = false
+          syncToolbar()
+          positionFloatingToolbar()
+          toolbar?.querySelector<HTMLElement>('select, button:not(:disabled)')?.focus()
+        } else if (event.key === 'Escape' && toolbar && !toolbar.hidden) {
+          event.preventDefault()
+          floatingDismissed = true
+          toolbar.hidden = true
+        }
+      },
+      { signal },
+    )
+    toolbar?.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        floatingDismissed = true
+        restoreToolbarSelection()
+        toolbar.hidden = true
+      },
+      { signal },
+    )
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        const target = event.target as Node
+        if (el.contains(target)) {
+          floatingKeyboard = false
+          floatingDismissed = false
+          return
+        }
+        if (toolbar?.contains(target) || linkDialog()?.contains(target)) return
+        floatingKeyboard = false
+        floatingDismissed = true
+        toolbarSpan = null
+        if (toolbar) toolbar.hidden = true
+      },
+      { signal },
+    )
+    document.addEventListener(
+      'focusin',
+      (event) => {
+        if (!root.contains(event.target as Node)) {
+          floatingDismissed = true
+          toolbarSpan = null
+        }
+        scheduleFloatingToolbar()
+      },
+      { signal },
+    )
+    document.addEventListener('scroll', scheduleFloatingToolbar, { capture: true, passive: true, signal })
+    window.addEventListener('resize', scheduleFloatingToolbar, { passive: true, signal })
+    window.visualViewport?.addEventListener('resize', scheduleFloatingToolbar, { passive: true, signal })
+    window.visualViewport?.addEventListener('scroll', scheduleFloatingToolbar, { passive: true, signal })
   }
 
   // ---- presence -----------------------------------------------------------
@@ -1095,12 +1255,28 @@ export function createLiveDocView(props: LiveDocProps) {
 
   // ---- transport ----------------------------------------------------------
 
-  async function pushLocalUpdate(update: Uint8Array) {
-    await fetch(`${base}/push`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ update: bytesToBase64(update) }),
-    }).catch(() => {})
+  const transport = createLiveDocTransport({
+    merge: Y.mergeUpdates,
+    online: () => typeof navigator === 'undefined' || navigator.onLine,
+    onState: props.onSync,
+    send: async (update) => {
+      const response = await fetch(`${base}/push`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ update: bytesToBase64(update) }),
+      })
+      if (!response.ok) throw new Error('Document update refused')
+      const result = (await response.json()) as { ok?: boolean; record?: Record<string, unknown> }
+      if (result.ok !== true) throw new Error('Document update was not acknowledged')
+      return result
+    },
+  })
+  const onOnline = () => {
+    if (!props.local)
+      void (async () => {
+        if (ready || (await resync())) await transport.flush()
+      })()
   }
 
   /**
@@ -1111,20 +1287,58 @@ export function createLiveDocView(props: LiveDocProps) {
    * disconnected; re-applying already-known updates through it is a no-op,
    * Yjs merges are idempotent.
    */
+  let ready = !!props.local
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let resyncing: Promise<boolean> | null = null
   async function resync() {
-    const response = await fetch(`${base}/content`).catch(() => null)
-    if (!response?.ok) return
-    const { snapshot, topic, viewerId } = (await response.json()) as {
-      snapshot: string
-      topic: string
-      viewerId?: string | null
-    }
-    if (viewerId) selfId = viewerId
-    Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
-    connectLive(topic)
+    if (disposed) return false
+    if (resyncing) return resyncing
+    resyncing = (async () => {
+      try {
+        const response = await fetch(`${base}/content`)
+        if (!response.ok) throw new Error('Document could not be read')
+        const { snapshot, topic, viewerId } = (await response.json()) as {
+          snapshot: string
+          topic: string
+          viewerId?: string | null
+        }
+        if (disposed) return false
+        if (typeof snapshot !== 'string' || typeof topic !== 'string')
+          throw new Error('Invalid document response')
+        if (viewerId) selfId = viewerId
+        const initial = !ready
+        Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
+        if (initial && !props.readOnly) ensureBlocks()
+        ready = true
+        container?.setAttribute('contenteditable', String(!props.readOnly))
+        if (initial) render(null)
+        connectLive(topic)
+        if (!heartbeat) {
+          void announce(0)
+          heartbeat = setInterval(() => {
+            if (document.visibilityState === 'visible') void announce(selectionSpan()?.start.index ?? 0)
+          }, HEARTBEAT_MS)
+          window.addEventListener('pagehide', onPageHide)
+        }
+        if (!transport.isPending()) props.onSync?.({ status: 'saved' })
+        return true
+      } catch {
+        if (!disposed) {
+          props.onSync?.({
+            status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
+          })
+          if (!ready) container?.setAttribute('contenteditable', 'false')
+        }
+        return false
+      }
+    })().finally(() => {
+      resyncing = null
+    })
+    return resyncing
   }
 
   function connectLive(topic: string) {
+    if (disposed) return
     source?.close()
     const es = new EventSource(`${base}/live?topic=${encodeURIComponent(topic)}`)
     es.onmessage = (event) => {
@@ -1141,14 +1355,31 @@ export function createLiveDocView(props: LiveDocProps) {
       }
     }
     es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) setTimeout(() => void resync(), 500)
+      if (!disposed && es.readyState === EventSource.CLOSED) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = setTimeout(() => {
+          void resync()
+        }, 500)
+      }
     }
+    es.addEventListener('done', () => {
+      es.close()
+      if (!disposed) void resync()
+    })
     source = es
   }
 
   // ---- mount --------------------------------------------------------------
 
   const onSelectionChange = () => {
+    const span = selectionSpan()
+    const focused = toolbarElement()?.contains(document.activeElement) || linkDialog()?.open
+    if (!focused && span && JSON.stringify(span) !== JSON.stringify(toolbarSpan)) {
+      floatingDismissed = false
+      floatingKeyboard = false
+      toolbarSpan = span
+    }
+    if (!span && !focused) toolbarSpan = null
     syncToolbar()
     announceCaret()
   }
@@ -1156,8 +1387,12 @@ export function createLiveDocView(props: LiveDocProps) {
   function wireToolbar(root: HTMLElement) {
     for (const button of Array.from(root.querySelectorAll('[data-flow-editor-mark]')) as HTMLElement[]) {
       const name = button.getAttribute('data-flow-editor-mark') ?? ''
+      button.addEventListener('pointerdown', () => {
+        toolbarSpan = selectionSpan() ?? toolbarSpan
+      })
       button.addEventListener('mousedown', (event) => event.preventDefault())
       button.addEventListener('click', () => {
+        restoreToolbarSelection()
         if (name === 'image') {
           if (!props.readOnly && !props.imageDisabled && props.local)
             props.onImageRequest?.(prepareImageInsertion(), button)
@@ -1173,7 +1408,11 @@ export function createLiveDocView(props: LiveDocProps) {
       })
     }
     const select = root.querySelector('[data-flow-editor-block]') as HTMLSelectElement | null
+    select?.addEventListener('pointerdown', () => {
+      toolbarSpan = selectionSpan() ?? toolbarSpan
+    })
     select?.addEventListener('change', () => {
+      restoreToolbarSelection()
       if (inCell()) return
       const value = select.value as BlockType
       const span = selectionSpan()
@@ -1298,6 +1537,13 @@ export function createLiveDocView(props: LiveDocProps) {
   function wireLinkDialog(root: HTMLElement) {
     const dialog = root.querySelector('[data-flow-editor-link-dialog]') as HTMLDialogElement | null
     const input = root.querySelector('[data-flow-editor-link-input]') as HTMLInputElement | null
+    dialog?.addEventListener('close', () => {
+      if (linkSpan) {
+        container?.focus({ preventScroll: true })
+        restoreSelection(linkSpan)
+      }
+      syncToolbar()
+    })
     root.querySelector('[data-flow-editor-link-cancel]')?.addEventListener('click', () => {
       dialog?.close()
     })
@@ -1326,6 +1572,7 @@ export function createLiveDocView(props: LiveDocProps) {
     }
     el.addEventListener('compositionstart', () => {
       composing = true
+      if (props.toolbar === 'floating') toolbarElement()?.setAttribute('hidden', '')
       composedAt = selectionSpan()?.start ?? null
     })
     el.addEventListener('compositionend', (event) => {
@@ -1371,6 +1618,7 @@ export function createLiveDocView(props: LiveDocProps) {
     if (shell) {
       wireToolbar(shell)
       wireLinkDialog(shell)
+      wireFloatingToolbar(shell, el)
     }
 
     doc.on('update', (update: Uint8Array, origin: unknown) => {
@@ -1381,8 +1629,8 @@ export function createLiveDocView(props: LiveDocProps) {
       // server's own incrementally-built state doesn't round-trip marks the
       // same way normal incremental merges do.
       if (origin !== REMOTE) {
-        if (props.local) props.onChange?.(currentValue())
-        else void pushLocalUpdate(update)
+        props.onChange?.(currentValue())
+        if (!props.local) transport.enqueue(update)
       }
       if (origin !== LOCAL_TYPING) {
         const keep = pending
@@ -1398,36 +1646,18 @@ export function createLiveDocView(props: LiveDocProps) {
       render(null)
       return
     }
-    const response = await fetch(`${base}/content`)
-    const { snapshot, topic, viewerId } = (await response.json()) as {
-      snapshot: string
-      topic: string
-      viewerId?: string | null
-    }
-    if (viewerId) selfId = viewerId
-    Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
-    ensureBlocks()
-    render(null)
-    connectLive(topic)
-
-    void announce(0)
-    // Only while the tab is actually being looked at: a background tab that
-    // kept announcing would hold its author in the room for as long as the
-    // browser stayed open, and would keep writing frames onto a topic that
-    // only a flatten ever ends.
-    heartbeat = setInterval(() => {
-      if (document.visibilityState === 'visible') void announce(selectionSpan()?.start.index ?? 0)
-    }, HEARTBEAT_MS)
-
-    window.addEventListener('pagehide', () => {
-      navigator.sendBeacon?.(`${base}/leave`)
-      // A Blob, because sendBeacon posts text/plain otherwise and the route
-      // reads JSON. Beacons survive the page going away; a fetch does not.
-      navigator.sendBeacon?.(
-        `${base}/presence`,
-        new Blob([JSON.stringify({ index: 0, gone: true })], { type: 'application/json' }),
-      )
-    })
+    window.addEventListener('online', onOnline)
+    await resync()
+  }
+  const onPageHide = () => {
+    if (disposed) return
+    navigator.sendBeacon?.(`${base}/leave`)
+    // A Blob, because sendBeacon posts text/plain otherwise and the route
+    // reads JSON. Beacons survive the page going away; a fetch does not.
+    navigator.sendBeacon?.(
+      `${base}/presence`,
+      new Blob([JSON.stringify({ index: 0, gone: true })], { type: 'application/json' }),
+    )
   }
 
   function updateImage(index: number, patch: { width?: number; align?: string }) {
@@ -1561,6 +1791,8 @@ export function createLiveDocView(props: LiveDocProps) {
   }
 
   return {
+    flush: async () => (props.local ? true : !ready && !(await resync()) ? false : transport.flush()),
+    isPending: () => !props.local && transport.isPending(),
     prepareImageInsertion,
     updateImage,
     removeImage,
@@ -1568,14 +1800,23 @@ export function createLiveDocView(props: LiveDocProps) {
       liveDocShell({
         containerId,
         lang: props.lang,
-        tables: props.local,
+        tables: true,
         images: props.local && !!props.onImageRequest,
         imageDisabled: props.readOnly || props.imageDisabled,
+        toolbar: props.toolbar,
+        surface: props.surface,
+        readOnly: props.readOnly,
       }) as TemplateResult,
     getValue: currentValue,
     dispose() {
       disposed = true
+      floatingEvents?.abort()
+      if (floatingFrame) cancelAnimationFrame(floatingFrame)
       source?.close()
+      transport.dispose()
+      clearTimeout(reconnectTimer)
+      if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPageHide)
+      if (typeof window !== 'undefined') window.removeEventListener('online', onOnline)
       doc.destroy()
       if (heartbeat) clearInterval(heartbeat)
       if (typeof document !== 'undefined') document.removeEventListener('selectionchange', onSelectionChange)

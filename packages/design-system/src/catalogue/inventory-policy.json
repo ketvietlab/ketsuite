@@ -29,6 +29,20 @@
       "wave": 4,
       "gapTask": "DS-031"
     },
+    "./data-display/column-chart/index.tsx": {
+      "owner": "Data display",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 4,
+      "gapTask": "DS-031"
+    },
+    "./data-display/qr-code/index.tsx": {
+      "owner": "Data display",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 5,
+      "gapTask": "DS-048"
+    },
     "./data-display/data-grid/index.tsx": {
       "owner": "Data display",
       "maturity": "stable",
@@ -256,6 +270,55 @@
       "decision": "refactor",
       "gapTask": "DS-015"
     },
+    "./patterns/peek/index.tsx": {
+      "owner": "Overlays",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./patterns/embedded-page/index.tsx": {
+      "owner": "Layout",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./patterns/settings-directory/index.tsx": {
+      "owner": "Page recipes",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./patterns/dock/index.tsx": {
+      "owner": "Overlays",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./runtime/row-anchor.js": {
+      "owner": "Data operations",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 2,
+      "gapTask": "DS-046"
+    },
+    "./runtime/field-error.js": {
+      "owner": "Forms",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-019"
+    },
+    "./runtime/peek.js": {
+      "owner": "Interactions",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
     "./patterns/pipeline/index.tsx": {
       "owner": "Data display",
       "maturity": "stable",
@@ -330,6 +393,13 @@
       "wave": 5,
       "gapTask": "DS-036"
     },
+    "./record/stage-path/index.tsx": {
+      "owner": "Record",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 5,
+      "gapTask": "DS-036"
+    },
     "./record/display/index.tsx": {
       "owner": "Record",
       "maturity": "stable",
@@ -369,6 +439,41 @@
       "maturity": "stable",
       "decision": "keep",
       "gapTask": "Maintain shared Lucide geometry, tone and accessible naming."
+    },
+    "./content/markdown/index.tsx": {
+      "owner": "Content",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./patterns/help-drawer/index.tsx": {
+      "owner": "Shell",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./runtime/help.js": {
+      "owner": "Interactions",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./runtime/mermaid.js": {
+      "owner": "Content",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
+    },
+    "./runtime/mermaid-theme.js": {
+      "owner": "Content",
+      "maturity": "stable",
+      "decision": "keep",
+      "wave": 4,
+      "gapTask": "DS-015"
     }
   },
   "compatibilityModules": {
@@ -672,6 +777,14 @@
       "target": "Public core",
       "wave": 2,
       "gapTask": "DS-015"
+    },
+    "./application-switcher.ts": {
+      "owner": "Shell",
+      "maturity": "stable",
+      "decision": "keep",
+      "target": "KetSuite application configuration",
+      "wave": 0,
+      "gapTask": "DS-009"
     }
   },
   "plannedComponents": []

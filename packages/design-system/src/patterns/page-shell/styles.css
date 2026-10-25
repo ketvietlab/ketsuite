@@ -103,7 +103,22 @@
     }
 
     :where([data-kv-design-system]) [data-kv-page-identity="header"] {
+      row-gap: var(--kv-space-1);
       padding: var(--kv-gap-section) var(--kv-page-padding-x) var(--kv-space-3);
+    }
+
+    /* The page's identity reads as one block (title, description, status, meta), then its
+       commands. Unwrapping the heading lets the meta row join that block; the commands take
+       the last row and keep their separation, as on ListPage. */
+    :where([data-kv-design-system])
+      [data-kv-page-identity="header"]
+      :is([data-kv-page-identity="heading"], [data-kv-page-identity="title-row"]) {
+      display: contents;
+    }
+
+    :where([data-kv-design-system]) [data-kv-page-identity="header"] [data-kv-page-identity="actions"] {
+      order: 1;
+      margin-top: var(--kv-space-2);
     }
 
     :where([data-kv-design-system]) [data-kv-page-identity="title-row"] {

@@ -1,3 +1,6 @@
+import type { JSXChild } from '@ketvietlab/ketjs-view'
+import { randomUUID } from 'node:crypto'
+import { hospitalityRecordBack } from './scoped-href.ts'
 import { FormScreenFrame } from './page-frame.tsx'
 import {
   badge,
@@ -55,12 +58,29 @@ export const reservationDetailScreen = (
     cancel: true,
     noShow: true,
   },
+  guarantee?: TemplateResult | null,
+  currentHref?: string,
+  pickers: { hold?: JSXChild; checkIn?: JSXChild } = {},
 ): TemplateResult => {
   const guest = guestName(reservation)
   const room = reservation.stay?.currentRoom
-  const backHref = `/admin/hospitality/reservations?property=${encodeURIComponent(reservation.propertyId)}&lang=${encodeURIComponent(locale)}`
-  const action = `/admin/hospitality/reservations/${encodeURIComponent(reservation.id)}?lang=${encodeURIComponent(locale)}`
+  const backHref = hospitalityRecordBack(
+    currentHref,
+    `/admin/hospitality/reservations?property=${encodeURIComponent(reservation.propertyId)}&lang=${encodeURIComponent(locale)}`,
+  )
+  const action =
+    currentHref ??
+    `/admin/hospitality/reservations/${encodeURIComponent(reservation.id)}?lang=${encodeURIComponent(locale)}`
+  const nativeUrl = new URL(action, 'http://hospitality.local')
+  nativeUrl.searchParams.delete('action')
+  nativeUrl.searchParams.delete('finance')
+  nativeUrl.searchParams.set('dialog', 'checkIn')
+  const nativeHref = nativeUrl.pathname + nativeUrl.search
+  const checkoutUrl = new URL(nativeUrl)
+  checkoutUrl.searchParams.delete('dialog')
+  checkoutUrl.searchParams.set('action', 'check-out')
   const actions: TemplateResult[] = []
+  if (guarantee) actions.push(guarantee)
 
   if (reservation.state === 'confirmed' && reservation.provider === 'direct' && permissions.amend) {
     actions.push(
@@ -73,7 +93,12 @@ export const reservationDetailScreen = (
             method="post"
             submit={_('hospitality_core.reservation.action.amend')}
             submitVariant="secondary"
-            hidden={{ operation: 'amend', lang: locale }}
+            hidden={{
+              operation: 'amend',
+              lang: locale,
+              expectedVersion: String(reservation?.version ?? 0),
+              requestKey: randomUUID(),
+            }}
             fields={[
               {
                 name: 'partnerId',
@@ -151,7 +176,7 @@ export const reservationDetailScreen = (
             : _('hospitality_core.reservation.action.holdRoomHint')
         }
         body={
-          rooms.length ? (
+          pickers.hold || rooms.length ? (
             <>
               <RecordForm
                 action={action}
@@ -162,9 +187,15 @@ export const reservationDetailScreen = (
                     : 'hospitality_core.reservation.action.holdRoom',
                 )}
                 submitVariant="secondary"
-                hidden={{ operation: 'hold-room', lang: locale }}
+                hidden={{
+                  operation: 'hold-room',
+                  lang: locale,
+                  expectedVersion: String(reservation.stay?.version ?? 0),
+                  requestKey: randomUUID(),
+                }}
                 fields={[
                   {
+                    control: pickers.hold,
                     name: 'roomId',
                     label: _('hospitality_core.reservation.field.room'),
                     type: 'select',
@@ -183,7 +214,12 @@ export const reservationDetailScreen = (
                   method="post"
                   submit={_('hospitality_core.reservation.action.releaseRoomHold')}
                   submitVariant="tertiary"
-                  hidden={{ operation: 'release-room-hold', lang: locale }}
+                  hidden={{
+                    operation: 'release-room-hold',
+                    lang: locale,
+                    expectedVersion: String(reservation.stay?.version ?? 0),
+                    requestKey: randomUUID(),
+                  }}
                   fields={[]}
                 />
               ) : null}
@@ -204,34 +240,11 @@ export const reservationDetailScreen = (
       <Section
         title={_('hospitality_core.reservation.action.checkIn')}
         description={_('hospitality_core.reservation.action.checkInHint')}
-        body={
-          rooms.length ? (
-            <RecordForm
-              action={action}
-              method="post"
-              submit={_('hospitality_core.reservation.action.checkIn')}
-              submitVariant="primary"
-              hidden={{ operation: 'check-in', lang: locale }}
-              fields={[
-                {
-                  name: 'roomId',
-                  label: _('hospitality_core.reservation.field.room'),
-                  type: 'select',
-                  required: true,
-                  options: rooms.map((candidate) => ({
-                    value: candidate.id,
-                    label: `${candidate.code} · ${candidate.name}`,
-                  })),
-                },
-              ]}
-            />
-          ) : (
-            emptyState(
-              _('hospitality_core.reservation.empty.availableRooms'),
-              _('hospitality_core.reservation.empty.availableRoomsHint'),
-            )
-          )
-        }
+        body={linkButton({
+          href: nativeHref,
+          label: _('hospitality_core.reservation.openArrival'),
+          variant: 'primary',
+        })}
       />,
     )
   }
@@ -248,7 +261,12 @@ export const reservationDetailScreen = (
               method="post"
               submit={_('hospitality_core.reservation.action.adjustDeparture')}
               submitVariant="secondary"
-              hidden={{ operation: 'adjust-departure', lang: locale }}
+              hidden={{
+                operation: 'adjust-departure',
+                lang: locale,
+                expectedVersion: String(reservation.stay?.version ?? 0),
+                requestKey: randomUUID(),
+              }}
               fields={[
                 {
                   name: 'checkOut',
@@ -271,7 +289,7 @@ export const reservationDetailScreen = (
           title={_('hospitality_core.reservation.action.checkOut')}
           description={_('hospitality_core.reservation.action.checkOutHint')}
           body={linkButton({
-            href: `${action}?action=check-out${locale ? `&lang=${locale}` : ''}`,
+            href: checkoutUrl.pathname + checkoutUrl.search,
             label: _('hospitality_core.checkOutPrep.open'),
             variant: 'primary',
           })}
@@ -294,7 +312,12 @@ export const reservationDetailScreen = (
               method="post"
               submit={_('hospitality_core.reservation.action.noShow')}
               submitVariant="destructive"
-              hidden={{ operation: 'no-show', lang: locale }}
+              hidden={{
+                operation: 'no-show',
+                lang: locale,
+                expectedVersion: String(reservation?.version ?? 0),
+                requestKey: randomUUID(),
+              }}
               fields={[
                 {
                   name: 'reason',
@@ -319,7 +342,12 @@ export const reservationDetailScreen = (
               method="post"
               submit={_('hospitality_core.reservation.action.cancel')}
               submitVariant="destructive"
-              hidden={{ operation: 'cancel', lang: locale }}
+              hidden={{
+                operation: 'cancel',
+                lang: locale,
+                expectedVersion: String(reservation?.version ?? 0),
+                requestKey: randomUUID(),
+              }}
               fields={[
                 {
                   name: 'reason',
@@ -372,7 +400,11 @@ export const reservationDetailScreen = (
             },
           ]}
           navigation={linkButton({
-            label: _('hospitality_core.reservation.action.back'),
+            label: _(
+              backHref.split('?')[0] === '/admin/hospitality/reservations'
+                ? 'hospitality_core.reservation.action.back'
+                : 'hospitality_core.reservation.action.backSource',
+            ),
             href: backHref,
             variant: 'tertiary',
             icon: 'chevron-left',

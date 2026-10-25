@@ -1,6 +1,6 @@
 {
   "name": "@ketvietlab/flow-client",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "MIT Flow core client and extension contracts for KetSuite deployments.",
   "type": "module",
   "license": "MIT",
@@ -28,6 +28,7 @@
     "./command-search.mjs": "./dist/command-search.mjs",
     "./content-layout.mjs": "./dist/content-layout.mjs",
     "./custom-fields.mjs": "./dist/custom-fields.mjs",
+    "./catalog-contract.mjs": "./dist/catalog-contract.mjs",
     "./document-access.mjs": "./dist/document-access.mjs",
     "./document-tree.mjs": "./dist/document-tree.mjs",
     "./documents.mjs": "./dist/documents.mjs",
@@ -43,19 +44,30 @@
     "./operations-model.mjs": "./dist/operations-model.mjs",
     "./operations.mjs": "./dist/operations.mjs",
     "./organization.mjs": "./dist/organization.mjs",
+    "./paged-options.mjs": "./dist/paged-options.mjs",
     "./project-catalogs.mjs": "./dist/project-catalogs.mjs",
     "./project-setup.mjs": "./dist/project-setup.mjs",
     "./routes.mjs": "./dist/routes.mjs",
     "./server-extensions.mjs": "./dist/server-extensions.mjs",
+    "./shell-model.mjs": "./dist/shell-model.mjs",
     "./setup-catalog.mjs": "./dist/setup-catalog.mjs",
     "./sprint-cadence.mjs": "./dist/sprint-cadence.mjs",
     "./task-assignees.mjs": "./dist/task-assignees.mjs",
     "./task-autosave.mjs": "./dist/task-autosave.mjs",
     "./task-composer.mjs": "./dist/task-composer.mjs",
+    "./task-relocation.mjs": "./dist/task-relocation.mjs",
     "./task-order.mjs": "./dist/task-order.mjs",
     "./timeline.mjs": "./dist/timeline.mjs",
     "./workspace-overview.mjs": "./dist/workspace-overview.mjs",
-    "./workspace.mjs": "./dist/workspace.mjs"
+    "./workspace.mjs": "./dist/workspace.mjs",
+    "./command-contract.mjs": "./dist/command-contract.mjs",
+    "./navigation-host.mjs": "./dist/navigation-host.mjs",
+    "./production": "./dist/production-entry.mjs",
+    "./production-entry.mjs": "./dist/production-entry.mjs",
+    "./exchange-contract.mjs": {
+      "types": "./dist/exchange-contract.d.mts",
+      "default": "./dist/exchange-contract.mjs"
+    }
   },
   "scripts": {
     "prepack": "npm run build --prefix ../..",
@@ -63,11 +75,10 @@
     "atlas": "node atlas/server.mjs"
   },
   "dependencies": {
-    "@ketvietlab/design-system": "0.1.41",
-    "@ketvietlab/flow-ui": "0.1.41",
-    "@ketvietlab/ketjs-view": "0.2.0",
-    "@ketvietlab/ketjs": "0.2.0",
-    "@ketvietlab/ketsuite": "0.1.41"
+    "@ketvietlab/design-system": "0.1.42",
+    "@ketvietlab/flow-ui": "0.1.42",
+    "@ketvietlab/ketjs-view": "0.6.1",
+    "@ketvietlab/ketjs": "0.6.1"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

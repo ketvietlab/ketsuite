@@ -2,6 +2,18 @@
 
 Compact work-management components for KétJS View: shell, lists, boards, task dialogs, documents and overview visuals. Styling comes entirely from the public `@ketvietlab/design-system` tokens.
 
+Flow uses one `FlowSearchTrigger` in the sidebar to open the only editable
+global input in `FlowSpotlight` (`./workspace`). The topbar has no search field.
+The product supplies authorized results and routing; `attachFlowUI` owns native
+dialog focus, selected-option scrolling and cleanup. `FlowGlobalSearch` remains
+a compatibility API for other consumers. Reference pickers filter their own
+options; they do not add another product content-search field.
+
+`FlowTaskRow` owns a shared `--flow-task-key-width: 10ch` identifier track and a
+flexible title/project track. All task groups share that geometry. Longer keys
+elide with a full native title and accessible text; task titles wrap. This width
+is scoped to list rows and does not change task cards.
+
 ## Run the demo
 
 From the repository root, using Node 24 or newer:
@@ -22,9 +34,18 @@ Open `http://127.0.0.1:4190/`. Set `PORT` to change the port. The server binds o
 
 ## Ownership
 
-`@ketvietlab/flow-ui` is a public MIT package in the ketjs repository. Product data, persistence, routing and paid features belong to consumers; see `AGENTS.md` for agent-facing rules.
+`@ketvietlab/flow-ui` is a public MIT package in Két Việt's `ketsuite/packages/flow-ui`. Product data, persistence, routing and paid features belong to consumers; see `AGENTS.md` for agent-facing rules.
 
 The shared foundations are `@ketvietlab/ketjs-view` and `@ketvietlab/design-system/tokens.css` from this repository. Colors, typography, spacing, radius, elevation, focus and motion inherit KétJS tokens. Flow owns its component structure and compact density, with `--flow-*` aliases to shared semantic tokens. It does not load Suite page layouts or Suite's document-wide runtime. Token names are checked against the design-system source in the same repository, so there is no pinned copy to drift.
+
+Below 768px or on a coarse pointer, controls and navigation targets use at least
+44px. This includes project/scope tabs, their picker, and scope-menu summaries;
+the mobile contract applies even when a narrow window reports a fine pointer.
+Horizontal tab scrolling remains within the navigation region.
+
+`styles.css` loads local Inter variable subsets from `fonts.css` and `fonts/`.
+Serve these relative assets beside the stylesheet; the public dist includes them
+and their OFL license. See [font provenance](src/fonts/README.md).
 
 | Boundary         | Contract                                                    |
 | ---------------- | ----------------------------------------------------------- |
@@ -35,6 +56,11 @@ The shared foundations are `@ketvietlab/ketjs-view` and `@ketvietlab/design-syst
 | Runtime          | Explicit `attachFlowUI(root)` with `sync()` and `dispose()` |
 | Private behavior | No calls to Flow APIs or storage from library components    |
 | Demo             | `demo/` owns fixtures, persistence, routing and layout      |
+
+`FlowConfirmDialog` owns the centred `alertdialog`, associated question and action
+footer. `details` adds prerequisite content below the question; `confirmDisabled`
+locks only the destructive command while keeping cancellation available. Consumers
+supply the reason, data and callback. Neither slot changes confirmation geometry.
 
 ## Design authority
 
@@ -49,7 +75,7 @@ the existing implementation; visual decisions are maintained only in the skill.
 | Actions  | `FlowButton`, `FlowIcon`                                                 |
 | Input    | `FlowInput`, `FlowSearch`, `FlowSelect`, `FlowCheckbox`, `FlowSegmented` |
 | Metadata | `FlowStatus`, `FlowPriority`, `FlowAvatar`, `FlowTag`, `FlowProgress`    |
-| Feedback | `FlowEmpty`, `FlowDialog`                                                |
+| Feedback | `FlowEmpty`, `FlowDialog`, `FlowConfirmDialog`                           |
 | Work     | `FlowTaskRow`, `FlowTaskCard`                                            |
 
 `FlowShell` supplies the reusable application frame: 240px sidebar, 44px header and scrolling content bounded by `contentWidth`. Its slots are `sidebar`, `title`, `breadcrumb`, `actions`, `navigation`, `children` and optional `footer`. Navigation sits outside the centered content container. It follows the proportions of the original Flow atlas proportions (now codified in this package) while using current shared tokens. Workspace titles belong in this header, with no oversized hero above the list. `FlowSegmented` supports `appearance: 'underline'` for the shallow view bar.
@@ -77,7 +103,7 @@ runtime.sync(); // call after each render to synchronize native control properti
 
 `FlowInput.value` supplies the initial/current record value. Runtime sync preserves an edited draft until this supplied value changes. `FlowSearch`, `FlowCheckbox`, and a `FlowSelect` with `onChange` are controlled: update their props in the callback, render, then call `sync()`. A select without a callback retains its native form draft. Native `form.reset()` restores supplied defaults.
 
-`FlowDialog` renders a closed native dialog. After rendering, call `runtime.open(id)` from its opener. Escape and close buttons dismiss it; focus returns to the opener. Application-specific unsaved-change handling remains a consumer concern.
+`FlowDialog` renders a closed native dialog. After rendering, call `runtime.open(id)` from its opener. Escape and close buttons dismiss it; focus returns to the opener. Every dialog keeps its header/footer visible and scrolls its body within the viewport. Application-specific unsaved-change handling remains a consumer concern.
 
 ## Verification
 
@@ -90,6 +116,31 @@ npm --workspace @ketvietlab/flow-ui test
 
 ## Workspace composition API
 
+Use `FlowCheckbox({ target: 'standalone', ... })` for independent selection controls.
+Its native label provides a 24px desktop hit area and 44px mobile/coarse-pointer hit
+area around the 14px/24px checkbox. The default native input remains compatible
+with enclosing labels; `FlowCheckboxField` supplies its own clickable text/row.
+Task selection columns reserve 48px desktop / 68px mobile, including cell padding.
+Pointer gestures on labels remain native control gestures and never start task drag.
+
+`FlowTable({ label, columns, children, layout })` owns a named, keyboard-reachable
+scroll region. Use `layout: 'tasks'` for six-column task lists with inline status,
+priority, assignee and due-date controls. Other tables retain native column sizing;
+having six columns does not opt a collection into task geometry. Task widths use
+named `--flow-task-*` dimensions, including sufficient space for date actions.
+Table cell sizing, spacing and row styles apply only to the table's own sections.
+Nested controls such as the DS DatePicker retain their independent grid geometry.
+
+`FlowStack({ inset: 'page', children })` owns the page gutter for a flush collection
+and its pagination. Nest its toolbar with `inset: 'none'`; inside a `FlowGroup`,
+keep the default flush Stack so the group's gutter is applied once.
+
+`FlowStack({ divided: true, children })` is a column of settings rows: one hairline between
+rows with equal space either side, none above the first. Each row is a nested
+`FlowSection({ inset: 'none', title, description, actions })`: what the setting does on the
+left, its control and save on the right. When the actions leave the heading less than 16rem,
+they wrap below it instead of squeezing the description (Workspace settings is the reference).
+
 Import `@ketvietlab/flow-ui/workspace` for navigation, toolbar, sections, tables, grouped lists, board columns, properties, document, activity, timeline, calendar and routed sheets. These components own their markup and sizing; consumers compose them into routes. `FlowStatus.label` accepts a project-defined column label while `status` selects the shared visual semantic.
 
 `FlowSelectField` composes a named, labelled native select for forms. Product forms use this and `FlowInput` (including file inputs), without recreating control markup.
@@ -98,13 +149,32 @@ Import `@ketvietlab/flow-ui/workspace` for navigation, toolbar, sections, tables
 
 `@ketvietlab/flow-ui/documents` exports `FlowDocsShell`, `FlowDocTree`, `FlowDocEditor`, `FlowDocOutline`, `FlowDocTool`, `FlowDocToolGroup`, `FlowDocPanel` and `FlowDocBlank`. They use the same `FlowFrame` as `FlowShell`, so the normal 240px Flow menu remains visible. The document area adds a 300px resizable tree, a flexible paper column and a 260px inspector at desktop widths. Reading text uses public `--kv-text-lg`; headers use the public heading scale. There is no Atlas CSS override.
 
-The toolbar acts on the focused block. Editor callbacks expose plain text, table cells and checklist state; HTML is escaped. This initial block editor is not a real-time rich-text engine. The product controller owns drafts and saving.
+The toolbar acts on the focused block. Editor callbacks expose plain text, table cells and checklist state; HTML is escaped. The product controller owns drafts and saving. `FlowDocEditor.titleInContent` removes the separate visible/editable title when LiveDoc already contains the document heading. LiveDoc owns that heading's markup; the Flow shell does not duplicate it. The fallback projection preserves an explicit `h1` block. The product creates, names and autosaves notes; the UI kit owns no persistence or route.
+
+Document tree rows and their open/toggle buttons use `--flow-row` (36px dense
+desktop, 48px mobile). The toggle reserves `--flow-checkbox-hit-size` (24px/44px);
+the library disclosure and evidence-person buttons use `--flow-control` as their
+minimum target height. Consumers do not add padding around these controls.
 
 Card surfaces share `--flow-card-radius: var(--kv-radius-lg)` (9px) and `--flow-card-padding: var(--kv-space-4)` (16px). Notices and every metric, including static colored metrics, have full inset padding and a rounded border. Task/resource cards and table/group containers share that radius; application shell separators retain straight edges.
 
 ### Route-owned task dialog
 
 `FlowDialog({ size: 'task', onRequestClose, ... })` uses the shared 1440px responsive dialog layout. The runtime opens it as a native modal when it mounts; Escape, backdrop and close delegate to the route controller. Header/footer remain visible while the body scrolls. `FlowRecordLayout` provides the main content and 440px inline properties column, stacking on mobile. At widths up to 760px, task dialogs fill the viewport (100dvh), with square edges, no outer gutters, a scrolling body and fixed header/footer. Use this component for every task route; do not recreate its size or CSS in a client presenter.
+
+The disposable runtime returns focus when a native dialog closes or a route dialog is removed. It uses the connected opener inside the same Flow root; direct links and removed openers fall back to the background page heading. Replacing one modal with another preserves the modal journey's outer opener and does not pull focus out of the new dialog.
+
+`FlowConfirmDialog({ id, title, message, cancelLabel, confirmLabel, onCancel, onConfirm, tone?, loading?, autoOpen? })` owns a centred, 400px maximum question on every viewport. Its native `alertdialog` associates both title and explanation. Cancel/Escape/close preserve the current work; the consumer decides what confirming changes. Pending actions disable all dismissal controls. It auto-opens on mount; set `autoOpen: false` for a persistent demo/native dialog opened through `runtime.open`. Do not use a task dialog or side sheet for a discard/delete/reset question.
+
+`FlowDialog({ size: 'wide', ... })` owns a 960px maximum dialog for two-column review or chart content. It keeps the default viewport gutters and bounded body scrolling, reflowing its consumer-owned content on mobile. Extensions use this public variant rather than overriding Flow's dialog width in private CSS. `FlowConfirmDialog.feedback` keeps recovery actions inside the active question.
+
+Native field errors belong to their component: `FlowInput`, `FlowTextarea` and
+`FlowSelectField` accept `error`, mark the control invalid and associate its visible
+message through `aria-describedby`. The low-level `FlowSelect` exposes `invalid`
+and `descriptionId` for compositions that own a separate error message.
+`FlowTextarea.name` defaults to `id` for compatibility. Set it explicitly when
+sibling forms submit the same field name: each textarea still needs a distinct
+DOM `id` for its label and error associations.
 
 `FlowAtlasViewport` is the labeled host slot for the official KetAtlas viewer. Flow owns its responsive height, border and radius; the viewer owns its isolated Shadow DOM. The client mounts/destroys the viewer and resolves repository sources; the component never fetches GitHub or starts renderers. The component demo includes the host-slot specimen.
 
@@ -114,7 +184,7 @@ Card surfaces share `--flow-card-radius: var(--kv-radius-lg)` (9px) and `--flow-
 
 `FlowPropertyFields` (workspace export) opts native `FlowInput` and `FlowSelectField` into an inline label/value layout. Use it only in a task sidebar; main title, description, checklist and other forms keep stacked labels. The task modal is up to 1440px (16px desktop outer gutters) with a 440px property rail, a 148px label track and 44px property rows. Labels use the 13px control token, medium weight and semantic muted text; editable values use 14px body text. `icon` is optional on inputs/select fields and decorative. The layout reflows on narrow screens and inherits both themes.
 
-`FlowDocTree` renders the supplied canonical hierarchy without sorting. Its optional `onReorder` enables sibling-only drag/drop with a position indicator and Alt+Arrow keyboard fallback; omitting it removes drag controls. The document shell exposes a 220–420px tree splitter (default 300px), operated by dragging or arrow keys. It is hidden in the single-column mobile layout.
+`FlowDocTree` renders the supplied canonical hierarchy without sorting. Its optional `onReorder` enables sibling-only drag/drop with a position indicator and Alt+Arrow keyboard fallback; omitting it removes drag controls. Return the write/refresh promise from `onReorder`: the disposable Flow runtime returns keyboard focus to the same document after refresh or failure, without stealing a newer focus or following an abandoned route. `data-page-id` identifies the item for this runtime. The document shell exposes a 220–420px tree splitter (default 300px), operated by dragging or arrow keys. It is hidden in the single-column mobile layout.
 
 `FlowProjectViews` attaches a native popover to the List navigation item. Consumers supply project-scoped saved views, selected view ID, navigation and save callbacks; the shared component owns the menu structure and style.
 
@@ -129,6 +199,11 @@ Card surfaces share `--flow-card-radius: var(--kv-radius-lg)` (9px) and `--flow-
 ### Manual task ordering
 
 `FlowTaskRow` and `FlowTaskCard` accept `onDropTask(id, position)` and `onMoveKey(direction)`. `FlowGroup` / `FlowBoard.columns` accept group-level `onDropTask`. The disposable runtime lets users grab anywhere on a row/card after 6px movement; no drag handle is necessary. Clicks still open tasks, and native checkbox/input gestures are excluded. It handles pointer capture, insertion feedback, Escape/cancel and cleanup; the consumer performs the atomic group/order update. Alt+Up/Down reorders; Alt+Left/Right changes group. The demo list supports manual reordering with the same components/runtime.
+
+`FlowTaskCard.statusHint` adds a translated workflow constraint inside the native
+card button. The card owns its metadata typography and spacing; the product owns
+the reason. A locked status may still allow ordering within its current column.
+This hint does not authorize a move or replace the consumer/server transition gate.
 
 ### Scrollable Gantt
 
@@ -152,6 +227,13 @@ Task dialogs keep the 440px property rail at widths of 1200px and above. Below 1
 
 Pass a unique matching `asideId`/`controls` pair when rendering more than one record layout. The runtime toggles popover behavior on resize without cloning or moving inputs, preserving form association, drafts and autosave. Client code owns all values and callbacks. The demo includes a responsive task dialog.
 
+After rendering server field errors and releasing pending controls, call
+`runtime.focusInvalid(form)`. It reveals ancestor disclosures and the compact
+record-properties popover before focusing the first enabled `aria-invalid` control.
+It returns whether focus reached that control, ignores detached/foreign scopes,
+and does nothing after disposal. Native validation uses the same reveal mechanism.
+The responsive task specimen demonstrates a server error in its property rail.
+
 ### Content width by screen
 
 `FlowShell.contentWidth` has two bounded responsive maxima including page gutters: `standard` 1200px (organization administration, inbox, personal settings) and `wide` 1600px (Workspace tabs, project tabs, task lists and reports). The client assigns widths by navigation family in `content-layout.mjs`: adjacent tabs share the same width, including their settings and document library. Width is always 100% up to the cap and centered. This container adds no padding: sections and toolbars retain gutter ownership. Header and scope tabs remain full width; dialog dimensions are independent. Document reading/editing shells fill the remaining work area; the tree and inspector sit at its edges while the inner reading column stays readable. The document library retains its 1600px cap. Board, Calendar and Timeline explicitly use `contentWidth: "full"`: no maximum, filling the remaining work area while keeping normal page gutters and scrolling. This is not a third fixed width.
@@ -160,9 +242,9 @@ The document workspace is capped at 1920px with the existing 840px reading paper
 
 ### Spotlight
 
-`FlowSpotlight` composes the native `FlowDialog` with `size: "spotlight"`: 680px maximum width, near-top positioning, a full-width search combobox, grouped listbox results, a bounded internal scroll region, an empty state and keyboard hints. `query`, `groups`, `activeId` and selection callbacks belong to the consumer. The combobox retains focus and exposes its active result through `aria-activedescendant`; arrows wrap, Enter selects and native Escape/backdrop dismiss. The shared runtime reveals the selected option without scrolling the underlying screen. Mobile constrains the dialog within viewport gutters. The component demo includes an interactive specimen.
+`FlowSpotlight` composes the native `FlowDialog` with `size: "spotlight"`: 680px maximum width, viewport-centered positioning and a fixed 34rem (544px) total height, clamped to the available viewport. Loading, results, empty and error states share one flexible scroll viewport; the search row and footer stay fixed. Result count cannot resize or recenter the dialog. Pass `loading`, `error` and `onRetry` to hide stale results while retaining the query. The combobox exposes its active result through `aria-activedescendant`; arrows wrap, Enter selects and Escape closes immediately even with a nonempty query. Retry restores input focus. Mobile constrains the dialog within viewport gutters. The component demo includes an interactive specimen.
 
-Flow's command search groups authorized bootstrap tasks, projects and documents alongside curated navigation destinations. It supports accent-insensitive Vietnamese lookup and exact task IDs; it does not send data to Algolia or index a separate server. Production search completeness remains bounded by bootstrap data. References: [Apple Spotlight](https://support.apple.com/en-ph/guide/mac-help/mchlp1008/mac), [Algolia keyboard navigation](https://www.algolia.com/doc/ui-libraries/autocomplete/core-concepts/keyboard-navigation).
+Flow's command search uses `flow.search` to group authorized tasks, body/comment content, documents, files, organization/catalog records and curated navigation. Pro providers add their own authorized groups. It supports accent-insensitive Vietnamese lookup and exact task IDs. Atlas search is an in-memory model; production indexing and persistence are not verified by the mock. References: [Apple Spotlight](https://support.apple.com/en-ph/guide/mac-help/mchlp1008/mac), [Algolia keyboard navigation](https://www.algolia.com/doc/ui-libraries/autocomplete/core-concepts/keyboard-navigation).
 
 ### Task-focused content
 
@@ -180,23 +262,39 @@ Flow's command search groups authorized bootstrap tasks, projects and documents 
 
 `FlowChoiceField` is a controlled single-choice field with rich selected and option content. Pass `id`, `label`, `value`, `options: {value,label,content}[]`, `onChange(value)` and optional label icon/disabled state. Task details compose it with `FlowStatus` (including project-specific label/color) and `FlowPriority`. It uses a native popover listbox, selected indicator, Arrow/Home/End navigation, Enter/Space activation and Escape dismissal; it works inside the responsive task-properties popover. Keep label icons muted without overriding semantic icons inside field values.
 
+For server-paged single choices, `FlowChoiceField.remote` also accepts `query`,
+`onQuery` and optional `onMore`. Search and recovery controls stay outside the
+listbox; the consumer owns debounce/cancellation and cursor fences. `selected`
+retains the current label/content even when it is outside the displayed window.
+
 ### Multiple-user selection
 
 `FlowUserPicker` is exported from `@ketvietlab/flow-ui/workspace`. It is a controlled field with `id`, `label`, `value: string[]`, `options: {id,name,email?,avatarUrl?,disabled?,description?}[]`, `onChange(ids)`, and optional `disabled`, `placeholder`, `size`.
+
+For a paged directory, `remote` supplies `query`, `loading`, `error`, `total`,
+`onQuery`, `onRetry` and optional `onMore`. The consumer owns the scoped read,
+debounce, cancellation and selected identities. Remote search does not filter a
+previously cut options page in the DOM. Loading/error/empty and retry stay in the
+same popover; pagination never discards selected users. Local options retain the
+existing accent-insensitive filter. Both modes keep native checkbox keyboard paths.
 
 - `size: "md"` (default): 32px minimum control, overlapping avatars and the first name with a `+N` remaining-person count. Long names ellipsize on one line; full names remain in the tooltip and accessible label.
 - `size: "sm"`: 28px minimum inline list control, up to three overlapping avatars and a `+N` overflow count, full names in the accessible label/tooltip. Both sizes use 44px minimum touch targets on coarse pointers.
 - Both open the same searchable multi-checkbox popover. Search ignores Vietnamese accents, arrow keys move between eligible users, Space/Enter toggles, and Escape/Xong dismisses. Selection stays open and calls `onChange` immediately; the consumer owns saving.
 - A disabled option already selected can be removed, but not added again. A disabled field blocks all edits. Consumers supply project eligibility and retained unavailable identities.
-- `FlowAvatar` accepts optional `src` with initials fallback; `FlowAvatarGroup` is exported from the main package for read-only rows/cards. `FlowTaskRow.assigneeControl` accepts the compact picker; `FlowTask.assignees` supplies avatar display data.
+- `FlowAvatar` accepts optional `src` with initials fallback. Initials take an identity hue from the name (`data-color` 0–4 → `--kv-chart-1..5`), so one person keeps one colour on every screen; never a status colour. In a group the separating ring is an outline, so 20px avatars keep the full width for their initials; `FlowAvatarGroup` is exported from the main package for read-only rows/cards. `FlowTaskRow.assigneeControl` accepts the compact picker; `FlowTask.assignees` supplies avatar display data.
 
-`FlowShell.search` places a shared `FlowSearch` in the topbar, between context/title and actions. Equal side tracks keep its bordered surface centered in the header regardless of title and action widths. At viewport widths of 1368px and above it stays on one row, scaling from 240px to 440px to leave room for project actions. Only below 1368px viewport width does it occupy a separate centered row; at 760px or less that row fills the available width; header actions remain available and the input never forces horizontal overflow. Task filters remain in the content toolbar.
+`FlowNavigation.search` owns the shared sidebar launcher. Supply `FlowSearchTrigger` with `onClick`, `disabled`, `open` and `dialogId`. The trigger is a button with dialog semantics, not a second editable search input. It stays visible below the workspace picker when mobile navigation is collapsed. Flow Core and Pro render one `FlowSpotlight` outside the shell when opened; click or Meta/Ctrl+K opens it, native Escape/backdrop closes it and returns focus. The topbar has no product search field. `FlowShell.search` and `FlowGlobalSearch` remain compatibility APIs for other consumers.
+
+For SSR chrome, `FlowShell.header` can receive the same `FlowShellHeader` wrapped in a hydration region. `contentMode: 'documents'` lets the data island fill the remaining work area. `FlowDocsShell.bodyOnly` (or `FlowDocsWorkspace`) supplies the tree/editor/inspector without duplicating the application frame or routed project tabs. `syncFlowShellNavigation` updates only the persistent frame’s width/document-mode and existing sidebar links’ current state; page headers/tabs still arrive as SSR fragments. Header minimum height includes the current control height, its vertical padding and border, so a mobile route without actions reserves the same 53px row as one with a 44px control. `FlowButton.action` exposes an owned runtime command hook; the theme runtime updates that button's label and icon without rerendering server chrome.
 
 `FlowListItem` supports `variant: "plain"` for standalone context summaries inside a padded section: no row border or extra inset, a 24px horizontal gap to actions, and actions below the description on narrow shells. Regular list rows retain their existing separators.
 
 `FlowChoiceField.size: "sm"` reuses the sidebar's colored options for borderless 28px inline list editing, retaining a hidden accessible field label. `FlowTaskRow` accepts `statusControl`, `priorityControl`, `assigneeControl` and `dueControl` slots.
 
-`FlowDateField` (workspace export) shows a compact day/month value or “Đặt hạn”; its tooltip and accessible name include the year. The popover uses `FlowInput` with the native date picker, optional `min`/`max`, “Bỏ hạn”, and “Xong”. Consumers supply `id`, `label`, `value`, `disabled?` and `onChange(value)`; an empty string removes the date. Values autosave through the same task controller as sidebar edits. Disabled fields keep their current values visible.
+Rows must not prebuild their menus. `FlowChoiceField`, `FlowUserPicker` and `FlowDateField` accept `menu: {open, onToggle(open)}`: with it, the trigger, accessible name and empty popover render always, and options, people, search or date input render only while `open` is true. `onToggle(true)` runs before the popover shows, so content exists when focus moves in; `onToggle(false)` runs after it hid and returned focus to the trigger, so it may arrive after another menu reported open. Keep one open menu ID per screen in the controller and clear it only when the closing ID still matches. Sidebar fields omit `menu` and keep their options built.
+
+`FlowDateField` (workspace export) shows a compact day/month value or “Đặt hạn”; its tooltip and accessible name include the year. Its editing popover composes the DS calendar through `FlowDateInput`, optional `min`/`max`, “Bỏ hạn”, and “Xong”. Consumers supply `id`, `label`, `value`, `disabled?` and `onChange(value)`; an empty string removes the date. Values autosave through the same task controller as sidebar edits. Disabled fields keep their current values visible.
 
 
 `FlowSection.description` groups supporting context with the section title (4px title/description gap) instead of a separate body hint. Header actions stay aligned with that heading group. Nested sections still use `inset: "none"`.
@@ -236,14 +334,59 @@ already registered throws. The demo import map uses a browser-only bundle of the
 **installed KetJS i18n module**, built by `build:i18n`; there is no copied
 translation engine.
 
+`FlowEmpty.titleLevel: 1` gives a standalone failed/empty screen a native h1;
+omitting it keeps the region's strong title. `empty-title` owns the same body type
+and spacing in both cases, independent of the semantic heading level.
+
+`FlowToast.placement` defaults to the workspace `overlay`. Dialog consumers pass
+`inline` in `FlowDialog.feedback`: the dialog reserves a padded feedback row below
+its scrolling body/footer, so the alert and close/recovery controls never cover
+form commands. Inline feedback has no popover and scrolls within a quarter of the
+viewport for long messages; `FlowDialog` owns its outside inset.
+
+Dialog form actions belong in `FlowDialog.footer`, outside its scrolling body.
+Give the native body form a unique `id` and pass it as `FlowButton.form` on the
+submit action; keyboard submission and browser validation use that same form.
+`FlowSetupForm` accepts `id` and optional `actions`. Omit `actions` when the dialog
+supplies them, so there is one action band and one scrolling region. The consumer
+keeps draft/permission/mutation state and respects the associated form when
+accepting a submission from a footer button.
+
+Durable form routes use `FlowShell.contentMode: 'form'` and
+`FlowSetupForm.layout: 'page'`. The shell and routed tabs stay SSR; the form's
+`setup-fields` region scrolls while `actions` remain at the bottom of the work
+area. Pass `feedback` with `FlowToast.placement: 'inline'` so errors reserve a row
+above the actions instead of overlapping them. This same form retains its native
+`id`/submit association. The project profile is the canonical consumer; editing
+its primary data does not recreate the shell or tabs.
+
 ### LiveDoc
+
+`FlowScopeMenu.align` defaults to `end` for actions at the right edge. Use `start`
+for left-aligned launchers such as document options; the owning component aligns
+its panel without consumer CSS. `placement` separately chooses up/down.
 
 `FlowLiveDoc` provides the shared rich editor for documents and task descriptions.
 Call `attachFlowUI(root).sync()` after rendering and dispose the runtime on unmount.
 Pass a stable owner-scoped ID, optional Yjs `snapshot` or legacy `blocks`/`text`,
 `readOnly`, `onChange` and optionally `onBlur`. Owners persist the returned snapshot;
 `FlowLiveDocText` and `FlowLiveDocLegacyBlocks` create plain/legacy projections.
-The editor is `@ketvietlab/ketsuite/livedoc` (local mode, tables, read-only).
+The editor belongs to the host, which names its module once with
+`setFlowLiveDocEditor(url)`; the module exports `createLiveDocView`. KetSuite names its
+own editor (`@ketvietlab/ketsuite/livedoc`: local mode, tables, read-only), and
+`createFlowWorkspace` does so from its `liveDocEditor` prop. The kit never imports the
+suite. `FlowLiveDoc` imports that module when its first editor mounts, so screens without a
+document or task description never download it. `attachFlowUI` holds the editor's slot
+while it loads, disposes a late editor whose element is gone and frees the slot after
+a failed load so the next `sync()` retries.
+Flow's shared LiveDoc embedding adapter owns the controls' geometry and maps it to
+`--flow-control` and `--flow-type-editable`, including 44px controls and 16px editable
+type below 768px. The canonical LiveDoc owns editor DOM, selection and commands.
+Use `toolbar: 'floating'`, `surface: 'plain'` and `hideLabel: true` for a document
+canvas. Selection opens formatting; Alt+F10 opens it at the caret and Escape
+returns to the editor. The hidden visible label still names the textbox.
+Default `top`/`framed` preserves embedded task forms. See the
+[native presentation contract](../../docs/src/content/docs/ketsuite/livedoc.md).
 Live synchronization is a separate
 server transport integration; this embedding uses the owner's existing save flow.
 
@@ -251,13 +394,19 @@ server transport integration; this embedding uses the owner's existing save flow
 
 ### Overview visuals
 
+`FlowChoiceField.remote` adds consumer-owned loading and error/retry state. Its
+popover becomes a named dialog containing a listbox, with status and recovery
+outside the options. Arrow keys skip disabled choices; an empty/loading menu can
+receive focus until choices arrive. Use `menu` to avoid rendering closed content.
+Read cancellation, authorization and selected-value persistence stay in the client.
+
 Workspace exports for summary pages. They receive computed numbers only and own no data rules.
 
 - `FlowStatGrid` — clickable tiles (label, value, optional `visual`, one detail line). Tiles navigate; they are not toggles, so they carry no `aria-pressed`.
 - `FlowSegmentBar` — proportional bar with a spoken breakdown. Zero segments leave the track; an unlabelled segment is spacing (for example headroom to the busiest person) and stays out of the label. `legend: true` adds a visible legend.
-- `FlowColumnChart` — selectable columns on one shared scale, with `muted` (non-working days) and `current` (today). Mark a backlog column `outlier: true` so it cannot flatten the rest; if it exceeds the scale it is drawn full height with a faded top (`data-clipped`) and keeps its exact number.
+- `FlowColumnChart` — selectable columns on one shared scale, with `muted` (non-working days) and `current` (today). Mark a backlog column `outlier: true` so it cannot flatten the rest; if it exceeds the scale it is drawn full height with a faded top (`data-clipped`) and keeps its exact number. On a phone the columns keep a 3rem minimum and scroll sideways inside the chart rather than ellipsizing their dates.
 - `FlowMeterList` — goals, sprints or load as one title line, one bar and one muted line.
-- `FlowEntryPage` — shell-less page for sign-in and first-run setup: brand line, optional numbered `steps` (`complete`/`current`), one centred card. Pass `onSubmit` to make the card a form with `actions` under the fields. Tenant-facing copy never names the identity provider.
+- `FlowEntryPage` — sign-in and first-run setup: brand line, optional numbered `steps` (`complete`/`current`), one centred card. Standalone mode owns a `main` landmark and viewport height. Use `embedded: true` inside an existing shell: it renders a `section` with natural height, leaving the main landmark and viewport to the parent. Pass `onSubmit` to make the card a form with `actions` under the fields. Tenant-facing copy never names the identity provider.
 - `FlowChecklist` — getting-started steps that tick themselves from data. Done steps drop their action; `doneLabel`/`todoLabel` are spoken for the mark.
 - `FlowEvidenceTable` also takes `actionsLabel` (trailing icon-menu column via `FlowScopeMenu({icon:'more'})`), `more` (a row under the data) and column `size`. `FlowEvidenceTask` and `FlowEvidenceValue` keep each cell to one line plus an optional muted line.
 - A row with `onOpen` opens on a pointer click anywhere outside its own controls (`data-open`); put `FlowEvidencePerson` (avatar, name, muted line) or `FlowEvidenceTask` in the row as the keyboard path to the same detail.
@@ -271,3 +420,19 @@ These components set tone through `data-state`, never `data-tone`: the shared `[
 It collapses to one column below a 1000px container. Its historical name is retained
 for compatibility; it contains no paid-feature policy or data. Both core workspace
 overviews and pro reports compose this presentation component.
+
+### Native select density and caret
+
+`FlowSelect({ size: 'sm' })` uses the 28px compact control contract; the default
+`md` stays 32px. Pair controls with buttons of the same size in a toolbar. The
+component keeps the native select (labels, form values and keyboard operation)
+and owns one decorative Lucide caret, its reserved end padding and 8px inset
+through spacing tokens. `FlowSelectField` reuses this same control.
+Pass `id` when a field is displayed over another form with the same `name`.
+Labels and error descriptions use that ID; submitted values keep the original name.
+Canonical record forms scope input, textarea, date and select IDs by route, so
+background and modal fields keep distinct associations during SSR and hydration.
+
+Date controls use `FlowDateInput` (also selected by `FlowInput({type:"date"})`). This adapter composes the public Két DS `DatePicker`; `attachFlowUI` acquires/disposes its canonical calendar runtime. Load the DS stylesheet as well as tokens and Flow styles. Core and Pro receive the same calendar, native ISO form values, validation and vi/en/ja commands; no product module owns calendar markup.
+
+The adapter selects 44px touch controls below 768px through public DS control-height tokens. Desktop fields retain the standard 32px density. The native date input remains the form value and no-JavaScript fallback; the enhanced calendar is owned by the DS.

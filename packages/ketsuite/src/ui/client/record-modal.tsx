@@ -10,9 +10,20 @@
 // Views are render-pure: they read the context and return design-system markup.
 // They never fetch, never touch history and never query the document.
 
-import { signal } from '@ketvietlab/ketjs-view'
+import { each } from '@ketvietlab/ketjs-view'
+import { batch, signal } from '@ketvietlab/ketjs-view'
 import type { IslandController, IslandProps, JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
-import { Button, LoadingState, ModalSheet, Notice, RecordPage, TabbedView } from '@ketvietlab/design-system'
+import type { ActionVariant } from '@ketvietlab/design-system'
+import {
+  Button,
+  ConfirmDialog,
+  LoadingState,
+  ModalSheet,
+  Notice,
+  RecordPage,
+  Stack,
+  TabbedView,
+} from '@ketvietlab/design-system'
 import {
   RECORD_NEW_ID,
   RECORD_PARAM,
@@ -23,6 +34,9 @@ import {
   recordModalHost,
   recordModalHref,
   recordPageLoading,
+  recordPanelLoading,
+  recordPanelFrame,
+  recordPageTrail,
   recordPageFrame,
   recordPageShell,
 } from '../record-modal.tsx'
@@ -34,6 +48,7 @@ export type RecordIssue = {
   field: string | null
   code: string
   message: string | null
+  messageKey?: string
   params: Record<string, unknown>
 }
 
@@ -55,6 +70,7 @@ const issuesOf = (source: unknown): RecordIssue[] => {
       field: typeof item.field === 'string' ? item.field : path,
       code: String(item.code ?? 'invalid'),
       message: typeof item.message === 'string' ? item.message : null,
+      ...(typeof item.messageKey === 'string' ? { messageKey: item.messageKey } : {}),
       params: (item.params && typeof item.params === 'object' ? item.params : {}) as Record<string, unknown>,
     }
   })
@@ -67,6 +83,57 @@ const issuesOf = (source: unknown): RecordIssue[] => {
  * permission refusal (`ok: false` on the envelope) come back in one shape, so a
  * view never has to know which layer said no.
  */
+export const recordRequestHref = (href: string, currentHref: string): string => {
+  const current = new URL(currentHref),
+    target = new URL(href, current)
+  if (target.origin !== current.origin) throw new Error('Record requests require a same-origin route')
+  for (const key of ['company', 'companies', 'branch', 'branches', 'lang']) {
+    if (target.searchParams.has(key)) continue
+    for (const value of current.searchParams.getAll(key)) target.searchParams.append(key, value)
+  }
+  return target.href
+}
+
+/** Route context keys are explicit; unrelated collection filters stay out of the read request. */
+export const recordContextRequestHref = (
+  href: string,
+  currentHref: string,
+  keys: readonly string[] = [],
+): string => {
+  const current = new URL(currentHref),
+    target = new URL(recordRequestHref(href, currentHref))
+  for (const key of keys) {
+    if (target.searchParams.has(key)) continue
+    for (const value of current.searchParams.getAll(key)) target.searchParams.append(key, value)
+  }
+  return target.href
+}
+
+/** Only the return entry made by this modal belongs to its pending close. */
+export const recordModalReturnMatches = (expected: string, current: string): boolean => {
+  const left = new URL(expected, current),
+    right = new URL(current)
+  left.searchParams.sort()
+  right.searchParams.sort()
+  return (
+    left.origin === right.origin &&
+    left.pathname === right.pathname &&
+    left.search === right.search &&
+    left.hash === right.hash
+  )
+}
+
+/** Reconciliation during draft capture may detach and empty the old native select. */
+export const applyRecordControlState = (
+  control: { value: string },
+  captureDrafts: () => void,
+  apply: (value: string) => void,
+): void => {
+  const value = control.value
+  captureDrafts()
+  apply(value)
+}
+
 export const callRecordRoute = async <Value = unknown>(
   route: string,
   input: Record<string, unknown>,
@@ -75,16 +142,21 @@ export const callRecordRoute = async <Value = unknown>(
   const target = new URL(route, 'https://record.invalid')
   if (target.origin !== 'https://record.invalid' || !route.startsWith('/') || route.startsWith('//'))
     throw new Error('Record commands require a same-origin route')
-  const response = await fetch(target.pathname + target.search, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      'content-type': 'application/json',
-      ...(options.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {}),
+  const response = await fetch(
+    typeof location === 'undefined'
+      ? target.pathname + target.search
+      : recordRequestHref(target.pathname + target.search, location.href),
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        ...(options.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {}),
+      },
+      body: JSON.stringify(input),
+      signal: options.signal,
     },
-    body: JSON.stringify(input),
-    signal: options.signal,
-  })
+  )
   const payload = (await response.json().catch(() => ({}))) as {
     ok?: boolean
     value?: unknown
@@ -138,8 +210,14 @@ export type RecordModalContext<Data> = {
   draft: (name: string, fallback?: string) => string
   /** Read a captured parent-record draft when explicitly seeding a child workflow. */
   recordDraft?: (name: string, fallback?: string) => string
+  /** Parent edits captured before opening a child decision. */
+  recordChanged?: boolean
+  /** The layer owning this view's inputs; `dialog` metadata also exists on the parent. */
+  draftScope?: 'record' | 'dialog'
   /** Whether a checkbox/radio value was selected before the view re-rendered. */
   draftChecked: (name: string, value?: string, fallback?: boolean) => boolean
+  /** Captured selections in this layer, including inputs on unmounted pages. */
+  draftCheckedValues?: (name: string) => readonly string[]
   /**
    * What a preview command answered, for the view to render. Null until that
    * command has run in this layer, and again as soon as anything moves.
@@ -171,8 +249,9 @@ export type RecordUploads = Record<string, { id: string; name: string | null }>
 export const readRecordContextRoute = async <Data,>(
   href: string,
   signal?: AbortSignal,
+  keys: readonly string[] = [],
 ): Promise<RecordCallResult<Data | null>> => {
-  const url = new URL(href, location.href)
+  const url = new URL(recordContextRequestHref(href, location.href, keys))
   if (url.origin !== location.origin) throw new Error('Record context must stay same-origin')
   const response = await fetch(url.href, {
     credentials: 'same-origin',
@@ -191,15 +270,26 @@ export type RecordModalCommandStep<Data> = {
     context: RecordModalContext<Data>,
     uploads: RecordUploads,
   ) => Record<string, unknown>
-  /** Skip this step — a module not installed, a permission the viewer lacks. */
-  when?: (context: RecordModalContext<Data>) => boolean
+  /**
+   * Skip this step — a module not installed, a permission the viewer lacks, or a
+   * submitted value that leaves this step nothing to do.
+   */
+  when?: (context: RecordModalContext<Data>, form: FormData) => boolean
 }
 
 export type RecordModalCommand<Data> = ({ fn: string; route?: never } | { fn?: never; route: string }) & {
   /** Same-origin destination after a successful command; evaluated by the runtime. */
   navigate?: (value: unknown, context: RecordModalContext<Data>) => string
-  /** Parent fields consumed by a child command; clear only after all steps succeed. */
+  /** Fields consumed by this command; preserve other record drafts and clear only after all steps succeed. */
   clearRecordDrafts?: readonly string[]
+  /** Keep the current dialog input when an ancillary mutation refreshes it. Default: consume it. */
+  retainDialogDraft?: boolean
+  /**
+   * Read the record again quietly after a refusal, keeping what was typed and the refusal's
+   * guidance: for a command refused because the record, or what it depends on, moved since it
+   * was read (a revision stamp, an availability slice). The retry then carries the new stamps.
+   */
+  refreshOnRefusal?: boolean
   /** Map server paths to stable native field names using the submitted snapshot. */
   issueField?: (field: string, form: FormData, context: RecordModalContext<Data>) => string
   /** Map the submitted form to the function's input. */
@@ -243,6 +333,12 @@ export type RecordModalCommand<Data> = ({ fn: string; route?: never } | { fn?: n
    * not consulted — a preview always stays in its layer.
    */
   preview?: boolean
+  /**
+   * The view answers this command itself from `context.outcome`: a password shown once, the
+   * address a link went to. The runtime's own "saved" notice would only repeat that answer, or
+   * misname it, so a command that stays open says nothing more.
+   */
+  showsOutcome?: boolean
   /** The id of the record a create command made, read from the function's value. */
   created?: (value: unknown) => string | null
   /** Tab to open on the created record when `after` is `open`. */
@@ -262,13 +358,27 @@ export type RecordModalDialog<Data> = {
   description?: (context: RecordModalContext<Data>) => string | null
   /** ModalSheet's width: small for a short single-column form, large for a dense workspace. */
   size?: 'small' | 'default' | 'large'
+  /** Only non-persistent previews may discard their own draft without confirmation. Parent drafts keep their guard. */
+  discardPolicy?: 'confirm' | 'allow'
   view: (context: RecordModalContext<Data>) => JSXChild
   /** Fixed actions for this dialog layer, outside its scrolling body. */
   actions?: (context: RecordModalContext<Data>) => JSXChild
+  /** A hard-to-undo decision uses the shared small centred ConfirmDialog. */
+  confirmation?: {
+    message: (context: RecordModalContext<Data>) => string
+    label: (context: RecordModalContext<Data>) => string
+    cancelLabel?: (context: RecordModalContext<Data>) => string
+    form: (context: RecordModalContext<Data>) => string
+    command: string
+    variant?: 'primary' | 'secondary' | 'destructive'
+    disabled?: (context: RecordModalContext<Data>) => boolean
+  }
 }
 
 export type RecordModalDefinition<Data> = {
   kind: string
+  /** Clear dependent relation drafts when their parent relation changes. */
+  resetRelationsOnChange?: Readonly<Record<string, readonly string[]>>
   size?:
     | 'small'
     | 'default'
@@ -312,6 +422,16 @@ export type RecordModalDefinition<Data> = {
    * commands sit in the header the way a list page's create action does.
    */
   pageActions?: (context: RecordModalContext<Data>) => JSXChild | undefined
+  /** Supporting record information beside a page; ignored by modal presentation. */
+  pageAside?: (context: RecordModalContext<Data>) => JSXChild | undefined
+  pageAsideLabel?: (context: RecordModalContext<Data>) => string
+  /**
+   * Where the rail sits in reading and keyboard order (`RecordPage.asideWhenStacked`).
+   * `before`, the default, leads the record with it: a rail of things to act on first.
+   * `after` keeps reference facts behind the record's own fields. A wide page draws the
+   * rail beside the record either way.
+   */
+  pageAsideWhenStacked?: 'before' | 'after'
   tabs?: readonly RecordModalTab<Data>[]
   /**
    * Tabs other modules add to this record, read from its context: they follow the
@@ -335,6 +455,13 @@ export type RecordModalDefinition<Data> = {
    * whose context must never be shown before a fresh read.
    */
   cache?: boolean
+  /**
+   * The record changes without the reader (a background job's status). An open modal
+   * of this kind reads it again when `ket:records-changed` names it, as a record page
+   * does, unless a command is running or the reader typed into it. Off by default: a
+   * form keeps the context it opened with.
+   */
+  follow?: boolean
 }
 
 /** How many record contexts one island keeps for instant reopening. */
@@ -350,11 +477,19 @@ export const RECORD_MODAL_LABELS: Readonly<Record<string, string>> = Object.free
   'recordModal.loadFailed': 'The record could not be read.',
   'recordModal.notFound': 'The record is gone or you cannot see it.',
   'recordModal.retry': 'Retry',
+  'recordModal.save': 'Save',
   'recordModal.errorTitle': 'Not saved',
   'recordModal.saveFailed': 'That did not work. Try again.',
   'recordModal.savedTitle': 'Saved',
   'recordModal.saved': 'The change is in.',
   'recordModal.unsaved': 'Discard what you typed?',
+  'recordModal.unsavedDetail': 'Closing now loses what you typed here.',
+  'recordModal.discard': 'Discard',
+  'recordModal.keepEditing': 'Keep editing',
+  'recordModal.confirm': 'Continue',
+  'recordModal.back': 'Go back',
+  'recordModal.deniedTitle': 'You cannot open this record',
+  'recordModal.denied': 'Ask an administrator for access.',
   'recordModal.uploadFailed': 'The file could not be uploaded. Try again.',
 })
 
@@ -393,6 +528,81 @@ export const resolveRecordModalIssue = (
 export const RECORD_COMMAND_FIELD = '__command'
 /** Field a link or button uses to open a dialog of the same record. */
 export const RECORD_DIALOG_ATTRIBUTE = 'data-record-dialog'
+
+/** Native HelpDrawer/confirmation dialogs own their keyboard layer above record sheets. */
+export const recordLayerOwnsKey = (key: string, defaultPrevented: boolean, nativeDialogOpen: boolean) =>
+  !defaultPrevented && !nativeDialogOpen && (key === 'Escape' || key === 'Tab')
+
+/** Both island hosts a page may use: the `ket-island` element and a `div` that names its island. */
+export const RECORD_ISLAND_HOST = 'ket-island, div[data-ket-island]'
+
+/** A nested island owns its native submit, including inline variant editors. */
+export const recordFormOwnedByHost = (form: { closest(selector: string): unknown }, host: unknown) =>
+  form.closest(RECORD_ISLAND_HOST) === host
+
+/** A read refused for access is said so, without a retry that would only be refused again. */
+export const recordReadDenied = (status: number | undefined): boolean => status === 403
+
+/** A retained island host must receive fresh validation, draft and busy props. */
+export const recordIslandChanges = (records: MutationRecord[], root: Element) => {
+  const selector = RECORD_ISLAND_HOST
+  const holds = (node: Node): node is Element =>
+    node instanceof Element && (node.matches(selector) || node.querySelector(selector) !== null)
+  const removed = new Set<Element>()
+  const added = new Set<Element>()
+  const updated = new Set<Element>()
+  for (const record of records) {
+    for (const node of record.removedNodes) if (holds(node)) removed.add(node)
+    for (const node of record.addedNodes) if (holds(node) && node.isConnected) added.add(node)
+    if (
+      record.type === 'attributes' &&
+      record.attributeName === 'data-props' &&
+      record.target instanceof Element &&
+      record.target !== root &&
+      record.target.matches(selector) &&
+      record.target.isConnected
+    )
+      updated.add(record.target)
+  }
+  return { removed, added, updated: [...updated].filter((node) => !removed.has(node) && !added.has(node)) }
+}
+
+/** Retain a write intent across an uncertain response; changed input gets a new intent. */
+export const createRecordCommandIntents = (makeKey: () => string, limit = 20) => {
+  const held = new Map<string, string>()
+  return {
+    get: (operation: string, input: Record<string, unknown>) => {
+      const signature = JSON.stringify([operation, input])
+      let key = held.get(signature)
+      if (!key) {
+        key = makeKey()
+        held.set(signature, key)
+        while (held.size > limit) held.delete(held.keys().next().value!)
+      }
+      return key
+    },
+    clear: () => held.clear(),
+  }
+}
+
+/** A client-read page owns its tab and child decision in the URL. */
+export const recordClientPageHref = (
+  path: string,
+  currentHref: string,
+  tab: string | null,
+  dialogName?: string | null,
+  contextKeys: readonly string[] = [],
+): string => {
+  const url = new URL(recordContextRequestHref(path, currentHref, contextKeys))
+  if (tab) url.searchParams.set(RECORD_TAB_PARAM, tab)
+  else url.searchParams.delete(RECORD_TAB_PARAM)
+  if (dialogName) url.searchParams.set('dialog', dialogName)
+  else {
+    url.searchParams.delete('dialog')
+    url.searchParams.delete('dialogId')
+  }
+  return `${url.pathname}${url.search}`
+}
 
 // ── Runtime helpers ───────────────────────────────────────────────────────────
 
@@ -474,21 +684,61 @@ export const recordDraftHasChanges = (draft: DraftState): boolean =>
   Object.entries(draft.values).some(([key, value]) => value !== draft.initialValues[key]) ||
   Object.entries(draft.checks).some(([key, value]) => value !== draft.initialChecks[key])
 
+/** A preview opt-out belongs to its dialog, never to the parent record. */
+export const recordDiscardAccepted = (
+  draft: DraftState,
+  hasFile: boolean,
+  policy: 'confirm' | 'allow' | undefined,
+  confirm: () => boolean,
+): boolean => policy === 'allow' || (!recordDraftHasChanges(draft) && !hasFile) || confirm()
+
+/** Captured checked values belong to one named field in one draft layer. */
+export const recordDraftCheckedValues = (draft: DraftState, name: string): readonly string[] => {
+  const prefix = `${name}\u0000`
+  return Object.entries(draft.checks)
+    .filter(([key, checked]) => checked && key.startsWith(prefix))
+    .map(([key]) => key.slice(prefix.length))
+}
+
 /** Cancel one inline editor without losing edits elsewhere in the record. */
 export const resetRecordDraftFields = (previous: DraftState, names: readonly string[]): DraftState => {
-  const omit = <T,>(values: Record<string, T>): Record<string, T> =>
-    Object.fromEntries(Object.entries(values).filter(([name]) => !names.includes(name)))
+  const omit = <T,>(values: Record<string, T>, checked = false): Record<string, T> =>
+    Object.fromEntries(
+      Object.entries(values).filter(([key]) => !names.includes(checked ? key.split('\u0000', 1)[0] : key)),
+    )
   return {
     values: omit(previous.values),
-    checks: omit(previous.checks),
+    checks: omit(previous.checks, true),
     initialValues: omit(previous.initialValues),
-    initialChecks: omit(previous.initialChecks),
+    initialChecks: omit(previous.initialChecks, true),
   }
 }
 
 type DraftScope = 'record' | 'dialog'
 
 const emptyDraftState = (): DraftState => ({ values: {}, checks: {}, initialValues: {}, initialChecks: {} })
+/** A successful inline command consumes only its declared record fields. */
+export const consumeRecordCommandDrafts = (previous: DraftState, names?: readonly string[]): DraftState =>
+  names ? resetRecordDraftFields(previous, names) : emptyDraftState()
+
+export const consumeRecordDialogDrafts = (previous: DraftState, retain = false): DraftState =>
+  retain ? previous : emptyDraftState()
+
+/**
+ * Drop baselines no capture holds. `draft()` seeds a field's baseline from the record each
+ * render reads, so the render between a command and its re-read seeds the very data that
+ * command replaced; left in place, a saved field would read as edited until the page reloads.
+ */
+export const settleRecordDraftBaselines = (previous: DraftState): DraftState => ({
+  values: previous.values,
+  checks: previous.checks,
+  initialValues: Object.fromEntries(
+    Object.entries(previous.initialValues).filter(([key]) => key in previous.values),
+  ),
+  initialChecks: Object.fromEntries(
+    Object.entries(previous.initialChecks).filter(([key]) => key in previous.checks),
+  ),
+})
 const draftCheckKey = (name: string, value: string): string => `${name}\u0000${value}`
 
 /** Name prefix of a checkbox that ticks every checkbox of its form sharing the rest of its name. */
@@ -585,35 +835,69 @@ export const createRecordPage =
   (props: RecordPageIslandProps): IslandController =>
     recordController(definition, { ...options, props })()
 
-type PageMode = Partial<RecordPageOptions> & { props: RecordPageIslandProps }
+/** A record form inside an existing SSR page/tab; it owns no page title or route tabs. */
+export const createRecordPanel =
+  <Data,>(definition: RecordModalDefinition<Data>) =>
+  (props: RecordPageIslandProps): IslandController =>
+    recordController(definition, {
+      props,
+      panel: true,
+      path: () => `${location.pathname}${location.search}`,
+    })()
+
+type PageMode = Partial<RecordPageOptions> & { props: RecordPageIslandProps; panel?: boolean }
 
 const MODAL_LAYER = '[data-ui="modal-layer"][data-client-modal="true"]'
+/** Wraps the runtime's own question, which is a modal layer but never a record layer. */
+const ASK_LAYER = '[data-record-ask]'
+/** The value of the confirm button in the runtime's question; it submits nothing. */
+export const RECORD_ASK_CONFIRM = 'record-ask-confirm'
+
+/** The name a submitter shows, which a question about its command repeats. */
+export const recordSubmitterLabel = (submitter: Element | null): string | null =>
+  (
+    submitter?.getAttribute('aria-label') ??
+    submitter?.querySelector('[data-ui="action-label"]')?.textContent ??
+    submitter?.textContent ??
+    ''
+  ).trim() || null
 
 const recordController =
   <Data,>(definition: RecordModalDefinition<Data>, page: PageMode | null) =>
   (): IslandController => {
+    const commandIntents = createRecordCommandIntents(uuid)
     // Pages with a path own client-read/create navigation; other pages adopt route context.
     const serverPage = Boolean(page && !page.path)
     const pageProps = serverPage ? page!.props : null
     const adopted = signal(!serverPage)
     // A page's record layer is its RecordPage; nested dialogs are modal layers in either case.
-    const layerSelector = serverPage
-      ? `[data-record-layer="page"], ${MODAL_LAYER}`
-      : page
-        ? `[data-ui="record-page"], ${MODAL_LAYER}`
-        : MODAL_LAYER
+    const layerSelector = page?.panel
+      ? `[data-record-layer="panel"], ${MODAL_LAYER}`
+      : serverPage
+        ? `[data-record-layer="page"], ${MODAL_LAYER}`
+        : page
+          ? `[data-ui="record-page"], ${MODAL_LAYER}`
+          : MODAL_LAYER
     const hrefFor = (id: string, tab: string | null, dialogName?: string | null): string => {
       if (!page) return recordModalHref(location.href, { kind: definition.kind, id, tab, dialog: dialogName })
       if (serverPage) return `${location.pathname}${location.search}`
-      const url = new URL(page.path!(id), location.href)
-      const lang = new URL(location.href).searchParams.get('lang')
-      if (lang) url.searchParams.set('lang', lang)
-      if (tab) url.searchParams.set(RECORD_TAB_PARAM, tab)
+      const url = new URL(
+        recordClientPageHref(
+          page.path!(id),
+          location.href,
+          tab,
+          dialogName,
+          'route' in definition.context ? definition.context.query : [],
+        ),
+        location.href,
+      )
+      if (page.props.back) url.searchParams.set('returnTo', page.props.back)
       return `${url.pathname}${url.search}`
     }
     // A link this record answers: in a modal, one naming its kind on the same
     // collection; on a page, one to the page's own path (a tab).
     const targetOf = (url: URL): RecordModalTarget | null => {
+      if (page?.panel) return null
       if (!page) {
         const target = readRecordModalTarget(url)
         return target?.kind === definition.kind ? target : null
@@ -623,20 +907,31 @@ const recordController =
       const current = open()
       const data = envelope()?.data
       // A tab another route serves (a server-rendered page on the same path) is a navigation.
+      // The tab already open is this page's own, declared or not (a page's route may name
+      // one, such as `general`, its definition has no tab for): a link to it stays here.
       if (
         tab &&
         current &&
+        tab !== current.tab &&
         data !== undefined &&
         !visibleTabs(contextFor(current, data)).some((item) => item.id === tab)
       )
         return null
-      return { kind: definition.kind, id: current?.id ?? page.props.id, tab }
+      return {
+        kind: definition.kind,
+        id: current?.id ?? page.props.id,
+        tab,
+        dialog: url.searchParams.get('dialog') ?? undefined,
+      }
     }
     // Leave the page through the shell's own link handling, as a click on a link would.
     const leave = (): void => {
       if (!page?.props.back) return
       const link = document.createElement('a')
       link.href = page.props.back
+      // The fragment navigator's response URL cannot contain a row fragment.
+      // Keep anchored collection returns on the framework's native reload path.
+      if (new URL(link.href).hash) link.setAttribute('data-ket-reload', '')
       link.hidden = true
       document.body.append(link)
       link.click()
@@ -646,6 +941,7 @@ const recordController =
     const status = signal<Status>('idle')
     const envelope = signal<RecordContextEnvelope<Data> | null>(null)
     const failure = signal<string | null>(null)
+    const failureStatus = signal<number | undefined>(undefined)
     const issues = signal<RecordIssue[]>([])
     const recordDrafts = signal<DraftState>(emptyDraftState())
     const dialogDrafts = signal<DraftState>(emptyDraftState())
@@ -698,9 +994,22 @@ const recordController =
     let root: HTMLElement | null = null
     let request: AbortController | null = null
     let pushed = false
+    let pendingHistoryClose: string | null = null
     let returnFocus: HTMLElement | null = null
     let dialogReturnFocus: HTMLElement | null = null
     let releaseInert: (() => void) | null = null
+
+    // The question asked before discarding input or running a command that asks first,
+    // in the shared ConfirmDialog. One at a time; answering settles what `ask` returned.
+    type Question = {
+      title: string
+      message: string
+      confirmLabel: string
+      cancelLabel: string
+      variant: ActionVariant
+      settle: (accepted: boolean) => void
+    }
+    const asking = signal<Question | null>(null)
 
     // Messages of the last record this modal loaded: opening the next record clears
     // the envelope, and its loading state still needs words rather than keys.
@@ -711,7 +1020,8 @@ const recordController =
     const t = (key: string, params?: Record<string, unknown>): string =>
       interpolate(resolveRecordModalLabel(key, sources()), params)
     const issueText = (issue: RecordIssue): string =>
-      issue.message ?? interpolate(resolveRecordModalIssue(issue.code, sources()), issue.params)
+      issue.message ??
+      interpolate(resolveRecordModalIssue(issue.messageKey ?? issue.code, sources()), issue.params)
     const visibleTabs = (context: RecordModalContext<Data>) =>
       [...(definition.tabs ?? []), ...(definition.extensionTabs?.(context) ?? [])].filter(
         (tab) => tab.visible?.(context) ?? true,
@@ -740,6 +1050,9 @@ const recordController =
           return draft.values[name] ?? fallback
         },
         recordDraft: (name, fallback = '') => recordDrafts().values[name] ?? fallback,
+        recordChanged: recordDraftHasChanges(recordDrafts()),
+        draftScope: scope,
+        draftCheckedValues: (name) => recordDraftCheckedValues(draftState(), name),
         draftChecked: (name, value = '1', fallback = false) => {
           const draft = draftState()
           const key = draftCheckKey(name, value)
@@ -763,6 +1076,14 @@ const recordController =
     }
 
     let pendingEntryDialog: string | null = null
+    // A record read again replaces the baselines of fields nobody captured, in the same
+    // render, so `draft()` seeds them from what was read now.
+    const adopt = (next: RecordContextEnvelope<Data>): void =>
+      batch(() => {
+        envelope.set(next)
+        recordDrafts.set(settleRecordDraftBaselines(recordDrafts()))
+        dialogDrafts.set(settleRecordDraftBaselines(dialogDrafts()))
+      })
     const load = async (id: string, quiet = false): Promise<void> => {
       request?.abort()
       const controller = new AbortController()
@@ -772,12 +1093,13 @@ const recordController =
       const cached = definition.cache === false ? undefined : cache.get(id)
       if (cached) {
         previousMessages = cached.messages ?? previousMessages
-        envelope.set(cached)
+        adopt(cached)
         status.set('ready')
         quiet = true
       }
       if (!quiet) status.set('loading')
       failure.set(null)
+      failureStatus.set(undefined)
       try {
         const creating = id === RECORD_NEW_ID
         const result =
@@ -785,6 +1107,7 @@ const recordController =
             ? await readRecordContextRoute<RecordContextEnvelope<Data>>(
                 definition.context.route(id, creating),
                 controller.signal,
+                definition.context.query,
               )
             : await callRecordFunction<RecordContextEnvelope<Data> | null>(
                 definition.context.fn,
@@ -793,16 +1116,27 @@ const recordController =
               )
         if (controller.signal.aborted) return
         if (!result.ok || !result.value) {
-          failure.set(result.ok ? 'recordModal.notFound' : (result.message ?? 'recordModal.loadFailed'))
+          const denied = !result.ok && recordReadDenied(result.status)
+          failure.set(
+            result.ok
+              ? 'recordModal.notFound'
+              : (result.message ?? (denied ? 'recordModal.denied' : 'recordModal.loadFailed')),
+          )
+          failureStatus.set(result.ok ? undefined : result.status)
           status.set('error')
           return
         }
         previousMessages = result.value.messages ?? previousMessages
         if (definition.cache !== false) remember(id, result.value)
-        envelope.set(result.value)
+        adopt(result.value)
         status.set('ready')
         if (pendingEntryDialog && definition.dialogs?.[pendingEntryDialog]) {
-          dialog.set({ name: pendingEntryDialog, params: {} })
+          dialog.set({
+            name: pendingEntryDialog,
+            params: new URL(location.href).searchParams.has('dialogId')
+              ? { id: new URL(location.href).searchParams.get('dialogId')! }
+              : {},
+          })
           afterRender()
         }
         pendingEntryDialog = null
@@ -813,7 +1147,10 @@ const recordController =
       }
     }
 
-    const layers = (): HTMLElement[] => (root ? [...root.querySelectorAll<HTMLElement>(layerSelector)] : [])
+    const layers = (): HTMLElement[] =>
+      root
+        ? [...root.querySelectorAll<HTMLElement>(layerSelector)].filter((layer) => !layer.closest(ASK_LAYER))
+        : []
     const recordLayer = (): HTMLElement | null => layers()[0] ?? null
     const topLayer = (): HTMLElement | null => layers().at(-1) ?? null
 
@@ -859,8 +1196,23 @@ const recordController =
       for (const control of current.querySelectorAll<
         HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
       >('input[name], select[name], textarea[name]')) {
-        if (control.disabled || control.name === RECORD_COMMAND_FIELD) continue
+        if (control.disabled || !control.name || control.name === RECORD_COMMAND_FIELD) continue
         if (control instanceof HTMLInputElement) {
+          // DateTimePicker progressively hides its canonical named field. Its
+          // unnamed day/time inputs are helpers, not separate draft fields.
+          const picker = control.closest('[data-ui="date-time-picker"]')
+          if (picker && control.matches('[data-ui="field-control"]')) {
+            const day = picker.querySelector<HTMLInputElement>('input[type="date"]')
+            const time = picker.querySelector<HTMLInputElement>('input[type="time"]')
+            kept.initialValues[control.name] ??=
+              day && time
+                ? day.defaultValue || time.defaultValue
+                  ? `${day.defaultValue}T${time.defaultValue}`
+                  : ''
+                : control.defaultValue
+            kept.values[control.name] = control.value
+            continue
+          }
           if (control.type === 'file' || control.type === 'hidden') continue
           if (control.type === 'checkbox' || control.type === 'radio') {
             const key = draftCheckKey(control.name, control.value)
@@ -892,7 +1244,39 @@ const recordController =
       if (currentLayers.length > 1) keepDrafts(currentLayers.at(-1) ?? null, 'dialog')
     }
 
-    const mayDiscard = (current: HTMLElement | null): boolean => {
+    const ask = (question: Omit<Question, 'settle'>): Promise<boolean> => {
+      if (asking()) return Promise.resolve(false)
+      const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      // Everything under the question is out of reach until it is answered.
+      const beneath = layers()
+      const wasInert = beneath.map((layer) => layer.inert)
+      const releaseOutside = page && !releaseInert && root ? inertOutside(root) : null
+      return new Promise((resolve) => {
+        const asked: Question = {
+          ...question,
+          settle: (accepted) => {
+            if (asking() !== asked) return
+            asking.set(null)
+            beneath.forEach((layer, index) => {
+              layer.inert = wasInert[index] ?? false
+            })
+            releaseOutside?.()
+            // Declining returns to where the question was asked; accepting lets the caller move on.
+            if (!accepted && trigger?.isConnected) requestAnimationFrame(() => trigger.focus())
+            resolve(accepted)
+          },
+        }
+        asking.set(asked)
+        requestAnimationFrame(() => {
+          if (asking() !== asked) return
+          for (const layer of beneath) layer.inert = true
+          // The safe answer has focus: Enter on an unread question keeps what is there.
+          root?.querySelector<HTMLElement>(`${ASK_LAYER} [data-client-modal-close] button`)?.focus()
+        })
+      })
+    }
+
+    const mayDiscard = async (current: HTMLElement | null): Promise<boolean> => {
       if (!current) return true
       const scope = dialog() && current === topLayer() ? 'dialog' : 'record'
       keepDrafts(current, scope)
@@ -900,8 +1284,15 @@ const recordController =
       const hasFile = [...current.querySelectorAll<HTMLInputElement>('input[type="file"]')].some(
         (field) => !field.disabled && Boolean(field.files?.length),
       )
-      if (!recordDraftHasChanges(draft) && !hasFile) return true
-      return globalThis.confirm(t('recordModal.unsaved'))
+      const policy = scope === 'dialog' ? definition.dialogs?.[dialog()!.name]?.discardPolicy : undefined
+      if (recordDiscardAccepted(draft, hasFile, policy, () => false)) return true
+      return ask({
+        title: t('recordModal.unsaved'),
+        message: t('recordModal.unsavedDetail'),
+        confirmLabel: t('recordModal.discard'),
+        cancelLabel: t('recordModal.keepEditing'),
+        variant: 'destructive',
+      })
     }
 
     const afterRender = (preferred?: () => HTMLElement | null): void => {
@@ -942,6 +1333,9 @@ const recordController =
       how: 'push' | 'replace' | 'none',
       preferredFocus?: () => HTMLElement | null,
       entryDialog?: string | null,
+      /** The opened dialog's parameters, read from the link that named it. */
+      entryParams?: Record<string, string>,
+      opener?: HTMLElement | null,
     ): void => {
       const current = open()
       const sameRecord = current?.id === id
@@ -949,7 +1343,11 @@ const recordController =
       if (!sameRecord) {
         tallestRecordHeight = 0
         pendingEntryDialog = entryDialog ?? null
-        returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        returnFocus =
+          opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+        // Signals render synchronously. Remove the previous record before clearing
+        // drafts, or its fields seed the new record's initial values again.
+        envelope.set(null)
         issues.set([])
         saved.set(false)
         recordDrafts.set(emptyDraftState())
@@ -959,17 +1357,29 @@ const recordController =
         outcome.set(null)
         dialog.set(null)
         dialogReturnFocus = null
-        envelope.set(null)
         void load(id)
       }
       if (sameRecord && entryDialog && definition.dialogs?.[entryDialog]) {
         keepAllDrafts()
         dialogDrafts.set(emptyDraftState())
         dialogViewState.set({})
-        dialog.set({ name: entryDialog, params: {} })
+        // As from a dialog button: the last command's answer is not this dialog's.
+        issues.set([])
+        outcome.set(null)
+        saved.set(false)
+        dialog.set({
+          name: entryDialog,
+          params:
+            entryParams ??
+            (new URL(location.href).searchParams.has('dialogId')
+              ? { id: new URL(location.href).searchParams.get('dialogId')! }
+              : {}),
+        })
       }
       open.set({ id, tab: nextTab })
-      const href = hrefFor(id, nextTab || null, entryDialog)
+      const entryHref = new URL(hrefFor(id, nextTab || null, entryDialog), location.href)
+      if (entryDialog && entryParams?.id) entryHref.searchParams.set('dialogId', entryParams.id)
+      const href = `${entryHref.pathname}${entryHref.search}`
       if (how === 'push') {
         // The shell's own navigation snapshots scroll onto the entry it leaves
         // before pushing (`saveScroll` in packages/ketjs/src/server/http.ts) so
@@ -992,12 +1402,33 @@ const recordController =
       afterRender(preferredFocus)
     }
 
-    const hide = (how: 'history' | 'replace' | 'none'): void => {
+    const hide = (how: 'history' | 'replace' | 'none', afterHidden?: () => void): void => {
       // Closing a page is leaving it, for the collection it came from.
       if (page && how !== 'none') {
         leave()
         return
       }
+      const target = returnFocus
+      const href = target?.closest<HTMLAnchorElement>('a[href]')?.href
+      const restoreFocus = () =>
+        requestAnimationFrame(() => {
+          const current = target?.isConnected
+            ? target
+            : href
+              ? [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].find(
+                  (link) => link.href === href,
+                )
+              : null
+          current?.focus()
+        })
+      const done = () => {
+        afterHidden?.()
+        restoreFocus()
+      }
+      const back = how === 'history' && pushed
+      // Set the closed address before disposal can trigger a shell/island reconciliation.
+      if (!back && how !== 'none')
+        history.replaceState(history.state ?? {}, '', recordModalClosedHref(location.href))
       request?.abort()
       open.set(null)
       tallestRecordHeight = 0
@@ -1013,22 +1444,22 @@ const recordController =
       envelope.set(null)
       releaseInert?.()
       releaseInert = null
-      if (how === 'history' && pushed) {
-        pushed = false
+      pushed = false
+      if (back) {
+        pendingHistoryClose = recordModalClosedHref(location.href)
+        window.addEventListener('popstate', done, { once: true })
         history.back()
-      } else if (how !== 'none') {
-        pushed = false
-        history.replaceState(history.state ?? {}, '', recordModalClosedHref(location.href))
-      }
-      const target = returnFocus
+      } else done()
       returnFocus = null
       dialogReturnFocus = null
-      if (target?.isConnected) requestAnimationFrame(() => target.focus())
     }
 
-    const close = (): void => {
-      if (dialog()) {
-        if (!mayDiscard(topLayer())) return
+    const close = async (): Promise<void> => {
+      // A question already on screen is answered first; Escape or a second click does not stack another.
+      if (asking()) return
+      const opened = dialog()
+      if (opened) {
+        if (!(await mayDiscard(topLayer())) || dialog() !== opened) return
         const target = dialogReturnFocus
         dialogReturnFocus = null
         dialog.set(null)
@@ -1044,7 +1475,8 @@ const recordController =
       }
       // Route-context pages stay open; client-read pages return through their back action.
       if (serverPage) return
-      if (!mayDiscard(recordLayer())) return
+      const current = open()
+      if (!(await mayDiscard(recordLayer())) || open() !== current) return
       hide('history')
     }
 
@@ -1058,9 +1490,21 @@ const recordController =
       const scope: DraftScope = dialog() && currentLayer === topLayer() ? 'dialog' : 'record'
       keepDrafts(currentLayer, scope)
       const context = contextFor(current, data, scope)
-      if (command.confirm) {
-        const message = command.confirm(context)
-        if (message && !globalThis.confirm(message)) return
+      const question = command.confirm?.(context)
+      if (question) {
+        // The question repeats the command's own name, so the answer reads as the act itself.
+        const label = recordSubmitterLabel(submitter) ?? t('recordModal.confirm')
+        const accepted = await ask({
+          title: label,
+          message: question,
+          confirmLabel: label,
+          cancelLabel: t('recordModal.back'),
+          variant:
+            submitter instanceof HTMLElement && submitter.dataset.variant === 'destructive'
+              ? 'destructive'
+              : 'primary',
+        })
+        if (!accepted || open() !== current || running()) return
       }
       setRunning(true)
       issues.set([])
@@ -1096,19 +1540,21 @@ const recordController =
         }
         // A preview reads and never writes, so the function behind it is not declared
         // idempotent and the server refuses a key on it.
-        const intent = () => (command.preview ? undefined : uuid())
+        const intent = (operation: string, input: Record<string, unknown>) =>
+          command.preview ? undefined : commandIntents.get(operation, input)
         const invoke = (fn: string, input: Record<string, unknown>) =>
-          callRecordFunction(fn, input, { idempotencyKey: intent() })
+          callRecordFunction(fn, input, { idempotencyKey: intent(fn, input) })
+        const primaryInput = command.input(formData, context, uploads)
         let result = command.route
-          ? await callRecordRoute(command.route, command.input(formData, context, uploads), {
-              idempotencyKey: intent(),
+          ? await callRecordRoute(command.route, primaryInput, {
+              idempotencyKey: intent(command.route, primaryInput),
             })
-          : await invoke(command.fn!, command.input(formData, context, uploads))
+          : await invoke(command.fn!, primaryInput)
         // Further calls run only once the first succeeds, and stop at the first
         // one that does not — a later step's success never papers over an
         // earlier failure.
         for (const step of result.ok ? (command.also ?? []) : []) {
-          if (step.when && !step.when(context)) continue
+          if (step.when && !step.when(context, formData)) continue
           result = await invoke(step.fn, step.input(formData, context, uploads))
           if (!result.ok) break
         }
@@ -1134,6 +1580,9 @@ const recordController =
                   },
                 ],
           )
+          // Hidden stamps are never drafts, so the quiet re-read replaces them while typed values stay.
+          if (command.refreshOnRefusal) await load(current.id, true)
+          afterRender(() => topLayer()?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? null)
           return
         }
         if (command.preview) {
@@ -1144,17 +1593,18 @@ const recordController =
           version.set(version() + 1)
           return
         }
+        commandIntents.clear()
         if (scope === 'dialog') {
-          dialogDrafts.set(emptyDraftState())
-          dialogViewState.set({})
-        } else recordDrafts.set(emptyDraftState())
-        if (command.clearRecordDrafts?.length)
+          dialogDrafts.set(consumeRecordDialogDrafts(dialogDrafts(), command.retainDialogDraft === true))
+          if (!command.retainDialogDraft) dialogViewState.set({})
+        } else recordDrafts.set(consumeRecordCommandDrafts(recordDrafts(), command.clearRecordDrafts))
+        if (scope === 'dialog' && command.clearRecordDrafts?.length)
           recordDrafts.set(resetRecordDraftFields(recordDrafts(), command.clearRecordDrafts))
         // A command that stays in its layer leaves its answer for the view, which is
         // how something the server can only say once — a one-time credential — reaches
         // the reader. Every other `after` replaces the layer, so the answer goes.
         outcome.set(after_(command) === 'stay' ? { command: name, value: result.value } : null)
-        form.reset()
+        if (!(scope === 'dialog' && command.retainDialogDraft)) form.reset()
         const value = result.value as { id?: unknown } | null | undefined
         const createdId =
           after_(command) === 'open'
@@ -1164,15 +1614,23 @@ const recordController =
         // What the command changed is no longer what the cache holds.
         cache.delete(current.id)
         if (createdId) cache.delete(createdId)
-        const announce = (): void => {
+        const announce = (closing = false): void => {
           document.dispatchEvent(
             new CustomEvent('ket:records-changed', {
+              // A collection island that reads itself again cancels the event, and
+              // the shell leaves the content slot alone (table-selection-view.tsx).
+              cancelable: true,
               // `page`: no collection sits behind a record page, so the shell
               // has nothing to refresh; the page re-reads its own context.
+              // `href`: a closing modal still names its record in the address bar, which
+              // it leaves only after this event; the collection is read without it.
               detail: {
                 kind: definition.kind,
                 ids: [createdId ?? current.id],
                 ...(page ? { page: true } : {}),
+                ...(closing
+                  ? { href: new URL(recordModalClosedHref(location.href), location.href).href }
+                  : {}),
               },
             }),
           )
@@ -1198,21 +1656,32 @@ const recordController =
             : declared
         // A modal that closes says so by closing; one that stays owes an answer. A
         // page whose dialog closed shows the change itself, read again in place.
-        if (after !== 'close' && after === declared) saved.set(true)
+        if (
+          after !== 'close' &&
+          after === declared &&
+          !(scope === 'dialog' && command.retainDialogDraft) &&
+          command.showsOutcome !== true
+        )
+          saved.set(true)
         if (after === 'open') {
           dialog.set(null)
           dialogDrafts.set(emptyDraftState())
           dialogViewState.set({})
           // Replace `:new` in the address bar before the collection refreshes: the
           // shell re-fetches `location.href`, which must already name the new record.
-          if (createdId) show(createdId, command.openTab ?? null, 'replace')
-          else hide('history')
+          if (createdId) {
+            show(createdId, command.openTab ?? null, 'replace')
+            if (createdId === current.id) await load(createdId)
+          } else hide('history')
           announce()
           return
         }
+        if (after === 'close') {
+          hide('history', () => announce(true))
+          return
+        }
         announce()
-        if (after === 'close') hide('history')
-        else if (after === 'reload') {
+        if (after === 'reload') {
           const target = dialogReturnFocus
           dialogReturnFocus = null
           dialog.set(null)
@@ -1270,6 +1739,13 @@ const recordController =
     const recordBody = (): TemplateResult | string => {
       const current = open()
       if (!current) return ''
+      // A refused read says why and offers nothing to retry; another failure may pass next time.
+      if (status() === 'error' && recordReadDenied(failureStatus()))
+        return Notice({
+          title: t('recordModal.deniedTitle'),
+          message: t(failure() ?? 'recordModal.denied'),
+          tone: 'warning',
+        })
       if (status() === 'error')
         return (
           <>
@@ -1308,12 +1784,33 @@ const recordController =
             ) : undefined,
           body,
         })
+      // The stack owns the gap under a header or notice. Each part keeps its position
+      // (an empty one renders nothing), so a refusal's notice never rebuilds the form.
+      return Stack({ items: [header || null, issueNotice || null, body || null] })
+    }
+
+    // A refused read is titled as such; any other failure could not load.
+    const failureTitle = (): string =>
+      t(recordReadDenied(failureStatus()) ? 'recordModal.deniedTitle' : 'recordModal.loadFailed')
+
+    const askLayer = (): TemplateResult | string => {
+      const question = asking()
+      if (!question) return ''
       return (
-        <>
-          {header}
-          {issueNotice}
-          {body}
-        </>
+        <div data-record-ask>
+          {ConfirmDialog({
+            id: `record-ask-${definition.kind.replaceAll('.', '-')}`,
+            mode: 'client',
+            size: 'small',
+            title: question.title,
+            message: question.message,
+            closeHref: '#',
+            closeLabel: question.cancelLabel,
+            confirmLabel: question.confirmLabel,
+            confirmValue: RECORD_ASK_CONFIRM,
+            confirmVariant: question.variant,
+          })}
+        </div>
       )
     }
 
@@ -1325,6 +1822,25 @@ const recordController =
       const spec = definition.dialogs?.[opened.name]
       if (!spec) return ''
       const context = contextFor(current, data, 'dialog')
+      if (spec.confirmation) {
+        const decision = spec.confirmation
+        return ConfirmDialog({
+          id: `record-dialog-${definition.kind.replaceAll('.', '-')}-${opened.name}`,
+          mode: 'client',
+          size: 'small',
+          title: spec.title(context),
+          closeHref: '#',
+          closeLabel: decision.cancelLabel?.(context) ?? t('recordModal.close'),
+          message: decision.message(context),
+          confirmLabel: decision.label(context),
+          confirmForm: decision.form(context),
+          confirmName: RECORD_COMMAND_FIELD,
+          confirmValue: decision.command,
+          confirmVariant: decision.variant,
+          confirmDisabled: decision.disabled?.(context) ?? false,
+          details: Stack({ items: [formIssues(context) || null, spec.view(context) || null] }),
+        })
+      }
       return ModalSheet({
         id: `record-dialog-${definition.kind.replaceAll('.', '-')}-${opened.name}`,
         mode: 'client',
@@ -1334,12 +1850,7 @@ const recordController =
         description: spec.description?.(context),
         actions: spec.actions?.(context),
         closeLabel: t('recordModal.close'),
-        body: (
-          <>
-            {formIssues(context)}
-            {spec.view(context)}
-          </>
-        ),
+        body: Stack({ items: [formIssues(context) || null, spec.view(context) || null] }),
       })
     }
 
@@ -1353,7 +1864,7 @@ const recordController =
       const title = context
         ? definition.title(context)
         : status() === 'error'
-          ? t('recordModal.loadFailed')
+          ? failureTitle()
           : pageProps!.title
       return (
         <>
@@ -1364,9 +1875,13 @@ const recordController =
             meta: context ? (definition.description?.(context) ?? undefined) : undefined,
             status: context ? definition.status?.(context) : undefined,
             actions: context ? definition.pageActions?.(context) : undefined,
+            aside: context ? definition.pageAside?.(context) : undefined,
+            asideLabel: context ? definition.pageAsideLabel?.(context) : undefined,
+            asideWhenStacked: definition.pageAsideWhenStacked,
             body: recordBody(),
           })}
           {dialogLayer()}
+          {askLayer()}
         </>
       )
     }
@@ -1376,6 +1891,22 @@ const recordController =
       const current = open()
       const data = envelope()?.data
       const context = current && data !== undefined ? contextFor(current, data) : null
+      if (mode.panel) {
+        if (!current || (status() !== 'error' && !context)) return recordPanelLoading(mode.props)
+        return (
+          <>
+            {recordPanelFrame({
+              actions: context
+                ? (definition.pageActions?.(context) ?? definition.actions?.(context))
+                : undefined,
+              body: recordBody(),
+              aside: context ? definition.pageAside?.(context) : undefined,
+            })}
+            {dialogLayer()}
+            {askLayer()}
+          </>
+        )
+      }
       // Until the record has loaded, the page is exactly what the server rendered.
       if (!current || (status() !== 'error' && !context)) return recordPageLoading(mode.props)
       const size =
@@ -1384,7 +1915,7 @@ const recordController =
             ? definition.size(context)
             : 'default'
           : (definition.size ?? 'default')
-      const title = context ? definition.title(context) : t('recordModal.loadFailed')
+      const title = context ? definition.title(context) : failureTitle()
       // The document title follows the record, as a server-rendered page's would:
       // a created record replaces `new`, a rename shows after saving.
       if (context && document.title !== title) queueMicrotask(() => (document.title = title))
@@ -1393,12 +1924,19 @@ const recordController =
           {RecordPage({
             variant: 'operational',
             width: size === 'large' ? 'wide' : 'default',
+            context: recordPageTrail(mode.props.trail, mode.props.trailLabel ?? mode.props.title),
             title,
             status: context ? definition.status?.(context) : undefined,
-            actions: context ? definition.actions?.(context) : undefined,
+            actions: context
+              ? (definition.pageActions?.(context) ?? definition.actions?.(context))
+              : undefined,
+            aside: context ? definition.pageAside?.(context) : undefined,
+            asideLabel: context ? definition.pageAsideLabel?.(context) : undefined,
+            asideWhenStacked: definition.pageAsideWhenStacked ?? 'before',
             body: recordBody(),
           })}
           {dialogLayer()}
+          {askLayer()}
         </>
       )
     }
@@ -1431,7 +1969,9 @@ const recordController =
               fixedHeight: definition.fixedHeight ?? 'auto',
               title: context
                 ? definition.title(context)
-                : t(status() === 'error' ? 'recordModal.loadFailed' : 'recordModal.loading'),
+                : status() === 'error'
+                  ? failureTitle()
+                  : t('recordModal.loading'),
               description: context ? (definition.description?.(context) ?? null) : null,
               status: context ? definition.status?.(context) : undefined,
               actions: context ? definition.actions?.(context) : undefined,
@@ -1439,11 +1979,17 @@ const recordController =
               body: recordBody(),
             })}
             {dialogLayer()}
+            {askLayer()}
           </>
         )
       },
       mount: ({ root: host, lifetime }) => {
         root = host as unknown as HTMLElement
+        // Object URLs of the images chosen but not sent yet (see the `change` handler).
+        const filePreviews = new Set<string>()
+        lifetime.addEventListener('abort', () => {
+          for (const src of filePreviews) URL.revokeObjectURL(src)
+        })
 
         // Links anywhere on the page that name this kind open it; a link naming the
         // record already open switches its tab. Runs before the navigation layer.
@@ -1460,6 +2006,20 @@ const recordController =
             )
               return
             const element = event.target instanceof Element ? event.target : null
+            // The question answers before anything under it: its confirm submits nothing.
+            const question = asking()
+            const inAsk = question && element?.closest(ASK_LAYER)
+            if (inAsk && root?.contains(inAsk)) {
+              const confirmed = element?.closest(`button[value="${RECORD_ASK_CONFIRM}"]`)
+              const declined = element?.closest(
+                '[data-ui="modal-close"], [data-ui="modal-backdrop"], [data-client-modal-close]',
+              )
+              if (confirmed || declined) {
+                event.preventDefault()
+                question.settle(Boolean(confirmed))
+              }
+              return
+            }
             const inModal = element?.closest(layerSelector)
             if (inModal && root?.contains(inModal)) {
               // A child control can open its own dialog inside this record.
@@ -1472,10 +2032,12 @@ const recordController =
               // for its styling, not the icon-only close control's). Route-context pages have no close.
               if (
                 (!serverPage || inModal.matches('[data-ui="modal-layer"]')) &&
-                element?.closest('[data-ui="modal-close"], [data-ui="modal-backdrop"], [data-record-close]')
+                element?.closest(
+                  '[data-ui="modal-close"], [data-ui="modal-backdrop"], [data-record-close], [data-client-modal-close]',
+                )
               ) {
                 event.preventDefault()
-                close()
+                void close()
                 return
               }
               const stateControl = element?.closest<HTMLElement>(
@@ -1519,7 +2081,14 @@ const recordController =
                 issues.set([])
                 outcome.set(null)
                 saved.set(false)
-                dialog.set({ name: opener.getAttribute(RECORD_DIALOG_ATTRIBUTE) ?? '', params })
+                const name = opener.getAttribute(RECORD_DIALOG_ATTRIBUTE) ?? ''
+                dialog.set({ name, params })
+                if (page && !serverPage) {
+                  const current = open()!
+                  const url = new URL(hrefFor(current.id, current.tab || null, name), location.href)
+                  if (params.id) url.searchParams.set('dialogId', params.id)
+                  history.pushState(history.state ?? {}, '', `${url.pathname}${url.search}`)
+                }
                 afterRender()
                 return
               }
@@ -1535,7 +2104,7 @@ const recordController =
             if (page && !(element && root?.contains(element))) return
             const href = openerHref(element)
             if (!href) return
-            const url = new URL(href, location.href)
+            const url = new URL(recordRequestHref(href, location.href))
             if (url.origin !== location.origin || url.pathname !== location.pathname) return
             const target = targetOf(url)
             if (!target) return
@@ -1564,6 +2133,27 @@ const recordController =
               // which the views read back, so no prompt stands between two tabs.
               keepDrafts(recordLayer(), 'record')
               issues.set([])
+              if (target.dialog) {
+                // A link naming one of this record's dialogs (an overflow menu's command)
+                // opens it as its trigger would: a new entry Back closes, focus in the
+                // dialog, then back on what opened it — the menu's own button when the
+                // link sat in a disclosure that has closed since. Like any opened dialog,
+                // it clears the answer of the layer below.
+                outcome.set(null)
+                const opener = element?.closest<HTMLElement>('a[href]') ?? null
+                dialogReturnFocus =
+                  opener?.closest('details')?.querySelector<HTMLElement>(':scope > summary') ?? opener
+                const dialogId = url.searchParams.get('dialogId')
+                show(
+                  target.id,
+                  target.tab ?? null,
+                  'push',
+                  () => null,
+                  target.dialog,
+                  dialogId ? { id: dialogId } : {},
+                )
+                return
+              }
               // The answer belonged to the tab that asked for it.
               outcome.set(null)
               show(
@@ -1572,10 +2162,19 @@ const recordController =
                 'replace',
                 () =>
                   recordLayer()?.querySelector<HTMLElement>('[data-ui="tab"][data-active="true"]') ?? null,
+                target.dialog,
               )
               return
             }
-            show(target.id, target.tab ?? null, 'push', undefined, target.dialog)
+            show(
+              target.id,
+              target.tab ?? null,
+              'push',
+              undefined,
+              target.dialog,
+              undefined,
+              element?.closest<HTMLElement>('a[href], button, [tabindex]') ?? null,
+            )
           },
           // Capture: the navigation layer listens on the document too, and was
           // installed first, so a bubbling listener would see the page fetched.
@@ -1597,7 +2196,15 @@ const recordController =
             const target = targetOf(url)
             if (!target) return
             event.preventDefault()
-            show(target.id, target.tab ?? null, 'push', undefined, target.dialog)
+            show(
+              target.id,
+              target.tab ?? null,
+              'push',
+              undefined,
+              target.dialog,
+              undefined,
+              element instanceof HTMLElement ? element : null,
+            )
           },
           { signal: lifetime, capture: true },
         )
@@ -1606,13 +2213,15 @@ const recordController =
           'submit',
           (event) => {
             const form = event.target instanceof HTMLFormElement ? event.target : null
-            if (!form || !root?.contains(form)) return
-            event.preventDefault()
+            if (!form || !root?.contains(form) || !recordFormOwnedByHost(form, root)) return
             const submitter = (event as SubmitEvent).submitter ?? null
             const name =
               (submitter instanceof HTMLButtonElement && submitter.name === RECORD_COMMAND_FIELD
                 ? submitter.value
                 : null) ?? String(new FormData(form).get(RECORD_COMMAND_FIELD) ?? '')
+            // Native search forms inside a record page keep their GET navigation.
+            if (!name) return
+            event.preventDefault()
             void run(name, form, submitter)
           },
           { signal: lifetime },
@@ -1622,13 +2231,19 @@ const recordController =
           'keydown',
           (event) => {
             if (!open()) return
+            if (
+              !recordLayerOwnsKey(event.key, event.defaultPrevented, !!document.querySelector('dialog[open]'))
+            )
+              return
             // Only modal layers trap keys: a page answers Escape and Tab only while a dialog is up.
             const layers = root?.querySelectorAll<HTMLElement>(MODAL_LAYER)
             const top = layers?.[layers.length - 1]
             if (!top) return
             if (event.key === 'Escape') {
               event.preventDefault()
-              close()
+              const question = asking()
+              if (question) question.settle(false)
+              else void close()
               return
             }
             if (event.key !== 'Tab') return
@@ -1695,9 +2310,25 @@ const recordController =
                 ? control.getAttribute('name')
                 : null)
             if ((control instanceof HTMLSelectElement || control instanceof HTMLInputElement) && stateKey) {
-              keepAllDrafts()
               const stateStore = dialog() ? dialogViewState : viewState
-              stateStore.set({ ...stateStore(), [stateKey]: control.value })
+              applyRecordControlState(control, keepAllDrafts, (value) => {
+                const reset =
+                  stateStore()[stateKey] === value
+                    ? []
+                    : (definition.resetRelationsOnChange?.[stateKey] ?? [])
+                if (reset.length) {
+                  const drafts = dialog() ? dialogDrafts : recordDrafts
+                  drafts.set({
+                    ...drafts(),
+                    values: { ...drafts().values, ...Object.fromEntries(reset.map((name) => [name, ''])) },
+                  })
+                }
+                stateStore.set({
+                  ...stateStore(),
+                  [stateKey]: value,
+                  ...Object.fromEntries(reset.map((name) => [name, ''])),
+                })
+              })
               return
             }
             if (
@@ -1706,8 +2337,27 @@ const recordController =
               (control.hasAttribute('data-record-submit') ||
                 control.form?.hasAttribute('data-record-dropzone')) &&
               control.files?.length
-            )
+            ) {
               control.form?.requestSubmit()
+              return
+            }
+            // A form sent by its button shows the image it is about to send: the view
+            // reads `state('file:<name>')` (and `:name`) and gives it to DropZone as
+            // its preview. Anything but an image clears it.
+            if (control instanceof HTMLInputElement && control.type === 'file' && control.name) {
+              keepAllDrafts()
+              const key = `file:${control.name}`
+              const stateStore = dialog() ? dialogViewState : viewState
+              const previous = stateStore()[key]
+              if (previous) {
+                URL.revokeObjectURL(previous)
+                filePreviews.delete(previous)
+              }
+              const file = control.files?.[0]
+              const src = file?.type.startsWith('image/') ? URL.createObjectURL(file) : ''
+              if (src) filePreviews.add(src)
+              stateStore.set({ ...stateStore(), [key]: src, [`${key}:name`]: src ? file!.name : '' })
+            }
           },
           { signal: lifetime },
         )
@@ -1760,22 +2410,25 @@ const recordController =
 
         // Islands a view places with `recordIsland` start when their host appears
         // and stop when it leaves, through the page's own island manager.
-        const islandSelector = 'ket-island, div[data-ket-island]'
-        const holdsIsland = (node: Node): node is Element =>
-          node instanceof Element &&
-          (node.matches(islandSelector) || node.querySelector(islandSelector) !== null)
         const observer = new MutationObserver((records) => {
           fitRecordHeight()
-          for (const record of records) {
-            for (const node of record.removedNodes)
-              if (holdsIsland(node))
-                document.dispatchEvent(new CustomEvent('ket:islands-detach', { detail: { root: node } }))
-            for (const node of record.addedNodes)
-              if (holdsIsland(node) && node.isConnected)
-                document.dispatchEvent(new CustomEvent('ket:islands-attach', { detail: { root: node } }))
-          }
+          if (!root) return
+          const { removed, added, updated } = recordIslandChanges(records, root)
+          for (const node of [...removed, ...updated])
+            document.dispatchEvent(new CustomEvent('ket:islands-detach', { detail: { root: node } }))
+          // Disposing stops effects/listeners; a fresh mount does not remove the
+          // retained host's old DOM. The island owns these children, not this view.
+          for (const node of updated) node.replaceChildren()
+          for (const node of [...added, ...updated])
+            document.dispatchEvent(new CustomEvent('ket:islands-attach', { detail: { root: node } }))
         })
-        observer.observe(root, { childList: true, subtree: true, characterData: true })
+        observer.observe(root, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: true,
+          attributeFilter: ['data-props'],
+        })
         lifetime.addEventListener('abort', () => observer.disconnect())
         window.addEventListener('resize', fitRecordHeight, { signal: lifetime })
         // Images and native disclosures change layout without adding text nodes.
@@ -1796,10 +2449,11 @@ const recordController =
             if (detail?.kind !== definition.kind) return
             if (!Array.isArray(detail.ids) || !detail.ids.length) cache.clear()
             else for (const id of detail.ids) cache.delete(String(id))
-            // A page keeps showing its record, so it reads the change at once.
+            // A page keeps showing its record, so it reads the change at once; so does a
+            // modal that follows its record, unless the reader typed into it.
             const current = open()
             if (
-              page &&
+              (page || (definition.follow === true && !!root && !recordLayerHasDraft(root))) &&
               current &&
               !running() &&
               (!Array.isArray(detail.ids) ||
@@ -1821,16 +2475,50 @@ const recordController =
         // A page belongs to its address; history and links are the shell's.
         if (serverPage) {
           adopted.set(true)
+          const entry = pageProps?.dialog
+          if (entry && Object.hasOwn(definition.dialogs ?? {}, entry)) {
+            dialog.set({ name: entry, params: {} })
+            afterRender()
+          }
           if (status() !== 'ready') void load(open()!.id)
           return
         }
 
         // Back and forward over entries this modal created change only the modal.
+        if (page)
+          window.addEventListener(
+            'popstate',
+            () => {
+              const current = open()
+              if (
+                !current ||
+                !page.path ||
+                new URL(page.path(current.id), location.href).pathname !== location.pathname
+              )
+                return
+              const url = new URL(location.href)
+              const name = url.searchParams.get('dialog')
+              if (!name && dialog()) {
+                void close()
+                return
+              }
+              show(current.id, url.searchParams.get(RECORD_TAB_PARAM), 'none', undefined, name)
+            },
+            { signal: lifetime },
+          )
         document.addEventListener(
           'ket:popstate',
           (event) => {
             // A page's entries are the shell's: back leaves it like any other page.
             if (page) return
+            if (pendingHistoryClose) {
+              const ownsReturn = recordModalReturnMatches(pendingHistoryClose, location.href)
+              pendingHistoryClose = null
+              if (ownsReturn) {
+                event.preventDefault()
+                return
+              }
+            }
             const target = readRecordModalTarget(location.href)
             const mine = target?.kind === definition.kind
             if (!mine && !open()) return
@@ -1859,8 +2547,22 @@ const recordController =
         )
 
         if (page) {
-          const tab = new URL(location.href).searchParams.get(RECORD_TAB_PARAM) ?? page.props.tab ?? null
-          show(page.props.id, tab, 'none')
+          const tab = page.props.tab ?? new URL(location.href).searchParams.get(RECORD_TAB_PARAM) ?? null
+          // Fragment hydration can precede the shell's URL commit. Adopt the context
+          // computed for this destination; rereading location here would fetch the
+          // previous search (and discard the user's newly submitted GET parameters).
+          if (page.props.envelope) {
+            open.set({ id: String(page.props.id), tab: '' })
+            envelope.set(page.props.envelope as RecordContextEnvelope<Data>)
+            status.set('ready')
+          }
+          show(
+            page.props.id,
+            tab,
+            'none',
+            undefined,
+            page.props.dialog ?? new URL(location.href).searchParams.get('dialog'),
+          )
         } else {
           const initial = readRecordModalTarget(location.href)
           if (initial?.kind === definition.kind)
@@ -1875,7 +2577,15 @@ const recordController =
  * appears and disposes it when the host leaves; props must be JSON.
  */
 export const recordIsland = (name: string, props: Record<string, unknown>): TemplateResult => (
-  <ket-island data-island={name} data-props={JSON.stringify(props)} />
+  <>
+    {each(
+      [props],
+      (value) => JSON.stringify(value),
+      (value) => (
+        <ket-island data-island={name} data-props={JSON.stringify(value)} />
+      ),
+    )}
+  </>
 )
 
 export {

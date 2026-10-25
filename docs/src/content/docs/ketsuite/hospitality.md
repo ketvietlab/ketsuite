@@ -15,12 +15,51 @@ Primary reservation, stay, folio, property, room, room-type, rate-plan, housekee
 amenity, policy, charge-rule, and billing lists use the shared KetTable collection boundary.
 The app shell and its location band precede the title and Create action, then URL-backed filters,
 tools, and the collection.
+The same reactive `ListChrome` owns the result range and previous/next page controls above the
+table. A primary list does not render a second pagination footer. Policy types, amenity scopes,
+cleaning types and priorities use translated labels while preserving their API enum values.
 Property and housekeeping filters retain their submitted values; text search on reference,
 stay, folio, and billing lists searches the complete authorized collection using displayed
 names and codes. Existing modal actions and decimal money formatting remain server-owned.
 
 Setup forms, property structure tables, record details, and operational boards keep their
 specialized composition. Their embedded tables are not primary collection tables.
+
+## Room catalogue and holds
+
+Room creation and configuration require a floor and its building in the same property and company.
+API clients may omit the building when the floor identifies it; missing, mismatched or newly assigned
+archived locations are refused before any room, inventory, property version or receipt is written.
+The form requires both locations, enables Floor after Building, and clears Floor when Building changes.
+Legacy rooms without a location must be assigned one on their next configuration save.
+
+Room holds, release and moves serialize on the property's version with catalogue changes. A hold
+must fit the selected physical room's adult/child capacity. Arrival, walk-in availability and room
+pickers exclude undersized rooms; automatic arrival scans candidates in bounded batches. Children
+use physical places. Adding an adult beyond the ordinary capacity requires a configured, explicitly
+accepted extra-bed charge. Its purchased allowance is stored on the stay atomically with the guest
+and charge; legacy missing allowances mean zero. Moves retain that allowance but cannot exceed the
+destination's physical or room-type limits, including its extra-bed support. A room move never
+purchases another bed implicitly. Held or occupied rooms cannot change
+type, reduce capacity or be archived. Moving an idle room to another type must leave enough
+physical inventory for the old type's sold/blocked nights; refusal rolls back the room, both
+inventory updates, property version and command receipts. A successful replay returns the original
+result without another version increment.
+
+The room-type catalogue modal edits bedding, cancellation policy and up to 100 room amenities in
+the same versioned transaction. Replacing the bed layout requires a valid type and 1–50 beds;
+keeping an existing mixed layout leaves its bed rows unchanged. Omitted bedding/amenity inputs
+from legacy callers also preserve those rows. Amenity replacements reject foreign-company,
+wrong-scope, duplicate and newly selected inactive records. Existing inactive assignments remain
+editable without losing their labels. Room display names allow at most 120 characters.
+
+Catalogue function descriptors live beside their named handlers in `functions/*.ts`; the
+`functions/index.ts` registry rejects duplicate keys. The 29 pre-existing descriptors were compared
+before adding the new catalogue inputs; all their original fields were preserved.
+
+New cancellation-policy dialogs start with the template fee rule. Existing policies whose stored
+fee rule is absent retain their configured hours/percentage interpretation; opening an editor
+does not silently replace those agreed terms with a template.
 
 ## Least-privilege permission bundles
 
@@ -99,3 +138,9 @@ contact or identity data.
 
 This split also covers separate deployments: Hospitality can run without Stock, while an installation
 that enables minibar must provide the connector and its reconciliation evidence.
+
+### Native forms and operational guides
+
+Hospitality uses the public FormGrid through RecordModalForm. Long room-type forms group identity, occupancy, bedding/amenities and selling terms in named Sections. Arrival, walk-in and added-guest forms give each adult a named region while preserving canonical field names, raw refused values and one form owner. Repeated sections use three columns where their container permits; mobile fields stack. Added guests keep the next adult number from the current stay.
+
+Screen-owned VI/EN Help includes compact top-down decision workflows. Mermaid uses the shared loader, semantic decision/outcome classes and accessible source fallback; guides do not supply themes or content CSS. Navigating to another screen replaces its guide through the existing content slot.

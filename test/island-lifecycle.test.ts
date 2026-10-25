@@ -58,10 +58,12 @@ test('a removed collaboration island aborts its active request', async () => {
   const previousFetch = globalThis.fetch
   let activeSignal: AbortSignal | undefined
 
-  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} })
+  // The mention picker keeps its popup placed as the page scrolls or resizes.
+  const events = { addEventListener: () => {}, removeEventListener: () => {} }
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { ...events } })
   Object.defineProperty(globalThis, 'document', {
     configurable: true,
-    value: { visibilityState: 'visible' },
+    value: { ...events, visibilityState: 'visible' },
   })
   globalThis.fetch = (_input, init) => {
     activeSignal = init?.signal ?? undefined
@@ -78,7 +80,8 @@ test('a removed collaboration island aborts its active request', async () => {
       resId: 'product-1',
       lang: 'vi',
     })
-    chatter.mount()
+    // The island host mounts with its root and lifetime; the mention picker reads both.
+    chatter.mount({ root: {}, lifetime: new AbortController().signal })
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.ok(activeSignal, 'the initial collaboration request started')
     chatter.dispose()

@@ -3,16 +3,19 @@
     display: grid;
     min-width: 0;
     min-height: 100dvh;
-    grid-template-columns: var(--kv-sidebar-width) minmax(0, 1fr);
+    grid-template-columns: var(--kv-app-switcher-width) var(--kv-sidebar-width) minmax(0, 1fr);
     background: var(--kv-page-bg);
     color: var(--kv-text-main);
   }
 
   :where([data-kv-design-system]) [data-ui="app-shell"][data-has-right-rail="true"] {
-    grid-template-columns: var(--kv-sidebar-width) minmax(0, 1fr) var(--kv-right-rail-width);
+    grid-template-columns: var(--kv-app-switcher-width) var(--kv-sidebar-width) minmax(0, 1fr) var(
+        --kv-right-rail-width
+      );
   }
 
   :where([data-kv-design-system]) [data-ui="app-sidebar"] {
+    grid-column: 2;
     position: sticky;
     top: 0;
     height: 100dvh;
@@ -24,12 +27,20 @@
   }
 
   :where([data-kv-design-system]) [data-ui="app-main"] {
+    grid-column: 3;
     min-width: 0;
     border-radius: var(--kv-radius-app-region);
     background: var(--kv-page-bg);
   }
 
+  /* A disposable island may wrap the sidebar's public navigation slot. */
+  :where([data-kv-design-system]) [data-ui="app-sidebar"] > :only-child {
+    block-size: 100%;
+    min-block-size: 0;
+  }
+
   :where([data-kv-design-system]) [data-ui="app-right-rail"] {
+    grid-column: 4;
     position: sticky;
     top: 0;
     height: 100dvh;
@@ -110,12 +121,12 @@
 
   @media (min-width: 48rem) and (max-width: 75rem) {
     :where([data-kv-design-system]) [data-ui="app-shell"][data-has-right-rail="true"] {
-      grid-template-columns: var(--kv-sidebar-width) minmax(0, 1fr);
+      grid-template-columns: var(--kv-app-switcher-width) var(--kv-sidebar-width) minmax(0, 1fr);
     }
 
     :where([data-kv-design-system]) [data-ui="app-right-rail"] {
       position: static;
-      grid-column: 2;
+      grid-column: 3;
       height: auto;
       border-left: 0;
       border-top: 1px solid var(--kv-right-rail-border);
@@ -157,7 +168,7 @@
     grid-template-rows: var(--kv-app-topbar-height) minmax(0, 1fr);
   }
   :where([data-kv-design-system]) [data-ui="app-shell-topbar"] {
-    grid-column: 1 / -1;
+    grid-column: 2 / -1;
     grid-row: 1;
     position: sticky;
     top: 0;
@@ -376,6 +387,10 @@
     min-width: 0;
     flex: 1 1 auto;
   }
+  /* Context gives up width before navigation, search or account controls. */
+  :where([data-kv-design-system]) [data-ui="app-location-bar"] > :not([data-ui="app-location-context"]) {
+    flex-shrink: 0;
+  }
   :where([data-kv-design-system]) [data-ui="app-location-bar"] [data-ui="global-search-trigger"] {
     margin-inline-start: 0;
     color: var(--kv-text-secondary);
@@ -442,5 +457,298 @@
   }
   :where([data-kv-design-system]) [data-ui="app-brand"] [data-appearance="dark"] {
     display: var(--kv-brand-dark-display, none);
+  }
+}
+
+@layer ket.app {
+  :where([data-kv-design-system]) [data-ui="app-switcher"] {
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: start;
+    width: var(--kv-app-switcher-width);
+    height: 100dvh;
+    padding: var(--kv-space-2) var(--kv-space-1-5);
+    /* Its settings popup and tooltips must clear the adjacent sticky sidebar. */
+    z-index: var(--kv-layer-menu);
+    background: var(--kv-app-switcher-bg);
+    color: var(--kv-app-switcher-text);
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-footer"] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--kv-space-2);
+    margin-block-start: auto;
+    padding-block-start: var(--kv-space-2);
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher"]:has(> [data-ui="app-switcher-brand"]) {
+    padding-block-start: 0;
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-brand"] {
+    display: flex;
+    justify-content: center;
+    margin-block-end: var(--kv-space-2);
+  }
+  :where([data-kv-design-system]) [data-ui="app-brand"][data-variant="mark"] {
+    display: block;
+    width: 36px;
+    height: 44px;
+    overflow: hidden;
+  }
+  :where([data-kv-design-system]) [data-ui="app-brand"][data-variant="mark"] img {
+    width: 132px;
+    max-width: none;
+    height: 44px;
+    object-fit: contain;
+    /* Keep the wordmark clipped when mobile enlarges only the hit target. */
+    clip-path: inset(0 calc(100% - 36px) 0 0);
+  }
+  :where([data-kv-design-system])
+    [data-ui="app-shell"]
+    [data-ui="app-switcher"]
+    [data-ui="app-switcher-expand"] {
+    display: none;
+    margin-block-end: var(--kv-space-2);
+  }
+  @media (width >= 48rem) {
+    :where([data-kv-design-system]) [data-ui="app-shell"][data-sidebar-collapsed="true"] {
+      --kv-sidebar-width: 0px;
+    }
+    :where([data-kv-design-system])
+      [data-ui="app-shell"][data-sidebar-collapsed="true"]
+      > [data-ui="app-sidebar"] {
+      display: none;
+    }
+    :where([data-kv-design-system])
+      [data-ui="app-shell"][data-sidebar-collapsed="true"]
+      [data-ui="app-switcher-expand"] {
+      display: grid;
+    }
+  }
+  @media (width < 48rem) {
+    :where([data-kv-design-system]) [data-ui="app-brand"][data-variant="mark"] {
+      width: var(--kv-touch-target);
+    }
+    :where([data-kv-design-system]) [data-ui="app-brand"][data-variant="mark"] img {
+      margin-inline-start: var(--kv-space-1);
+    }
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-item"][aria-disabled="true"] {
+    cursor: default;
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-item"][aria-disabled="true"] > [data-ui="icon"] {
+    opacity: 0.55;
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-list"] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--kv-space-2);
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    ) {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    min-height: 0;
+    border-radius: var(--kv-radius-md);
+    color: inherit;
+    text-decoration: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    )
+    > [data-ui="icon"] {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    ):is(:hover, :focus-visible) {
+    background: var(--kv-app-switcher-hover);
+    color: var(--kv-app-switcher-active);
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    ):focus-visible {
+    outline: 2px solid var(--kv-app-switcher-active);
+    outline-offset: 2px;
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    )[data-active="true"] {
+    color: var(--kv-app-switcher-active);
+    background: var(--kv-app-switcher-selected);
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    )[data-active="true"]::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: calc(-1 * var(--kv-space-1-5));
+    top: calc(50% - 8px);
+    height: 16px;
+    width: 2px;
+    border-radius: var(--kv-radius-full);
+    background: var(--kv-app-switcher-active);
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-tooltip"] {
+    position: absolute;
+    left: calc(100% + var(--kv-space-3));
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    width: max-content;
+    max-width: 14rem;
+    padding: var(--kv-space-1-5) var(--kv-space-2-5);
+    border-radius: var(--kv-radius-sm);
+    background: var(--kv-app-switcher-bg);
+    color: var(--kv-app-switcher-active);
+    box-shadow: var(--kv-shadow-float);
+    font-size: var(--kv-text-xs);
+    line-height: var(--kv-line-xs);
+    font-weight: var(--kv-weight-medium);
+    pointer-events: none;
+    z-index: var(--kv-layer-popover);
+  }
+  :where([data-kv-design-system])
+    :is(
+      [data-ui="app-switcher-item"],
+      [data-ui="app-switcher-help"],
+      [data-ui="app-switcher-expand"],
+      [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+      [data-ui="app-switcher-settings-link"]
+    ):is(:hover, :focus-visible)
+    > [data-ui="app-switcher-tooltip"] {
+    display: block;
+  }
+  :where([data-kv-design-system]) [data-ui="app-switcher-settings"] {
+    display: grid;
+  }
+  :where([data-kv-design-system])
+    [data-ui="app-switcher-settings"]
+    [data-ui="menu"][open]
+    [data-ui="app-switcher-tooltip"] {
+    display: none;
+  }
+  :where([data-kv-design-system]) [data-ui="app-shell"][data-mode="embedded"] > [data-ui="app-switcher"] {
+    position: relative;
+    height: 100%;
+  }
+  :where([data-kv-design-system])
+    [data-ui="app-shell"][data-has-topbar="true"]
+    > :is([data-ui="app-sidebar"], [data-ui="app-main"], [data-ui="app-right-rail"]) {
+    grid-row: 2;
+  }
+  @media (min-width: 48rem) and (max-width: 75rem) {
+    :where([data-kv-design-system])
+      [data-ui="app-shell"][data-has-right-rail="true"]
+      > [data-ui="app-right-rail"] {
+      grid-column: 3;
+      grid-row: 2;
+    }
+    :where([data-kv-design-system])
+      [data-ui="app-shell"][data-has-topbar="true"][data-has-right-rail="true"]
+      > [data-ui="app-right-rail"] {
+      grid-row: 3;
+    }
+  }
+  @media (width < 48rem) {
+    :where([data-kv-design-system]) [data-ui="app-shell"] > [data-ui="app-switcher"] {
+      display: none;
+    }
+    :where([data-kv-design-system])
+      [data-ui="app-shell"]
+      > :is(
+        [data-ui="app-sidebar"],
+        [data-ui="app-main"],
+        [data-ui="app-right-rail"],
+        [data-ui="app-shell-topbar"]
+      ) {
+      grid-column: 1;
+    }
+    :where([data-kv-design-system])
+      [data-ui="app-shell"]:has([data-ui="app-navigation"][open])
+      > [data-ui="app-switcher"] {
+      display: flex;
+      position: fixed;
+      z-index: var(--kv-layer-dialog);
+      inset: 0 auto 0 0;
+    }
+    :where([data-kv-design-system]) [data-ui="app-shell"] [data-ui="navigation-drawer"],
+    :where([data-kv-design-system]) [data-ui="navigation-drawer"]:has(> [data-ui="app-switcher"]) {
+      position: relative;
+      padding-inline-start: var(--kv-app-switcher-width);
+    }
+    :where([data-kv-design-system]) [data-ui="navigation-drawer"] > [data-ui="app-switcher"] {
+      position: absolute;
+      inset: 0 auto 0 0;
+      height: 100%;
+      display: flex;
+    }
+    :where([data-kv-design-system]) [data-ui="app-switcher"] {
+      padding-inline: var(--kv-space-0-5);
+    }
+    :where([data-kv-design-system])
+      :is(
+        [data-ui="app-switcher-item"],
+        [data-ui="app-switcher-help"],
+        [data-ui="app-switcher-expand"],
+        [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+        [data-ui="app-switcher-settings-link"]
+      )[data-active="true"]::before {
+      inset-inline-start: calc(-1 * var(--kv-space-0-5));
+    }
+    :where([data-kv-design-system])
+      :is(
+        [data-ui="app-switcher-item"],
+        [data-ui="app-switcher-help"],
+        [data-ui="app-switcher-expand"],
+        [data-ui="app-switcher-settings"] [data-ui="menu-trigger"],
+        [data-ui="app-switcher-settings-link"]
+      ) {
+      width: var(--kv-touch-target);
+      height: var(--kv-touch-target);
+    }
   }
 }

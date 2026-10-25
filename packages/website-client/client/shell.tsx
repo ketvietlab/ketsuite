@@ -1,5 +1,5 @@
+import { suiteApplications } from '@ketvietlab/ketsuite/ui/application-switcher'
 import {
-  AppBrand,
   AppShell,
   AppNavigation,
   AppTopbar,
@@ -68,17 +68,6 @@ export const BRAND = Object.freeze({
 })
 const NAVIGATION_ID = 'website-navigation'
 
-// GAP ds-app-brand-text: AppBrand shows an image or a label, never both; the product name sits
-// beside it in an Inline until the DS takes a suffix.
-const identity = (ctx: StudioContext) => (
-  <Inline
-    items={[
-      <AppBrand label={tr('website.brand')} href={ctx.href('overview')} {...BRAND} imageFit="cover" />,
-      <Text children={tr('website.nav.app')} />,
-    ]}
-  />
-)
-
 /** Website selection is distinct from the company scope inherited from ERP. */
 const siteContext = (ctx: StudioContext) => {
   const boot = ctx.boot()
@@ -90,7 +79,7 @@ const siteContext = (ctx: StudioContext) => {
         <Menu
           id="website-site-switch"
           label={tr('website.site.switch')}
-          trigger={companyScope ? tr('website.route.sites') : boot.site!.name}
+          trigger={companyScope ? tr('website.route.sites') : (boot.site?.name ?? tr('website.site.switch'))}
           size="compact"
           items={[
             { id: 'sites', kind: 'label', label: tr('website.site.switch') },
@@ -132,7 +121,12 @@ const tools = (ctx: StudioContext) => {
           type="button"
           variant="secondary"
           pressed={dark}
-          icon={icon(dark ? 'sun' : 'moon')}
+          icon={
+            <>
+              <span class="website-theme-moon">{icon('moon')}</span>
+              <span class="website-theme-sun">{icon('sun')}</span>
+            </>
+          }
         />,
         <Menu
           id="website-viewer"
@@ -197,7 +191,17 @@ const navigation = (ctx: StudioContext, key: string) => {
       id={NAVIGATION_ID}
       label={tr('website.nav.label')}
       externalTrigger
-      identity={identity(ctx)}
+      identity={
+        ctx.applications?.items.find((item) => item.id === 'website')?.label ?? tr('website.apps.website')
+      }
+      tools={
+        ctx.applications?.navigation?.tools ?? {
+          searchLabel: tr('website.apps.searchMenu'),
+          searchPlaceholder: tr('website.nav.search'),
+          emptyLabel: tr('website.nav.noMatch'),
+          collapseLabel: tr('website.apps.collapseMenu'),
+        }
+      }
       groups={groups}
       menuLabel={tr('website.nav.open')}
       closeLabel={tr('website.nav.close')}
@@ -205,8 +209,8 @@ const navigation = (ctx: StudioContext, key: string) => {
   )
 }
 
-export function studioFrame(ctx: StudioContext, content: StudioContent, toasts: Toast[]) {
-  const region = <ToastRegion label={tr('website.toast.region')} toasts={toasts} />
+export function studioFrame(ctx: StudioContext, content: StudioContent, toasts: Toast[], toastView?: View) {
+  const region = toastView ?? <ToastRegion label={tr('website.toast.region')} toasts={toasts} />
   if (content.route?.frame === 'workspace')
     return (
       <>
@@ -219,6 +223,14 @@ export function studioFrame(ctx: StudioContext, content: StudioContent, toasts: 
   return (
     <>
       <AppShell
+        applications={
+          ctx.applications ??
+          suiteApplications(
+            [],
+            (key) => tr(key === 'backend.brand' ? 'website.brand' : key.replace('backend.', 'website.')),
+            'website',
+          )
+        }
         location={locationBar(ctx)}
         sidebar={navigation(ctx, content.key)}
         main={

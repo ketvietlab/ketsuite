@@ -1,7 +1,7 @@
 {
   "name": "ketsuite-monorepo",
   "private": true,
-  "version": "0.1.41",
+  "version": "0.1.42",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -13,10 +13,13 @@
   "scripts": {
     "prepare": "test \"$(git rev-parse --show-toplevel 2>/dev/null)\" = \"$PWD\" && git config core.hooksPath .githooks || true",
     "build": "node tools/build.mjs",
+    "build:design-system": "node tools/build-design-system.mjs",
     "build:watch": "tsx tools/watch-build.ts",
-    "check": "tsc -p tsconfig.json",
+    "check": "node tools/design-system-inventory.mjs && tsc -p tsconfig.json",
     "test": "npm run build --silent && node --test --test-timeout=120000 --test-force-exit \".build/test/*.test.js\"",
     "test:built": "node --test --test-timeout=120000 --test-force-exit \".build/test/*.test.js\"",
+    "test:browser": "npm run build --silent && npm run test:browser:built",
+    "test:browser:built": "node --test --test-timeout=120000 --test-force-exit \".build/test/browser/*.test.js\"",
     "test:group": "npm run build --silent && node tools/ci-test-groups.mjs run",
     "test:group:built": "node tools/ci-test-groups.mjs run",
     "test:groups": "node tools/ci-test-groups.mjs list",
@@ -68,7 +71,7 @@
     "design:inventory": "node tools/design-system-inventory.mjs",
     "design:inventory:check": "node tools/design-system-inventory.mjs --check",
     "design:governance:check": "node tools/design-system-governance.mjs",
-    "design:release:check": "node tools/design-system-release-audit.mjs",
+    "design:release:check": "node tools/design-system-inventory.mjs && node tools/design-system-release-audit.mjs",
     "design:system": "npm run build --silent && node .build/apps/design-system/serve.js",
     "test:design-system:browser": "npm run build --silent && node .build/tools/design-system-browser-e2e.js",
     "test:ketspec": "tsx --test test/ketspec-model.test.ts test/ketspec-page.test.ts test/design-system-code-block.test.tsx",
@@ -82,10 +85,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
-    "@ketvietlab/ketjs": "0.2.0",
-    "@ketvietlab/ketjs-postgres": "0.2.0",
-    "@ketvietlab/ketjs-view": "0.2.0",
+    "@ketvietlab/ketjs": "0.6.1",
+    "@ketvietlab/ketjs-postgres": "0.6.1",
+    "@ketvietlab/ketjs-view": "0.6.1",
     "@types/node": "^26.2.0",
+    "marked": "18.1.0",
+    "mermaid": "12.1.0",
     "postgres": "3.4.9",
     "tsx": "4.23.12",
     "typescript": "^7.0.2"

@@ -437,6 +437,14 @@ test('an installed theme is offered, chosen, published and served from tenant st
   assert.match(svg.headers.get('content-type') ?? '', /^image\/svg\+xml/)
   assert.match(svg.headers.get('content-security-policy') ?? '', /(?:^|;\s*)sandbox(?:;|$)/)
   assert.equal(svg.headers.get('x-content-type-options'), 'nosniff')
+  // HEAD answers with the same markup type, which the plain-text helper refuses.
+  const svgHead = await anonymous.request(`/_theme/${versionId}/logo.svg`, { method: 'HEAD' })
+  assert.equal(svgHead.status, 200)
+  assert.match(svgHead.headers.get('content-type') ?? '', /^image\/svg\+xml/)
+  assert.equal(
+    svgHead.headers.get('content-length'),
+    String(bytes('<svg xmlns="http://www.w3.org/2000/svg"/>').length),
+  )
   const boot = await anonymous.get(`/_theme/${versionId}/_boot.mjs`)
   assert.equal(boot.status, 200)
   assert.match(await boot.text(), /import \* as theme from '\.\/theme\.mjs'/)

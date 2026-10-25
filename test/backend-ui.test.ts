@@ -15,6 +15,7 @@ import { HOOKS as PUBLIC_HOOKS } from '@ketvietlab/design-system'
 import type { MenuNode, Route, ServeContext } from '@ketvietlab/ketjs'
 import { ketsuite } from '../apps/ketsuite/deployment.ts'
 import backend from '@ketvietlab/ketsuite/backend'
+import { sidebarMain } from '../packages/ketsuite/src/ui/nav.tsx'
 import { collectionTable, recordModalHost } from '@ketvietlab/ketsuite/ui'
 import { bulkActions, listChrome } from '../packages/ketsuite/src/ui/chrome.tsx'
 import {
@@ -90,6 +91,7 @@ import type { ListChrome, PageRow } from '@ketvietlab/ketsuite/backend'
 import { DashboardPage as KetSuiteDashboardPage } from '../packages/ketsuite/src/ui/dashboard-page.tsx'
 import { BoardPage as KetSuiteBoardPage } from '../packages/ketsuite/src/ui/board-page.tsx'
 import { FormPage as KetSuiteFormPage } from '../packages/ketsuite/src/ui/form-page.tsx'
+import { catalogueRecords } from '../packages/ketsuite/src/modules/hospitality_core/records/config.ts'
 import { ListPage as KetSuiteListPage } from '../packages/ketsuite/src/ui/list-page.tsx'
 
 /**
@@ -196,7 +198,7 @@ const CHROME: ListChrome = {
   ],
 }
 
-const _ = translator(compose([backend], { headless: true }), 'vi')
+const _ = translator(compose([backend], { headless: true, companies: true }), 'vi')
 
 test('KetSuite ListPage leaves navigation and company context to the shell', () => {
   const output = renderToString(
@@ -719,6 +721,8 @@ const componentContract = [
 ]
 
 const everything = [
+  // Compatibility navigation still supports a root whose glyph is unavailable.
+  sidebarMain(_, { menu: MENU, rootList: 'always' }),
   // Record/workspace chrome retains this compatibility hook. Collection pages
   // now render their create action through the shared ListPage header instead.
   listChrome(_, 'Workspace', { create: { label: 'Create', path: '/records/new' } }, false),
@@ -1086,7 +1090,7 @@ test('routes: the segment after /admin names the section, so a path says where i
     'access-policies',
     'permission-presets',
   ])
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const stray = Object.keys(manifest.routes)
     .filter((path) => path === '/admin' || path.startsWith('/admin/'))
     .filter((path) => {
@@ -1103,8 +1107,8 @@ test('routes: every path a screen builds is a path some module serves', () => {
   // actions and redirects on the old one, every last of them written as
   // `` `/admin/taxes${localeQuery(url)}` `` — a template hole away from the search
   // that found the rest. The route table is the answer; this asks it.
-  const routes = Object.keys(compose(ketsuite.modules, { headless: true }).routes).map((route) =>
-    route.split('/'),
+  const routes = Object.keys(compose(ketsuite.modules, { headless: true, companies: true }).routes).map(
+    (route) => route.split('/'),
   )
   const served = (path: string): boolean => {
     const parts = path.split('/')
@@ -1145,6 +1149,14 @@ test('routes: every path a screen builds is a path some module serves', () => {
     return out
   }
 
+  // Hospitality hands a property's channels and its service stock to extensions a
+  // deployment may add; KetSuite serves neither, and its screens offer them only
+  // where the extension answers.
+  const EXTENSIONS = ['/admin/hospitality/ota/connections', '/admin/hospitality/product-fulfillments']
+  // One hospitality record context per catalogue entry, built from the entry's
+  // path; checked against the routes entry by entry below.
+  const BY_DEFINITION =
+    'modules/hospitality_core/records/catalogue-modal.tsx: /admin/hospitality/{}/{}/record-context'
   const stray: string[] = []
   for (const file of globSync('packages/ketsuite/src/**/*.{ts,tsx}')) {
     // the design harness names paths for screens it renders without a server
@@ -1153,12 +1165,25 @@ test('routes: every path a screen builds is a path some module serves', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
     for (const match of source.matchAll(/[`'](\/admin\/[^`'\n]*)[`']/g)) {
+      // A prefix a URL is compared against is not a link.
+      if (source.slice(0, match.index).endsWith('startsWith(')) continue
       const path = shape(match[1] as string).replace(/\/$/, '')
-      if (!path.startsWith('/admin/') || served(path)) continue
+      if (!path.startsWith('/admin/') || served(path) || EXTENSIONS.includes(path)) continue
       stray.push(`${file.split('/src/')[1]}: ${path}`)
     }
   }
-  assert.deepEqual([...new Set(stray)].sort(), [], 'a screen links somewhere no route answers')
+  assert.deepEqual(
+    [...new Set(stray)].filter((entry) => entry !== BY_DEFINITION).sort(),
+    [],
+    'a screen links somewhere no route answers',
+  )
+  assert.deepEqual(
+    catalogueRecords
+      .map((entry) => `/admin/hospitality/${entry.path}/{}/record-context`)
+      .filter((path) => !served(path)),
+    [],
+    'every hospitality catalogue entry has its record context',
+  )
 })
 
 test('sidebar: every menu entry says where it goes in the list', () => {
@@ -1166,7 +1191,7 @@ test('sidebar: every menu entry says where it goes in the list', () => {
   // tie-break is the label — so a Vietnamese menu came out in the order its English
   // message keys happened to sort in. Purchasing read Đơn mua · RFQ · Bảng giá,
   // which is the workflow backwards.
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const entries = Object.entries(manifest.menus)
   assert.deepEqual(
     entries
@@ -1190,7 +1215,7 @@ test('sidebar: every menu entry says where it goes in the list', () => {
 })
 
 test('sidebar: equal sequences fall back to the language being read, not the message key', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const order = (locale: string) =>
     buildMenu(manifest, {
       translate: (key) => translator(manifest, locale)(key),
@@ -1203,7 +1228,7 @@ test('sidebar: equal sequences fall back to the language being read, not the mes
 })
 
 test('sidebar: every KetSuite root declares a glyph carried by the design system', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const missing = Object.entries(manifest.menus)
     .filter(([, entry]) => !entry.parent)
     .filter(([, entry]) => !entry.icon || !hasIcon(entry.icon))
@@ -1267,8 +1292,8 @@ test('sidebar footer: a gateway viewer signs out where the deployment says, or h
   assert.doesNotMatch(undeclared, /data-ui="signout"/)
 })
 
-test('sidebar: every module group opens by default and only submenu links carry active state', () => {
-  const html = renderToString(pagesScreen(_, [page()], { menu: MENU }))
+test('sidebar: navigation branches open independently and only submenu links carry active state', () => {
+  const html = renderToString(sidebarMain(_, { menu: MENU, rootList: 'always' }))
   assert.match(html, /data-ui="app-navigation"/)
   assert.equal([...html.matchAll(/data-ui="navigation-branch"[^>]*data-level="1"/g)].length, 2)
   assert.equal(
@@ -1301,7 +1326,7 @@ test('backend shell: the document uses the design-system application shell', () 
   const html = renderToString(
     shell(_, 'Page title', html2`<p>Page body</p>`, {
       menu: MENU,
-      extras: { runtime: html2`<span data-ui="runtime-probe"></span>`, 'sidebar.foot': 'persistent foot' },
+      extras: { 'sidebar.foot': 'persistent foot' },
     }),
   ).replace(/<!--k\[?\]?-->/g, '')
   assert.match(
@@ -1311,7 +1336,6 @@ test('backend shell: the document uses the design-system application shell', () 
   )
   assert.match(html, /<aside data-ui="app-sidebar">[\s\S]*?data-ui="app-navigation"/)
   assert.equal((html.match(/<main\b/g) ?? []).length, 1, 'one main landmark')
-  assert.match(html, /<main data-ui="app-main">[\s\S]*?<span data-ui="runtime-probe">/)
   for (const slot of ['backend.sidebar-main', 'backend.topbar', 'backend.global-topbar', 'backend.content'])
     assert.equal(
       (html.match(new RegExp(`data-ket-slot="${slot.replace('.', '\\.')}"`, 'g')) ?? []).length,
@@ -1322,16 +1346,16 @@ test('backend shell: the document uses the design-system application shell', () 
   assert.doesNotMatch(html, /data-ui="app-topbar"|data-ui="app-shell-topbar"/)
   assert.match(html, /data-has-location="true"/)
   const sidebar = html.match(/<aside data-ui="app-sidebar">[\s\S]*?<\/aside>/)?.[0] ?? ''
-  assert.match(sidebar, /data-ui="navigation-header"[\s\S]*?data-ui="app-brand"[\s\S]*?alt="KetSuite"/)
+  assert.match(html, /data-ui="app-switcher-brand"[\s\S]*?data-ui="app-brand"[\s\S]*?alt="KetSuite"/)
+  assert.match(sidebar, /data-ui="navigation-header"[\s\S]*?data-ui="navigation-identity"/)
+  assert.doesNotMatch(sidebar, /data-ui="app-brand"/)
   assert.match(
     html,
     /data-ui="app-main"[\s\S]*?data-ui="app-location-bar"[\s\S]*?data-ui="app-location-context"[\s\S]*?data-ui="global-search-trigger"[\s\S]*?data-ui="sidebar-foot"/,
   )
   assert.doesNotMatch(sidebar, /data-ui="sidebar-foot"|name="theme"|data-ui="viewer"/)
   assert.equal((html.match(/name="theme"/g) ?? []).length, 1)
-  const runtimeAt = html.indexOf('runtime-probe')
-  const slotAt = html.indexOf('data-ket-slot="backend.topbar"')
-  assert.ok(runtimeAt > 0 && runtimeAt < slotAt, 'the island runtime stays outside the swapped slots')
+  assert.doesNotMatch(html, /data-ui="document-runtime"/, 'the document, not the shell, places the runtime')
 })
 
 test('backend shell: suppressed topbar content keeps the stable navigation slot', () => {
@@ -1446,6 +1470,9 @@ test('backend responder: a fragment request never renders document infrastructur
         documents++
         throw new Error('fragment navigation must not render a document')
       },
+      joint: async () => {
+        throw new Error('fragment navigation must not render the island runtime')
+      },
     } as never,
     { headers: { 'x-ket-navigation': 'fragment-v1' } } as never,
     {
@@ -1463,6 +1490,7 @@ test('backend responder: a persisted theme is restored before styles can paint',
     {
       styles: async () => html2`<link rel="stylesheet" href="/backend.css">`,
       document: ketDocument,
+      joint: async () => '',
     } as never,
     { headers: {} } as never,
     {
@@ -1477,6 +1505,44 @@ test('backend responder: a persisted theme is restored before styles can paint',
   const styles = body.indexOf('/backend.css')
   assert.ok(restore > 0, 'the document restores an explicit preference')
   assert.ok(restore < styles, 'the preference is restored before a stylesheet can paint')
+})
+
+test('backend responder: every full document carries the island runtime once', async () => {
+  // A screen that assembles its own frame used to leave the runtime out, and
+  // fragment navigation never adds it: record links opened nothing until a reload.
+  const asked: Array<{ url: string; key: string }> = []
+  const respond = (req: object, url?: URL) =>
+    backendPage(
+      {
+        styles: async () => '',
+        document: ketDocument,
+        joint: async (at: URL, _req: unknown, key: string) => {
+          asked.push({ url: at.href, key })
+          return html2`<span data-ui="runtime-probe"></span>`
+        },
+      } as never,
+      req as never,
+      { lang: 'vi', title: 'Ứng dụng', body: pagesScreen(_, [page()], { menu: MENU }), url },
+    )
+  const own = await respond({ url: '/admin/sale-channels?menu=x', headers: { host: 'shop.example.test' } })
+  const body = (own.body as string).replace(/<!--k\[?\]?-->/g, '')
+  assert.equal((body.match(/data-ui="runtime-probe"/g) ?? []).length, 1)
+  assert.match(
+    body,
+    /<div data-kv-design-system(?:="true")? data-presentation="grouped" data-density="compact" data-ui="document-runtime"><span data-ui="runtime-probe">/,
+  )
+  assert.ok(
+    body.indexOf('data-ui="document-runtime"') > body.lastIndexOf('data-ket-slot="backend.content"'),
+    'the runtime sits outside every slot fragment navigation swaps',
+  )
+  await respond(
+    { url: '/ignored', headers: { host: 'ignored.test' } },
+    new URL('https://shop.example.test/admin/crm'),
+  )
+  assert.deepEqual(asked, [
+    { url: 'http://shop.example.test/admin/sale-channels?menu=x', key: 'backend:runtime' },
+    { url: 'https://shop.example.test/admin/crm', key: 'backend:runtime' },
+  ])
 })
 
 test('design tokens: every admin role used by components is declared', () => {
@@ -1556,7 +1622,7 @@ test('design tokens: the native date picker glyph follows the theme', () => {
 })
 
 test('backend layout: a workspace screen uses one identity band with navigation context', () => {
-  const manifest = compose(ketsuite.modules, { headless: true })
+  const manifest = compose(ketsuite.modules, { headless: true, companies: true })
   const vi = translator(manifest, 'vi')
   const menu = buildMenu(manifest, {
     translate: (key) => vi(key),
@@ -2101,14 +2167,79 @@ test('backend shell: the phone menu uses the design-system left drawer', () => {
 test('backend compatibility CSS leaves Section and ModalSheet geometry to the design system', () => {
   const forms = readFileSync('packages/ketsuite/src/modules/backend/design/forms.css', 'utf8')
   assert.doesNotMatch(forms, /\[data-ui="(?:section(?:-[a-z-]+)?|modal(?:-[a-z-]+)?)"\]/u)
+  // The public MediaGallery owns its grid, items and image ratio; the kit styles only the
+  // gallery inside its own media widget.
+  assert.doesNotMatch(forms, /^\s*\[data-ui="media-(?:gallery|item)"\]/mu)
+  assert.match(forms, /\[data-ui="media"\] > \[data-ui="media-gallery"\] \{[^}]*auto-fill/u)
   const lists = readFileSync('packages/ketsuite/src/modules/backend/design/lists.css', 'utf8')
   assert.doesNotMatch(lists, /\[data-ui="badge"\]/u)
   const controls = readFileSync('packages/ketsuite/src/modules/backend/design/controls.css', 'utf8')
   assert.doesNotMatch(controls, /\[data-ui="(?:tag(?:-remove)?|action(?:-group)?)"\]/u)
+  // A design-system Stack keeps its auto column: only the kit's own stacks fit theirs.
+  assert.doesNotMatch(controls, /\[data-ui="stack"\] \{[^}]*grid-template-columns/u)
+  assert.match(
+    controls,
+    /\[data-ui="stack"\]:not\(\[data-pattern="stack"\]\) \{[^}]*grid-template-columns: minmax\(0, 1fr\)/u,
+  )
   const content = readFileSync('packages/ketsuite/src/modules/backend/design/content.css', 'utf8')
   assert.doesNotMatch(content, /\[data-ui="action"\]/u)
   const modal = readFileSync('packages/design-system/src/patterns/modal-sheet/styles.css', 'utf8')
   const layout = readFileSync('packages/design-system/src/layouts/layout/styles.css', 'utf8')
   assert.match(modal, /\[data-ui="modal-title"\][^{]*\{[^}]*font-size: var\(--kv-text-xl\)/u)
-  assert.match(layout, /\[data-ui="section-title"\][^{]*\{[^}]*font-size: var\(--kv-text-sm\)/u)
+  assert.match(layout, /\[data-ui="section-title"\][^{]*\{[^}]*font-size: var\(--kv-text-md\)/u)
+})
+
+test('the phone breakpoint ends below 768px in every design system and backend stylesheet', () => {
+  // `max-width: 48rem` also matches exactly 768px, the first width with the desktop
+  // sidebar, so a phone rule there hid the context icon beside a full desktop shell.
+  const sheets = [
+    ...globSync('packages/design-system/src/**/*.css'),
+    ...globSync('packages/ketsuite/src/modules/backend/design/*.css'),
+  ]
+  assert.ok(sheets.length > 40)
+  for (const path of sheets) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /@media \(max-width: 48rem\)/u, path)
+  }
+})
+
+test('a squeezed page context gives up the branch before the company', () => {
+  const content = readFileSync('packages/ketsuite/src/modules/backend/design/content.css', 'utf8')
+  const rule = (hook: string) =>
+    content.match(new RegExp(`\\n {2}\\[data-ui="${hook}"\\] \\{(?<body>[^}]*)\\}`, 'u'))?.groups?.body ?? ''
+  const branch = rule('page-context-branch')
+  assert.match(branch, /min-inline-size: 0;/u)
+  assert.match(branch, /overflow: hidden;/u)
+  assert.match(branch, /text-overflow: ellipsis;/u)
+  const shrink = Number(branch.match(/flex: 0 (\d+) auto;/u)?.[1])
+  // The company keeps the default shrink of 1, so the branch must shrink far faster.
+  assert.doesNotMatch(rule('page-context-company'), /flex/u)
+  assert.ok(shrink >= 10, `branch flex-shrink ${shrink}`)
+  // Text that cannot wrap sets a min-content wider than the slot at 768px, so the cap
+  // must include the slot itself, not only a fixed length.
+  assert.match(
+    content,
+    /\n {2}\[data-ui="app-location-bar"\] \[data-ui="page-context-viewer"\] \{\s*max-inline-size: min\(24rem, 100%\);/u,
+  )
+})
+
+test('loginScreen without passwords keeps the card, errors and providers but posts nothing', () => {
+  const markup = renderToString(
+    loginScreen(_, {
+      password: false,
+      oauthFailed: true,
+      unavailable: true,
+      providers: [{ code: 'company', name: 'Company', href: '/auth/oauth/company/start?next=%2Fadmin' }],
+    }),
+  )
+  assert.doesNotMatch(markup, /<form/)
+  assert.doesNotMatch(markup, /name="(login|password)"/)
+  assert.doesNotMatch(markup, /data-ui="login-(submit|divider)"/)
+  assert.match(markup, /<div data-ui="login-form"/)
+  assert.equal(markup.match(/data-ui="login-error"/g)?.length, 2)
+  assert.match(markup, /data-ui="login-provider" href="\/auth\/oauth\/company\/start\?next=%2Fadmin"/)
+  // The default is unchanged: one form with both fields, and the divider before providers.
+  const classic = renderToString(loginScreen(_, { providers: [{ code: 'c', name: 'C', href: '/c' }] }))
+  assert.match(classic, /<form data-ui="login-form" method="post" action="\/login"/)
+  assert.match(classic, /name="password"/)
+  assert.match(classic, /data-ui="login-divider"/)
 })

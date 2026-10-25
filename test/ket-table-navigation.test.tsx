@@ -41,6 +41,105 @@ test('KetTable: descriptive wrapping preserves the complete value and native rec
   }
 })
 
+test('KetTable: fixed geometry is independent of rows, sorting, loading and grouping in both renderers', () => {
+  const columns = [
+    {
+      key: 'name',
+      label: 'Name',
+      width: 'wide' as const,
+      wrap: true,
+      cell: (row: { id: string; name: string }) => row.name,
+    },
+    {
+      key: 'id',
+      label: 'Reference',
+      width: 'narrow' as const,
+      cell: (row: { id: string; name: string }) => row.id,
+    },
+  ]
+  const rows = [
+    { id: 'a', name: 'Short' },
+    { id: 'b', name: 'A much longer descriptive value that must stay accessible after sorting' },
+  ]
+  const groupMarkup = (output: string) => output.match(/<colgroup[^>]*>[\s\S]*?<\/colgroup>/)?.[0]
+  const outputs = [
+    ...[false, true].map((reverse) =>
+      renderToString(
+        KetTable({
+          layout: 'fixed',
+          columns,
+          rows: reverse ? [...rows].reverse() : rows,
+          id: (row) => row.id,
+          labels: ketTableDemoConfig.labels,
+          sort: { field: 'name', direction: reverse ? 'desc' : 'asc' },
+        }),
+      ),
+    ),
+    renderToString(
+      KetTable({
+        layout: 'fixed',
+        columns,
+        rows,
+        id: (row) => row.id,
+        labels: ketTableDemoConfig.labels,
+        loading: { rows: 25 },
+      }),
+    ),
+    renderToString(
+      KetTable({
+        layout: 'fixed',
+        columns,
+        rows,
+        id: (row) => row.id,
+        labels: ketTableDemoConfig.labels,
+        groups: [{ id: 'group', label: 'Group', count: rows.length, href: '?group=closed', rows }],
+      }),
+    ),
+    renderToString(
+      createKetTableView({
+        id: 'fixed-client',
+        config: {
+          ...ketTableDemoConfig,
+          selection: undefined,
+          layout: 'fixed',
+          columns: columns.map(({ cell: _cell, ...column }) => ({
+            ...column,
+            format: { kind: 'text', field: column.key },
+          })),
+          rows,
+        },
+      }).view(),
+    ),
+  ]
+  for (const output of outputs) {
+    assert.match(output, /data-layout="fixed"/)
+    assert.equal(groupMarkup(output), groupMarkup(outputs[0]!))
+  }
+  assert.match(groupMarkup(outputs[0]!)!, /75%/)
+  assert.match(groupMarkup(outputs[0]!)!, /25%/)
+  assert.ok(outputs[1]!.includes(rows[1]!.name))
+  const selected = renderToString(
+    KetTable({
+      layout: 'fixed',
+      columns,
+      rows,
+      id: (row) => row.id,
+      labels: ketTableDemoConfig.labels,
+      selection: { formId: 'bulk', fieldName: 'selected' },
+    }),
+  )
+  assert.match(groupMarkup(selected)!, /data-ui="kt-select-col"/)
+  // Table layout treats a width mixing a percentage and a length as auto (equal columns).
+  assert.match(groupMarkup(selected)!, /data-col="[^"]+" style="width: 75%"/)
+  assert.doesNotMatch(groupMarkup(selected)!, /calc\(/)
+  assert.equal(
+    groupMarkup(
+      renderToString(KetTable({ columns, rows, id: (row) => row.id, labels: ketTableDemoConfig.labels })),
+    ),
+    undefined,
+  )
+})
+
 test('KetTable: URL-driven pagination and sorting preserve the server state', () => {
   const html = renderToString(
     createKetTableView({

@@ -88,7 +88,8 @@
     gap: var(--kv-space-2);
   }
 
-  :where([data-kv-design-system]) [data-ui="record-page-meta"] {
+  :where([data-kv-design-system]) [data-ui="record-page-meta"],
+  :where([data-kv-design-system]) [data-ui="record-page-path"] {
     min-width: 0;
   }
 
@@ -151,6 +152,21 @@
     background: var(--kv-panel-bg-subtle);
   }
 
+  /* A leading rail comes first in the document; a wide page still draws it in the rail column. */
+  :where([data-kv-design-system])
+    [data-ui="record-page"][data-aside-stacked="before"]
+    [data-ui="record-page-body"] {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="record-page"][data-aside-stacked="before"]
+    [data-ui="record-page-aside"] {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
   /* Stack the rail once the record column would fall below 40rem beside it. */
   @container record-page (max-width: 61.25rem) {
     :where([data-kv-design-system]) [data-ui="record-page-layout"] {
@@ -165,6 +181,51 @@
       overflow: visible;
       border-top: 1px solid var(--kv-panel-divider);
       border-left: 0;
+    }
+
+    /* A leading rail sits between the header and the record, closed by one hairline; the
+       record's own inset is the gap after it. */
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-aside-stacked="before"]
+      [data-ui="record-page-layout"] {
+      row-gap: 0;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-aside-stacked="before"]
+      [data-ui="record-page-body"],
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-aside-stacked="before"]
+      [data-ui="record-page-aside"] {
+      grid-row: auto;
+      grid-column: auto;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-aside-stacked="before"]
+      [data-ui="record-page-aside"] {
+      padding-bottom: var(--kv-space-5);
+      border-top: 0;
+      border-bottom: 1px solid var(--kv-panel-divider);
+    }
+  }
+
+  /* The commands drop below the record's identity on the page's own width, so a sidebar
+     beside the page counts and a record code never breaks beside the commands. Title, status,
+     meta and path read as one block; the commands follow it, 12px away (the header gap plus
+     their own separation, as on ListPage). The header scope outranks the page identity rules
+     that the same elements also carry. */
+  @container record-page (max-width: 47.9375rem) {
+    :where([data-kv-design-system])
+      [data-ui="record-page-header"]
+      :is([data-ui="record-page-heading"], [data-ui="record-page-title-row"]) {
+      display: contents;
+    }
+
+    :where([data-kv-design-system]) [data-ui="record-page-header"] [data-ui="record-page-actions"] {
+      order: 1;
+      justify-content: flex-start;
+      margin-top: var(--kv-space-1);
     }
   }
 
@@ -182,16 +243,6 @@
 
     :where([data-kv-design-system]) [data-ui="record-page-header"] {
       padding: var(--kv-space-4) var(--kv-page-padding-x) var(--kv-space-3);
-    }
-
-    :where([data-kv-design-system]) [data-ui="record-page-title-row"] {
-      grid-template-columns: minmax(0, 1fr);
-      align-items: stretch;
-      gap: var(--kv-space-3);
-    }
-
-    :where([data-kv-design-system]) [data-ui="record-page-actions"] {
-      justify-content: flex-start;
     }
 
     :where([data-kv-design-system])

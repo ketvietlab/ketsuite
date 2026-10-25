@@ -26,11 +26,13 @@ export const KeyValue = (props: KeyValueProps): TemplateResult => (
  * `layout="strip"` lays the pairs out in one row divided by hairlines, the
  * metadata strip of Két Design System visual contract L7 (due date, SLA, owner under a record title).
  * It has no box around it; `columns` applies to the grid layout only.
+ * `columns="auto"` fits as many 12rem columns as the list's own width holds, at most four:
+ * the facts of a wide record page fill the row instead of leaving half of it empty.
  */
 export const DescriptionList = (props: {
   label?: string
   items: readonly (KeyValueProps & { id: string })[]
-  columns?: 1 | 2 | 3
+  columns?: 1 | 2 | 3 | 'auto'
   layout?: 'grid' | 'strip'
 }): TemplateResult => (
   <dl

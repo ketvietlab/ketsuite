@@ -1,4 +1,5 @@
 // Opt-in site tracking. This module is served from the visitor site, without inline JavaScript.
+import { readConsent } from './consent.mjs'
 /**
  * @param {Document} doc
  * @param {string | undefined} id
@@ -27,7 +28,22 @@ export function installGoogleTagManager(doc, id, view = doc.defaultView) {
   return script
 }
 
+/**
+ * Install the container now, or, when the site asks before tracking, once the visitor agrees.
+ * @param {Document} doc
+ * @param {HTMLScriptElement} loader
+ */
+export function installWhenAllowed(doc, loader) {
+  const id = loader.dataset.websiteGtm
+  const required = loader.dataset.websiteGtmConsent
+  if (!required || readConsent(doc, required) === 'yes') return installGoogleTagManager(doc, id)
+  doc.addEventListener('website:consent', (event) => {
+    if (/** @type {CustomEvent} */ (event).detail?.granted) installGoogleTagManager(doc, id)
+  })
+  return null
+}
+
 if (typeof document !== 'undefined') {
   const loader = /** @type {HTMLScriptElement | null} */ (document.querySelector('script[data-website-gtm]'))
-  if (loader) installGoogleTagManager(document, loader.dataset.websiteGtm)
+  if (loader) installWhenAllowed(document, loader)
 }

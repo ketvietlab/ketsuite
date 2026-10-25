@@ -4,6 +4,7 @@
 import { spawnSync } from 'node:child_process'
 import { buildBackendClients } from './build-backend-client.mjs'
 import { buildDesignSystemStyles } from './build-design-system-styles.mjs'
+import { buildBackendMermaid } from './build-backend-mermaid.mjs'
 import { buildChartClient } from './build-chart-client.mjs'
 import { buildFlowClient } from './build-flow-client.mjs'
 
@@ -11,6 +12,7 @@ await Promise.all([
   buildBackendClients(),
   buildDesignSystemStyles('packages/design-system/dist/styles.css'),
   buildChartClient(),
+  buildBackendMermaid(),
   buildFlowClient(),
 ])
 

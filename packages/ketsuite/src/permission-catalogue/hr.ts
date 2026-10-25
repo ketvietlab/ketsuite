@@ -1,0 +1,30 @@
+import type { CatalogueSource } from './source.ts'
+
+export const permissions = {
+  posture: 'permission-bearing',
+  bundles: ['configure', 'operate'],
+  functions: {
+    'department.save': ['configure', 'configure', 'hr.configuration-audit'],
+    'employee.create': ['configure', 'configure', 'hr.configuration-audit'],
+    'employee.manageList': ['configure', 'configure', 'hr.configuration-audit'],
+    'employee.myProfile': ['operate', 'operate'],
+    'employee.save': ['configure', 'configure', 'hr.configuration-audit'],
+    'job.save': ['configure', 'configure', 'hr.configuration-audit'],
+    'leave.manageAllocation': ['configure', 'configure', 'hr.configuration-audit'],
+    'leave.manageDecision': ['configure', 'configure', 'hr.configuration-audit'],
+    'leave.manageList': ['configure', 'configure', 'hr.configuration-audit'],
+    'leave.mine': ['operate', 'operate'],
+    'leave.request': ['operate', 'operate'],
+    'leaveType.save': ['configure', 'configure', 'hr.configuration-audit'],
+    'roster.generate': ['operate', 'operate'],
+    'roster.manageList': ['configure', 'configure', 'hr.configuration-audit'],
+    'roster.managePublish': ['configure', 'configure', 'hr.configuration-audit'],
+    'roster.manageReopen': ['configure', 'configure', 'hr.configuration-audit'],
+    'rotation.assign': ['configure', 'configure', 'hr.configuration-audit'],
+    'rotation.save': ['configure', 'configure', 'hr.configuration-audit'],
+    'schedule.mine': ['operate', 'operate'],
+    'shift.save': ['configure', 'configure', 'hr.configuration-audit'],
+    'shiftTemplate.save': ['configure', 'configure', 'hr.configuration-audit'],
+  },
+  exemptions: {},
+} satisfies CatalogueSource

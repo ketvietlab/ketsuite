@@ -28,7 +28,12 @@ export const attachClientModalInteractions = (root = document) => {
   const siblings = []
   for (let current = layer; current !== root && current.parentElement; current = current.parentElement) {
     for (const sibling of current.parentElement.children) {
-      if (sibling instanceof HTMLElement && sibling !== current) {
+      // The dock region (a call in progress) stays operable over the dialog, which keeps its room free.
+      const holdsDock =
+        sibling instanceof HTMLElement &&
+        (sibling.matches('[data-ui="dock-region"]') ||
+          !!sibling.querySelector(':scope [data-ui="dock-region"]'))
+      if (sibling instanceof HTMLElement && sibling !== current && !holdsDock) {
         siblings.push({ element: sibling, inert: sibling.inert })
         sibling.inert = true
       }

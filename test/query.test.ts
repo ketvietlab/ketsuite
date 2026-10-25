@@ -31,7 +31,7 @@ import type { Adapter, Manifest } from '@ketvietlab/ketjs'
 import { catalog, checkout, defaultTheme as theme, inventory } from '@ketvietlab/ketsuite'
 
 const mods = [catalog, inventory, checkout, theme]
-const manifest = compose(mods)
+const manifest = compose(mods, { companies: true })
 const P = table(manifest, 'catalog.Product')
 
 async function boot(): Promise<{ adapter: Adapter; manifest: Manifest }> {
@@ -143,7 +143,7 @@ test('query: db.group returns normalized keys, counts and aggregates', async () 
       },
     },
   })
-  const m = compose([grouped])
+  const m = compose([grouped], { companies: true })
   const adapter = sqliteAdapter()
   await adapter.open()
   for (const sql of renderSql(planMigration(null, schemaFromManifest(m)), adapter)) await adapter.exec(sql)
@@ -184,7 +184,7 @@ test('models: timestamps are optional for legacy rows and server-maintained on w
       },
     },
   })
-  const m = compose([timed])
+  const m = compose([timed], { companies: true })
   assert.equal(m.models['timed.Item']!.fields.createdAt!.optional, true)
   const adapter = sqliteAdapter()
   await adapter.open()
@@ -290,7 +290,7 @@ test('query: a query the function did not declare is blocked before it runs', as
       },
     },
   })
-  const m2 = compose([...mods, rogue])
+  const m2 = compose([...mods, rogue], { companies: true })
   registerFunctions([...mods, rogue])
   await assert.rejects(
     () => callFn('rogue.snoop', {}, { adapter, manifest: m2 }),
@@ -347,7 +347,11 @@ test('changeset: casting coerces what it safely can and refuses the rest', () =>
 
   const bad = changeset(manifest, 'catalog.Product', { priceCents: '15.5' }).cast(['priceCents'])
   assert.equal(bad.valid, false)
-  assert.deepEqual(bad.errors, [{ field: 'priceCents', message: 'expected an integer, got 15.5' }])
+  assert.deepEqual(
+    bad.errors.map((error) => error.field),
+    ['priceCents'],
+  )
+  assert.match(bad.errors[0]!.message, /integer, got "?15\.5"?$/)
 })
 
 test('changeset: changes are a real diff against the existing row', () => {

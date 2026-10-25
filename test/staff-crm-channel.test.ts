@@ -8,7 +8,10 @@ import { TERMINAL_STATES } from '../packages/ketsuite/src/modules/crm/types.ts'
 type Envelope<T> = { data: T; error: { code: string } | null }
 
 const boot = async (t: TestContext, options: { teamScope?: boolean } = {}) => {
-  const e2e = await createTestDeployment(ketsuite, { worker: false })
+  const e2e = await createTestDeployment(ketsuite, {
+    worker: false,
+    client: { headers: { connection: 'close' } },
+  })
   t.after(() => e2e.close())
   const scope = { company: 'acme', branches: null }
   const fixture = <T = Row>(name: string, input: Record<string, unknown>, actor?: string) =>
@@ -295,9 +298,10 @@ test('staff CRM channel returns one narrow actionable detail with the canonical 
     summary: 'Call the buyer',
     dueDate: '2026-08-27',
   })
+  // A lead may be lost, never won.
   assert.deepEqual(
     (response.data.stageOptions as Row[]).map((stage) => stage.id),
-    ['crm-stage-new', 'crm-stage-qualified'],
+    ['crm-stage-new', 'crm-stage-qualified', 'crm-stage-lost'],
   )
   assert.deepEqual(response.data.assigneeOptions, [
     { id: 'admin', name: 'Administrator' },

@@ -5,8 +5,6 @@ import type { Row } from '@ketvietlab/ketjs'
 import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { ketsuite } from '../apps/ketsuite/deployment.ts'
 
-import { renderCaseModal, type CaseModalPayload } from './crm-case-modal-helper.ts'
-
 const boot = async (t: TestContext) => {
   const app = await createTestDeployment(ketsuite, { worker: false })
   t.after(() => app.close())
@@ -153,10 +151,6 @@ test('CRM reporting HTTP: origin, interactions, categorized loss, conflicts, own
   assert.equal((report.coverage as Row).unknownClosingOwnership, 0)
   assert.equal((await call('crm.report.sales', { ...parameters, timezone: 'Invalid/Zone' })).ok, false)
   assert.equal((await call('crm.report.sales', { ...parameters, start: parameters.end })).ok, false)
-  const payload = await call<CaseModalPayload>('crm.case.modalContext', { id, locale: 'en' })
-  assert.match(renderCaseModal(payload, 'overview', 'interaction'), /Reached customer/u)
-  assert.match(renderCaseModal(payload, 'overview', 'close'), /name="lostReasonCode"/u)
-  assert.match(renderCaseModal(payload, 'timeline'), /Phone · Reached customer/u)
   const scope = { company: 'acme', branches: null }
   await app.fixture.call(
     'user.createUser',

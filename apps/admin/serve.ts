@@ -73,7 +73,7 @@ const mods = [
   paperTheme,
   backend,
 ]
-const manifest = compose(mods)
+const manifest = compose(mods, { companies: true })
 
 const db = sqliteAdapter()
 await db.open()

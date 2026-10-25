@@ -202,6 +202,8 @@ export type TabPanelProps = {
   id?: string
   labelledBy?: string
   body: JSXChild
+  /** Page content participates in the containing page's scroll, rather than trapping it. */
+  scroll?: 'panel' | 'page'
 }
 
 /**
@@ -209,7 +211,13 @@ export type TabPanelProps = {
  * rhythm, but deliberately adds no left or right padding.
  */
 export const TabPanel = (props: TabPanelProps): TemplateResult => (
-  <section data-ui="tab-panel" id={props.id} aria-labelledby={props.labelledBy} tabindex="-1">
+  <section
+    data-ui="tab-panel"
+    data-scroll={props.scroll}
+    id={props.id}
+    aria-labelledby={props.labelledBy}
+    tabindex="-1"
+  >
     {props.body}
   </section>
 )
@@ -222,15 +230,17 @@ export type TabbedViewProps = {
   /** Stable content above the tab bar, such as a record summary or issues. */
   context?: JSXChild
   extension?: JSXChild
+  /** Use page for unbounded routed content; panel retains bounded modal scrolling. */
+  scroll?: 'panel' | 'page'
 }
 
-/** A complete tabbed region with one stable navigation bar and one scrolling panel. */
+/** A complete tabbed region with one stable navigation bar and one content panel. */
 export const TabbedView = (props: TabbedViewProps): TemplateResult => {
   const tabsId = `${props.id}-tabs`
   const panelId = `${props.id}-panel`
   const active = props.items.find((item) => item.active === true)
   return (
-    <div data-ui="tabbed-view">
+    <div data-ui="tabbed-view" data-scroll={props.scroll}>
       {props.context !== undefined && props.context !== '' ? (
         <div data-ui="tabbed-view-context">{props.context}</div>
       ) : (
@@ -247,6 +257,7 @@ export const TabbedView = (props: TabbedViewProps): TemplateResult => {
         id={panelId}
         labelledBy={active ? tabElementId(tabsId, active.id) : undefined}
         body={props.body}
+        scroll={props.scroll}
       />
     </div>
   )

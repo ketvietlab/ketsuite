@@ -6,6 +6,7 @@ import {
   resolveDatePreset,
 } from '../forms/date-presets/index.tsx'
 import { DatePicker, DateRangePicker, DateTimePicker } from '../forms/date-time/index.tsx'
+import { Field } from '../primitives/field/index.tsx'
 import { Disclosure, Stack } from '../layouts/index.tsx'
 
 /** Fixed civil today makes catalogue and browser checks reproducible. */
@@ -13,6 +14,14 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
   <Stack
     gap="loose"
     items={[
+      Field({
+        id: 'catalogue-record-date-en',
+        name: 'recordDate',
+        label: 'Record date · English host',
+        type: 'date',
+        value: '2026-10-04',
+        locale: 'en',
+      }),
       <Disclosure
         summary="Khoảng ngày cố định · 04/10/2026"
         body={
@@ -46,6 +55,14 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
         today="2026-09-30"
         help="Chọn trên lịch hoặc nhập ngày trực tiếp."
       />,
+      <DatePicker
+        id="date-japanese"
+        name="releaseDate"
+        label="公開日"
+        locale="ja"
+        value="2026-10-11"
+        today="2026-10-11"
+      />,
       <DateTimePicker
         id="appointment"
         name="appointment"
@@ -53,6 +70,22 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
         value="2026-09-30T09:00"
         today="2026-09-30"
         required
+      />,
+      <DateTimePicker
+        id="locked-appointment"
+        name="lockedAppointment"
+        label="Ngày và giờ đã khóa"
+        value="2026-09-30T09:00"
+        today="2026-09-30"
+        disabled
+      />,
+      <Field
+        id="english-deadline"
+        name="englishDeadline"
+        label="Due by"
+        type="datetime-local"
+        locale="en"
+        value="2026-09-30T09:00"
       />,
       <DateRangePicker
         id="range"

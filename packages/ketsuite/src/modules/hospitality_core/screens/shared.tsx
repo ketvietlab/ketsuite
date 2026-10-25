@@ -1,3 +1,5 @@
+import { chargeDescription } from '../records/charge-description.ts'
+import { randomUUID } from 'node:crypto'
 import type { Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import {
@@ -37,7 +39,6 @@ import { addCalendarDays, dateKeyIn, zonedMidnight } from '../calendar.ts'
 import {
   ACCOMMODATION_TYPES,
   BOOKING_PROVIDERS,
-  CANCELLATION_POLICY_TYPES,
   CHARGE_TYPES,
   DOCUMENT_TYPES,
   GENDERS,
@@ -114,6 +115,10 @@ export type PropertyRow = {
 }
 
 export type PropertyDetail = {
+  version?: number | null
+  lifecycle?: string | null
+  inspectionRequired?: boolean | null
+  businessDate?: string | null
   id: string
   companyId: string
   branchId?: string | null
@@ -155,7 +160,12 @@ export type PropertyDetail = {
   contacts?: Array<{ id?: string }>
 }
 
-export type PropertyFormValues = Pick<
+export type PropertyFormValues = {
+  expectedVersion?: number
+  requestKey?: string
+  editing?: boolean
+  timezoneLocked?: boolean
+} & Pick<
   PropertyDetail,
   | 'id'
   | 'branchId'
@@ -187,6 +197,7 @@ export type BranchChoice = {
 }
 
 export type BuildingRow = {
+  version?: number
   id: string
   propertyId: string
   code: string
@@ -198,7 +209,7 @@ export type BuildingRow = {
 }
 
 export type BuildingDetail = BuildingRow & {
-  property?: { code?: string; name?: string; active?: boolean } | null
+  property?: { code?: string; name?: string; active?: boolean; version?: number } | null
   floors: FloorRow[]
   rooms: RoomRow[]
 }
@@ -206,6 +217,7 @@ export type BuildingDetail = BuildingRow & {
 export type BuildingFormValues = Pick<BuildingRow, 'id' | 'propertyId' | 'code' | 'name' | 'sequence'>
 
 export type FloorRow = {
+  version?: number
   id: string
   propertyId: string
   buildingId: string
@@ -218,7 +230,7 @@ export type FloorRow = {
 }
 
 export type FloorDetail = FloorRow & {
-  property?: { code?: string; name?: string; active?: boolean } | null
+  property?: { code?: string; name?: string; active?: boolean; version?: number } | null
   building?: { id?: string; code?: string; name?: string; active?: boolean } | null
   rooms: RoomRow[]
 }
@@ -364,6 +376,9 @@ export type ContentCompleteness = {
 }
 
 export type NightAuditPreview = {
+  roomNightCount?: number
+  heldCount?: number
+  roomNightAmount?: string | number
   propertyId: string
   auditDate: string
   inHouseCount: number
@@ -374,6 +389,9 @@ export type NightAuditPreview = {
 }
 
 export type NightAuditRow = {
+  roomNightCount?: number
+  heldCount?: number
+  roomNightAmount?: string | number
   id: string
   propertyId: string
   auditDate: string
@@ -482,6 +500,7 @@ export type CleaningTaskSummary = {
 }
 
 export type ReservationRow = {
+  version?: number | null
   id: string
   code: string
   partnerId: string
@@ -553,6 +572,12 @@ export type ReservationAmendmentValues = {
 }
 
 export type StayRow = {
+  expectedArrivalTime?: string | null
+  earlyArrivalRequested?: boolean
+  version?: number | null
+  balance?: string | null
+  arrivalIssue?: string | null
+  guaranteeValid?: boolean
   id: string
   code: string
   folioId: string
@@ -635,6 +660,9 @@ export type FolioStayRow = {
 }
 
 export type FolioChargeRow = {
+  serviceDate?: string | null
+  adjustsChargeId?: string | null
+  adjustmentReason?: string | null
   id: string
   stayId?: string | null
   description: string
@@ -1149,7 +1177,13 @@ export const propertyFormFields = (
 ): FormField[] => {
   const timezones = [...new Set([values.timezone, ...PROPERTY_TIMEZONES])]
   return [
-    { name: 'code', label: _('hospitality_core.property.field.code'), value: values.code, required: true },
+    {
+      name: 'code',
+      label: _('hospitality_core.property.field.code'),
+      value: values.code,
+      required: true,
+      readOnly: values.editing === true || 'version' in values,
+    },
     { name: 'name', label: _('hospitality_core.property.field.name'), value: values.name, required: true },
     {
       name: 'publicName',
@@ -1196,6 +1230,7 @@ export const propertyFormFields = (
       label: _('hospitality_core.property.field.timezone'),
       type: 'select',
       value: values.timezone,
+      disabled: values.timezoneLocked === true,
       required: true,
       options: timezones.map((value) => ({ value, label: value })),
     },
@@ -1303,7 +1338,14 @@ export const propertyForm = (
   <RecordForm
     action={action}
     fields={propertyFormFields(_, values, policies, branches)}
-    hidden={{ id: values.id, lang: locale }}
+    hidden={{
+      id: values.id,
+      lang: locale,
+      expectedVersion: String(
+        values.expectedVersion ?? ('version' in values ? Number(values.version ?? 0) : 0),
+      ),
+      requestKey: values.requestKey ?? randomUUID(),
+    }}
     submit={submit}
     submitVariant="primary"
     cancelHref={cancelHref}
@@ -1898,6 +1940,16 @@ export const nightAuditColumns = (_: Translator, locale: string): Array<Column<N
     priority: 'primary',
   },
   {
+    key: 'heldCount',
+    label: _('hospitality_core.nightAudit.metric.heldArrivals'),
+    cell: (row) => String(row.heldCount ?? 0),
+  },
+  {
+    key: 'roomNightCount',
+    label: _('hospitality_core.nightAudit.metric.roomNights'),
+    cell: (row) => String(row.roomNightCount ?? 0),
+  },
+  {
     key: 'status',
     label: _('hospitality_core.col.status'),
     cell: (row) =>
@@ -2456,20 +2508,7 @@ export const folioColumns = (_: Translator, locale: string, timezone: string): A
  * `cancellation:` followed by why it was charged. The type column already says
  * what the charge is; this says why, and never shows the reader the key.
  */
-export const chargeDescription = (_: Translator, charge: { type: string; description: string }): string => {
-  if (charge.type === 'room' && charge.description.startsWith('room:'))
-    return _('hospitality_core.folio.charge.roomDescription')
-  if (charge.type === 'cancellation' && charge.description.startsWith('no_show:'))
-    return _('hospitality_core.folio.charge.noShowDescription')
-  if (charge.type === 'cancellation' && charge.description.startsWith('cancellation:')) {
-    const reason = charge.description.slice('cancellation:'.length)
-    if (reason === 'provider') return _('hospitality_core.folio.charge.cancellationByChannel')
-    return CANCELLATION_POLICY_TYPES.includes(reason as (typeof CANCELLATION_POLICY_TYPES)[number])
-      ? _(`hospitality_core.policy.${reason}`)
-      : _('hospitality_core.folio.charge.cancellationByPolicy')
-  }
-  return charge.description
-}
+export { chargeDescription }
 
 export const folioChargeColumns = (
   _: Translator,

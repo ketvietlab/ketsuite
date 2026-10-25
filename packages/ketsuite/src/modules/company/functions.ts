@@ -1,6 +1,9 @@
 import { asc, defineFn, eq, from, isTimezone } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 
+const foldSearch = (value: string): string =>
+  value.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/đ/gu, 'd')
+
 type Issue = { field: string; code: string; params?: Record<string, unknown> }
 const issue = (field: string, code: string, params?: Record<string, unknown>): Issue => ({
   field,
@@ -271,7 +274,8 @@ export const functions: Record<string, FnSpec> = {
   }),
 
   listBranches: defineFn({
-    input: { companyId: 'id', includeArchived: 'bool?' },
+    // `search` and `limit` let a relation picker read one company's branches as the person types.
+    input: { companyId: 'id', includeArchived: 'bool?', search: 'text?', limit: 'int?' },
     output: {
       id: 'id',
       companyId: 'id',
@@ -287,7 +291,19 @@ export const functions: Record<string, FnSpec> = {
       const B = ctx.table('company.Branch')
       let q = from(B).where(eq(B.companyId, a.companyId)).orderBy(asc(B.code))
       if (a.includeArchived !== true) q = q.where(eq(B.active, true))
-      return (await ctx.db.all(q)).map((row) => ({ ...row, isRoot: row.rootKey === a.companyId }))
+      const rows = await ctx.db.all(q)
+      // A company has a handful of branches, so the match runs here, without accents or case, where
+      // the database's collation would not fold Vietnamese letters.
+      const needle = foldSearch(String(a.search ?? '').trim())
+      const matched = needle
+        ? rows.filter((row) => foldSearch(`${row.name} ${row.code}`).includes(needle))
+        : rows
+      return (typeof a.limit === 'number' && a.limit > 0 ? matched.slice(0, a.limit) : matched).map(
+        (row) => ({
+          ...row,
+          isRoot: row.rootKey === a.companyId,
+        }),
+      )
     },
   }),
 

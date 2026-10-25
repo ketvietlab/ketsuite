@@ -1,6 +1,5 @@
+import { ListPage, RecordPage } from '../page-regions.tsx'
 import {
-  ListPage,
-  RecordPage,
   DataTable,
   DescriptionList,
   Surface,

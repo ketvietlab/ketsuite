@@ -1,13 +1,20 @@
+import { ROOM_NIGHT_READS, captureRoomNights, roomNightPlan } from './functions/audit-room-nights.ts'
+import { GUARANTEE_READS } from './functions/guarantee-source.ts'
 import { asc, defineFn, defineJob, desc, eq, from, inArray, lte } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, JobContext, JobSpec, Row } from '@ketvietlab/ketjs'
 import { addCalendarDays, dateKeyIn, zonedMidnight } from './calendar.ts'
+import { lateArrivalPlan } from './functions/audit-decisions.ts'
+import { addDecimals, multiplyDecimals } from '../account/money.ts'
 import { occupancyDates } from './inventory.ts'
 import { applyNoShow } from './operations.ts'
-import { postCharge } from './services.ts'
+import { postCharge, postChargeInTransaction } from './services.ts'
 
 type AuditContext = Ctx & { signal?: AbortSignal }
 type AuditIssue = { field: string; code: string; messageKey: string }
 type AuditResult = {
+  roomNightCount?: number
+  heldCount?: number
+  roomNightAmount?: string
   inHouseCount: number
   servicePosted: number
   rentPosted: number
@@ -180,8 +187,9 @@ const postRentPeriod = async (
   periodStart: string,
   timezone: string,
   nightAuditRunId?: string,
+  inTransaction = false,
 ): Promise<Record<string, unknown>> =>
-  postCharge(ctx, {
+  (inTransaction ? postChargeInTransaction : postCharge)(ctx, {
     id: `${String(stay.id)}:rent:${periodStart}`,
     folioId: stay.folioId,
     stayId: stay.id,
@@ -200,10 +208,11 @@ const postRentPeriod = async (
  * makes this repairable when the HTTP request is retried after the stay state
  * has already transitioned.
  */
-export const initializeRecurringRent = async (
+const initializeRent = async (
   ctx: Ctx,
   stay: Row,
   property: Row,
+  inTransaction: boolean,
 ): Promise<Record<string, unknown>> => {
   if (!isLongStay(stay)) return success(stay.id, { scheduled: false })
   if (stay.nextBillDate) return success(stay.id, { scheduled: true, existing: true })
@@ -211,7 +220,7 @@ export const initializeRecurringRent = async (
   const periodStart = dateKeyIn(new Date(String(stay.checkIn)), timezone)
   let nextBillDate = periodStart
   if (property.longStayBillOnCheckIn !== false) {
-    const posted = await postRentPeriod(ctx, stay, periodStart, timezone)
+    const posted = await postRentPeriod(ctx, stay, periodStart, timezone, undefined, inTransaction)
     if (posted.ok !== true) return posted
     nextBillDate = addCalendarDays(periodStart, periodDays(stay.bookingType))
   }
@@ -219,15 +228,39 @@ export const initializeRecurringRent = async (
   return success(stay.id, { scheduled: true, nextBillDate })
 }
 
+export const initializeRecurringRent = (ctx: Ctx, stay: Row, property: Row) =>
+  initializeRent(ctx, stay, property, false)
+/** The arrival command owns rollback of the first rent charge and stay mutation. */
+export const initializeRecurringRentInTransaction = (ctx: Ctx, stay: Row, property: Row) =>
+  initializeRent(ctx, stay, property, true)
+
 export const executeNightAudit = async (
   ctx: AuditContext,
   args: { runId: string; propertyId: string; auditDate: string },
 ): Promise<AuditResult> => {
   const property = await one(ctx, 'hospitality_core.Property', args.propertyId)
   if (!property) throw new Error(`night audit property "${args.propertyId}" does not exist`)
+  const previous = await one(ctx, 'hospitality_core.NightAuditRun', args.runId)
+  if (previous?.state === 'completed')
+    return {
+      inHouseCount: Number(previous.inHouseCount),
+      servicePosted: Number(previous.servicePosted),
+      rentPosted: Number(previous.rentPosted),
+      existingCount: Number(previous.existingCount),
+      noShowPosted: Number(previous.noShowPosted),
+      totalAmount: String(previous.totalAmount),
+      roomNightCount: Number(previous.roomNightCount ?? 0),
+      heldCount: Number(previous.heldCount ?? 0),
+      roomNightAmount: String(previous.roomNightAmount ?? '0'),
+    }
   const attempt = await beginRunAttempt(ctx, args.runId)
 
   try {
+    if (
+      ctx.manifest.models['hospitality_billing.GuaranteeAllocation'] &&
+      !ctx.effects.includes('read:hospitality_billing.GuaranteeAllocation')
+    )
+      throw new Error('Financial night audit requires the Billing worker; retry from the night audit screen')
     const snapshot = await auditSnapshot(ctx, property, args.auditDate)
     const result: AuditResult = {
       inHouseCount: snapshot.stays.length,
@@ -239,7 +272,18 @@ export const executeNightAudit = async (
     }
     const timezone = String(property.timezone ?? 'UTC')
 
+    const late = await lateArrivalPlan(ctx, property, args.auditDate)
+    if (late.some((row) => !row.guaranteeValid))
+      throw new Error('Arrival guarantees must be repaired before night audit')
+    if (late.some((r) => !['none', 'prepaid', 'agent'].includes(String(r.guaranteeKind)) && !r.decision))
+      throw new Error('Guaranteed arrivals need a decision before night audit')
     for (const reservation of await missedArrivals(ctx, property, args.auditDate)) {
+      const planned = late.find((r) => r.id === reservation.id)
+      if (
+        planned &&
+        (['prepaid', 'agent'].includes(String(planned.guaranteeKind)) || planned.decision?.choice === 'hold')
+      )
+        continue
       abortIfRequested(ctx)
       const closed = await applyNoShow(
         ctx,
@@ -296,24 +340,46 @@ export const executeNightAudit = async (
       }
     }
 
+    const roomNights = await captureRoomNights(ctx, property, args.auditDate, args.runId)
+    Object.assign(result, roomNights)
     const runCharges = await ctx.db.select('hospitality_core.Charge', {
       nightAuditRunId: args.runId,
       state: 'active',
     })
     result.servicePosted = runCharges.filter((charge) => charge.extraLineId).length
     result.rentPosted = runCharges.filter((charge) => charge.type === 'room').length
-    result.totalAmount = String(runCharges.reduce((sum, charge) => sum + Number(charge.amount ?? 0), 0))
-    await ctx.db.compareAndSet(
-      'hospitality_core.NightAuditRun',
-      { id: args.runId },
-      { state: 'running', attempt },
-      {
-        state: 'completed',
-        ...result,
-        completedAt: new Date().toISOString(),
-        error: null,
-      },
+    result.totalAmount = runCharges.reduce(
+      (sum, charge) => addDecimals(sum, String(charge.amount ?? '0')),
+      roomNights.roomNightAmount,
     )
+    await ctx.tx(async (tx) => {
+      const currentProperty = await one(tx, 'hospitality_core.Property', property.id)
+      if (!currentProperty || (currentProperty.closingDate && currentProperty.closingDate !== args.auditDate))
+        throw new Error('The business date changed during night audit')
+      const runClaim = await tx.db.compareAndSet(
+        'hospitality_core.NightAuditRun',
+        { id: args.runId },
+        { state: 'running', attempt },
+        { state: 'completed', ...result, completedAt: new Date().toISOString(), error: null },
+      )
+      if (!('matched' in runClaim) || !runClaim.matched) throw new Error('Night audit attempt lost ownership')
+      const propertyClaim = await tx.db.compareAndSet(
+        'hospitality_core.Property',
+        { id: property.id },
+        {
+          businessDate: property.businessDate ?? null,
+          closingDate: currentProperty.closingDate ?? null,
+          version: currentProperty.version ?? null,
+        },
+        {
+          businessDate: addCalendarDays(args.auditDate, 1),
+          closingDate: null,
+          version: Number(currentProperty.version ?? 0) + 1,
+        },
+      )
+      if (!('matched' in propertyClaim) || !propertyClaim.matched)
+        throw new Error('The business date could not advance')
+    })
     return result
   } catch (error) {
     await ctx.db.compareAndSet(
@@ -331,6 +397,9 @@ export const executeNightAudit = async (
 }
 
 const runOutput = {
+  roomNightCount: 'int?',
+  heldCount: 'int?',
+  roomNightAmount: 'decimal?',
   id: 'id',
   propertyId: 'id',
   auditDate: 'date',
@@ -348,12 +417,95 @@ const runOutput = {
   error: 'text?',
 }
 
+export const requestNightAuditHandler = async (
+  ctx: Ctx,
+  args: Record<string, unknown>,
+  jobKey = 'hospitality_core.nightAudit',
+) => {
+  if (
+    ctx.manifest.models['hospitality_billing.GuaranteeAllocation'] &&
+    ctx.fnKey === 'hospitality_core.requestNightAudit'
+  )
+    return failure(issue('auditDate', 'audit_billing_required'))
+  const property = await one(ctx, 'hospitality_core.Property', args.propertyId)
+  const auditDate = String(args.auditDate)
+  if (!property) return failure(issue('propertyId', 'property_missing'))
+  if (!validDate(auditDate)) return failure(issue('auditDate', 'date'))
+  if (auditDate > dateKeyIn(new Date(), String(property.timezone ?? 'UTC')))
+    return failure(issue('auditDate', 'audit_future'))
+  const completed = await one(ctx, 'hospitality_core.NightAuditRun', `${args.propertyId}:${auditDate}`)
+  if (completed?.state === 'completed') return success(completed.id, { existing: true })
+  const today = dateKeyIn(new Date(), String(property.timezone))
+  const hour = Number(
+    new Intl.DateTimeFormat('en', {
+      timeZone: String(property.timezone),
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date()),
+  )
+  if (auditDate === today && hour < 23) return failure(issue('auditDate', 'audit_cutoff'))
+  if (property.businessDate && auditDate !== String(property.businessDate))
+    return failure(issue('auditDate', 'date_locked'))
+  const late = await lateArrivalPlan(ctx, property, auditDate)
+  if (late.some((row) => !row.guaranteeValid)) return failure(issue('auditDate', 'guarantee_payment'))
+  if (late.some((r) => !['none', 'prepaid', 'agent'].includes(String(r.guaranteeKind)) && !r.decision))
+    return failure(issue('auditDate', 'audit_decisions_pending'))
+  const id = `${String(args.propertyId)}:${auditDate}`
+  const requestedAt = new Date().toISOString()
+  return ctx.tx(async (tx) => {
+    const existing = await one(tx, 'hospitality_core.NightAuditRun', id)
+    if (existing?.state === 'completed') return success(id, { existing: true })
+    const propertyClaim = await tx.db.compareAndSet(
+      'hospitality_core.Property',
+      { id: property.id },
+      {
+        businessDate: property.businessDate ?? null,
+        closingDate: property.closingDate ?? null,
+        version: property.version ?? null,
+      },
+      { closingDate: auditDate, version: Number(property.version ?? 0) + 1 },
+    )
+    if (!('matched' in propertyClaim) || !propertyClaim.matched)
+      return failure(issue('auditDate', 'transition_conflict'))
+    if (!existing)
+      await tx.db.insert('hospitality_core.NightAuditRun', {
+        id,
+        propertyId: args.propertyId,
+        auditDate,
+        state: 'queued',
+        inHouseCount: 0,
+        servicePosted: 0,
+        rentPosted: 0,
+        existingCount: 0,
+        noShowPosted: 0,
+        totalAmount: '0',
+        attempt: 0,
+        requestedAt,
+      })
+    else if (existing.state !== 'running')
+      await tx.db.update(
+        'hospitality_core.NightAuditRun',
+        { id },
+        { state: 'queued', requestedAt, completedAt: null, error: null },
+      )
+    const queued = await tx.jobs.enqueue(
+      jobKey,
+      { runId: id, propertyId: args.propertyId, auditDate },
+      { uniqueKey: `night-audit:${String(args.propertyId)}:${auditDate}` },
+    )
+    return success(id, { jobId: queued.id, existing: queued.existing })
+  })
+}
+
 export const nightAuditFunctions: Record<string, FnSpec> = {
   previewNightAudit: defineFn({
     input: { propertyId: 'id', auditDate: 'date' },
     output: {
       propertyId: 'id',
       auditDate: 'date',
+      roomNightCount: 'int?',
+      heldCount: 'int?',
+      roomNightAmount: 'decimal?',
       inHouseCount: 'int',
       serviceDue: 'int',
       rentDue: 'int',
@@ -361,6 +513,9 @@ export const nightAuditFunctions: Record<string, FnSpec> = {
       estimatedAmount: 'decimal',
     },
     effects: [
+      ...GUARANTEE_READS,
+      ...ROOM_NIGHT_READS,
+      'read:hospitality_core.AuditArrivalDecision',
       'read:hospitality_core.Property',
       'read:hospitality_core.Stay',
       'read:hospitality_core.ExtraLine',
@@ -380,22 +535,32 @@ export const nightAuditFunctions: Record<string, FnSpec> = {
           estimatedAmount: '0',
         }
       const snapshot = await auditSnapshot(ctx, property, String(args.auditDate))
+      const roomNights = await roomNightPlan(ctx, property, String(args.auditDate))
+      const roomNightAmount = roomNights.reduce((sum, night) => addDecimals(sum, night.amount), '0')
       const newServices = snapshot.services.filter((item) => !item.existing)
       const newRent = snapshot.rentPeriods.filter((item) => !item.existing)
       return {
         propertyId: args.propertyId,
         auditDate: args.auditDate,
+        roomNightCount: roomNights.length,
+        heldCount: roomNights.filter((night) => night.held).length,
+        roomNightAmount,
         inHouseCount: snapshot.stays.length,
         serviceDue: newServices.length,
         rentDue: newRent.length,
         existingCount:
           snapshot.services.filter((item) => item.existing).length +
           snapshot.rentPeriods.filter((item) => item.existing).length,
-        estimatedAmount: String(
-          newServices.reduce(
-            (sum, item) => sum + Number(item.line.quantity) * Number(item.line.unitPrice),
-            0,
-          ) + newRent.reduce((sum, item) => sum + Number(item.stay.rate), 0),
+        estimatedAmount: addDecimals(
+          roomNightAmount,
+          addDecimals(
+            newServices.reduce(
+              (sum, item) =>
+                addDecimals(sum, multiplyDecimals(String(item.line.quantity), String(item.line.unitPrice))),
+              '0',
+            ),
+            newRent.reduce((sum, item) => addDecimals(sum, String(item.stay.rate)), '0'),
+          ),
         ),
       }
     },
@@ -404,7 +569,7 @@ export const nightAuditFunctions: Record<string, FnSpec> = {
   listNightAudits: defineFn({
     input: { propertyId: 'id?', limit: 'int?' },
     output: runOutput,
-    effects: ['read:hospitality_core.NightAuditRun'],
+    effects: [...GUARANTEE_READS, ...ROOM_NIGHT_READS, 'read:hospitality_core.NightAuditRun'],
     agent: true,
     handler: async (ctx, args) => {
       const A = ctx.table('hospitality_core.NightAuditRun')
@@ -418,6 +583,11 @@ export const nightAuditFunctions: Record<string, FnSpec> = {
     input: { propertyId: 'id', auditDate: 'date' },
     output: { ok: 'bool', id: 'id?', jobId: 'id?', existing: 'bool?', errors: 'json?' },
     effects: [
+      ...GUARANTEE_READS,
+      ...ROOM_NIGHT_READS,
+      'read:hospitality_core.AuditArrivalDecision',
+      'read:hospitality_core.Reservation',
+      'write:hospitality_core.Property',
       'read:hospitality_core.Property',
       'read:hospitality_core.NightAuditRun',
       'write:hospitality_core.NightAuditRun',
@@ -425,46 +595,7 @@ export const nightAuditFunctions: Record<string, FnSpec> = {
     ],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const property = await one(ctx, 'hospitality_core.Property', args.propertyId)
-      const auditDate = String(args.auditDate)
-      if (!property) return failure(issue('propertyId', 'property_missing'))
-      if (!validDate(auditDate)) return failure(issue('auditDate', 'date'))
-      if (auditDate > dateKeyIn(new Date(), String(property.timezone ?? 'UTC')))
-        return failure(issue('auditDate', 'audit_future'))
-      const id = `${String(args.propertyId)}:${auditDate}`
-      const requestedAt = new Date().toISOString()
-      return ctx.tx(async (tx) => {
-        const existing = await one(tx, 'hospitality_core.NightAuditRun', id)
-        if (!existing)
-          await tx.db.insert('hospitality_core.NightAuditRun', {
-            id,
-            propertyId: args.propertyId,
-            auditDate,
-            state: 'queued',
-            inHouseCount: 0,
-            servicePosted: 0,
-            rentPosted: 0,
-            existingCount: 0,
-            noShowPosted: 0,
-            totalAmount: '0',
-            attempt: 0,
-            requestedAt,
-          })
-        else if (existing.state !== 'running')
-          await tx.db.update(
-            'hospitality_core.NightAuditRun',
-            { id },
-            { state: 'queued', requestedAt, completedAt: null, error: null },
-          )
-        const queued = await tx.jobs.enqueue(
-          'hospitality_core.nightAudit',
-          { runId: id, propertyId: args.propertyId, auditDate },
-          { uniqueKey: `night-audit:${String(args.propertyId)}:${auditDate}` },
-        )
-        return success(id, { jobId: queued.id, existing: queued.existing })
-      })
-    },
+    handler: requestNightAuditHandler,
   }),
 }
 
@@ -473,6 +604,11 @@ export const nightAuditJobs: Record<string, JobSpec> = {
     queue: 'maintenance',
     input: { runId: 'id', propertyId: 'id', auditDate: 'date' },
     effects: [
+      ...ROOM_NIGHT_READS,
+      'write:hospitality_core.RoomNightSnapshot',
+      'read:hospitality_core.AuditArrivalDecision',
+      'read:hospitality_core.Reservation',
+      'write:hospitality_core.Property',
       'read:hospitality_core.Property',
       'read:hospitality_core.Stay',
       'write:hospitality_core.Stay',

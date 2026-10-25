@@ -215,14 +215,18 @@ actor, and return `409` before a stale version can write. Barcode input is never
 stores only a SHA-256 fingerprint and the resolved product/move identity. Quality remains explicitly
 `unavailable`; the execution preview exposes that fact instead of inventing a passed inspection.
 
-`inventory_staff_channel` contributes a bounded goods catalogue and one read-only stock detail under the
-`inventory.products` read capability. Product owns variant identity and channel eligibility, Stock owns the
+`inventory_staff_channel` contributes a bounded goods catalogue, one stock detail, and goods management under
+the `inventory.products` capability. Product owns variant identity and channel eligibility, Stock owns the
 company-scoped availability and internal/transit positions, UOM owns unit labels, and Product Media supplies
 only whether a primary image exists. The detail carries an opaque content-derived `ipv_` version, a matching
-strong ETag, and independently versioned positions. Service products, prices, costs, tax setup, BOMs, and
-management-option catalogues are deliberately absent. Create, edit, archive, restore, and stock-adjustment
-commands remain outside this module until their aggregate versions and domain workflows can satisfy the mobile
-contract without inventing state.
+strong ETag, and independently versioned positions. Create, update, archive, restore, and stock adjustment go
+through Stock's inventory commands under that version; there is no delete until a product's references can be
+checked. Service products, tax setup, BOMs, and pricelists are deliberately absent.
+
+Purchase cost follows `product.listVariantCosts`. A viewer who may not call it reads `cost: null` in the list
+and the detail, and the management options report `costVisible: false`. A write may leave `cost` out, which
+keeps the stored cost, and a write that carries a cost the viewer may not read is refused with a `cost` field
+error.
 
 `account_staff_channel` contributes a bounded customer-invoice and credit-note list plus one read-only detail
 under the `accounting.invoices` read capability. Account owns company scope, canonical document totals, and

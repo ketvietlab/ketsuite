@@ -10,7 +10,7 @@ const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const runtime = mkdtempSync(join(tmpdir(), 'ketjs-website-backend-e2e-'))
 const database = join(runtime, 'website.sqlite')
 const modules = [...ketsuite.modules, ...(ketsuite.theme ? [ketsuite.theme] : []), ...(ketsuite.themes ?? [])]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 const adapter = sqliteAdapter(database)
 const scope = {
   company: 'default',

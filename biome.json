@@ -6,7 +6,11 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!packages/ketsuite/src/modules/address/data"],
+    "includes": [
+      "**",
+      "!packages/ketsuite/src/modules/address/data",
+      "!packages/flow-client/client/*.generated.mjs"
+    ],
     "ignoreUnknown": true
   },
   "formatter": {

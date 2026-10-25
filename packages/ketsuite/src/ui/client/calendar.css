@@ -62,6 +62,10 @@
   [data-ui="calendar-field"] input {
     grid-column: 2;
   }
+  /* The name takes its own row so start and stop share the next one. */
+  [data-ui="calendar-field"][data-span="full"] {
+    grid-column: 1 / -1;
+  }
   [data-ui="calendar-all-day"] {
     display: inline-flex;
     align-items: center;

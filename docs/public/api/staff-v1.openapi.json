@@ -9021,7 +9021,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": ["all", "todo", "in_progress", "done", "cancelled"]
+              "enum": ["all", "todo", "in_progress", "done", "cancelled", "declined"]
             }
           },
           {
@@ -9077,7 +9077,7 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": ["todo", "in_progress", "done", "cancelled"]
+                                "enum": ["todo", "in_progress", "done", "cancelled", "declined"]
                               },
                               "taskType": {
                                 "type": "string",
@@ -9790,9 +9790,20 @@
                 "properties": {
                   "expectedVersion": {
                     "type": "string"
+                  },
+                  "checklist": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["linen", "bathroom", "supplies", "final"]
+                    }
+                  },
+                  "completionNotes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 },
-                "required": ["expectedVersion"]
+                "required": ["expectedVersion", "checklist"]
               }
             }
           }
@@ -10227,7 +10238,7 @@
                                 "required": ["currency", "amount"]
                               },
                               "cost": {
-                                "type": "object",
+                                "type": ["object", "null"],
                                 "additionalProperties": false,
                                 "properties": {
                                   "currency": {
@@ -10379,7 +10390,6 @@
                   "uomId",
                   "categoryId",
                   "salePrice",
-                  "cost",
                   "channels",
                   "tracking",
                   "sku",
@@ -10451,7 +10461,7 @@
                           "required": ["currency", "amount"]
                         },
                         "cost": {
-                          "type": "object",
+                          "type": ["object", "null"],
                           "additionalProperties": false,
                           "properties": {
                             "currency": {
@@ -10733,9 +10743,12 @@
                             },
                             "required": ["id", "name", "code", "parentId"]
                           }
+                        },
+                        "costVisible": {
+                          "type": "boolean"
                         }
                       },
-                      "required": ["uoms", "categories", "routes", "locations"]
+                      "required": ["uoms", "categories", "routes", "locations", "costVisible"]
                     },
                     "error": {},
                     "meta": {
@@ -10842,7 +10855,7 @@
                           "required": ["currency", "amount"]
                         },
                         "cost": {
-                          "type": "object",
+                          "type": ["object", "null"],
                           "additionalProperties": false,
                           "properties": {
                             "currency": {
@@ -11084,7 +11097,6 @@
                   "uomId",
                   "categoryId",
                   "salePrice",
-                  "cost",
                   "channels",
                   "tracking",
                   "sku",
@@ -11157,7 +11169,7 @@
                           "required": ["currency", "amount"]
                         },
                         "cost": {
-                          "type": "object",
+                          "type": ["object", "null"],
                           "additionalProperties": false,
                           "properties": {
                             "currency": {
@@ -11449,7 +11461,7 @@
                           "required": ["currency", "amount"]
                         },
                         "cost": {
-                          "type": "object",
+                          "type": ["object", "null"],
                           "additionalProperties": false,
                           "properties": {
                             "currency": {
@@ -11722,7 +11734,7 @@
                           "required": ["currency", "amount"]
                         },
                         "cost": {
-                          "type": "object",
+                          "type": ["object", "null"],
                           "additionalProperties": false,
                           "properties": {
                             "currency": {
@@ -12140,7 +12152,13 @@
                                 "properties": {
                                   "kind": {
                                     "type": "string",
-                                    "enum": ["sales_order", "warehouse_picking"]
+                                    "enum": [
+                                      "sales_order",
+                                      "warehouse_picking",
+                                      "partner",
+                                      "product_template",
+                                      "crm_case"
+                                    ]
                                   },
                                   "id": {
                                     "type": "string"
@@ -12321,7 +12339,7 @@
         },
         "x-ket-capability": {
           "key": "mail.notifications",
-          "action": "read"
+          "action": "update"
         },
         "x-ket-auth": "required",
         "x-ket-idempotent": false
@@ -12377,7 +12395,7 @@
         },
         "x-ket-capability": {
           "key": "mail.notifications",
-          "action": "read"
+          "action": "update"
         },
         "x-ket-auth": "required",
         "x-ket-idempotent": false

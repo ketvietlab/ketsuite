@@ -2,6 +2,34 @@ import type { Row } from '@ketvietlab/ketjs'
 import { addDecimals, multiplyDecimals } from '../account/money.ts'
 
 export const LOST_REASON_CODES = ['budget', 'fit', 'competitor', 'no_need', 'other'] as const
+
+const LOST_REASON_NAMES: Record<(typeof LOST_REASON_CODES)[number], [vi: string, en: string, note: boolean]> =
+  {
+    budget: ['Giá / ngân sách', 'Price or budget', false],
+    fit: ['Chưa phù hợp nhu cầu', 'Not a fit', false],
+    competitor: ['Chọn đối thủ', 'Chose a competitor', true],
+    no_need: ['Không còn nhu cầu', 'No longer needed', false],
+    other: ['Lý do khác', 'Another reason', true],
+  }
+
+/**
+ * The loss reasons of a company that has saved none of its own: one per report bucket, so a record can be marked
+ * lost from the first day and still lands in the right bucket. Their ids (`crm-lost-<code>`) are stable, so saving
+ * one stores it under the id the screens already used.
+ */
+export const defaultLostReasons = (lang = 'vi'): Row[] =>
+  LOST_REASON_CODES.map((code, index) => {
+    const [vi, en, requiresNote] = LOST_REASON_NAMES[code]
+    return {
+      id: `crm-lost-${code}`,
+      name: lang === 'en' ? en : vi,
+      code,
+      requiresNote,
+      sequence: (index + 1) * 10,
+      active: true,
+      version: 1,
+    }
+  })
 export const INTERACTION_CHANNELS = ['phone', 'email', 'chat', 'meeting', 'other'] as const
 export const INTERACTION_OUTCOMES = ['attempted', 'reached', 'unreachable'] as const
 const DAY = 86_400_000

@@ -35,7 +35,7 @@ const modules = [
   pos,
   posChannel,
 ]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = (adapter: Adapter, name: string, input: Record<string, unknown>) =>
   callFn(name, input, { adapter, manifest, scope })
@@ -70,13 +70,66 @@ test('pos sync PostgreSQL: concurrent duplicate claims keep one durable command'
       requestHash: 'same-request-hash',
       request: { aggregateId: 'local-order-1' },
     }
-    const results = await Promise.all([
-      call(first, 'pos_channel.claimSyncCommand', request),
-      call(second, 'pos_channel.claimSyncCommand', request),
-    ])
+    // Force the winner to insert after the other connection read "no command",
+    // but before that connection checks the device sequence. This interleaving
+    // used to misclassify an identical claim as a sequence conflict.
+    const missed = Promise.withResolvers<void>()
+    const inserted = Promise.withResolvers<void>()
+    let firstInvocation = true
+    const definition = posChannel.functions!.claimSyncCommand!
+    // KetJS binds handlers when it composes a manifest, so the paused claim is composed in.
+    const pausedChannel: typeof posChannel = {
+      ...posChannel,
+      functions: {
+        ...posChannel.functions,
+        claimSyncCommand: {
+          ...definition,
+          handler: async (ctx, args) => {
+            const hold = firstInvocation
+            firstInvocation = false
+            let paused = false
+            const db = new Proxy(ctx.db, {
+              get(target, property) {
+                if (property !== 'select') return Reflect.get(target, property)
+                return async (...input: Parameters<typeof target.select>) => {
+                  const rows = await target.select(...input)
+                  if (hold && !paused && input[0] === 'pos_channel.SyncCommand') {
+                    paused = true
+                    missed.resolve()
+                    await inserted.promise
+                  }
+                  return rows
+                }
+              },
+            })
+            return definition.handler!({ ...ctx, db }, args)
+          },
+        },
+      },
+    }
+    const held = compose(
+      modules.map((module) => (module === posChannel ? pausedChannel : module)),
+      { headless: true, companies: true },
+    )
+    const claim = (adapter: Adapter) =>
+      callFn('pos_channel.claimSyncCommand', request, { adapter, manifest: held, scope })
+    const follower = claim(second)
+    await missed.promise
+    const winner = await claim(first).finally(() => {
+      inserted.resolve()
+    })
+    const results = [winner, await follower]
     const values = results.map((result) => result.value as Row)
-    assert.equal(values.filter((value) => value.ok && value.replayed === false).length, 1)
-    assert.equal(values.filter((value) => value.reason === 'command_in_flight').length, 1)
+    assert.equal(
+      values.filter((value) => value.ok && value.replayed === false).length,
+      1,
+      JSON.stringify(values),
+    )
+    assert.equal(
+      values.filter((value) => value.reason === 'command_in_flight').length,
+      1,
+      JSON.stringify(values),
+    )
     const table = first.quoteIdent(tableNameFor('pos_channel.SyncCommand'))
     const commands = await first.all(
       `SELECT "commandId", state, attempts FROM ${table} WHERE "commandId" = $1`,
@@ -86,6 +139,18 @@ test('pos sync PostgreSQL: concurrent duplicate claims keep one durable command'
       commands.map((row) => ({ ...row, attempts: Number(row.attempts) })),
       [{ commandId: 'sync-command-1', state: 'processing', attempts: 1 }],
     )
+    for (const [sequence, reason] of [
+      [1, 'sequence_conflict'],
+      [2, 'idempotency_conflict'],
+    ] as const) {
+      const conflict = await call(first, 'pos_channel.claimSyncCommand', {
+        ...request,
+        id: 'other-command',
+        commandId: 'other-command',
+        sequence,
+      })
+      assert.deepEqual(conflict.value, { ok: false, reason })
+    }
   } finally {
     await Promise.all([first.close().catch(() => {}), second.close().catch(() => {})])
     await admin.exec(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`).catch(() => {})

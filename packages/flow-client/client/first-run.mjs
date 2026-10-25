@@ -50,16 +50,20 @@ export function createFirstRun(ctx) {
     step = signal(''),
     revision = signal(0)
   const created = { workspaceId: '', workspaceTitle: '', projectId: '' }
+  const invitationKeys = new Map()
   const signIn = { email: '', password: '' },
     secret = { password: '', confirm: '' },
     workspace = { title: '', key: '' },
     project = { title: '', code: '', codeTouched: false, defaultView: 'board', plan: 'sprint', key: '' },
     invite = { emails: '', role: 'member' }
   const redraw = () => revision.set(revision() + 1)
+  const focusInvalid = (/** @type {HTMLFormElement|null} */ form) =>
+    queueMicrotask(() => form?.querySelector('[aria-invalid="true"]')?.focus())
   /** Runs one request; field errors land next to their field, anything else above the actions. */
   const run = async (
     /** @type {()=>Promise<void>} */ work,
     /** @type {Record<string,string>} */ codes = {},
+    /** @type {HTMLFormElement|null} */ form = null,
   ) => {
     if (busy()) return
     busy.set(true)
@@ -77,6 +81,7 @@ export function createFirstRun(ctx) {
       )
     } finally {
       busy.set(false)
+      if (Object.keys(errors()).some((key) => key !== 'form')) focusInvalid(form)
     }
   }
   const formError = () => (errors().form ? FlowHint({ tone: 'red', children: errors().form }) : null)
@@ -87,6 +92,7 @@ export function createFirstRun(ctx) {
   const signInPage = () => {
     revision()
     return FlowEntryPage({
+      embedded: true,
       brand: brand(),
       title: t('signIn.title'),
       description: t('signIn.description'),
@@ -99,6 +105,7 @@ export function createFirstRun(ctx) {
             await ctx.reload()
           },
           { credentials: 'password' },
+          e.currentTarget,
         )
       },
       children: html`${FlowInput({
@@ -137,6 +144,7 @@ export function createFirstRun(ctx) {
           ? { confirm: t('password.mismatch') }
           : null
     return FlowEntryPage({
+      embedded: true,
       brand: brand(),
       title: t('password.title'),
       description: t('password.description', [PASSWORD_MIN]),
@@ -145,13 +153,18 @@ export function createFirstRun(ctx) {
         const invalid = check()
         if (invalid) {
           errors.set(invalid)
+          focusInvalid(e.currentTarget)
           return
         }
-        void run(async () => {
-          await ctx.call('flow.auth.setPassword', { password: secret.password, confirm: secret.confirm })
-          secret.password = secret.confirm = ''
-          await ctx.reload()
-        })
+        void run(
+          async () => {
+            await ctx.call('flow.auth.setPassword', { password: secret.password, confirm: secret.confirm })
+            secret.password = secret.confirm = ''
+            await ctx.reload()
+          },
+          {},
+          e.currentTarget,
+        )
       },
       children: html`${FlowInput({
         id: 'new-password',
@@ -189,12 +202,29 @@ export function createFirstRun(ctx) {
     )
   }
   const current = () => step() || 'workspace'
+  const intents = new Map()
+  const invoke = async (name, args, key) => {
+    const held = intents.get(key) ?? { ...args, idempotencyKey: key }
+    intents.set(key, held)
+    try {
+      const value = await ctx.call(name, held)
+      intents.delete(key)
+      return value
+    } catch (error) {
+      if (['conflict', 'validation'].includes(error.code)) intents.delete(key)
+      throw error
+    }
+  }
   const organizationCommand = (/** @type {Record<string,unknown>} */ args, /** @type {string} */ key) =>
-    ctx.call('flow.organization.command', {
-      ...args,
-      idempotencyKey: key,
-      expectedRevision: ctx.data().organizationRevision,
-    })
+    invoke(
+      'flow.organization.command',
+      {
+        ...args,
+        idempotencyKey: key,
+        expectedRevision: ctx.data().organizationRevision,
+      },
+      key,
+    )
 
   const workspaceStep = () => ({
     title: t('workspace.title'),
@@ -203,19 +233,24 @@ export function createFirstRun(ctx) {
       e.preventDefault()
       if (!workspace.title.trim()) {
         errors.set({ title: t('required') })
+        focusInvalid(/** @type {HTMLFormElement} */ (e.currentTarget))
         return
       }
       workspace.key ||= crypto.randomUUID()
-      void run(async () => {
-        const value = await organizationCommand(
-          { action: 'workspace.save', title: workspace.title.trim(), description: '', access: 'internal' },
-          workspace.key,
-        )
-        Object.assign(created, { workspaceId: value.id, workspaceTitle: workspace.title.trim() })
-        workspace.key = ''
-        step.set('project')
-        await ctx.reload()
-      })
+      void run(
+        async () => {
+          const value = await organizationCommand(
+            { action: 'workspace.save', title: workspace.title.trim(), description: '', access: 'internal' },
+            workspace.key,
+          )
+          Object.assign(created, { workspaceId: value.id, workspaceTitle: workspace.title.trim() })
+          workspace.key = ''
+          step.set('project')
+          await ctx.reload()
+        },
+        {},
+        /** @type {HTMLFormElement} */ (e.currentTarget),
+      )
     },
     children: html`${FlowInput({
       id: 'workspace-title',
@@ -243,31 +278,41 @@ export function createFirstRun(ctx) {
           : null
       if (invalid) {
         errors.set(invalid)
+        focusInvalid(/** @type {HTMLFormElement} */ (e.currentTarget))
         return
       }
       project.key ||= crypto.randomUUID()
-      void run(async () => {
-        const value = await ctx.call('flow.entity.save', {
-          collection: 'projects',
-          workspaceId: created.workspaceId,
-          title: project.title.trim(),
-          code: project.code,
-          description: '',
-          access: 'workspace',
-          ownerId: ctx.data().user.id,
-          defaultView: project.defaultView,
-          sprintCadence: project.plan === 'sprint' ? { ...DEFAULT_CADENCE } : null,
-          state: 'planned',
-          tags: [],
-          memberIds: [],
-          teamIds: [],
-          idempotencyKey: project.key,
-        })
-        created.projectId = value.id
-        project.key = ''
-        step.set('invite')
-        await ctx.reload()
-      })
+      void run(
+        async () => {
+          const value = await invoke(
+            'flow.entity.save',
+            {
+              collection: 'projects',
+              workspaceId: created.workspaceId,
+              title: project.title.trim(),
+              code: project.code,
+              description: '',
+              access: 'workspace',
+              ownerId: ctx.data().user.id,
+              defaultView: project.defaultView,
+              sprintCadence: project.plan === 'sprint' ? { ...DEFAULT_CADENCE } : null,
+              state: 'planned',
+              tags: [],
+              memberIds: [],
+              teamIds: [],
+              expectedRevision: ctx.data().organizationRevision,
+              idempotencyKey: project.key,
+            },
+            project.key,
+          )
+          created.projectId = value.id
+          project.key = ''
+          step.set('invite')
+          await ctx.reload()
+        },
+        {},
+        /** @type {HTMLFormElement} */ (e.currentTarget),
+      )
     },
     children: html`${FlowInput({
       id: 'project-title',
@@ -335,53 +380,63 @@ export function createFirstRun(ctx) {
       const { emails, invalid } = parseInvites(invite.emails)
       if (invalid.length) {
         errors.set({ emails: t('invite.invalid', [invalid.join(', ')]) })
+        focusInvalid(/** @type {HTMLFormElement} */ (e.currentTarget))
         return
       }
       if (!emails.length) {
         errors.set({ emails: t('invite.none') })
+        focusInvalid(/** @type {HTMLFormElement} */ (e.currentTarget))
         return
       }
-      void run(async () => {
-        const sent = []
-        try {
-          for (const email of emails) {
-            await organizationCommand(
-              { action: 'member.invite', email, role: invite.role },
-              crypto.randomUUID(),
-            )
-            sent.push(email)
+      const role = invite.role
+      void run(
+        async () => {
+          const sent = []
+          try {
+            for (const email of emails) {
+              const signature = JSON.stringify([email, role])
+              let key = invitationKeys.get(signature)
+              if (!key) {
+                key = crypto.randomUUID()
+                invitationKeys.set(signature, key)
+              }
+              await organizationCommand({ action: 'member.invite', email, role }, key)
+              invitationKeys.delete(signature)
+              sent.push(email)
+              await ctx.reload()
+            }
+          } catch (/** @type {any} */ error) {
+            invite.emails = emails.filter((x) => !sent.includes(x)).join('\n')
             await ctx.reload()
+            throw Object.assign(error, { fields: { emails: `${emails[sent.length]}: ${error.message}` } })
           }
-        } catch (/** @type {any} */ error) {
-          invite.emails = emails.filter((x) => !sent.includes(x)).join('\n')
-          await ctx.reload()
-          throw Object.assign(error, { fields: { emails: `${emails[sent.length]}: ${error.message}` } })
-        }
-        await finish()
-      })
+          await finish()
+        },
+        {},
+        /** @type {HTMLFormElement} */ (e.currentTarget),
+      )
     },
     children: html`${FlowTextarea({
       id: 'invite-emails',
       label: t('invite.emails'),
       placeholder: t('invite.placeholder'),
       value: invite.emails,
+      error: errors().emails,
       onInput: (e) => {
         invite.emails = /** @type {HTMLTextAreaElement} */ (e.target).value
       },
-    })}${errors().emails ? FlowHint({ tone: 'red', children: errors().emails }) : FlowHint({ children: t('invite.hint') })}${FlowSelectField(
-      {
-        name: 'invite-role',
-        label: t('invite.role'),
-        value: invite.role,
-        options: [
-          { value: 'member', label: t('invite.member') },
-          { value: 'admin', label: t('invite.admin') },
-        ],
-        onChange: (e) => {
-          invite.role = /** @type {HTMLSelectElement} */ (e.target).value
-        },
+    })}${errors().emails ? null : FlowHint({ children: t('invite.hint') })}${FlowSelectField({
+      name: 'invite-role',
+      label: t('invite.role'),
+      value: invite.role,
+      options: [
+        { value: 'member', label: t('invite.member') },
+        { value: 'admin', label: t('invite.admin') },
+      ],
+      onChange: (e) => {
+        invite.role = /** @type {HTMLSelectElement} */ (e.target).value
       },
-    )}${formError()}`,
+    })}${formError()}`,
     actions: html`${FlowButton({ label: t('invite.skip'), variant: 'ghost', disabled: busy(), onClick: () => void run(finish) })}${submit(t('invite.submit'))}`,
   })
 
@@ -391,6 +446,7 @@ export function createFirstRun(ctx) {
       at = onboardingSteps.indexOf(key)
     const page = key === 'workspace' ? workspaceStep() : key === 'project' ? projectStep() : inviteStep()
     return FlowEntryPage({
+      embedded: true,
       brand: brand(),
       stepsLabel: t('steps'),
       steps: onboardingSteps.map((id, i) => ({

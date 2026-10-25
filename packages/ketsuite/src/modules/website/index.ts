@@ -16,6 +16,7 @@ import { cmsFunctions } from './cms.ts'
 import { publicationFunctions } from './publication.ts'
 import { customerFunctions } from './customer.ts'
 import { jobs } from './jobs.ts'
+import { visitFunctions, visitJobs } from './visits.ts'
 
 export default defineModule({
   name: 'website',
@@ -46,6 +47,12 @@ export default defineModule({
       'error.invalidTitle': 'Tiêu đề không hợp lệ hoặc quá dài.',
       'error.invalidLocale': 'Mã ngôn ngữ không hợp lệ.',
       'error.invalidGoogleTagManagerId': 'Mã container phải có dạng GTM-XXXXXXX.',
+      'error.visitConsentNoticeRequired': 'Nhập câu chữ xin đồng ý trước khi bật theo dõi lượt truy cập.',
+      'error.visitConsentNoticeTooLong': 'Câu chữ xin đồng ý tối đa 2.000 ký tự.',
+      'error.visitTrackingOff': 'Website này không ghi lượt truy cập.',
+      'error.visitConsentStale': 'Câu chữ xin đồng ý đã đổi. Hỏi lại khách trước khi ghi.',
+      'error.invalidVisit': 'Lượt truy cập không hợp lệ.',
+      'error.visitRateLimit': 'Quá nhiều lượt ghi trong thời gian ngắn.',
       'error.payloadTooLarge': 'Dữ liệu vượt quá giới hạn cho phép.',
       'error.duplicateName': 'Tên này đã được sử dụng.',
       'error.duplicateHost': 'Tên miền này đã được gán cho website khác.',
@@ -146,6 +153,12 @@ export default defineModule({
       'error.invalidTitle': 'The title is invalid or too long.',
       'error.invalidLocale': 'The locale code is invalid.',
       'error.invalidGoogleTagManagerId': 'The container ID must match GTM-XXXXXXX.',
+      'error.visitConsentNoticeRequired': 'Enter the consent notice before turning on visit tracking.',
+      'error.visitConsentNoticeTooLong': 'The consent notice can be at most 2,000 characters.',
+      'error.visitTrackingOff': 'This site does not record visits.',
+      'error.visitConsentStale': 'The consent notice has changed. Ask the visitor again before recording.',
+      'error.invalidVisit': 'The visit is not valid.',
+      'error.visitRateLimit': 'Too many records in a short time.',
       'error.payloadTooLarge': 'The payload exceeds the allowed size.',
       'error.duplicateName': 'This name is already in use.',
       'error.duplicateHost': 'This domain is already assigned to another site.',
@@ -239,8 +252,9 @@ export default defineModule({
     ...publicationFunctions,
     ...customerFunctions,
     ...imageFunctions,
+    ...visitFunctions,
   },
-  jobs: { ...jobs, ...imageJobs },
+  jobs: { ...jobs, ...imageJobs, ...visitJobs },
   tokens,
 })
 

@@ -86,6 +86,20 @@
     content: ":";
   }
 
+  /* A notice without a message is its title alone: no colon after it and no empty line. */
+  :where([data-kv-design-system])
+    [data-ui="notice"][data-pattern="notice"]
+    [data-ui="notice-copy"]:not(:has([data-ui="notice-message"] > :not(:empty)))
+    [data-ui="notice-title"]::after {
+    content: none;
+  }
+
+  :where([data-kv-design-system])
+    [data-ui="notice"][data-pattern="notice"]
+    [data-ui="notice-message"]:not(:has(> :not(:empty))) {
+    display: none;
+  }
+
   :where([data-kv-design-system]) [data-ui="notice"][data-pattern="notice"] [data-ui="notice-message"] {
     margin: 0;
     color: var(--kv-color-ink-secondary);
@@ -98,44 +112,132 @@
     margin-left: auto;
   }
 
-  :where([data-kv-design-system]) [data-ui="empty"] {
+  /*
+   * One frame and one size in every context: a dashed placeholder panel, not a card, so it reads the
+   * same on the canvas and inside a Surface without stacking a second card border. `[data-visual]`
+   * outranks the legacy backend empty rule that shares the hook.
+   */
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual] {
     display: grid;
-    min-height: 11rem;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    max-inline-size: none;
+    min-block-size: 15rem;
+    box-sizing: border-box;
+    margin: 0;
+    padding: var(--kv-space-8) var(--kv-space-6);
+    gap: 0;
     place-items: center;
+    justify-items: center;
     align-content: center;
-    padding: var(--kv-space-8);
+    border: 1px dashed var(--kv-color-line-strong);
+    border-radius: var(--kv-radius-lg);
+    background: var(--kv-color-surface);
     color: var(--kv-color-ink-secondary);
+    overflow-wrap: anywhere;
     text-align: center;
   }
 
-  :where([data-kv-design-system]) [data-ui="empty-mark"] {
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual] [data-ui="empty-visual"] {
+    position: relative;
+    display: block;
+    width: 7.5rem;
+    height: 6rem;
+    margin-bottom: var(--kv-space-4);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty-art"] {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  /* SVG presentation attributes cannot read tokens; the parts take their colours here. */
+  :where([data-kv-design-system]) [data-ui="empty-art"] [data-part="backdrop"] {
+    fill: var(--kv-color-accent-soft);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty-art"] :is([data-part="sheet"], [data-part="sheet-back"]) {
+    stroke: var(--kv-color-line-strong);
+    stroke-width: 1.5;
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty-art"] [data-part="sheet-back"] {
+    fill: var(--kv-color-surface-hover);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty-art"] [data-part="sheet"] {
+    fill: var(--kv-color-surface);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty-art"] [data-part="heading"] {
+    fill: color-mix(in srgb, var(--kv-color-accent) 55%, transparent);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty-art"] [data-part="text"] {
+    fill: var(--kv-color-line-strong);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual="locked"] [data-part="heading"] {
+    fill: var(--kv-color-line-strong);
+  }
+
+  /* The badge names the reason; its glyph takes the panel colour so it stays legible in both themes. */
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual] [data-ui="empty-mark"] {
+    position: absolute;
+    right: 0.875rem;
+    bottom: 0.5rem;
     display: grid;
-    width: 2.5rem;
-    height: 2.5rem;
-    margin-bottom: var(--kv-space-3);
+    width: 2rem;
+    height: 2rem;
+    margin: 0;
     place-items: center;
-    border: 1px solid var(--kv-color-line-strong);
-    border-radius: 50%;
-    color: var(--kv-color-accent);
-    font-size: var(--kv-text-lg);
-    line-height: var(--kv-line-lg);
+    border: 0;
+    border-radius: var(--kv-radius-full);
+    background: var(--kv-color-accent);
+    box-shadow: 0 0 0 3px var(--kv-color-surface);
+    color: var(--kv-color-surface);
   }
 
-  :where([data-kv-design-system]) [data-ui="empty-title"] {
-    margin-bottom: var(--kv-space-1);
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual="done"] [data-ui="empty-mark"] {
+    background: var(--kv-color-positive);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual="locked"] [data-ui="empty-mark"] {
+    background: var(--kv-color-ink-muted);
+  }
+
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual] [data-ui="empty-title"] {
+    max-width: 30rem;
+    margin: 0 0 var(--kv-space-1);
     color: var(--kv-color-ink);
-    font-weight: 800;
+    font-size: var(--kv-text-md);
+    font-weight: 700;
+    line-height: var(--kv-line-md);
   }
 
-  :where([data-kv-design-system]) [data-ui="empty-message"] {
-    max-width: 34rem;
-    margin-bottom: 0;
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual] [data-ui="empty-message"] {
+    max-width: 30rem;
+    margin: 0;
+    color: var(--kv-color-ink-secondary);
     font-size: var(--kv-text-sm);
+    font-weight: 400;
     line-height: var(--kv-line-sm);
   }
 
-  :where([data-kv-design-system]) [data-ui="empty-actions"] {
+  :where([data-kv-design-system]) [data-ui="empty"][data-visual] [data-ui="empty-actions"] {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--kv-space-2);
     margin-top: var(--kv-space-4);
+  }
+
+  @media (max-width: 47.9375rem) {
+    :where([data-kv-design-system]) [data-ui="empty"][data-visual] {
+      padding: var(--kv-space-6) var(--kv-space-4);
+    }
   }
 
   :where([data-kv-design-system]) [data-ui="loading"] {

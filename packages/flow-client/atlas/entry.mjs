@@ -1,24 +1,32 @@
-try {
-  const config = JSON.parse(document.getElementById('flow-environment').textContent)
-  const [{ createIslandManager, domHost }, { createFlowWorkspace }, { createFnClient, createFileUploader }] =
-    await Promise.all([
-      import('@ketvietlab/ketjs-view'),
-      import('@ketvietlab/flow-client'),
-      import('@ketvietlab/flow-client/api'),
-    ])
-  const call = createFnClient({ headers: { 'x-flow-fixture': config.session } })
-  const upload = createFileUploader({ headers: { 'x-flow-fixture': config.session } })
-  const manager = createIslandManager(
-    domHost(),
-    { 'flow.workspace': (props) => createFlowWorkspace(props, { call, upload }) },
-    { strict: true },
+import { createFlowWorkspace } from '@ketvietlab/flow-client'
+import { createFnClient, createFileUploader } from '@ketvietlab/flow-client/api'
+
+let navigation
+export function attachAtlasNavigation(context) {
+  navigation = context.navigation
+  context.document.addEventListener(
+    'ket:navigation-error',
+    (event) => {
+      console.error('Flow navigation failed:', event.detail.error)
+    },
+    { signal: context.lifetime },
   )
-  manager.hydrate(document)
-  window.addEventListener('pagehide', () => manager.dispose(document), { once: true })
-} catch (error) {
-  console.error(error)
-  const message = document.createElement('pre')
-  message.setAttribute('role', 'alert')
-  message.textContent = `Không thể khởi động Flow: ${error.message}`
-  document.body.append(message)
+  return () => {
+    navigation = undefined
+  }
+}
+
+/** KetJS owns hydration, keyed island reconciliation and fragment navigation. */
+export function createAtlasWorkspace(props) {
+  const config = JSON.parse(document.getElementById('flow-environment').textContent)
+  const headers = { 'x-flow-fixture': config.session }
+  // Atlas serves KetSuite's editor build at /flow-live-doc.mjs (build-vendor.mjs).
+  return createFlowWorkspace(
+    { liveDocEditor: '/flow-live-doc.mjs', ...props },
+    {
+      call: createFnClient({ headers }),
+      upload: createFileUploader({ headers }),
+      navigatePage: (target, options) => navigation.navigate(target, options),
+    },
+  )
 }

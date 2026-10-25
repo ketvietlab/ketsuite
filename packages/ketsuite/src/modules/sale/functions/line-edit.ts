@@ -132,6 +132,7 @@ export const lineEditFunctions = {
       'read:account.Tax',
       'read:account.ProductTax',
     ],
+    idempotent: true,
     agent: true,
     handler: updateLine,
   }),

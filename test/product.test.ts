@@ -16,7 +16,7 @@ import { product, uom } from '@ketvietlab/ketsuite'
 const SCOPE = { company: 'acme', branches: null }
 const OTHER = { company: 'globex', branches: null }
 
-const manifest = compose([uom, product], { headless: true })
+const manifest = compose([uom, product], { headless: true, companies: true })
 const call = (fn: string, args: Record<string, unknown>, db: Adapter, scope = SCOPE) =>
   callFn(fn, args, { adapter: db, manifest, scope })
 
@@ -47,7 +47,7 @@ test('product: stock extends the template rather than the type enum carrying its
     depends: ['product'],
     extend: { 'product.Template': { tracked: 'bool?' } },
   })
-  const withStock = compose([uom, product, stock], { headless: true })
+  const withStock = compose([uom, product, stock], { headless: true, companies: true })
   const fields = withStock.models['product.Template']!.fields
   assert.equal(fields.tracked!.by, 'stock')
   assert.equal(fields.type!.by, 'product')
@@ -224,7 +224,7 @@ test('product: a required self-reference would have been refused', () => {
   })
   const e = (() => {
     try {
-      compose([broken], { headless: true })
+      compose([broken], { headless: true, companies: true })
     } catch (err) {
       return err as KetError
     }

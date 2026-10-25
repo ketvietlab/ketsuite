@@ -34,7 +34,7 @@ const altTheme = defineTheme({
   },
 })
 const modules = [address, partner, website, websiteMenu, websiteSeo, websiteForm, paperTheme, altTheme]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 
 const boot = async (): Promise<{ db: Adapter; manifest: Manifest }> => {
   const db = sqliteAdapter()
@@ -173,6 +173,10 @@ test('cms: domains resolve isolated sites with their locale and selected KTL the
     theme: 'theme_alt_test',
     tokens: null,
     googleTagManagerId: null,
+    // A site records visits only once it publishes a notice visitors agree to.
+    visitConsent: false,
+    visitConsentNotice: null,
+    visitConsentVersion: null,
   })
   assert.equal(await call(db, 'website.resolveSite', { host: 'unknown.example.test' }), null)
   await db.close()
@@ -517,7 +521,7 @@ test('verticals: hospitality captures booking leads and retail converts a catalo
     ...(ketsuite.theme ? [ketsuite.theme] : []),
     ...(ketsuite.themes ?? []),
   ]
-  const fullManifest = compose(fullModules)
+  const fullManifest = compose(fullModules, { companies: true })
   const db = sqliteAdapter()
   await db.open()
   await migrateOne(db, fullManifest)

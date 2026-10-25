@@ -1,4 +1,19 @@
 import { tr, trRich } from './i18n.mjs'
+import { AppSwitcherHelp, HelpDrawer, MarkdownContent } from '@ketvietlab/design-system'
+/** @param {{label:string}} p */
+export const FlowHelpTrigger = (p) => html`<span data-kv-design-system>${AppSwitcherHelp(p)}</span>`
+/** @param {Omit<import('@ketvietlab/design-system').HelpDrawerProps, 'body'> & import('@ketvietlab/design-system').MarkdownContentProps} p */
+export const FlowScreenHelp = (p) =>
+  html`<div data-kv-design-system>${HelpDrawer({
+    ...p,
+    body: MarkdownContent({
+      source: p.source,
+      lexer: p.lexer,
+      labels: p.labels,
+      headingOffset: 1,
+    }),
+  })}</div>`
+export { FlowGlobalSearch } from './global-search.mjs'
 export { FlowColorPicker, FlowCatalogEditor, FLOW_TAG_COLORS } from './catalog-editor.mjs'
 export { FlowDateField } from './date-field.mjs'
 export { FlowUserPicker } from './user-picker.mjs'
@@ -41,11 +56,12 @@ export const FlowLogo = (p = {}) => {
 /** @param {{company:string,name?:string}} p */
 export const FlowBrand = (p) =>
   html`<div data-flow="brand">${FlowLogo({ label: p.name ?? tr('flow.ui.k.tflow') })}${p.company ? html`<small>${p.company}</small>` : null}</div>`
-/** @param {{name:string,company:string,context?:Child,children:Child,footer:Child}} p */
+/** @param {{name:string,company:string,context?:Child,search?:Child,children:Child,footer:Child}} p */
 export const FlowNavigation = (p) =>
   html`<div data-flow="navigation">
     ${FlowBrand({ name: p.name, company: p.context ? '' : p.company })}
     ${p.context ?? null}
+    ${p.search ?? null}
     <details data-flow="mobile-nav" open>
       <summary>${tr('flow.ui.navigation')}</summary>
       <div data-flow="navigation-content">${p.children}</div>
@@ -53,9 +69,9 @@ export const FlowNavigation = (p) =>
     <div data-flow="navigation-footer">${p.footer}</div>
   </div>`
 /** Search entry opens the shared command dialog; it is not an editable input.
- * @param {{onClick:(event:Event)=>void,label?:string,shortcut?:string}} p */
+ * @param {{onClick:(event:Event)=>void,label?:string,shortcut?:string,disabled?:boolean,open?:boolean,dialogId?:string}} p */
 export const FlowSearchTrigger = (p) =>
-  html`<button type="button" data-flow="search-trigger" aria-label=${tr('flow.ui.search.flow')} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" on:click=${p.onClick}>${FlowIcon('search')}<span>${p.label ?? tr('flow.ui.search.7fae89')}</span><kbd aria-hidden="true">${p.shortcut ?? '⌘K'}</kbd></button>`
+  html`<button type="button" data-flow="search-trigger" disabled=${p.disabled ?? false} aria-label=${tr('flow.ui.search.flow')} aria-haspopup="dialog" aria-expanded=${String(!!p.open)} aria-controls=${p.open ? p.dialogId : null} aria-keyshortcuts="Meta+K Control+K" on:click=${p.onClick}>${FlowIcon('search')}<span>${p.label ?? tr('flow.ui.search.7fae89')}</span><kbd aria-hidden="true">${p.shortcut ?? '⌘K'}</kbd></button>`
 /** @param {{title:string,action?:Child,children:Child}} p */
 export const FlowNavGroup = (p) =>
   html`<section data-flow="nav-group">
@@ -68,8 +84,11 @@ export const FlowToolbar = (p) =>
     <div data-flow="inline">${p.children}</div>
     <div data-flow="inline">${p.trailing ?? null}</div>
   </div>`
-/** @param {{children:Child,gap?:'sm'|'md'|'lg'}} p */
-export const FlowStack = (p) => html`<div data-flow="stack" data-gap=${p.gap ?? 'md'}>${p.children}</div>`
+/** `inset: 'page'` owns the horizontal page gutter for a flush collection. `divided` separates
+ * rows with one hairline, for a column of settings rows.
+ * @param {{children:Child,gap?:'sm'|'md'|'lg',inset?:'page'|'none',divided?:boolean}} p */
+export const FlowStack = (p) =>
+  html`<div data-flow="stack" data-gap=${p.gap ?? 'md'} data-inset=${p.inset ?? 'none'} data-divided=${p.divided ? true : null}>${p.children}</div>`
 /** @param {{children:Child,align?:'start'|'end'}} p */
 export const FlowInline = (p) =>
   html`<div data-flow="inline" data-align=${p.align ?? 'start'}>${p.children}</div>`
@@ -86,9 +105,9 @@ export const FlowSection = (p) =>
     }${p.children}
   </section>`
 /** Compact scope menus; the consumer owns destinations and navigation. With `icon`, the summary is icon-only and `label` becomes its accessible name.
- * @param {{label:string,icon?:Parameters<typeof FlowIcon>[0],placement?:"up"|"down",header?:Child,items:{label:string,onClick:()=>void,active?:boolean}[]}} p */
+ * @param {{label:string,icon?:Parameters<typeof FlowIcon>[0],placement?:"up"|"down",align?:"start"|"end",header?:Child,items:{label:string,onClick:()=>void,active?:boolean}[]}} p */
 export const FlowScopeMenu = (p) =>
-  html`<details data-flow="scope-menu" data-placement=${p.placement ?? 'down'} data-variant=${p.icon ? 'icon' : null}><summary title=${p.icon ? p.label : null}>${p.icon ? html`<span data-flow="sr">${p.label}</span>${FlowIcon(p.icon)}` : html`${p.label}${FlowIcon('chevron')}`}</summary><div data-flow="scope-menu-items">${p.header ?? null}${each(
+  html`<details data-flow="scope-menu" data-placement=${p.placement ?? 'down'} data-align=${p.align ?? 'end'} data-variant=${p.icon ? 'icon' : null}><summary title=${p.icon ? p.label : null}>${p.icon ? html`<span data-flow="sr">${p.label}</span>${FlowIcon(p.icon)}` : html`${p.label}${FlowIcon('chevron')}`}</summary><div data-flow="scope-menu-items">${p.header ?? null}${each(
     p.items,
     (x) => x.label,
     (x) =>
@@ -148,10 +167,12 @@ export const FlowMetrics = (p) =>
         </div>`,
     )}
   </div>`
-/** @param {{columns:Child[],children:Child,label:string}} p */
+/** The task layout reserves space for inline task controls. Other collections keep native column sizing.
+ * The labelled scroll region is keyboard reachable when columns exceed its container.
+ * @param {{columns:Child[],children:Child,label:string,layout?:'default'|'tasks'}} p */
 export const FlowTable = (p) =>
-  html`<div data-flow="table-scroll">
-    <table data-flow="table" data-columns=${p.columns.length} aria-label=${p.label}>
+  html`<div data-flow="table-scroll" role="region" aria-label=${p.label} tabindex="0">
+    <table data-flow="table" data-layout=${p.layout ?? 'default'} data-columns=${p.columns.length} aria-label=${p.label}>
       <thead>
         <tr>
           ${each(
@@ -229,22 +250,25 @@ export const FlowProperties = (p) =>
         </div>`,
     )}
   </dl>`
-/** @param {{id:string,label:string,value?:string,placeholder?:string,required?:boolean,disabled?:boolean,onBlur?:(e:Event)=>void,onInput?:(e:Event)=>void}} p */
+/** @param {{id:string,name?:string,label:string,value?:string,placeholder?:string,required?:boolean,disabled?:boolean,error?:string,onBlur?:(e:Event)=>void,onInput?:(e:Event)=>void}} p */
 export const FlowTextarea = (p) =>
   html`<label data-flow="field" for=${p.id}
-    ><span>${p.label}</span
+    ><span id=${`${p.id}-label`}>${p.label}</span
     ><textarea
       data-flow="textarea"
       id=${p.id}
-      name=${p.id}
+      name=${p.name ?? p.id}
       data-flow-value=${p.value ?? ''}
       required=${p.required ?? false}
       disabled=${p.disabled ?? false}
       placeholder=${p.placeholder ?? ''}
+      aria-invalid=${p.error ? 'true' : null}
+      aria-labelledby=${`${p.id}-label`}
+      aria-describedby=${p.error ? `${p.id}-error` : null}
       on:input=${p.onInput}
       on:blur=${p.onBlur}
     >
-${p.value ?? ''}</textarea>
+${p.value ?? ''}</textarea>${p.error ? html`<small id=${`${p.id}-error`} data-flow="field-error">${p.error}</small>` : null}
   </label>`
 /** @param {{title:string,subtitle?:string,children:Child}} p */
 export const FlowDocument = (p) =>
@@ -393,11 +417,14 @@ export const FlowLaunchLink = (p) =>
     >${FlowIcon('arrow')}${p.label ?? tr('flow.ui.open.flow')}<span data-flow="sr">${tr('flow.ui.new.tab.8f664a')}</span></a
   >`
 
-/** @param {{name:string,label:string,icon?:Parameters<typeof FlowIcon>[0],value:string,options:{value:string,label:string}[],disabled?:boolean,onChange?:(e:Event)=>void}} p */
-export const FlowSelectField = (p) =>
-  html`<label data-flow="field" for=${p.name}
-    ><span>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span>${FlowSelect({ ...p, id: p.name })}</label
+/** `id` scopes labels/errors independently of the submitted form name.
+ * @param {{id?:string,name:string,label:string,icon?:Parameters<typeof FlowIcon>[0],value:string,options:{value:string,label:string}[],disabled?:boolean,error?:string,onChange?:(e:Event)=>void}} p */
+export const FlowSelectField = (p) => {
+  const id = p.id ?? p.name
+  return html`<label data-flow="field" for=${id}
+    ><span>${p.icon ? FlowIcon(p.icon) : null}${p.label}</span>${FlowSelect({ ...p, id, invalid: !!p.error, descriptionId: p.error ? `${id}-error` : undefined })}${p.error ? html`<small id=${`${id}-error`} data-flow="field-error">${p.error}</small>` : null}</label
   >`
+}
 
 /** Host slot for the official KetAtlas viewer; the consumer owns its lifecycle.
  * @param {{label:string,children?:Child}} p */
@@ -524,9 +551,11 @@ export const FlowProjectViews = (
   )}
 </nav>`
 
-/** Transient feedback in the top layer; never participates in workspace layout.
- * @param {{message:string,title?:string,tone?:"success"|"error"|"warning",action?:Child,onClose:()=>void,onPause?:()=>void,onResume?:()=>void}} p */
-export const FlowToast = (p) => html`<div data-flow="toast" data-tone=${p.tone ?? 'success'} popover="manual"
+/** Transient workspace overlay, or reserved feedback in a dialog's inline slot.
+ * @param {{message:string,title?:string,tone?:"success"|"error"|"warning",placement?:"overlay"|"inline",action?:Child,onClose:()=>void,onPause?:()=>void,onResume?:()=>void}} p */
+export const FlowToast = (
+  p,
+) => html`<div data-flow="toast" data-tone=${p.tone ?? 'success'} data-placement=${p.placement ?? 'overlay'} popover=${p.placement === 'inline' ? null : 'manual'}
   on:pointerenter=${p.onPause}
   on:pointerleave=${
     /** @param {PointerEvent} e */ (e) => {
@@ -548,7 +577,9 @@ export const FlowToast = (p) => html`<div data-flow="toast" data-tone=${p.tone ?
 
 /** @typedef {{id:string,title:string,color?:'neutral'|'blue'|'green'|'yellow'|'red',archived?:boolean}} FlowLabel */
 /** A controlled multi-select; selection and persistence belong to the consumer.
- * @param {{id:string,label?:string,placeholder?:string,value:string[],options:FlowLabel[],disabled?:boolean,onChange:(ids:string[])=>void,onManage?:()=>void}} p */
+ * With `menu`, search and options are built only while the consumer reports the menu open;
+ * with `remote`, the consumer searches and pages them (selected options stay in `options`).
+ * @param {{id:string,label?:string,placeholder?:string,value:string[],options:FlowLabel[],disabled?:boolean,onChange:(ids:string[])=>void,onManage?:()=>void,menu?:{open:boolean,onToggle:(open:boolean)=>void},remote?:{query:string,loading:boolean,error?:string|null,total:number,onQuery:(query:string)=>void,onRetry:()=>void,onMore?:()=>void}}} p */
 export const FlowTagPicker = (p) => html`<div data-flow="field">
   <span id=${`${p.id}-label`}>${FlowIcon('tag')}${p.label ?? tr('flow.ui.labels')}</span>
   <div data-flow="tag-picker">
@@ -574,19 +605,28 @@ export const FlowTagPicker = (p) => html`<div data-flow="field">
           }
         }>${FlowIcon('plus')}${p.value.length ? tr('flow.ui.add') : (p.placeholder ?? tr('flow.ui.select.labels'))}</button>
     </div>
-    <div data-flow="tag-menu" id=${`${p.id}-menu`} popover="auto" role="group" aria-labelledby=${`${p.id}-label`}>
-      <input data-flow="input" type="search" placeholder=${p.placeholder ? tr('flow.ui.search.options') : tr('flow.ui.search.labels')} aria-label=${p.placeholder ? tr('flow.ui.search.options.c05398') : tr('flow.ui.search.labels.99b4f6')} on:input=${
-        /** @param {Event} e */ (e) => {
-          const input = /** @type {HTMLInputElement} */ (e.currentTarget)
-          input.parentElement?.querySelectorAll('[data-flow="tag-option"]').forEach((node) => {
-            const option = /** @type {HTMLElement} */ (node)
-            option.hidden = !option.textContent
-              ?.toLocaleLowerCase()
-              .includes(input.value.toLocaleLowerCase().trim())
-          })
-        }
-      } />
-      <div data-flow="tag-options">
+    <div data-flow="tag-menu" id=${`${p.id}-menu`} popover="auto" role="group" aria-labelledby=${`${p.id}-label`}
+      on:beforetoggle=${/** @param {ToggleEvent} e */ (e) => e.newState === 'open' && p.menu?.onToggle(true)}
+      on:toggle=${/** @param {ToggleEvent} e */ (e) => e.newState !== 'open' && p.menu?.onToggle(false)}>
+      ${
+        p.menu && !p.menu.open
+          ? null
+          : html`<input data-flow="input" type="text" value=${p.remote?.query} placeholder=${p.placeholder ? tr('flow.ui.search.options') : tr('flow.ui.search.labels')} aria-label=${p.placeholder ? tr('flow.ui.search.options.c05398') : tr('flow.ui.search.labels.99b4f6')} autocomplete="off" on:input=${
+              /** @param {Event} e */ (e) => {
+                const input = /** @type {HTMLInputElement} */ (e.currentTarget)
+                if (p.remote) {
+                  p.remote.onQuery(input.value)
+                  return
+                }
+                input.parentElement?.querySelectorAll('[data-flow="tag-option"]').forEach((node) => {
+                  const option = /** @type {HTMLElement} */ (node)
+                  option.hidden = !option.textContent
+                    ?.toLocaleLowerCase()
+                    .includes(input.value.toLocaleLowerCase().trim())
+                })
+              }
+            } />
+      <div data-flow="tag-options" aria-busy=${p.remote?.loading ? 'true' : null}>
         ${each(
           p.options.filter((t) => !t.archived || p.value.includes(t.id)),
           (t) => t.id,
@@ -596,8 +636,12 @@ export const FlowTagPicker = (p) => html`<div data-flow="field">
           ${FlowTag({ label: t.title, tone: t.color ?? 'neutral' })}
         </label>`,
         )}
-        ${p.options.some((t) => !t.archived) ? null : html`<p>${p.placeholder ? tr('flow.ui.no.available.options') : tr('flow.ui.no.labels.yet.create.labels.in.settings')}</p>`}
+        ${(p.remote ? p.remote.loading || p.remote.error || p.remote.total > 0 : p.options.some((t) => !t.archived)) ? null : html`<p>${p.placeholder ? tr('flow.ui.no.available.options') : tr('flow.ui.no.labels.yet.create.labels.in.settings')}</p>`}
       </div>
+      ${p.remote?.loading ? html`<p role="status">${tr('flow.ui.search.loading')}</p>` : null}
+      ${p.remote?.error ? html`<p role="alert">${p.remote.error}</p>${FlowButton({ label: tr('flow.ui.search.retry'), size: 'sm', onClick: p.remote.onRetry })}` : null}
+      ${p.remote?.onMore ? FlowButton({ label: tr('flow.ui.options.more'), size: 'sm', disabled: p.remote.loading, onClick: p.remote.onMore }) : null}`
+      }
       ${p.onManage ? FlowButton({ label: tr('flow.ui.manage.labels'), icon: 'settings', variant: 'ghost', disabled: p.disabled, onClick: p.onManage }) : null}
     </div>
   </div>
@@ -668,16 +712,16 @@ export const FlowProjectDirectory = (p) => html`<section data-flow="project-dire
  ${!p.projects.length ? html`<small>${tr('flow.ui.no.projects.in.this.workspace.04553e')}</small>` : null}
 </section>`
 
-/** Checkbox with visible, clickable text for settings forms. @param {{label:string,checked?:boolean,disabled?:boolean,onChange?:(e:Event)=>void}} p */
+/** Checkbox with visible, clickable text for settings forms. @param {{label:string,name?:string,value?:string,checked?:boolean,disabled?:boolean,onChange?:(e:Event)=>void}} p */
 export const FlowCheckboxField = (p) =>
-  html`<label data-flow="checkbox-field">${FlowCheckbox({ ...p, checked: !!p.checked })}<span>${p.label}</span></label>`
+  html`<label data-flow="checkbox-field">${FlowCheckbox({ ...p, target: 'native', checked: !!p.checked })}<span>${p.label}</span></label>`
 
 /** @typedef {{id:string,title:string,description?:string,icon:Parameters<typeof FlowIcon>[0]}} FlowCommandItem */
 /** Search-first dialog. Focus stays in the combobox while active-descendant tracks results.
- * @param {{id:string,feedback?:Child,title?:string,query:string,scope:string,activeId:string,groups:{id:string,label:string,items:FlowCommandItem[]}[],onQuery:(value:string)=>void,onActive:(id:string)=>void,onSelect:(id:string)=>void,onClose:()=>void}} p */
+ * @param {{id:string,feedback?:Child,title?:string,query:string,scope:string,activeId:string,loading?:boolean,error?:string,onRetry?:()=>void,groups:{id:string,label:string,items:FlowCommandItem[]}[],onQuery:(value:string)=>void,onActive:(id:string)=>void,onSelect:(id:string)=>void,onClose:()=>void}} p */
 export const FlowSpotlight = (p) => {
   const items = p.groups.flatMap((g) => g.items),
-    active = items.find((x) => x.id === p.activeId) ?? items[0]
+    active = p.loading || p.error ? null : (items.find((x) => x.id === p.activeId) ?? items[0])
   /** @param {string} id */
   const optionId = (id) => `${p.id}-option-${encodeURIComponent(id)}`
   return FlowDialog({
@@ -688,14 +732,20 @@ export const FlowSpotlight = (p) => {
     feedback: p.feedback,
     body: html`<div data-flow="spotlight">
   <div data-flow="spotlight-search">${FlowIcon('search')}
-   <input data-flow="spotlight-input" type="text" role="combobox" aria-label=${tr('flow.ui.search.flow')} aria-autocomplete="list" aria-expanded="true" aria-controls=${p.id + '-results'} aria-activedescendant=${active ? optionId(active.id) : null} autocomplete="off" spellcheck="false" autofocus data-flow-value=${p.query} data-flow-controlled value=${p.query} placeholder=${tr('flow.ui.search.tasks.projects.documents')}
+   <input id=${p.id + '-input'} data-flow="spotlight-input" type="search" role="combobox" aria-label=${tr('flow.ui.search.flow')} aria-autocomplete="list" aria-expanded="true" aria-controls=${p.id + '-results'} aria-activedescendant=${active ? optionId(active.id) : null} aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false" maxlength="200" autofocus data-flow-value=${p.query} data-flow-controlled value=${p.query} placeholder=${tr('flow.ui.search.everything')}
     on:input=${/** @param {Event} e */ (e) => p.onQuery(/** @type {HTMLInputElement} */ (e.target).value)}
     on:keydown=${
       /** @param {KeyboardEvent} e */ (e) => {
         if (e.isComposing) return
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          p.onClose()
+          return
+        }
         if (['ArrowDown', 'ArrowUp'].includes(e.key)) {
           e.preventDefault()
-          if (!items.length) return
+          if (!items.length || p.loading || p.error) return
           const i = items.findIndex((x) => x.id === active?.id)
           p.onActive(items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].id)
         }
@@ -723,9 +773,10 @@ export const FlowSpotlight = (p) => {
 }
    <button type="button" data-flow="spotlight-close" aria-label=${tr('flow.ui.close.search')} on:click=${p.onClose}><kbd>Esc</kbd></button>
   </div>
-  <div data-flow="spotlight-results" id=${p.id + '-results'} role="listbox" aria-label=${tr('flow.ui.search.results')}>
+  <div data-flow="spotlight-viewport">
+  <div data-flow="spotlight-results" id=${p.id + '-results'} role="listbox" aria-label=${tr('flow.ui.search.results')} aria-busy=${String(!!p.loading)}>
    ${each(
-     p.groups,
+     p.loading || p.error ? [] : p.groups,
      (g) => g.id,
      (g) =>
        html`<div role="group" aria-labelledby=${p.id + '-group-' + g.id}><div data-flow="spotlight-group" id=${p.id + '-group-' + g.id}>${g.label}<span>${g.items.length}</span></div>${each(
@@ -738,9 +789,29 @@ export const FlowSpotlight = (p) => {
        )}</div>`,
    )}
   </div>
-  ${!items.length ? html`<div data-flow="spotlight-empty">${FlowIcon('search')}<strong>${tr('flow.ui.no.results.found')}</strong><p>${tr('flow.ui.try.another.name.task.id.or.shorter.keyword')}</p></div>` : null}
+  ${
+    p.loading
+      ? html`<p data-flow="search-status" role="status">${tr('flow.ui.search.loading')}</p>`
+      : p.error
+        ? html`<div data-flow="search-status" role="alert"><p>${p.error}</p>${
+            p.onRetry
+              ? FlowButton({
+                  label: tr('flow.ui.search.retry'),
+                  onClick: /** @param {Event} e */ (e) => {
+                    const button = /** @type {HTMLElement} */ (e.currentTarget)
+                    button.closest('[data-flow="spotlight"]')?.querySelector('input')?.focus()
+                    p.onRetry?.()
+                  },
+                })
+              : null
+          }</div>`
+        : !items.length
+          ? html`<div data-flow="spotlight-empty">${FlowIcon('search')}<strong>${tr('flow.ui.no.results.found')}</strong><p>${tr('flow.ui.search.refine')}</p></div>`
+          : null
+  }
+  </div>
   <footer data-flow="spotlight-footer"><span data-flow="spotlight-help"><span><kbd>↑</kbd><kbd>↓</kbd>${tr('flow.ui.navigate')}</span><span><kbd>↵</kbd>${tr('flow.ui.open.9ca07e')}</span></span><span data-flow="spotlight-scope" title=${p.scope}>${p.scope}</span></footer>
-  <span data-flow="spotlight-announcement" role="status" aria-live="polite">${tr('flow.ui.results', [items.length, p.query ? ' cho ' + p.query : ''])}</span>
+  <span data-flow="spotlight-announcement" role="status" aria-live="polite">${p.loading || p.error ? '' : tr('flow.ui.results', [items.length, p.query ? ' · ' + p.query : ''])}</span>
  </div>`,
   })
 }
@@ -749,9 +820,9 @@ export const FlowSpotlight = (p) => {
 export const FlowFormGrid = (p) => html`<div data-flow="form-grid">${p.children}</div>`
 /** Fields and their submit button on one line, bottom-aligned; wraps to a stack on narrow screens. With one field the button takes only its own width. @param {{children:Child}} p */
 export const FlowFieldRow = (p) => html`<div data-flow="field-row">${p.children}</div>`
-/** @param {{children:Child,actions:Child,onSubmit:(event:Event)=>void}} p */
+/** Page layout reserves feedback/actions and scrolls fields. Omit actions when the containing dialog owns its persistent footer; associate submit buttons with id. @param {{id?:string,layout?:'embedded'|'page',children:Child,feedback?:Child,actions?:Child,onSubmit:(event:Event)=>void}} p */
 export const FlowSetupForm = (p) =>
-  html`<form data-flow="setup-form" on:submit=${p.onSubmit}><div data-flow="setup-fields">${p.children}</div><footer data-flow="setup-actions">${p.actions}</footer></form>`
+  html`<form id=${p.id ?? null} data-flow="setup-form" data-layout=${p.layout ?? 'embedded'} on:submit=${p.onSubmit}><div data-flow="setup-fields">${p.children}</div>${p.feedback ? html`<div data-flow="setup-feedback">${p.feedback}</div>` : null}${p.actions ? html`<footer data-flow="setup-actions">${p.actions}</footer>` : null}</form>`
 
 /** Progressive disclosure keeps supporting detail near its task. @param {{title:Child,description?:string,children:Child,open?:boolean}} p */
 export const FlowDisclosure = (p) =>
@@ -868,11 +939,11 @@ export const FlowColumnChart = (p) => {
   )}</div>`
 }
 
-/** Shell-less page for signing in and first-run setup: brand line, optional numbered steps, one centred card. With onSubmit the card body is a form whose actions sit under the fields.
- * @param {{brand:string,title:string,description?:Child,steps?:{id:string,label:string,complete:boolean,current:boolean}[],stepsLabel?:string,children:Child,actions?:Child,onSubmit?:(event:Event)=>void,footer?:Child}} p */
+/** Sign-in and first-run setup: brand line, optional numbered steps, one centred card. With onSubmit the card body is a form. Embedded content leaves the main landmark and viewport height with its containing shell.
+ * @param {{brand:string,title:string,embedded?:boolean,description?:Child,steps?:{id:string,label:string,complete:boolean,current:boolean}[],stepsLabel?:string,children:Child,actions?:Child,onSubmit?:(event:Event)=>void,footer?:Child}} p */
 export const FlowEntryPage = (p) => {
   const body = html`<div data-flow="entry-fields">${p.children}</div>${p.actions ? html`<div data-flow="entry-actions">${p.actions}</div>` : null}`
-  return html`<main data-flow="entry-page"><div data-flow="entry-brand"><span aria-hidden="true">${FlowIcon('layers')}</span>${p.brand}</div>${
+  const content = html`<div data-flow="entry-brand"><span aria-hidden="true">${FlowIcon('layers')}</span>${p.brand}</div>${
     p.steps
       ? html`<ol data-flow="entry-steps" aria-label=${p.stepsLabel ?? null}>${each(
           p.steps,
@@ -881,7 +952,10 @@ export const FlowEntryPage = (p) => {
             html`<li data-complete=${String(s.complete)} aria-current=${s.current ? 'step' : null}><span>${s.complete ? FlowIcon('check') : i + 1}</span>${s.label}</li>`,
         )}</ol>`
       : null
-  }<section data-flow="entry-card"><header><h1>${p.title}</h1>${p.description ? html`<p>${p.description}</p>` : null}</header>${p.onSubmit ? html`<form data-flow="entry-form" on:submit=${p.onSubmit}>${body}</form>` : body}</section>${p.footer ? html`<footer data-flow="entry-footer">${p.footer}</footer>` : null}</main>`
+  }<section data-flow="entry-card"><header><h1>${p.title}</h1>${p.description ? html`<p>${p.description}</p>` : null}</header>${p.onSubmit ? html`<form data-flow="entry-form" on:submit=${p.onSubmit}>${body}</form>` : body}</section>${p.footer ? html`<footer data-flow="entry-footer">${p.footer}</footer>` : null}`
+  return p.embedded
+    ? html`<section data-flow="entry-page" data-embedded="true">${content}</section>`
+    : html`<main data-flow="entry-page">${content}</main>`
 }
 /** Getting-started steps that tick themselves off from real data; open steps carry their own action.
  * @param {{title:string,description?:Child,progressLabel:string,done:number,total:number,doneLabel:string,todoLabel:string,actions?:Child,items:{id:string,title:string,description?:Child,done:boolean,action?:Child}[]}} p */

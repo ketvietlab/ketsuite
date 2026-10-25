@@ -14,7 +14,8 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const node = process.execPath
 const command = process.argv[2] ?? 'check'
 
-// Publish order: every package comes after the packages it depends on.
+// Publish order: every package comes after the packages it depends on, except that
+// @ketvietlab/ketsuite and @ketvietlab/website-client depend on each other.
 const workspaces = [
   {
     name: '@ketvietlab/design-system',
@@ -23,14 +24,18 @@ const workspaces = [
     // inventory and relocatable stylesheet with embedded Inter fonts. Raw font assets
     // remain for the separate token stylesheets. Audited archive contains only dist,
     // notices, docs and metadata; no tests, dependencies or build caches.
-    maxPackedBytes: 2_000_000,
+    // 0.1.42 packs 2,267,675 bytes / 618 files: KÉT Sans Optical fonts, QR code, column
+    // chart, Markdown/Help runtime, dock, peek, settings directory and stage path. The
+    // audited archive still contains only dist, notices, docs and metadata.
+    maxPackedBytes: 2_350_000,
   },
   {
     name: '@ketvietlab/ketspec',
     dir: 'packages/ketspec',
     // 0.1.40 packs 139,014 bytes: the server renderer, CLI, typings and the self-contained
     // browser bundle (design system and ketjs-view included), styles and three logo SVGs.
-    maxPackedBytes: 150_000,
+    // 0.1.42 packs 165,640 bytes / 51 files; only the browser bundle and its map grew.
+    maxPackedBytes: 175_000,
     requiredPaths: [
       'LICENSE',
       'README.md',
@@ -45,39 +50,12 @@ const workspaces = [
       'dist/assets/mark.svg',
     ],
   },
-  // 0.1.24 packed 4,046,454 bytes: the record-modal tabs, the data-table pattern and the
-  // filter menu, with no stray files — about half the package is source maps.
-  // 0.1.26 packs 4.95 MB; new user/CRM record-modal bundles include source maps.
-  // 0.1.29 packs 6,150,837 bytes: reviewed user/access-policy, product and CRM client bundles,
-  // their source maps and the two brand images; no test/build caches in the 3,623-file archive.
-  // 0.1.30 packs 7,249,173 bytes (3,863 files): reviewed chart/LiveDoc and record
-  // bundles with source maps; no source, test, node_modules or build-cache directories.
-  // 0.1.32: 7,625,068 bytes / 3,942 files, including Website Studio bundles and maps;
-  // inspected archive contains no test, node_modules, atlas or build-cache directories.
-  // 0.1.41 packs 8,941,683 bytes / 4,094 files: current public modules and their
-  // generated client bundles/source maps. Audited archive has no tests or dependencies.
-  { name: '@ketvietlab/ketsuite', dir: 'packages/ketsuite', maxPackedBytes: 9_200_000 },
-  {
-    name: '@ketvietlab/website-client',
-    dir: 'packages/website-client',
-    // Measured typed Website Studio package: 292,248 bytes / 258 files.
-    maxPackedBytes: 350_000,
-    requiredPaths: [
-      'LICENSE',
-      'README.md',
-      'package.json',
-      'dist/client/index.js',
-      'dist/client/index.d.ts',
-      'dist/client/styles.css',
-      'dist/server/extensions.js',
-      'dist/server/extensions.d.ts',
-    ],
-  },
   // Flow's component kit ships JavaScript modules; 0.1.27 packs 128 KB with its stylesheet and icons.
+  // 0.1.42 packs 302,429 bytes / 91 files: it now carries its own Inter WOFF2 subsets.
   {
     name: '@ketvietlab/flow-ui',
     dir: 'packages/flow-ui',
-    maxPackedBytes: 160_000,
+    maxPackedBytes: 320_000,
     requiredPaths: [
       'LICENSE',
       'README.md',
@@ -91,7 +69,9 @@ const workspaces = [
     name: '@ketvietlab/flow-client',
     dir: 'packages/flow-client',
     // Measured import: 305 KB, including the bundled brand assets and three message catalogs.
-    maxPackedBytes: 350_000,
+    // 0.1.42 packs 1,049,905 bytes / 94 files: the browser workspace bundle (its map is
+    // 1.7 MB unpacked), generated Help and the vendored LiveDoc and date picker.
+    maxPackedBytes: 1_100_000,
     requiredPaths: [
       'LICENSE',
       'README.md',
@@ -101,6 +81,38 @@ const workspaces = [
       'dist/server-extensions.mjs',
       'EXTENSIONS.md',
       'NOTICE',
+    ],
+  },
+  // 0.1.24 packed 4,046,454 bytes: the record-modal tabs, the data-table pattern and the
+  // filter menu, with no stray files — about half the package is source maps.
+  // 0.1.26 packs 4.95 MB; new user/CRM record-modal bundles include source maps.
+  // 0.1.29 packs 6,150,837 bytes: reviewed user/access-policy, product and CRM client bundles,
+  // their source maps and the two brand images; no test/build caches in the 3,623-file archive.
+  // 0.1.30 packs 7,249,173 bytes (3,863 files): reviewed chart/LiveDoc and record
+  // bundles with source maps; no source, test, node_modules or build-cache directories.
+  // 0.1.32: 7,625,068 bytes / 3,942 files, including Website Studio bundles and maps;
+  // inspected archive contains no test, node_modules, atlas or build-cache directories.
+  // 0.1.41 packs 8,941,683 bytes / 4,094 files: current public modules and their
+  // generated client bundles/source maps. Audited archive has no tests or dependencies.
+  // 0.1.42 packs 16,684,322 bytes / 6,049 files: eleven Hospitality page bundles, the
+  // flow_workspace module and larger backend, product and CRM client bundles; source maps
+  // are 43 MB of the 69 MB unpacked. No tests, dependencies or orphaned module output.
+  { name: '@ketvietlab/ketsuite', dir: 'packages/ketsuite', maxPackedBytes: 17_200_000 },
+  {
+    name: '@ketvietlab/website-client',
+    dir: 'packages/website-client',
+    // Measured typed Website Studio package: 292,248 bytes / 258 files.
+    // 0.1.42 packs 374,551 bytes / 323 files with the Help, theme logo and visit clients.
+    maxPackedBytes: 390_000,
+    requiredPaths: [
+      'LICENSE',
+      'README.md',
+      'package.json',
+      'dist/client/index.js',
+      'dist/client/index.d.ts',
+      'dist/client/styles.css',
+      'dist/server/extensions.js',
+      'dist/server/extensions.d.ts',
     ],
   },
 ]
@@ -193,6 +205,9 @@ const verifyMetadata = () => {
   const suiteScaffold = readFileSync(join(ROOT, 'packages/ketsuite/src/scaffold/index.ts'), 'utf8')
   if (!suiteScaffold.includes(`const VERSION = '${version}'`))
     fail(`ketsuite new does not scaffold the release version ${version}`)
+  const suiteKetjs = byName.get('@ketvietlab/ketsuite')?.dependencies?.['@ketvietlab/ketjs']
+  if (!suiteScaffold.includes(`const KETJS_VERSION = '${suiteKetjs}'`))
+    fail(`ketsuite new does not scaffold the KetJS version ${suiteKetjs} the package depends on`)
   const lock = readJson(join(ROOT, 'package-lock.json'))
   if (lock.version !== undefined && lock.version !== version) fail(`package-lock root is ${lock.version}`)
   for (const workspace of workspaces) {
@@ -297,7 +312,7 @@ const smoke = (tarballs, version, parent) => {
     import assert from 'node:assert/strict';
     import {createFlowWorkspace,routes} from '@ketvietlab/flow-client';
     import {renderToStaticString} from '@ketvietlab/ketjs-view';
-    assert.equal(Object.keys(routes).length,76);
+    assert.equal(Object.keys(routes).length,80);
     for(const key of ['performance','workload','goals','github','atlas','gantt','automations','epic-map']) assert.equal(routes[key],undefined);
     assert.match(renderToStaticString(createFlowWorkspace({screen:'my-work'}).view()),/data-flow/);
     assert.throws(()=>import.meta.resolve('@repo/flow-pro-client'));
@@ -353,6 +368,11 @@ const smoke = (tarballs, version, parent) => {
     fail(
       `ketsuite new generated @ketvietlab/ketsuite dependency ${generatedSuitePackage.dependencies?.['@ketvietlab/ketsuite']}`,
     )
+  const suiteKetjs = readJson(join(ROOT, 'packages/ketsuite/package.json')).dependencies['@ketvietlab/ketjs']
+  if (generatedSuitePackage.dependencies?.['@ketvietlab/ketjs'] !== `^${suiteKetjs}`)
+    fail(
+      `ketsuite new generated @ketvietlab/ketjs dependency ${generatedSuitePackage.dependencies?.['@ketvietlab/ketjs']}`,
+    )
   run(
     npm,
     [
@@ -361,8 +381,9 @@ const smoke = (tarballs, version, parent) => {
       '--no-audit',
       '--no-fund',
       '--package-lock=false',
-      tarball('@ketvietlab/design-system'),
-      tarball('@ketvietlab/ketsuite'),
+      // @ketvietlab/ketsuite depends on the Flow and Website packages of the same version,
+      // which are not on npm yet, so every candidate tarball is installed.
+      ...workspaces.map((workspace) => tarball(workspace.name)),
     ],
     { cwd: generatedSuite },
   )

@@ -7,6 +7,7 @@
 // Only the columns each list displays are described, plus what a reader asks a
 // front desk for by name — a guest or a room, which sit on joined rows and so
 // arrive through `value`.
+import { CANCELLATION_POLICY_TYPES } from './types.ts'
 import { defineRowList } from '../backend/row-list.ts'
 
 const STAY_STATES = ['draft', 'checked_in', 'checked_out', 'no_show', 'cancelled'] as const
@@ -21,7 +22,7 @@ const ACCOMMODATION = [
   'aparthotel',
   'serviced_apartment',
 ] as const
-const POLICY_TYPES = ['flexible', 'moderate', 'strict', 'non_refundable'] as const
+const POLICY_TYPES = CANCELLATION_POLICY_TYPES
 const AMENITY_SCOPES = ['property', 'room'] as const
 
 const guest = (row: Record<string, unknown>): string =>

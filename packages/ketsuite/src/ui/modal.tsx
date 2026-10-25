@@ -4,6 +4,7 @@
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { icon } from './icons.ts'
 import { recordForm, type RecordFormOptions } from './form.tsx'
+import { shellWithModal } from './route-modal.ts'
 
 export const HOOKS = [
   'modal-layer',
@@ -102,10 +103,15 @@ export const modalForm = (options: {
     body: recordForm(options.form),
   })
 
-/** Keep collection/detail context mounted while a URL-owned modal is open. */
-export const modalWorkspace = (background: JSXChild, modal: JSXChild): TemplateResult => (
-  <>
-    {background}
-    {modal}
-  </>
-)
+/**
+ * Keep collection/detail context mounted while a URL-owned modal is open. A whole screen shell
+ * takes the modal into its content slot, so fragment navigation carries it too; anything else
+ * gets the modal beside it.
+ */
+export const modalWorkspace = (background: JSXChild, modal: JSXChild): TemplateResult =>
+  shellWithModal(background, modal) ?? (
+    <>
+      {background}
+      {modal}
+    </>
+  )

@@ -237,11 +237,10 @@ test('attendance manager capability opens the hub and owns internal issuance', a
   assert.match(hubHtml, /href="\/admin\/attendance\/credentials\?issue=kiosk&amp;lang=en"/)
   const pinModal = await (await e2e.client.get(issuePath('pin'))).text()
   assert.match(pinModal, /<option value="employee-1"/)
-  const capability = await e2e.client.post(
-    '/_ket/fn/attendance.credential.manageOptions',
-    new URLSearchParams(),
-    postOptions,
-  )
+  // A browser calls /_ket/fn with a JSON body; a session request in any other type is refused.
+  const capability = await e2e.client.post('/_ket/fn/attendance.credential.manageOptions', '{}', {
+    headers: { 'content-type': 'application/json' },
+  })
   const capabilityBody = await capability.text()
   assert.equal(capability.status, 200, capabilityBody)
   assert.match(capabilityBody, /employee-1/)

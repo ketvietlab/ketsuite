@@ -3,7 +3,11 @@ setFlowLocale('vi')
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createFixtureSession } from '../atlas/store.mjs'
-import { documentSiblings, filterDocumentTree } from '@ketvietlab/flow-client/document-tree.mjs'
+import {
+  documentSiblings,
+  filterDocumentTree,
+  documentMoveCandidates,
+} from '@ketvietlab/flow-client/document-tree.mjs'
 const move = (s, id, targetId, extra = {}) =>
   s.call('flow.page.reorder', {
     id,
@@ -81,4 +85,55 @@ test('search preserves ancestors and canonical order without flattening or alpha
     filterDocumentTree(pages, () => true).map((p) => p.id),
     ['z', 'a', 'x'],
   )
+})
+
+test('move candidates exclude descendants, cycles, other owners, visibility and read-only targets', () => {
+  const source = { id: 'source', workspaceId: 'one', projectId: null }
+  const pages = [
+    source,
+    { id: 'child', parentId: 'source', workspaceId: 'one' },
+    { id: 'grandchild', parentId: 'child', workspaceId: 'one' },
+    { id: 'valid', workspaceId: 'one' },
+    { id: 'other-workspace', workspaceId: 'two' },
+    { id: 'private', workspaceId: 'one', visibility: 'private' },
+    { id: 'archived', workspaceId: 'one', archived: true },
+    { id: 'readonly', workspaceId: 'one', access: { write: false } },
+    { id: 'project', projectId: 'core', workspaceId: 'one' },
+  ]
+  assert.deepEqual(
+    documentMoveCandidates(pages, source).map((p) => p.id),
+    ['valid'],
+  )
+})
+
+test('workspace documents cannot cross owners through move, reorder or child creation', () => {
+  const s = createFixtureSession()
+  s.data.pages.push(
+    { id: 'workspace-one', title: 'One', projectId: null, workspaceId: 'one' },
+    { id: 'workspace-two', title: 'Two', projectId: null, workspaceId: 'two' },
+  )
+  const before = structuredClone(s.data.pages)
+  assert.equal(
+    s.call('flow.entity.action', {
+      collection: 'pages',
+      entityId: 'workspace-one',
+      action: 'move',
+      parentId: 'workspace-two',
+      idempotencyKey: 'wrong-parent',
+    }).value.ok,
+    false,
+  )
+  assert.equal(move(s, 'workspace-one', 'workspace-two').value.ok, false)
+  assert.equal(
+    s.call('flow.entity.save', {
+      collection: 'pages',
+      title: 'Wrong child',
+      projectId: null,
+      workspaceId: 'one',
+      parentId: 'workspace-two',
+      idempotencyKey: 'wrong-child',
+    }).value.ok,
+    false,
+  )
+  assert.deepEqual(s.data.pages, before)
 })

@@ -1,9 +1,8 @@
+import { ListPage, RecordPage } from '../page-regions.tsx'
 import { LiveDescription } from '../live-description.tsx'
 import { TaxonomyImage } from '../image-upload.tsx'
 import { ArchiveActions } from '../archive-actions.tsx'
 import {
-  ListPage,
-  RecordPage,
   Surface,
   Section,
   Stack,

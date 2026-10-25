@@ -57,6 +57,41 @@ test('core mutations require capability, pass every guard in order and commit at
   assert.equal(await core.mutate(host, mutation({}), write), 2)
 })
 
+test('extension writes share the transaction and a post-write refusal rolls back the core write', async () => {
+  const events = []
+  const state = { core: 0, extension: 0 }
+  const server = createFlowServerExtensions([
+    {
+      name: 'extension',
+      afterMutation: (ctx, mutation, value) => {
+        events.push('extension')
+        assert.equal(value, ctx.core)
+        ctx.extension++
+        if (mutation.input.fail) throw Error('extension refused')
+      },
+    },
+  ])
+  const host = {
+    requireCapability() {},
+    async transaction(work) {
+      const draft = { ...state }
+      const value = await work(draft)
+      Object.assign(state, draft)
+      return value
+    },
+  }
+  const write = (ctx) => {
+    events.push('core')
+    return ++ctx.core
+  }
+  const mutation = (fail) => ({ name: 'flow.issue.save', capability: 'project.write', input: { fail } })
+  assert.equal(await server.mutate(host, mutation(false), write), 1)
+  assert.deepEqual(state, { core: 1, extension: 1 })
+  assert.deepEqual(events, ['core', 'extension'])
+  await assert.rejects(server.mutate(host, mutation(true), write), /extension refused/)
+  assert.deepEqual(state, { core: 1, extension: 1 })
+})
+
 test('private commands have explicit ownership and use the same permission/guard transaction', async () => {
   const calls = [],
     scoped = { tenant: 'verified-tenant' }

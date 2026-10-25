@@ -11,11 +11,17 @@ Design guidance is maintained only in [Két Design System](https://github.com/ke
 Install it with `npx @ketvietlab/ket-design-system-skill@latest`. This page documents
 APIs and runtime delivery; it does not define a competing visual rulebook.
 
-The package includes Inter 4.1 variable fonts (normal and italic, weights 100–900),
-including Vietnamese glyphs, under the SIL Open Font License. The font files and
-license live in `packages/design-system/src/foundations/fonts/`; their upstream
-source is pinned in that directory's README. `tokens.css` registers these fonts,
-so consumers do not depend on fonts installed on the user's operating system.
+The interface typeface is KÉT Sans (Light 300, Regular 400, Medium 500, Bold 700),
+Két Việt's own font: free to use and embed, but not open source and not MIT; the
+KÉT Sans Font License forbids modifying or redistributing the font files. Medium is
+registered for `500 600`, so text set at 600 uses Medium rather than falling through
+to Bold. KÉT Sans has no italic yet; the browser slants the upright faces. The package
+also includes Inter 4.1 variable fonts (normal and italic, weights 100–900) under the
+SIL Open Font License, and `--kv-font-sans` names Inter after KÉT Sans for the
+characters KÉT Sans does not draw. The font files and licenses live in
+`packages/design-system/src/foundations/fonts/`; their sources are pinned in that
+directory's README. `tokens.css` registers these fonts, so consumers do not depend
+on fonts installed on the user's operating system.
 The built `styles.css` embeds WOFF2 data URLs, keeping the stylesheet relocatable
 when KetJS serves it at a content-addressed URL, with no third-party font request.
 Consumers with a Content Security Policy must permit `data:` in `font-src`.
@@ -31,7 +37,26 @@ Run `npm run design:system` from the repository root to open the documentation a
   exports, planned components, ownership, maturity, promotion decisions, evidence posture, and CSS
   ownership.
 
+## Route-local screen help
+
+Website Studio consumes the canonical public `HelpDrawer` and `MarkdownContent`
+contracts described under screen guidance below. The native drawer owns its
+header, scrolling and responsive behavior: modeless desktop, modal mobile.
+Render one drawer with the current screen content. Use a public Button/IconButton with `name="screen-help"`, its
+drawer id as `value` and `controls`, and `expanded={false}`. The shared runtime also
+accepts `ket:screen-help-request`; disposing a frame closes its drawer and removes
+the listeners. Do not put fixed screen help in the application shell.
+
+Studio supplies its translated labels and a bounded heading/paragraph lexer
+returning public `MarkdownToken` values. Its guides do not require GFM or Mermaid;
+the same public renderer can consume the richer host lexer used by the catalogue.
+`headingOffset` keeps the authored headings below the drawer title. Text remains escaped.
+
 ## Relation selectors
+
+`Field` accepts `control` with `layout="inline"` for enhanced asset controls.
+Its public frame owns the label/control columns at narrow widths; a logo recipe
+owns only its thumbnail limit. Use the real picker ID for label association.
 
 `createRelationSelectView` also accepts optional client-only `RelationSelectCallbacks`. A composing
 island can supply reactive `options` and `disabled` readers, handle `onSelect`, and enable an
@@ -48,9 +73,13 @@ application still owns the open state and the region's id. Omitting both keeps t
 
 ## Inventory contract
 
-`npm run design:inventory` regenerates the inventory from the public and compatibility entry points.
-`npm run design:inventory:check` fails when the committed snapshot no longer matches source. The normal
-verification pipeline runs this check before building.
+The inventory is derived from the public and compatibility entry points and is not committed:
+`npm run build` and `npm run check` write it to
+`packages/design-system/src/catalogue/inventory.generated.{ts,json}` (ignored by Git), and the package
+publishes it as `@ketvietlab/design-system/catalogue/inventory.json`. It counts tests, consumers and CSS
+lines, so a committed copy changed on almost every branch and made them conflict.
+`npm run design:inventory` writes it on its own; `npm run design:inventory:check` fails when a public or
+compatibility export has no policy entry. The commit hook and the verification pipeline run that check.
 
 Classification policy lives in
 `packages/design-system/src/catalogue/inventory-policy.json`. A source module must have an owner,
@@ -118,6 +147,15 @@ Both modes share row selection and external bulk forms. The primary `kt-row-link
 `data-primary="true"`; its hit area spans the row while checkboxes and cell controls remain separate.
 An empty grouped result uses the same empty-state contract as a flat result.
 
+`ListChrome.filterMenus` accepts native `Menu` choices and `DateRangePicker` with
+`variant="filter"`. Its group fits the available width and wraps inside the opened
+phone disclosure. Use `FormGrid` for a sized Section form rather than this toolbar
+slot. Measure each label and control as well as document/table overflow: a collapsed
+input can remain inside a page that has no horizontal overflow.
+CSR updates to saved DateRangePicker boundary attributes synchronize the read-only
+display, including Back/Forward, without emitting another filtering decision. The
+shared runtime disconnects its attribute observer on removal or disposal.
+
 All `ListPage` consumers preserve navigation context for same-path GET controls. SearchFilter's
 `{ href }` apply result uses the backend shell's shared fragment navigation: filtering, grouping,
 clearing and selecting favorites no longer reload the document. The shell updates the results,
@@ -125,10 +163,35 @@ toolbar and URL together, then focuses the search input (desktop) or filter trig
 Back/Forward re-renders the corresponding server state. This covers native/static `KetTable`
 adapters and island-backed tables without duplicating domain queries in the browser.
 
-This is an SSR-first hybrid, not JSON-only CSR: URL-driven responses still contain server-rendered
-fragments; islands hydrate/reconcile those fragments and own their client interactions. The first
-document remains complete SSR. Permissions, localized cells and custom server cell callbacks retain
-their server contracts. RPC-driven tables retain their existing client loading mode.
+Full-page collections are client islands over one paged read (see "Collections are client islands"
+in `@ketvietlab/design-system`): the server renders the frame and a loading state from the URL, and the
+browser reads one page of one query, with its facet counts, through the function transport. The
+fragment navigation above is the compatibility path for server-rendered lists that have not moved yet;
+a new list does not use it, and an existing one moves when it is next changed. Permissions stay in the
+read function. Inside a list island, KetTable is used in its server form (`columns[].cell`, `sortHref`)
+rendered by the island; the RPC `manager` mode keeps its fixed-input client loading for embedded tables.
+
+The server form owns initial loading rows through `loading: { rows, lines? }` (1–100):
+decorative skeletons, the normal columns and selection gutter, disabled checkboxes,
+and no record or sort links. Use `busy` for a delayed refresh with retained rows.
+Client presenters may supply `selectionState: { ids, anchor?, onChange }` so a pure
+table render preserves page-local selection and Shift selection. The callback stays
+in the client. Clear selection uses the associated native form reset; collections
+also reset that selection when a new read replaces the page.
+Use `bulkPresentation="replace"` to show page-selection commands in place of the query
+toolbar; `selectedCount` controls the switch and cleared selection restores the query.
+Filter menus in `ListChrome` wrap within the available canvas at desktop and mobile
+widths; each control stays intact.
+Danger badges own `--kv-badge-danger-text`, a theme-aware foreground from the Két
+palette that meets small-text AA contrast over their tinted table and record surfaces.
+
+Use `rowAnchorHref` / `rememberRowAnchor` / `takeRowAnchor` / `restoreRowAnchor` with
+`KetTable.currentRow` when a collection opens a record page. On a plain click the
+runtime remembers the row's viewport top and table horizontal scroll in history,
+and adds measured `top` / `left` coordinates to the native link's `returnTo` fragment.
+Back and the record header restore the same row position and focus after the CSR
+read renders the rows. Unmeasured shared links centre the row. Missing rows are
+announced; changed queries clear the anchor. Position travels on the URL, without storage.
 
 For a custom shell, listen for `ket:search-filter-navigate` on `document`. Its exported
 `SearchFilterNavigateDetail` contains the filter `id`, `href`, cancellation `signal` and
@@ -196,10 +259,23 @@ authorized and already-redacted results; storage URLs, uploads, deletions, queri
 decisions stay outside the renderers. Activity and media families cover loading, empty, error, and
 redacted outcomes without inventing domain behavior.
 
+`EmptyState` is the single empty outcome for lists, record tables, activity, media and dashboard
+blocks. It owns its frame and size (a dashed placeholder panel with a minimum height of 15rem and a
+decorative illustration), so every region shows the same state; consumers neither wrap nor resize
+it. Pass `visual` to say why the region is empty: `start` for first use, `search` when filters match
+nothing, `done` for a cleared queue, `locked` for a region the reader may not see, or the default
+`empty`. See the `empty-visuals` catalogue specimen and the README section "Empty states and long
+content".
+
 The catalogue documents worklist, analytical list, settings, master-detail, board, schedule, and
 timeline recipes by composing `ListPage`, `RecordPage`, or `WorkspacePage`. These are slot recipes,
 not additional page-pattern exports. Canvas recipes are reserved for spatial work and keep their own
 horizontal overflow contract on narrow screens.
+
+`Stack({ divided: true })` owns the 1px `--kv-panel-border` boundary between
+peer groups and its gap on both sides. Flattening a child Disclosure or Surface
+preserves that parent boundary, including in flat presentation. See specimen
+`peer-section-dividers` and `test/design-system-peer-sections.test.tsx`.
 
 ## JavaScript delivery
 
@@ -293,6 +369,17 @@ panel to its supported sections. Product attributes reuse this compact SearchFil
 `frame.chrome.searchContent`, with URL-backed display-type and variant-policy facets; there is no legacy
 search-menu fallback.
 
+`SearchFilterConfig.applyOnInput` applies typed text after a short pause (Enter applies at once) instead
+of waiting for a suggestion; the text stays in the field and no query chip is created. Collections that
+sort through their table headers and apply filters as they change set it so no step waits for an apply
+button. See the design-system README, section "Expanded SearchFilter".
+
+A GET filter form outside SearchFilter (a record page's line filter, a forecast's product and warehouse
+pickers) uses `RecordForm({ method: 'get', applyOnInput: true })`: the shared runtime submits a chosen
+option at once and typed text after a 400 ms pause, Enter still submits at once through a hidden default
+button, and the typed field keeps focus whether the submit reloads the page or an island redraws the form. Such a form has no visible
+submit button; a cancel link, when given, remains.
+
 SearchFilter uses separate Filters, Group by, and Favorites triggers by default for every consumer.
 `search-filter-toggle` remains the single filters trigger; nested options keep `disclosure-summary` and
 `menu-item`. Applied `search-filter-facet` chips live in a separate row, including ordered groups. Their
@@ -335,6 +422,10 @@ is independent.
 
 ### Application topbar and compact lists
 
+Agent integration guidance lives in `skills/ket-design-system/references/shell.md`:
+shell ownership, SSR/fragment lifetime, app rail, Search/Collapse, settings layering,
+screen guidance and deployment-scoped verification.
+
 KétSuite uses compact density by default: 40px desktop rows, sentence-case column headings, and
 smaller operational list headers. Mobile selection targets remain at least 44px. Tables retain all
 columns and scroll horizontally; the scroll region is keyboard focusable. Classifications use plain
@@ -342,11 +433,32 @@ columns and scroll horizontally; the scroll region is keyboard focusable. Classi
 `MediaLabel` renders a 24px thumbnail only when present or explicitly reserved. Product lists reserve
 image space across a page only when at least one visible record has an image.
 
+`AppShell` requires an `applications` configuration: translated navigation and
+new-tab labels, optional `helpLabel` and `settings: { id, label, items }`, `activeId`, and items with `id`, `label`, Lucide `icon` and optional `href`. Without a destination, supply `unavailableLabel`; the icon exposes its status with `aria-disabled` and has no navigation action.
+Its `AppSwitcher` is a 48px graphite rail to the left of the primary navigation,
+with hover/focus names and an active indicator. Every enabled app link opens a new tab, except an item with `sameTab: true`: an app served inside this same shell, which reloads the current tab (`data-ket-reload`). When `helpLabel` is supplied, a question-mark footer button emits
+`ket:screen-help-request` with `detail.trigger`; guide drawers and their content
+are screen-owned through the public `HelpDrawer` contract below. Below it, the settings
+gear opens a shared `Menu` on click/touch or keyboard, never hover. The menu opens
+to the right, grows upwards and stays inside the viewport/drawer. Escape closes
+the settings menu before closing mobile navigation. Hosts own its translated
+entries and destinations; the demo uses placeholder entries.
+On mobile it appears only when the application menu opens, inside the drawer's
+focus boundary. The shell and rail remain SSR chrome during menu navigation.
+KetSuite owns destination URLs. Backend frames and Website Studio use `suiteApplications` with the deployment's permission-filtered menu: Kinh doanh/Sales and Website open permitted routes; Phone opens the first permitted entry of the `phone` menu root in the same tab when a module supplies one, and its screens call `adminPage`/`frameOf` with `app: 'phone'` (the frame sets `Frame.app`, the rail and the menu) so the rail, sidebar name and sidebar menu follow it, rather than assembling a frame of their own; Accounting, Flow and Chat are coming soon without URLs. Accounting and the duplicate Website destination are hidden from the main menu; Website remains in the app rail. Administration links move into the rail's settings menu, and help is hidden until guides are ready. `placeholderApplications` remains a catalogue sample. Hosts can override actual entries through `Frame.applications`; browser consumers import the pure adapter from `@ketvietlab/ketsuite/ui/application-switcher`.
+
+Consumer contract checks should load only the current deployment's composition and permitted menu, covering app availability, backend frames and Website bootstrap/shell integration. Use the same shared registry for every deployment without changing its Website preset; keep consumer-specific runners and module resolution in the consumer repository. Verify menu navigation on authenticated application routes with the KetJS document runtime and every placed island client available. A static shell fixture cannot prove fragment navigation: it has placeholder content and follows native links as full document loads. Navigation responses carry replaceable slots and omit `AppShell`; the outer SSR chrome remains mounted.
+
 `AppShell.location` places `AppTopbar` with its `location` prop inside the main column: organisation context
 on the left, compact search and all account/indicator/theme tools on the right. `AppBrand` lives in
-the sidebar navigation header. The strip is 48px high; no global bar spans both columns.
+the graphite app rail as a mark. The fixed 44px sidebar header names the current app,
+with menu Search and desktop Collapse; root icon guides are centred on their icon slots.
+The location strip is 48px high; no global bar spans both columns.
 The optional `AppShell.topbar` remains available to other consumers. The launcher opens a native modal dialog
 containing the existing GET search form; local list search remains visible beside its results. `NavigationToggle` can control `AppNavigation` with `externalTrigger`;
+its `controls` names the rendered navigation ID plus `-drawer`. Navigation groups
+with `exclusive: false` allow each branch to close independently, including Enter
+activation; the default named accordion retains its open branch until another is chosen.
 the shared runtime owns its mobile drawer, focus return and inert background. Ctrl/Cmd+K opens global search and focuses its input when no other dialog is open.
 Escape, the close button and backdrop close search and return focus to its launcher without clearing
 the draft. The modal frame stays in an inert template until opened; its search form remains
@@ -364,4 +476,67 @@ to 200 characters. Search is server rendered and works without JavaScript.
 
 `searchFilterRuleLabel` is shared by server and island labels. Group intervals are localized, including
 Day/Week/Month/Quarter/Year. KetTable errors use the consumer's localized `loadError`, never raw server
-exception messages. The sidebar search hooks are retired; consumers should use AppTopbar search.
+exception messages. Legacy sidebar search hooks are retired; global search uses AppTopbar.
+Current menu filtering is the separate AppNavigation.tools Search contract.
+
+LiveDoc's [presentation and formatting contract](./livedoc.md) defines its native
+top/floating toolbar and framed/plain surface. Flow document pages opt into
+floating/plain through their public adapter; other consumers keep the defaults.
+
+### CSR accounting consumers
+
+`AppTopbar.search.mode="link"` leads directly to a search workspace and emits no
+native dialog/template/noscript subtree; `dialog` remains the default. `ListPage`
+accepts `busy` and `dimmed`: an island owns delay, stale reads and disposal; the
+pattern owns `aria-busy` and `--kv-opacity-pending`. `Peek.closeControl` accepts a
+public client trigger while keeping the summary non-modal. `ConfirmDialog` accepts
+`mode="client"`; its cancel command is handled by the client modal owner.
+
+Client-read record pages own `tab`, `dialog` and `dialogId` in browser history and
+retain their list trail. Record commands retain an idempotency intent across an
+uncertain response; changed input receives another intent, and success clears it.
+`recordChanged` exposes captured parent edits to a child decision; a posting
+confirmation must require saving those edits first. Runtime effects remain in the
+island. Static SSR shell props never carry business data, rights or field options.
+Peer Sections inside one Surface or modal use `Stack({ divided: true })`; its
+existing token hairline is mandatory, including in CSR presenters.
+
+### Exact values in adaptive metric cards
+
+`CardGrid` with `minimum="wide"` adapts currency cards to the available canvas width, including the sidebar. `Metric` wraps long labels and exact values inside its text column. Do not truncate amounts or add consumer CSS. See `metric-exact-long-value` and the focused Account producer contracts.
+
+### Sidebar island slot height
+
+AppShell gives its sidebar's only child the available block size, including a disposable island wrapper. Navigation keeps its viewport geometry and internal scrolling; consumers do not patch sidebar descendants. Producer CSS check/mutation and Account browser geometry cover this contract. Account's breadcrumb-free canvas is an explicit user choice and still exposes a separate list-return link.
+
+## Shared screen guidance and Mermaid theme
+
+Render one `HelpDrawer` in the screen content slot, with translated `label`,
+`title`, `closeLabel` and body. It is a 512px modeless right panel on desktop,
+fullscreen native modal on mobile. The shell question-mark button opens it and
+shows its active state. Navigation closes before mobile help opens; closing
+restores focus and scrolling. The fixed header owns the title and close button;
+the body owns its scrolling and 24px desktop/16px mobile inset. New screen fragments
+own their own guide; keep the shell and app rail outside those fragments.
+
+Compose its body with `MarkdownContent`: a source string, a GFM-compatible lexer,
+localized diagram/source/loading/error/table labels and appropriate heading offset.
+The SSR renderer escapes raw HTML, validates links/images, supports tables and
+code, and keeps Mermaid source as progressive fallback. Wide tables and diagrams
+scroll locally, preserving legible diagram text instead of shrinking it to fit.
+
+All ecosystem Mermaid diagrams use the DS runtime's `createMermaidTheme` with
+`readMermaidPalette`, plus the shared `configureMermaidLoader`/interaction lifetime.
+The host supplies a pinned, lazy Mermaid bundle; DS owns theme and rendering policy.
+The interface font (`--kv-font-sans`, KÉT Sans) at 13px, 1.25px connectors, 6px node corners and resolved semantic DS colors form
+the common style in both themes. Use `kv-accent`, `kv-positive`, `kv-warning` and
+`kv-danger` classes to convey state. Notes use the warning surface; diagram families
+share explicit text, surface, border, connector and chart colors. Theme changes
+rerender SVGs. Configuration/style directives in content cannot override this
+standard. Rendering uses Mermaid's base theme with strict security and disabled
+HTML labels; see [Mermaid's official theme API](https://mermaid.js.org/config/theming).
+
+The DS remains dependent only on `ketjs-view`; apps provide parser/renderer adapters.
+The catalogue pins marked 18.1.0 and Mermaid 12.1.0, served locally. Inspect the
+connected drawer at `/demo2` and flowchart, sequence, state, ER and pie specimens
+plus invalid source at `/help-theme`. See the package README for the loader example.

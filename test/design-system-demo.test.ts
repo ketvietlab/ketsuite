@@ -41,6 +41,66 @@ test('sales demo: public page compositions use one canonical pattern', () => {
   }
 })
 
+test('submenu demo: every page uses the current location shell and keeps its tools out of the sidebar', () => {
+  const routes = createDemo2Routes()
+  for (const view of ['overview', 'orders', 'record', 'board']) {
+    for (const theme of ['light', 'dark']) {
+      const html = String(
+        routes['/demo2'](new URL(`http://localhost/demo2?view=${view}&theme=${theme}`)).body,
+      )
+      assert.match(html, /data-ui="app-shell"[^>]*data-has-location="true"/)
+      assert.doesNotMatch(html, /data-ui="app-shell-topbar"|data-ui="breadcrumbs"|demo-navigation-footer/)
+      assert.match(html, /data-ui="app-navigation"[^>]*data-external-trigger="true"/)
+      assert.match(html, /data-ui="app-brand" data-variant="mark"[\s\S]*src="\/demo2\/brand\/logo-dark.png"/)
+      const main = html.slice(html.indexOf('<main data-ui="app-main"'))
+      assert.match(main, /data-ket-slot="backend.global-topbar"[\s\S]*data-ui="app-location-bar"/)
+      assert.match(main, /data-ui="navigation-toggle"[^>]*aria-controls="enterprise-navigation-drawer"/)
+      assert.match(main, /data-ui="global-search-trigger"[^>]*aria-controls="demo2-global-search"/)
+      assert.match(main, new RegExp(`action="/demo2/search/${theme}"`))
+      assert.match(main, /data-ui="app-location-context"[\s\S]*An Việt Trading/)
+      assert.match(main, /aria-label="Tài khoản Ngọc Linh"[\s\S]*id="demo2-account-panel"/)
+      assert.match(main, /data-ui="global-search-dialog"/)
+      assert.equal([...html.matchAll(/data-pattern="(list|record|workspace)"/g)].length, 1)
+    }
+  }
+  const original = String(createDemoRoutes()['/demo'](new URL('http://localhost/demo')).body)
+  assert.doesNotMatch(original, /data-has-location="true"|data-ui="global-search-trigger"/)
+  assert.match(original, /demo-navigation-footer/)
+})
+
+test('submenu demo: native global search preserves appearance and finds destinations and records', () => {
+  const routes = createDemo2Routes()
+  const endpoint = routes['/demo2/search/dark']
+  assert.equal(typeof endpoint, 'function')
+  const response = endpoint(new URL('http://localhost/demo2/search/dark?q=SO-1042&lang=vi'))
+  assert.equal(response.status, 303)
+  const location = new URL(response.headers!.location, 'http://localhost')
+  assert.equal(location.searchParams.get('theme'), 'dark')
+  assert.equal(location.searchParams.get('search'), 'global')
+  assert.equal(location.searchParams.get('q'), 'SO-1042')
+  const record = String(routes['/demo2'](location).body)
+  assert.match(record, /Kết quả tìm kiếm/)
+  assert.match(record, /href="\/demo2\?theme=dark&amp;view=record&amp;id=SO-1042"/)
+  assert.match(record, /data-ui="global-search-input"[^>]*value="SO-1042"/)
+  assert.doesNotMatch(record, /data-ui="navigation-item" data-active="true"/)
+
+  const navigation = String(
+    routes['/demo2'](new URL('http://localhost/demo2?search=global&q=ton%20kho')).body,
+  )
+  assert.match(navigation, /data-ui="nav-item"[^>]*href="\/demo2\?theme=light&amp;module=inventory/)
+  const empty = String(routes['/demo2'](new URL('http://localhost/demo2?search=global')).body)
+  assert.match(empty, /Bạn muốn tìm gì/)
+  assert.doesNotMatch(empty, /data-ui="table"/)
+  const missing = String(
+    routes['/demo2'](new URL('http://localhost/demo2?search=global&q=zzzz-not-found')).body,
+  )
+  assert.match(missing, /Không tìm thấy kết quả/)
+  const unsafe = String(routes['/demo2'](new URL('http://localhost/demo2?search=global&q=%3Cscript%3E')).body)
+  assert.match(unsafe, /&lt;script&gt;/)
+  const capped = endpoint(new URL(`http://localhost/demo2/search/dark?q=${'x'.repeat(250)}`))
+  assert.equal(new URL(capped.headers!.location, 'http://localhost').searchParams.get('q')!.length, 200)
+})
+
 test('submenu demo: keeps the original demo intact and exposes 18 dense application modules', () => {
   const original = String(createDemoRoutes()['/demo'](new URL('http://localhost/demo')).body)
   assert.doesNotMatch(original, /data-ui="navigation-branch"/)
@@ -57,9 +117,9 @@ test('submenu demo: keeps the original demo intact and exposes 18 dense applicat
   assert.doesNotMatch(html, /data-ui="navigation-branch"[^>]*data-active=/)
   assert.doesNotMatch(html, /data-ui="navigation-branch-indicator"/)
   assert.match(html, /data-ui="navigation-item-label"[^>]*>[^<]*<!--k\[-->Hôm nay/)
-  assert.match(html, /data-ui="dashboard-page-context"/)
-  assert.match(html, /data-ui="breadcrumbs"[^>]*aria-label="Vị trí hiện tại"/)
-  assert.match(html, /aria-current="page"[^>]*>[^<]*<!--k\[-->Hôm nay/)
+  assert.match(html, /data-ui="app-location-bar"/)
+  assert.doesNotMatch(html, /data-ui="breadcrumbs"|data-ui="dashboard-page-context"/)
+  assert.match(html, /data-ui="navigation-item" data-active="true"[^>]*aria-current="page"[\s\S]*?Hôm nay/)
   assert.match(html, /href="\/demo2\?theme=light&amp;module=crm&amp;section=0"/)
   assert.match(html, /href="\/demo2\?theme=light&amp;view=orders"/)
   assert.doesNotMatch(html, /(?:href|action)="\/demo(?:[?/]|&quot;)/)
@@ -114,9 +174,12 @@ test('submenu demo: nested selection is URL-owned and the board submenu filters 
   assert.match(nested, /data-ui="navigation-branch" data-level="1"[^>]*open="true"/)
   assert.match(nested, /data-ui="navigation-branch" data-level="2"[^>]*open="true"/)
   assert.match(nested, /data-ui="navigation-item" data-active="true" data-level="3"[^>]*aria-current="page"/)
-  assert.match(nested, /data-ui="breadcrumbs"[^>]*aria-label="Vị trí hiện tại"/)
-  assert.match(nested, /data-ui="breadcrumb"[\s\S]*An Việt[\s\S]*Tồn kho[\s\S]*Báo cáo/)
-  assert.match(nested, /aria-current="page"[^>]*>[^<]*<!--k\[-->Luân chuyển hàng/)
+  assert.doesNotMatch(nested, /data-ui="breadcrumbs"/)
+  assert.match(nested, /data-ui="app-location-context"[\s\S]*An Việt Trading/)
+  assert.match(
+    nested,
+    /data-ui="navigation-item" data-active="true"[^>]*aria-current="page"[\s\S]*?Luân chuyển hàng/,
+  )
   assert.match(nested, /Luân chuyển hàng: 5 mục cần chú ý/)
 
   const board = String(routes['/demo2'](new URL('http://localhost/demo2?view=board&status=shipping')).body)
@@ -141,6 +204,29 @@ test('sales demo: overview columns use the same grouped surface hierarchy', () =
   )
   assert.match(html, /data-ui="surface"[\s\S]*data-ui="surface-title"[\s\S]*?Ưu tiên hôm nay/)
   assert.doesNotMatch(html, /data-ui="section-title">Ưu tiên hôm nay/)
+  // Its orders are rows inside the panel: a card there would draw a second frame.
+  const priority = html.slice(html.indexOf('Ưu tiên hôm nay'), html.indexOf('Cập nhật vận hành'))
+  assert.match(priority, /data-ui="resource-list"/)
+  assert.doesNotMatch(priority, /data-ui="content-card"/)
+})
+
+test('submenu demo: overview figures are abbreviated while order rows keep every đồng', () => {
+  const routes = createDemo2Routes()
+  const read = (view: string) =>
+    String(routes['/demo2'](new URL(`http://localhost/demo2?view=${view}&theme=light`)).body)
+      .replace(/<!--k\[?-->/gu, '')
+      .replace(/\s/gu, ' ')
+  const overview = read('overview')
+  const exact = /\d{1,3}(?:\.\d{3}){2,} ₫/u
+  const figure = overview.match(
+    /data-ui="metric-label">Giá trị đơn hàng<\/p><p data-ui="metric-value">([^<]+)</u,
+  )
+  assert.ok(figure, 'the order value metric renders')
+  assert.match(figure[1], /^\d+(?:,\d)? Tr ₫$/u)
+  const bars = [...overview.matchAll(/class="demo-bar-row"><span>[^<]+<\/span><strong>([^<]+)</gu)]
+  assert.ok(bars.length > 0, 'the value-by-status bars render')
+  for (const [, amount] of bars) assert.doesNotMatch(amount, exact)
+  assert.match(read('orders'), exact)
 })
 
 test('sales demo: collection paging belongs to ListChrome above the table', () => {
@@ -207,4 +293,34 @@ test('sales demo: create and selection commands stay in the header above filters
   assert.ok(bulk > header && bulk < filters && filters < body)
   assert.doesNotMatch(html, /data-ui="bulk-actions"[^>]*data-has-selection="true"/)
   assert.match(html, /form="bulk-form"/)
+})
+
+test('submenu navigation: SSR shell once, return only content and state for progressive navigation', () => {
+  const routes = createDemo2Routes()
+  const normal = routes['/demo2'](new URL('http://localhost/demo2'))
+  assert.match(String(normal.body), /^<!doctype html>/)
+  assert.match(String(normal.body), /data-ui="app-shell"/)
+  assert.equal(normal.headers?.vary, 'X-Ket-Navigation')
+  for (const query of [
+    'view=orders',
+    'module=crm',
+    'view=board',
+    'view=record',
+    'modal=create',
+    'search=global&q=ton+kho',
+  ]) {
+    const response = routes['/demo2'](new URL(`http://localhost/demo2?${query}`), {
+      headers: { 'x-ket-navigation': 'fragment-v1' },
+    })
+    const body = String(response.body)
+    assert.equal(response.type, 'text/vnd.ket.fragments+html')
+    assert.match(body, /^<ket-fragments/)
+    assert.match(body, /data-ket-slot="demo.content"/)
+    assert.match(body, /data-ket-slot="demo.overlay"/)
+    assert.match(body, /data-demo-navigation-state/)
+    assert.doesNotMatch(
+      body,
+      /<!doctype|<head[ >]|<script[ >]|data-ui="app-shell"|data-ui="app-navigation"|backend.global-topbar|data-ui="app-location-bar"/,
+    )
+  }
 })

@@ -1,6 +1,6 @@
 import { tr } from './i18n.mjs'
 import { assigneeGroupKey, taskAssigneeIds, taskAssigneeNames } from './task-assignees.mjs'
-import { taskColumns } from './project-catalogs.mjs'
+import { taskColumns, taskStatusDefinition } from './project-catalogs.mjs'
 // One canonical manual order, shared by list and board projections.
 export const orderedTasks = (tasks) =>
   tasks
@@ -30,18 +30,41 @@ export function taskGroups(data, field, projectId) {
     }
     return groups
   }
-  if (field === 'sprint')
-    return [
+  const visible = data.tasks.filter((task) => !task.archived && (!projectId || task.projectId === projectId))
+  if (field === 'sprint') {
+    const titles = new Set([
       'Backlog',
       ...data.sprints.filter((s) => !projectId || s.projectId === projectId).map((s) => s.title),
-    ].map((title) => ({ id: title, label: title }))
+      ...visible.map((task) => task.sprint || 'Backlog'),
+    ])
+    return [...titles].map((title) => ({ id: title, label: title }))
+  }
   if (field === 'none') return [{ id: '', label: tr('flow.ui.tasks') }]
-  return (projectId ? taskColumns(data, projectId) : data.columns).map((c) => ({
-    id: c.id,
-    label: c.label,
-    kind: c.kind,
-    color: c.color,
-  }))
+  const groups = new Map(
+    (projectId ? taskColumns(data, projectId) : data.columns).map((c) => [
+      c.id,
+      {
+        id: c.id,
+        label: c.label,
+        kind: c.kind,
+        color: c.color,
+      },
+    ]),
+  )
+  // Read windows may omit a task's catalog definition. Its authorized summary
+  // still needs a group; otherwise a loaded task disappears from list/board.
+  // These display groups do not expand the remote mutation choices.
+  for (const task of visible) {
+    if (groups.has(task.status)) continue
+    const definition = taskStatusDefinition(data, task)
+    groups.set(task.status, {
+      id: task.status,
+      label: definition?.label ?? definition?.title ?? task.status,
+      kind: definition?.kind,
+      color: definition?.color,
+    })
+  }
+  return [...groups.values()]
 }
 
 // Stable ties preserve the board's canonical manual order.

@@ -2,7 +2,7 @@ import { defineModule } from '@ketvietlab/ketjs'
 import { customerRoutes } from './customer.ts'
 import { staffRoutes } from './staff.ts'
 
-export default defineModule({
+const channelApi = defineModule({
   name: 'channel_api',
   version: '1.0.0',
   depends: ['website', 'user'],
@@ -62,6 +62,18 @@ export default defineModule({
     },
   },
 })
+
+export default channelApi
+
+/** Staff-only deployments do not acquire customer/website routes or dependencies. */
+export function createStaffChannelApi() {
+  return {
+    ...channelApi,
+    depends: ['user'],
+    reserves: ['/api/staff/v1/'],
+    routes: staffRoutes,
+  }
+}
 
 export {
   CHANNEL_API_VERSION,

@@ -20,6 +20,10 @@ test('KetSuite scaffold writes the packaged app and safe development scripts', a
     // to remember to move.
     const shipped = JSON.parse(await readFile('package.json', 'utf8')).version
     assert.equal(pkg.dependencies['@ketvietlab/ketsuite'], `^${shipped}`)
+    // KetJS has its own version line, so the app asks for the KetJS release the package
+    // itself depends on rather than reusing the KetSuite number.
+    const suite = JSON.parse(await readFile('packages/ketsuite/package.json', 'utf8'))
+    assert.equal(pkg.dependencies['@ketvietlab/ketjs'], `^${suite.dependencies['@ketvietlab/ketjs']}`)
     // A generated app is one product, commerce unless asked, and every command it
     // runs names that product, so `ket` and `ketsuite serve` reach the same database.
     assert.equal(pkg.scripts.dev, 'ketsuite serve --deployment commerce --dev-admin')

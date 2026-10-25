@@ -16,6 +16,7 @@ export function seedOperations(d) {
     Object.assign(f, {
       responses: 0,
       access: 'internal',
+      assigneeId: 'mai',
       assignee: 'Mai Anh',
       priority: 'normal',
       fields: [{ id: 'details', label: 'Chi tiết yêu cầu', type: 'textarea', required: true }],
@@ -30,10 +31,14 @@ export function seedOperations(d) {
 }
 export function operationsCommand(d, args, scenario, replay, baseCall) {
   if (['readonly', 'guest', 'revoked'].includes(scenario)) return denied()
+  if (!d.members.some((m) => m.id === d.user.id && m.status === 'active' && m.role !== 'guest'))
+    return denied()
   if (!args.idempotencyKey) return fail('Thiếu khóa thao tác.')
   const key = d.company.id + ':operations:' + args.idempotencyKey
   if (replay.has(key)) return structuredClone(replay.get(key))
-  if (args.expectedRevision !== d.operationsRevision)
+  // Preferences and read notifications are the actor's own: no shared revision is checked or moved.
+  const personal = ['preferences.save', 'inbox.read'].includes(args.action)
+  if (!personal && args.expectedRevision !== d.operationsRevision)
     return {
       ok: true,
       value: {
@@ -44,22 +49,46 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
   const a = args.action
   let value = {}
   const project = d.projects.find((p) => p.id === args.projectId && !p.archived)
-  const workspace = d.workspaces.find((w) => w.id === args.workspaceId && !w.archived)
-  if (a === 'form.submit' && (!project || accessFor(d, project, d.user.id).role === 'viewer')) return denied()
+  if (
+    a === 'form.submit' &&
+    (!project || !['editor', 'member', 'admin', 'owner'].includes(accessFor(d, project, d.user.id).role))
+  )
+    return denied()
   const manager = canManageScope(d, 'company', d.company.id)
   if (a === 'form.save') {
     if (!project || !canManageScope(d, 'project', project.id)) return denied()
   }
   if (a === 'form.save') {
-    if (!String(args.title ?? '').trim()) return fail('Nhập tên biểu mẫu.')
+    if (typeof args.title !== 'string' || !args.title.trim())
+      return fail('Nhập tên biểu mẫu.', { title: 'Tên biểu mẫu là bắt buộc.' })
+    if (args.description !== undefined && typeof args.description !== 'string')
+      return fail('Hướng dẫn phải là văn bản.', { description: 'Nhập hướng dẫn bằng văn bản.' })
     if (!['internal', 'project'].includes(args.access)) return fail('Chọn phạm vi gửi biểu mẫu.')
     if (
       !Array.isArray(args.fields) ||
       args.fields.length > 12 ||
-      args.fields.some((f) => !f.label?.trim() || !['text', 'textarea', 'number'].includes(f.type))
+      args.fields.some(
+        (f) =>
+          !f ||
+          typeof f.label !== 'string' ||
+          !f.label.trim() ||
+          !['text', 'textarea', 'number'].includes(f.type) ||
+          (f.required !== undefined && typeof f.required !== 'boolean'),
+      )
     )
       return fail('Mỗi trường cần tên và kiểu dữ liệu, tối đa 12 trường.')
-    if (!d.people.includes(args.assignee)) return fail('Chọn người tiếp nhận.')
+    // The recipient is posted by id, as the native command takes it; the name is display only.
+    const recipient = d.members.find(
+      (m) => m.id === args.assigneeId && m.status === 'active' && m.role !== 'guest',
+    )
+    if (!recipient || !accessFor(d, project, recipient.id).role)
+      return fail('Chọn người tiếp nhận đang hoạt động trong dự án.', {
+        assignee: 'Chọn người tiếp nhận hợp lệ.',
+      })
+    if (args.priority !== undefined && !['normal', 'high', 'urgent'].includes(args.priority))
+      return fail('Chọn mức ưu tiên.', { priority: 'Mức ưu tiên không hợp lệ.' })
+    if (args.publish !== undefined && typeof args.publish !== 'boolean')
+      return fail('Trạng thái xuất bản không hợp lệ.', { publish: 'Chọn trạng thái xuất bản.' })
     let f = d.forms.find((f) => f.id === args.id)
     if (args.id && (!f || f.projectId !== project.id)) return denied()
     if (!f) {
@@ -68,77 +97,127 @@ export function operationsCommand(d, args, scenario, replay, baseCall) {
     }
     Object.assign(f, {
       title: args.title.trim(),
-      description: args.description ?? '',
+      description: args.description ?? f.description ?? '',
       access: args.access,
-      assignee: args.assignee,
-      priority: args.priority ?? 'normal',
-      fields: args.fields.map((x, i) => ({ ...x, id: 'field-' + i, required: !!x.required })),
-      status: args.publish ? 'published' : 'draft',
+      assigneeId: recipient.id,
+      assignee: recipient.name,
+      priority: args.priority ?? f.priority ?? 'normal',
+      fields: args.fields.map((x, i) => ({
+        label: x.label.trim(),
+        type: x.type,
+        id: 'field-' + i,
+        required: x.required ?? false,
+      })),
+      status: args.publish === undefined ? (f.status ?? 'draft') : args.publish ? 'published' : 'draft',
     })
     value = { id: f.id }
   } else if (a === 'form.submit') {
     const f = d.forms.find((f) => f.id === args.id && f.projectId === project?.id && f.status === 'published')
     if (!f) return fail('Biểu mẫu chưa được xuất bản.')
-    if (!String(args.title ?? '').trim())
-      return fail('Nhập tiêu đề yêu cầu.', { title: 'Tiêu đề là bắt buộc.' })
+    if (typeof args.title !== 'string' || !args.title.trim())
+      return fail('Nhập tiêu đề yêu cầu.', { 'request-title': 'Tiêu đề là bắt buộc.' })
+    if (
+      args.answers !== undefined &&
+      (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers))
+    )
+      return fail('Câu trả lời không hợp lệ.')
     for (const field of f.fields) {
       const v = args.answers?.[field.id]
-      if (field.required && !String(v ?? '').trim()) return fail(`Vui lòng nhập ${field.label}.`)
-      if (field.type === 'number' && v !== undefined && v !== '' && !Number.isFinite(Number(v)))
-        return fail(`${field.label} phải là số.`)
+      const errorField = 'answer-' + field.id
+      if (v !== undefined && typeof v !== 'string' && typeof v !== 'number')
+        return fail(`Câu trả lời cho ${field.label} không hợp lệ.`, { [errorField]: 'Nhập văn bản hoặc số.' })
+      if (field.required && !String(v ?? '').trim())
+        return fail(`Vui lòng nhập ${field.label}.`, { [errorField]: 'Trường này là bắt buộc.' })
+      if (field.type === 'number' && String(v ?? '').trim() && !Number.isFinite(Number(v)))
+        return fail(`${field.label} phải là số.`, { [errorField]: 'Nhập số hợp lệ.' })
     }
     const response = baseCall('flow.issue.save', {
       title: args.title,
       description: f.fields.map((field) => `${field.label}: ${args.answers?.[field.id] ?? ''}`).join('\n'),
       projectId: f.projectId,
-      assignee: f.assignee,
+      assigneeIds: [f.assigneeId],
       priority: f.priority,
       idempotencyKey: args.idempotencyKey + ':task',
     })
-    if (response.value?.ok === false) return response
+    if (!response?.ok || response.value?.ok === false) return response
+    if (!response.value?.id) return fail('Không tạo được công việc. Vui lòng thử lại.')
     f.responses++
     d.formResponses.unshift({
       id: crypto.randomUUID(),
       formId: f.id,
       taskId: response.value.id,
       title: args.title,
-      answers: args.answers,
+      answers: Object.fromEntries(f.fields.map((field) => [field.id, args.answers?.[field.id] ?? ''])),
       person: d.user.name,
       at: new Date().toISOString(),
     })
     value = { id: response.value.id }
   } else if (a === 'inbox.read') {
-    if (!Array.isArray(args.ids)) return fail('Chọn thông báo.')
+    if (!Array.isArray(args.ids) || args.ids.some((id) => typeof id !== 'string'))
+      return fail('Chọn thông báo.')
+    if (
+      args.ids.some(
+        (id) => !d.inbox.some((n) => n.id === id && (!n.recipientId || n.recipientId === d.user.id)),
+      )
+    )
+      return denied()
     for (const n of d.inbox)
       if (args.ids.includes(n.id) && (!n.recipientId || n.recipientId === d.user.id)) n.read = true
   } else if (a === 'view.save') {
     const v = d.views.find((v) => v.id === args.id)
-    if (!v || (v.ownerId && v.ownerId !== d.user.id && !manager)) return denied()
+    if (
+      !project ||
+      !accessFor(d, project, d.user.id).role ||
+      !v ||
+      v.archived ||
+      v.projectId !== project.id ||
+      (v.ownerId && v.ownerId !== d.user.id && !manager)
+    )
+      return denied()
+    if (args.archive !== undefined && typeof args.archive !== 'boolean')
+      return fail('Thao tác lưu trữ không hợp lệ.')
     if (args.archive) v.archived = true
     else {
-      if (!String(args.title ?? '').trim()) return fail('Nhập tên view.')
+      if (typeof args.title !== 'string' || !args.title.trim())
+        return fail('Nhập tên view.', { title: 'Tên view là bắt buộc.' })
+      if (args.description !== undefined && typeof args.description !== 'string')
+        return fail('Ghi chú phải là văn bản.', { description: 'Nhập ghi chú bằng văn bản.' })
+      if (args.query !== undefined && typeof args.query !== 'string')
+        return fail('Truy vấn phải là văn bản.', { query: 'Nhập truy vấn bằng văn bản.' })
+      if (args.visibility !== undefined && !['private', 'project'].includes(args.visibility))
+        return fail('Chọn phạm vi chia sẻ.', { visibility: 'Phạm vi không hợp lệ.' })
+      if (
+        args.status !== undefined &&
+        args.status !== 'all' &&
+        !taskColumns(d, project.id).some((c) => c.id === args.status)
+      )
+        return fail('Chọn trạng thái trong dự án.', { status: 'Trạng thái không hợp lệ.' })
       Object.assign(v, {
         title: args.title.trim(),
-        description: args.description ?? '',
-        visibility: args.visibility === 'project' ? 'project' : 'private',
+        description: args.description ?? v.description ?? '',
+        visibility: args.visibility ?? v.visibility ?? 'private',
         ownerId: v.ownerId ?? d.user.id,
-        query: String(args.query ?? v.query ?? ''),
-        status: taskColumns(d, args.projectId).some((c) => c.id === args.status) ? args.status : 'all',
+        query: args.query ?? v.query ?? '',
+        status: args.status ?? v.status ?? 'all',
       })
     }
   } else if (a === 'preferences.save') {
-    if (args.timezone)
+    if (args.notifications !== undefined && !['all', 'mentions', 'none'].includes(args.notifications))
+      return fail('Chọn tùy chọn thông báo.', { notifications: 'Tùy chọn không hợp lệ.' })
+    if (args.timezone !== undefined && (typeof args.timezone !== 'string' || !args.timezone.trim()))
+      return fail('Múi giờ không hợp lệ.', { timezone: 'Chọn múi giờ hợp lệ.' })
+    if (args.timezone !== undefined)
       try {
         new Intl.DateTimeFormat('vi', { timeZone: args.timezone }).format(new Date())
       } catch {
-        return fail('Múi giờ không hợp lệ.')
+        return fail('Múi giờ không hợp lệ.', { timezone: 'Chọn múi giờ hợp lệ.' })
       }
     Object.assign(d.personalPreferences, {
       timezone: args.timezone ?? d.personalPreferences.timezone,
-      notifications: args.notifications ?? 'mentions',
+      notifications: args.notifications ?? d.personalPreferences.notifications,
     })
   } else return fail('Thao tác chưa được hỗ trợ.')
-  d.operationsRevision++
+  if (!personal) d.operationsRevision++
   const result = { ok: true, value }
   replay.set(key, structuredClone(result))
   return result

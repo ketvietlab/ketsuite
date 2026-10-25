@@ -14,7 +14,7 @@ import {
 
 const SCOPE = { company: 'acme', branches: null }
 const modules = [address, partner, website, websiteSeo, paperTheme]
-const manifest = compose(modules)
+const manifest = compose(modules, { companies: true })
 
 const boot = async (): Promise<{ db: Adapter; manifest: Manifest }> => {
   const db = sqliteAdapter()

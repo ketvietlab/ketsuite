@@ -30,7 +30,7 @@ const wave2Probe = defineModule({
   },
 })
 const modules = [address, partner, company, uom, product, account, wave2Probe]
-const manifest = compose(modules, { headless: true })
+const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>
   callFn(name, args, { adapter, manifest, scope }).then((result) => result.value as Row)

@@ -12,7 +12,6 @@ export const HOOKS = [
   'chatter-composer',
   'chatter-kinds',
   'chatter-kind',
-  'chatter-body',
   'chatter-compose-actions',
   'chatter-attachment',
   'chatter-send',

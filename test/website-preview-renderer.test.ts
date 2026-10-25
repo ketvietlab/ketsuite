@@ -27,11 +27,12 @@ const SCOPE = { company: 'acme', branches: null }
 // The theme is passed to the deployment, not listed beside the modules: compose
 // refuses the same name twice, and `theme:` is how a deployment names its own.
 const modules = [address, partner, website]
-const manifest = compose([...modules, paperTheme])
+const manifest = compose([...modules, paperTheme], { companies: true })
 const memory = { KET_LOG: 'null', KET_SQLITE: ':memory:', KET_COMPANY: 'acme' }
 
 const app = defineDeployment({
   name: 'preview_app',
+  companies: true,
   modules,
   theme: paperTheme,
   serve: {
@@ -226,6 +227,7 @@ test('preview: the path it is served from is one no page can be published at', (
 test('boot: a preview resolver naming nothing is refused before the first request', async () => {
   const broken = defineDeployment({
     name: 'broken_preview',
+    companies: true,
     modules,
     theme: paperTheme,
     serve: {
@@ -244,6 +246,7 @@ test('boot: a preview resolver naming nothing is refused before the first reques
 test('boot: a preview path a page could claim is refused', async () => {
   const claimable = defineDeployment({
     name: 'claimable_preview',
+    companies: true,
     modules,
     theme: paperTheme,
     serve: {

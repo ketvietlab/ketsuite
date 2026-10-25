@@ -24,7 +24,9 @@ export default defineModule({
   depends: ['product_backend', 'product_variant_mail_backend', 'activity_backend'],
   functions,
   fills: {
-    'product_backend:variant.collaboration': `{% island "activity.record" %}`,
+    // The panel opens on the activity types and this variant's activities; whoever may not
+    // read both is not shown it.
+    'product_backend:variant.collaboration': `{% if may.activity.listTypes %}{% if may.product_variant_activity_backend.list %}{% island "activity.record" %}{% endif %}{% endif %}`,
   },
 })
 

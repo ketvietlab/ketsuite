@@ -5,8 +5,8 @@ import { defineFormSchema } from '@ketvietlab/ketjs-view'
 import backend from '@ketvietlab/ketsuite/backend'
 import { formRefusal } from '@ketvietlab/ketsuite/backend'
 
-const _ = translator(compose([backend], { headless: true }), 'vi')
-const en = translator(compose([backend], { headless: true }), 'en')
+const _ = translator(compose([backend], { headless: true, companies: true }), 'vi')
+const en = translator(compose([backend], { headless: true, companies: true }), 'en')
 
 const programme = defineFormSchema({
   fields: {

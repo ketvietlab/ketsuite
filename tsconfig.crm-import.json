@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": [
+    "packages/ketsuite/src/modules/crm/index.ts",
+    "packages/ketsuite/src/modules/crm_backend/index.ts",
+    "test/crm-import*.test.ts"
+  ],
+  "exclude": ["node_modules", "packages/*/dist", ".build"]
+}

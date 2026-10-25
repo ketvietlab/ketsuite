@@ -1,8 +1,44 @@
 import { tr } from './i18n.mjs'
 export const routes = {
+  'task-exchange': {
+    get title() {
+      return tr('flow.exchange.title')
+    },
+    get group() {
+      return tr('flow.ui.projects')
+    },
+    pattern: 'workspace',
+  },
+  'invitation-accept': {
+    get title() {
+      return tr('flow.invitation.title')
+    },
+    get group() {
+      return tr('flow.ui.personal')
+    },
+    pattern: 'record',
+  },
+  'issue-copy': {
+    get title() {
+      return tr('flow.relocation.copy')
+    },
+    get group() {
+      return tr('flow.ui.work')
+    },
+    pattern: 'record',
+  },
+  'issue-transfer': {
+    get title() {
+      return tr('flow.relocation.transfer')
+    },
+    get group() {
+      return tr('flow.ui.work')
+    },
+    pattern: 'record',
+  },
   'workspace-settings': {
     get title() {
-      return tr('flow.ui.workspace.setup')
+      return tr('flow.ui.workspace.settings')
     },
     get group() {
       return tr('flow.ui.workspace.844042')
@@ -279,7 +315,7 @@ export const routes = {
   },
   epic: {
     get title() {
-      return tr('flow.ui.epic.sales.channel.integration')
+      return tr('flow.ui.epic')
     },
     get group() {
       return tr('flow.ui.planning')

@@ -37,6 +37,8 @@ const modules = [
 export const createCommerceDeployment = (openStore: OpenStore = sqliteStore) =>
   defineDeployment({
     name: 'commerce',
+    // Every KetSuite row belongs to a company; KetJS scopes by company only on request.
+    companies: true,
     datastore: 'commerce',
     modules,
     permissions: productPermissions(

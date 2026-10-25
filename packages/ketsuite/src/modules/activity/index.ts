@@ -1,12 +1,12 @@
 import { defineModule } from '@ketvietlab/ketjs'
-import { functions } from './functions.ts'
+import { functions } from './functions/index.ts'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
 
 export default defineModule({
   name: 'activity',
   version: '0.1.0',
-  depends: ['mail', 'user', 'storage'],
+  depends: ['mail', 'user', 'storage', 'company'],
   title: 'Hoạt động',
   summary: 'Việc cần làm, hạn xử lý, kế hoạch và chuỗi hoạt động trên bản ghi.',
   category: 'Năng suất',
@@ -27,7 +27,7 @@ export default defineModule({
   },
 })
 
-export { functions } from './functions.ts'
+export { functions } from './functions/index.ts'
 export {
   actorId,
   addDays,
@@ -35,10 +35,11 @@ export {
   completeActivity,
   listTypes,
   rescheduleActivity,
+  reassignActivity,
   scheduleActivity,
   stateOf,
-} from './operations.ts'
-export type { CompleteActivityResult, ScheduleActivityInput } from './operations.ts'
+} from './activity-service.ts'
+export type { CompleteActivityResult, ScheduleActivityInput } from './activity-service.ts'
 export { targetActivityFunctions } from './target.ts'
 export {
   ACTIVITY_CATEGORIES,

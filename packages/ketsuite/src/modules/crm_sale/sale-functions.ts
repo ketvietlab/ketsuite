@@ -1,6 +1,15 @@
-import { asc, defineFn, desc, eq, from, inArray } from '@ketvietlab/ketjs'
+import { asc, defineFn, deleteFrom, desc, eq, from, inArray } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
-import { addTimeline, canReadCase, commandKey, invalid, issue, normalized, now } from '../crm/index.ts'
+import {
+  addTimeline,
+  canEditCase,
+  canReadCase,
+  commandKey,
+  invalid,
+  issue,
+  normalized,
+  now,
+} from '../crm/index.ts'
 import { functions as saleFunctions } from '../sale/functions.ts'
 import { ours } from '../sale/scope.ts'
 import { AUTHORIZATION_READ_EFFECTS } from '../user/authorization.ts'
@@ -136,8 +145,9 @@ export async function createQuotationForCase(
         ...(input.pricelistId ? { pricelistId: input.pricelistId } : {}),
         ...(input.paymentTermId ? { paymentTermId: input.paymentTermId } : {}),
         ...(input.validityDate ? { validityDate: input.validityDate } : {}),
-        notes: input.notes ?? `CRM opportunity ${input.caseId}`,
-        clientOrderRef: `CRM:${input.caseId}`,
+        // The quotation is printed for the customer: its reference and notes are theirs, not the opportunity's id.
+        // `OpportunityQuotation` ties it to the opportunity.
+        ...(input.notes ? { notes: input.notes } : {}),
       })) as Row
       if (created.ok !== true) return refuse(created)
       for (const [index, product] of products.entries()) {
@@ -174,6 +184,254 @@ export async function createQuotationForCase(
     if (error instanceof Refused) return error.result
     throw error
   }
+}
+
+/** The step a quotation took, as the case's history names it, and the order states that show it was taken. */
+const QUOTATION_STEPS: Record<string, { event: string; states: string[] }> = {
+  sent: { event: 'quotation_sent', states: ['sent'] },
+  accepted: { event: 'quotation_accepted', states: ['sale', 'done'] },
+}
+
+/** A refusal thrown so the transaction it happened inside rolls back. */
+class QuotationRefused extends Error {
+  result: Row
+  constructor(result: Row) {
+    super('refused')
+    this.result = result
+  }
+}
+
+/** A quotation of a case the actor may read, or the refusal to return. */
+const quotationOf = async (ctx: Ctx, caseId: string, orderId: string): Promise<Row> => {
+  const held = (await ctx.db.select('crm.Case', { id: caseId }))[0]
+  if (!held || !(await canReadCase(ctx, held)))
+    throw new QuotationRefused(invalid(issue('caseId', 'crm.error.notFound')) as Row)
+  const link = (await ctx.db.select('crm_sale.OpportunityQuotation', { caseId, salesOrderId: orderId }))[0]
+  const order = link ? (await ours(ctx, 'sale.Order', { id: orderId }))[0] : undefined
+  if (!order) throw new QuotationRefused(invalid(issue('quoteId', 'crm.error.notFound')) as Row)
+  return order
+}
+
+/**
+ * A quotation written again: its lines replaced, priced as the form says, and its validity moved. One already sent
+ * goes back to a draft, to be sent again; an accepted one is an order and stays as it is.
+ */
+export async function reviseQuotationForCase(
+  ctx: Ctx,
+  input: {
+    caseId: string
+    orderId: string
+    expectedRevision: number
+    validityDate?: string
+    products?: unknown
+    idempotencyKey: string
+  },
+): Promise<Row> {
+  if (!ctx.actor) return invalid(issue('actor', 'crm.error.actorRequired'))
+  if (!commandKey(input.idempotencyKey))
+    return invalid(issue('idempotencyKey', 'crm.error.idempotencyRequired'))
+  const products = productsOf(input.products)
+  if (!products) return invalid(issue('products', 'crm.error.required'))
+  if (!products.length) return invalid(issue('products', 'crm_sale.error.productRequired'))
+  const entry = `timeline:${input.caseId}:quotation-revise:${input.orderId}:${input.idempotencyKey}`
+  try {
+    return await ctx.tx(async (tx) => {
+      const order = await quotationOf(tx, input.caseId, input.orderId)
+      // The same request again finds its revision written.
+      if ((await tx.db.select('crm.TimelineEntry', { id: entry }))[0])
+        return { ok: true, id: input.orderId, revision: Number(order.revision ?? 0) }
+      if (!['draft', 'sent'].includes(String(order.state)) || order.locked)
+        throw new QuotationRefused(invalid(issue('quoteId', 'crm_sale.error.quotationClosed')) as Row)
+      const revision = Number(order.revision ?? 0)
+      if (revision !== Number(input.expectedRevision))
+        throw new QuotationRefused(
+          invalid(issue('version', 'crm.error.stageConflict', { current: revision })) as Row,
+        )
+      const claimed = await tx.db.compareAndSet(
+        'sale.Order',
+        { id: input.orderId },
+        { revision: order.revision ?? null },
+        {
+          revision: revision + 1,
+          state: 'draft',
+          ...(input.validityDate ? { validityDate: input.validityDate } : {}),
+        },
+      )
+      if (!('dryRun' in claimed) && !claimed.matched)
+        throw new QuotationRefused(
+          invalid(issue('version', 'crm.error.stageConflict', { current: revision })) as Row,
+        )
+      const L = tx.table('sale.OrderLine')
+      await tx.db.del(deleteFrom(L).where(eq(L.orderId, input.orderId)))
+      for (const [index, product] of products.entries()) {
+        const line = (await saleFunctions.addLine!.handler(tx, {
+          id: `${input.orderId}:line:${revision + 1}:${index + 1}`,
+          orderId: input.orderId,
+          productId: product.productId,
+          productUomId: product.productUomId,
+          productUomQty: product.quantity,
+          ...(product.name ? { name: product.name } : {}),
+          ...(product.priceUnit != null ? { priceUnit: product.priceUnit } : {}),
+          ...(product.discount != null ? { discount: product.discount } : {}),
+          ...(product.taxId ? { taxId: product.taxId } : {}),
+          sequence: (index + 1) * 10,
+        })) as Row
+        if (line.ok !== true) throw new QuotationRefused(line)
+      }
+      await addTimeline(tx, {
+        id: entry,
+        caseId: input.caseId,
+        eventType: 'quotation_revised',
+        body: String(order.name ?? input.orderId),
+        metadata: { salesOrderId: input.orderId },
+      })
+      const after = (await ours(tx, 'sale.Order', { id: input.orderId }))[0]
+      return { ok: true, id: input.orderId, revision: Number(after?.revision ?? revision + 1) }
+    })
+  } catch (error) {
+    if (error instanceof QuotationRefused) return error.result
+    throw error
+  }
+}
+
+/** Puts a quotation's sending or acceptance, once the order shows it, on the case's history. */
+export async function recordQuotationStep(
+  ctx: Ctx,
+  input: { caseId: string; orderId: string; step: string; idempotencyKey: string },
+): Promise<Row> {
+  const step = Object.hasOwn(QUOTATION_STEPS, input.step) ? QUOTATION_STEPS[input.step] : undefined
+  if (!step) return invalid(issue('step', 'crm.error.required'))
+  if (!commandKey(input.idempotencyKey))
+    return invalid(issue('idempotencyKey', 'crm.error.idempotencyRequired'))
+  try {
+    const order = await quotationOf(ctx, input.caseId, input.orderId)
+    if (!step.states.includes(String(order.state)))
+      return invalid(issue('quoteId', 'crm_sale.error.quotationClosed'))
+    const id = `timeline:${input.caseId}:${step.event}:${input.orderId}:${input.idempotencyKey}`
+    if (!(await ctx.db.select('crm.TimelineEntry', { id }))[0])
+      await addTimeline(ctx, {
+        id,
+        caseId: input.caseId,
+        eventType: step.event,
+        body: String(order.name ?? input.orderId),
+        metadata: { salesOrderId: input.orderId },
+      })
+    return { ok: true, id: input.orderId }
+  } catch (error) {
+    if (error instanceof QuotationRefused) return error.result
+    throw error
+  }
+}
+
+/** How quotations written in Sales meet opportunities: only those written from one, or attached by hand too. */
+export const QUOTATION_POLICIES = ['off', 'attach'] as const
+
+const policyId = (ctx: Ctx) => `crm-sale-quotation-policy:${String(ctx.scope.company ?? '')}`
+
+/** The company's policy; a company that never chose keeps quotations to the opportunity that wrote them. */
+export async function quotationPolicyOf(ctx: Ctx): Promise<{ saleQuotations: string; version: number }> {
+  const row = (await ctx.db.select('crm_sale.QuotationPolicy', { id: policyId(ctx) }))[0]
+  const mode = String(row?.saleQuotations ?? '')
+  return {
+    saleQuotations: (QUOTATION_POLICIES as readonly string[]).includes(mode) ? mode : 'off',
+    version: Number(row?.version ?? 0),
+  }
+}
+
+/** Saves the company's policy, as of the version the form read. */
+export async function saveQuotationPolicy(
+  ctx: Ctx,
+  input: { saleQuotations: string; expectedVersion?: number | null },
+): Promise<Row> {
+  const mode = String(input.saleQuotations ?? '')
+  if (!(QUOTATION_POLICIES as readonly string[]).includes(mode))
+    return invalid(issue('saleQuotations', 'crm_sale.error.policyUnknown'))
+  if (!ctx.scope.company) return invalid(issue('company', 'crm.error.notFound'))
+  const id = policyId(ctx)
+  return ctx.tx(async (tx) => {
+    const held = (await tx.db.select('crm_sale.QuotationPolicy', { id }))[0]
+    const version = Number(held?.version ?? 0)
+    if (input.expectedVersion != null && Number(input.expectedVersion) !== version)
+      return invalid(issue('version', 'crm_sale.error.policyChanged'))
+    if (!held) {
+      await tx.db.insert('crm_sale.QuotationPolicy', {
+        id,
+        saleQuotations: mode,
+        version: 1,
+        updatedAt: now(),
+      })
+      return { ok: true, id, version: 1 }
+    }
+    const changed = await tx.db.compareAndSet(
+      'crm_sale.QuotationPolicy',
+      { id },
+      { version: held.version },
+      { saleQuotations: mode, version: version + 1, updatedAt: now() },
+    )
+    if (!('dryRun' in changed) && !changed.matched)
+      return invalid(issue('version', 'crm_sale.error.policyChanged'))
+    return { ok: true, id, version: version + 1 }
+  })
+}
+
+/**
+ * Attaches a quotation written in Sales to an opportunity of the same customer, when the company allows it. A
+ * quotation belongs to one opportunity at most; attaching it again to the same one returns it.
+ */
+export async function attachQuotation(
+  ctx: Ctx,
+  input: { caseId: string; orderId: string; idempotencyKey: string },
+): Promise<Row> {
+  if (!commandKey(input.idempotencyKey))
+    return invalid(issue('idempotencyKey', 'crm.error.idempotencyRequired'))
+  return ctx.tx(async (tx) => {
+    const held = (await tx.db.select('crm.Case', { id: input.caseId }))[0]
+    if (!held || !(await canEditCase(tx, held))) return invalid(issue('caseId', 'crm.error.notFound'))
+    if (held.kind !== 'opportunity') return invalid(issue('caseId', 'crm_sale.error.opportunityRequired'))
+    if ((await quotationPolicyOf(tx)).saleQuotations !== 'attach')
+      return invalid(issue('quoteId', 'crm_sale.error.attachOff'))
+    const order = (await ours(tx, 'sale.Order', { id: input.orderId }))[0]
+    if (!order || order.state === 'cancel') return invalid(issue('quoteId', 'crm.error.notFound'))
+    if (!held.partnerId || String(order.partnerId) !== String(held.partnerId))
+      return invalid(issue('quoteId', 'crm_sale.error.attachCustomer'))
+    const taken = (await tx.db.select('crm_sale.OpportunityQuotation', { salesOrderId: input.orderId }))[0]
+    if (taken)
+      return String(taken.caseId) === input.caseId
+        ? { ok: true, id: input.orderId }
+        : invalid(issue('quoteId', 'crm_sale.error.attachTaken'))
+    await tx.db.insert('crm_sale.OpportunityQuotation', {
+      id: `crm-quotation:${input.orderId}`,
+      caseId: input.caseId,
+      salesOrderId: input.orderId,
+      createdAt: now(),
+    })
+    await addTimeline(tx, {
+      id: `timeline:${input.caseId}:quotation_attached:${input.orderId}`,
+      caseId: input.caseId,
+      eventType: 'quotation_attached',
+      body: String(order.name ?? input.orderId),
+      metadata: { salesOrderId: input.orderId },
+    })
+    return { ok: true, id: input.orderId }
+  })
+}
+
+/** The quotations of a record merged into another follow it, as its messages and activities do. */
+export async function followMerge(ctx: Ctx, input: { sourceId: string; targetId: string }): Promise<Row> {
+  const [source, target] = await Promise.all([
+    ctx.db.select('crm.Case', { id: input.sourceId }),
+    ctx.db.select('crm.Case', { id: input.targetId }),
+  ])
+  if (
+    !source[0] ||
+    !target[0] ||
+    String(source[0].mergedIntoId ?? '') !== input.targetId ||
+    !(await canReadCase(ctx, target[0]))
+  )
+    return invalid(issue('sourceId', 'crm.error.notFound'))
+  for (const link of await ctx.db.select('crm_sale.OpportunityQuotation', { caseId: input.sourceId }))
+    await ctx.db.update('crm_sale.OpportunityQuotation', { id: link.id }, { caseId: input.targetId })
+  return { ok: true, id: input.targetId }
 }
 
 /**
@@ -295,5 +553,100 @@ export const saleFunctionsPublic: Record<string, FnSpec> = {
     idempotent: true,
     agent: true,
     handler: (ctx, args) => createQuotationForCase(ctx, args as never),
+  }),
+
+  /**
+   * Internal: the sales command route checks `crm_sale.sale.createQuotation` first, as writing a quotation again is
+   * writing it. Reading the case is checked here.
+   */
+  'sale.reviseQuotation': defineFn({
+    input: {
+      caseId: 'id',
+      orderId: 'id',
+      expectedRevision: 'int',
+      validityDate: 'datetime?',
+      products: 'json?',
+      idempotencyKey: 'text',
+    },
+    output: { ok: 'bool', id: 'id?', revision: 'int?', errors: 'json?' },
+    effects: [...quotationEffects, 'read:crm.TimelineEntry'],
+    exposure: 'internal',
+    idempotent: true,
+    handler: (ctx, args) => reviseQuotationForCase(ctx, args as never),
+  }),
+
+  /**
+   * Internal: the sales command route calls it after `sale.sendQuotation` or `sale.confirmOrder` ran as the user;
+   * it writes only the history line, once the order shows the step.
+   */
+  'sale.recordQuotationStep': defineFn({
+    input: { caseId: 'id', orderId: 'id', step: 'text', idempotencyKey: 'text' },
+    output: { ok: 'bool', id: 'id?', errors: 'json?' },
+    effects: [
+      'read:crm.Case',
+      'read:crm.Team',
+      'read:crm.TeamMember',
+      ...AUTHORIZATION_READ_EFFECTS,
+      'read:user.User',
+      'read:crm_sale.OpportunityQuotation',
+      'read:sale.Order',
+      'read:crm.TimelineEntry',
+      'write:crm.TimelineEntry',
+    ],
+    exposure: 'internal',
+    idempotent: true,
+    handler: (ctx, args) => recordQuotationStep(ctx, args as never),
+  }),
+
+  /** Internal: the sales command route checks `crm.stage.save` first: the policy is part of the pipeline's setup. */
+  'sale.saveQuotationPolicy': defineFn({
+    input: { saleQuotations: 'text', expectedVersion: 'int?', idempotencyKey: 'text' },
+    output: { ok: 'bool', id: 'id?', version: 'int?', errors: 'json?' },
+    effects: ['read:crm_sale.QuotationPolicy', 'write:crm_sale.QuotationPolicy'],
+    exposure: 'internal',
+    idempotent: true,
+    handler: (ctx, args) => saveQuotationPolicy(ctx, args as never),
+  }),
+
+  /**
+   * Internal: the sales command route checks `crm_sale.sale.createQuotation` first, as attaching a quotation is
+   * quoting the opportunity. Editing the case is checked here.
+   */
+  'sale.attachQuotation': defineFn({
+    input: { caseId: 'id', orderId: 'id', idempotencyKey: 'text' },
+    output: { ok: 'bool', id: 'id?', errors: 'json?' },
+    effects: [
+      'read:crm.Case',
+      'read:crm.Team',
+      'read:crm.TeamMember',
+      ...AUTHORIZATION_READ_EFFECTS,
+      'read:user.User',
+      'read:crm_sale.QuotationPolicy',
+      'read:crm_sale.OpportunityQuotation',
+      'write:crm_sale.OpportunityQuotation',
+      'read:sale.Order',
+      'write:crm.TimelineEntry',
+    ],
+    exposure: 'internal',
+    idempotent: true,
+    handler: (ctx, args) => attachQuotation(ctx, args as never),
+  }),
+
+  /** Internal: the sales command route calls it after `crm.case.merge` folded the source into the target. */
+  'sale.followMerge': defineFn({
+    input: { sourceId: 'id', targetId: 'id' },
+    output: { ok: 'bool', id: 'id?', errors: 'json?' },
+    effects: [
+      'read:crm.Case',
+      'read:crm.Team',
+      'read:crm.TeamMember',
+      ...AUTHORIZATION_READ_EFFECTS,
+      'read:user.User',
+      'read:crm_sale.OpportunityQuotation',
+      'write:crm_sale.OpportunityQuotation',
+    ],
+    exposure: 'internal',
+    idempotent: true,
+    handler: (ctx, args) => followMerge(ctx, args as never),
   }),
 }

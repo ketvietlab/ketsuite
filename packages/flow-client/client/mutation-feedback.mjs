@@ -63,7 +63,8 @@ export function mutationFeedback(name, input, value, data) {
   if (name === 'flow.issue.save') {
     key = input.id ? 'saved' : 'created'
     target = { route: 'issue', params: { id, project: entity?.projectId ?? input.projectId } }
-  } else if (name === 'flow.entity.save' || action.endsWith('.save')) {
+  } else if (action === 'view.save' && input.archive === true) key = 'archived'
+  else if (name === 'flow.entity.save' || action.endsWith('.save')) {
     key = input.entityId || input.id || ['company', 'preferences'].includes(kind) ? 'saved' : 'created'
     if (route)
       target = {
@@ -80,6 +81,8 @@ export function mutationFeedback(name, input, value, data) {
     target = { route: 'issue', params: { id, project: input.projectId } }
   } else if (action === 'inbox.read') key = 'read'
   else if (action === 'member.invite' || action === 'invitation.resend') key = 'invited'
+  // A grant names no single record: it may cover several people, and its id is internal.
+  else if (action === 'access.grant') key = 'granted'
   else if (action.includes('revoke')) key = 'revoked'
   else if (action === 'report') key = 'reportSent'
   else if (action === 'report.resolve') key = 'reportResult'
