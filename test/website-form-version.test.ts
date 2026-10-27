@@ -347,6 +347,23 @@ test('form: a form that shows a notice will not accept a submission without agre
   assert.deepEqual(await call(db, 'website_form.listSubmissions', { formId: 'f1' }), [])
 })
 
+test('form: a missing agreement and an empty field are reported together', async () => {
+  const db = await boot()
+  await seed(db)
+  await call(db, 'website_form.saveForm', withNotice)
+
+  const refused = (await call(db, 'website_form.submitForm', { formId: 'f1', payload: {} })) as Result
+  assert.equal(refused.ok, false)
+  // One round trip names everything to fix, not the notice first and the field after.
+  assert.deepEqual(
+    refused.errors?.map((e) => [e.field, e.message]),
+    [
+      ['consent', 'website_form.error.consentRequired'],
+      ['email', 'website_form.error.required'],
+    ],
+  )
+})
+
 test('form: a submission records the exact notice it agreed to', async () => {
   const db = await boot()
   await seed(db)

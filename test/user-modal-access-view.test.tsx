@@ -332,8 +332,25 @@ test('the profile dialog edits who a person is and where they work as two decisi
   // because that company is held.
   assert.match(html, /name="company_company-a"[^>]*checked/)
   assert.match(html, /name="branch_cau-giay"/)
-  assert.match(html, /name="defaultCompanyId"/)
   assert.doesNotMatch(html, /name="workplaceReason"/)
+  // Where they land is picked like every other relation: a RelationSelect over the places ticked above,
+  // its trigger carrying the field's id so the label names it, never a plain select.
+  assert.doesNotMatch(html, /<select[^>]*name="default(Company|Branch)Id"/)
+  const pickers = [...html.matchAll(/data-island="backend\.relation-select" data-props="([^"]*)"/g)].map(
+    (match) => JSON.parse((match[1] as string).replaceAll('&quot;', '"').replaceAll('&amp;', '&')),
+  )
+  const picker = (name: string) => pickers.find((props) => props.config.name === name)?.config
+  assert.equal(picker('defaultCompanyId')?.triggerId, 'user-user-defaultCompanyId')
+  assert.equal(picker('defaultBranchId')?.triggerId, 'user-user-defaultBranchId')
+  assert.equal(picker('defaultCompanyId')?.required, true)
+  assert.deepEqual(
+    picker('defaultCompanyId')?.options.map((option: { value: string }) => option.value),
+    ['company-a'],
+  )
+  assert.deepEqual(
+    picker('defaultBranchId')?.options.map((option: { value: string }) => option.value),
+    ['cau-giay'],
+  )
 
   // A company nobody ticked offers none of its branches.
   const other = render(

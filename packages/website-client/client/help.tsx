@@ -6,9 +6,9 @@ import type { StudioContext } from './types.ts'
 const recipes: Record<string, readonly [string, string, string, string]> = {
   overview: [
     'Xem số liệu và tình trạng nội dung của website đang chọn.',
-    'Chọn một mục trên thanh điều hướng để xử lý nội dung tương ứng.',
+    'Chọn một mục trên thanh điều hướng để xử lý nội dung tương ứng. Website đang trực tuyến khi đã có ít nhất một trang xuất bản, kể cả trang xuất bản riêng lẻ. Công ty chưa có website thì màn hình mời tạo website đầu tiên, hoặc nhờ người quản trị website nếu tài khoản không được tạo.',
     'Review the selected website’s content and status.',
-    'Choose a navigation item to work on that content.',
+    'Choose a navigation item to work on that content. The website is live once at least one page is published, including a page published on its own. A company without a website is offered its first one, or told to ask a website administrator when the account cannot create it.',
   ],
   entries: [
     'Quản lý trang và bài viết của website đang chọn.',
@@ -114,9 +114,9 @@ const recipes: Record<string, readonly [string, string, string, string]> = {
   ],
   sites: [
     'Quản lý website của công ty hiện tại.',
-    'Chọn website cần làm việc hoặc tạo website mới khi được cấp quyền. Kiểm tra tên và các trường bắt buộc trước khi xác nhận tạo.',
+    'Chọn website cần làm việc hoặc tạo website mới khi được cấp quyền. Danh sách ghi tên miền chính và trạng thái của từng website. Website mới thuộc công ty đang đăng nhập; nhập tên, tên miền, mã và ngôn ngữ mặc định rồi xác nhận tạo.',
     'Manage websites of the current company.',
-    'Select a website or create one when allowed. Review its name and required fields before confirming creation.',
+    'Select a website or create one when allowed. The list shows each website’s primary domain and state. A new website belongs to the signed-in company; enter its name, domain, code and default language, then confirm.',
   ],
   themes: [
     'Chỉnh giao diện và logo của website đang chọn.',
@@ -126,9 +126,9 @@ const recipes: Record<string, readonly [string, string, string, string]> = {
   ],
   menus: [
     'Quản lý menu và liên kết điều hướng của website.',
-    'Mở menu, chỉnh nhãn, đích và thứ tự các mục. Kiểm tra cảnh báo liên kết trước khi lưu.',
+    'Mở menu, chỉnh nhãn, đích và thứ tự các mục. Kiểm tra cảnh báo liên kết trước khi lưu. Mỗi website có một menu đầu trang theo ngôn ngữ mặc định; chưa có menu chân trang hay menu theo ngôn ngữ khác.',
     'Manage website menus and navigation links.',
-    'Open a menu, edit labels, destinations and ordering. Review link warnings before saving.',
+    'Open a menu, edit labels, destinations and ordering. Review link warnings before saving. Each website has one header menu in its default language; footer menus and menus for other languages are not available yet.',
   ],
   seo: [
     'Quản lý thông tin tìm kiếm và chia sẻ của website.',

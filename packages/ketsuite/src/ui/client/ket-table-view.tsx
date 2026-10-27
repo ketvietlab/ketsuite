@@ -1,5 +1,5 @@
 import { Badge, createKetTableView, Inline, MediaLabel, Text } from '@ketvietlab/design-system'
-import type { IconName, KetTableGroup, KetTableConfig } from '@ketvietlab/design-system'
+import type { IconName, KetTableConfig, KetTableExtensions, KetTableGroup } from '@ketvietlab/design-system'
 import type { IslandController, IslandProps } from '@ketvietlab/ketjs-view'
 
 // A thin, shared registration point — not a reimplementation like
@@ -7,6 +7,33 @@ import type { IslandController, IslandProps } from '@ketvietlab/ketjs-view'
 // kind has one place to add it, registered identically for the server-side
 // `view:` in `backend/islands.ts` and this same file's client bundle entry
 // in `tools/build-backend-client.mjs`. Media and text use public DS primitives.
+/** Cells that read only their row, shared with the collection islands (row-list-island.tsx). */
+export const ketTableCellRenderers: KetTableExtensions = {
+  // A classification in words. `status` draws a badge, which is for states
+  // and exceptions; a value most rows share would repeat the same pill down
+  // the column and stop the colour meaning anything.
+  label: (value, _row, options) => {
+    const labels = (options?.labels ?? {}) as Record<string, string>
+    const key = String(value ?? '')
+    const muted = Array.isArray(options?.mutedValues) && options.mutedValues.includes(key)
+    return <Text tone={muted ? 'muted' : 'default'}>{labels[key] ?? key}</Text>
+  },
+  // A name with the one exception worth seeing on its row, such as authority
+  // that answers to nothing else. Most rows carry no flag and show the name alone.
+  flagged: (value, row, options) => {
+    const name = <Text>{String(value ?? '')}</Text>
+    if (!row[String(options?.flag ?? 'flag')]) return name
+    const tone = (options?.tone ?? 'warning') as 'warning'
+    return (
+      <Inline
+        gap="tight"
+        blockAlign="center"
+        items={[name, <Badge label={String(options?.label ?? '')} tone={tone} />]}
+      />
+    )
+  },
+}
+
 export const ketTable = (props: IslandProps): IslandController =>
   createKetTableView(props as never, {
     'thumbnail-label': (value, row, options) => {
@@ -32,27 +59,5 @@ export const ketTable = (props: IslandProps): IslandController =>
         />
       )
     },
-    // A classification in words. `status` draws a badge, which is for states
-    // and exceptions; a value most rows share would repeat the same pill down
-    // the column and stop the colour meaning anything.
-    label: (value, _row, options) => {
-      const labels = (options?.labels ?? {}) as Record<string, string>
-      const key = String(value ?? '')
-      const muted = Array.isArray(options?.mutedValues) && options.mutedValues.includes(key)
-      return <Text tone={muted ? 'muted' : 'default'}>{labels[key] ?? key}</Text>
-    },
-    // A name with the one exception worth seeing on its row, such as authority
-    // that answers to nothing else. Most rows carry no flag and show the name alone.
-    flagged: (value, row, options) => {
-      const name = <Text>{String(value ?? '')}</Text>
-      if (!row[String(options?.flag ?? 'flag')]) return name
-      const tone = (options?.tone ?? 'warning') as 'warning'
-      return (
-        <Inline
-          gap="tight"
-          blockAlign="center"
-          items={[name, <Badge label={String(options?.label ?? '')} tone={tone} />]}
-        />
-      )
-    },
+    ...ketTableCellRenderers,
   })

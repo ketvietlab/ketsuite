@@ -47,46 +47,78 @@ const boot = async (t: TestContext) => {
   return app
 }
 
-test('identity lists HTTP: the bar replaces the GET search and drives the same URL state', async (t) => {
+/** One page of people, as the list's islands read it. */
+const readPeople = async (app: Awaited<ReturnType<typeof boot>>, href: string) => {
+  const response = await app.client.post(`${PEOPLE}/read?lang=vi`, JSON.stringify({ href }), {
+    headers: { 'content-type': 'application/json' },
+  })
+  assert.equal(response.status, 200, href)
+  return ((await response.json()) as { value: { rows: Row[]; groups: Array<{ href: string }> | null } }).value
+}
+const ids = (answer: { rows: Row[] }) => answer.rows.map((row) => row.id)
+
+test('identity lists HTTP: the bar drives the URL the people read applies', async (t) => {
   const app = await boot(t)
 
   const all = await app.client.get(`${PEOPLE}?lang=vi`)
   const allHtml = await all.text()
   assert.equal(all.status, 200)
-  assert.match(allHtml, /data-island="backend\.search-filter"/)
+  assert.match(allHtml, /data-island="backend\.row-list-controls"[\s\S]*?data-ui="search-filter"/)
   assert.doesNotMatch(allHtml, /name="q"[^>]*data-ui="chrome-search-input"/)
-  assert.match(allHtml, /data-row="portal-guest"/)
-  assert.doesNotMatch(allHtml, /data-row="left"/)
+  assert.doesNotMatch(allHtml, /data-row="portal-guest"/, 'no person is rendered on the server')
 
-  const searched = await (await app.client.get(`${PEOPLE}?lang=vi&q=Portal`)).text()
-  assert.match(searched, /data-row="portal-guest"/)
-  assert.doesNotMatch(searched, /data-row="admin"/)
+  const everyone = await readPeople(app, `${PEOPLE}?lang=vi`)
+  assert.ok(ids(everyone).includes('portal-guest'))
+  assert.ok(!ids(everyone).includes('left'))
 
-  const portal = await (await app.client.get(`${PEOPLE}?lang=vi&preset=portal`)).text()
-  assert.match(portal, /data-row="portal-guest"/)
-  assert.doesNotMatch(portal, /data-row="admin"/)
+  assert.deepEqual(ids(await readPeople(app, `${PEOPLE}?lang=vi&q=Portal`)), ['portal-guest'])
+  assert.deepEqual(ids(await readPeople(app, `${PEOPLE}?lang=vi&preset=portal`)), ['portal-guest'])
 
   // Alternatives within one group, so asking for both keeps both kinds.
-  const both = await (await app.client.get(`${PEOPLE}?lang=vi&preset=portal&preset=internal`)).text()
-  assert.match(both, /data-row="portal-guest"/)
-  assert.match(both, /data-row="admin"/)
+  const both = ids(await readPeople(app, `${PEOPLE}?lang=vi&preset=portal&preset=internal`))
+  assert.ok(both.includes('portal-guest') && both.includes('admin'))
 
   // The archived toggle reaches the domain call as well as the row filter.
-  assert.match(await (await app.client.get(`${PEOPLE}?lang=vi&archived=1`)).text(), /data-row="left"/)
+  assert.ok(ids(await readPeople(app, `${PEOPLE}?lang=vi&archived=1`)).includes('left'))
 
-  const grouped = await (await app.client.get(`${PEOPLE}?lang=vi&group=accessKind`)).text()
-  assert.match(grouped, /data-ui="kt-group-toggle"/)
-  assert.doesNotMatch(grouped, /data-ui="kt-row"/)
-  const open = grouped.match(/data-ui="kt-group-toggle" href="([^"]+)" aria-expanded="false"/)
-  assert.ok(open, 'a group must be expandable')
-  assert.match(await (await app.client.get(open[1]!.replaceAll('&amp;', '&'))).text(), /data-ui="kt-row"/)
+  const grouped = await readPeople(app, `${PEOPLE}?lang=vi&group=accessKind`)
+  assert.deepEqual(grouped.rows, [])
+  assert.ok(grouped.groups?.length, 'a group must be expandable')
+  const opened = await readPeople(app, grouped.groups![0]!.href)
+  assert.ok(JSON.stringify(opened.groups).includes('"rows":[{'), 'an open group carries its rows')
 })
 
-test('identity lists HTTP: custom role administration remains unavailable', async (t) => {
+const readRoles = async (app: Awaited<ReturnType<typeof boot>>, href: unknown, headers = {}) =>
+  app.client.post(`${ROLES}/read?lang=vi`, JSON.stringify({ href }), {
+    headers: { 'content-type': 'application/json', ...headers },
+  })
+
+test('identity lists HTTP: the roles page is a frame, its rows a read; custom roles stay unavailable', async (t) => {
   const app = await boot(t)
   const html = await (await app.client.get(`${ROLES}?lang=vi`)).text()
-  assert.match(html, /data-island="backend\.search-filter"/)
+  assert.match(html, /data-island="backend\.row-list-controls"[\s\S]*?data-ui="search-filter"/)
+  assert.match(html, /data-island="backend\.row-list"[\s\S]*?data-ui="kt-placeholder"/)
   assert.doesNotMatch(html, /data-row="manager"/)
+
+  const response = await readRoles(app, `${ROLES}?lang=vi&q=Manager`)
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  const answer = (
+    (await response.json()) as {
+      value: { rows: Array<{ id: string }>; isEmpty: boolean; search: { query: string } }
+    }
+  ).value
+  assert.deepEqual(answer.rows, [], 'the custom role is never listed')
+  assert.equal(answer.search.query, 'Manager')
+})
+
+test('identity lists HTTP: the roles read answers only its own list, to its own site, by POST', async (t) => {
+  const app = await boot(t)
+  assert.equal((await readRoles(app, '/admin/users?lang=vi')).status, 400)
+  assert.equal((await readRoles(app, 'https://elsewhere.test/admin/roles')).status, 400)
+  assert.equal((await readRoles(app, `${ROLES}?lang=vi`, { origin: 'https://elsewhere.test' })).status, 403)
+  assert.equal((await readRoles(app, `${ROLES}?lang=vi`, { 'sec-fetch-site': 'cross-site' })).status, 403)
+  assert.equal((await app.client.get(`${ROLES}/read?lang=vi`)).status, 405)
 })
 
 test('identity lists HTTP: the bar applies and saves searches through the shared functions', async (t) => {
@@ -149,8 +181,8 @@ test('identity lists HTTP: checked people are made active or inactive together, 
     )?.active as boolean | undefined) ?? null
 
   const page = await (await app.client.get(`${PEOPLE}?lang=vi`)).text()
-  assert.match(page, /data-island="backend\.ket-table"/)
-  assert.match(page, /data-ui="kt-row-select"/)
+  // The rows check into the form by its id (`selection` of the islands); the form is the server's.
+  assert.match(page, /data-island="backend\.row-list"[^>]*data-props="[^"]*user-people-bulk/)
   assert.match(
     page,
     /<form data-ui="bulk-form" id="user-people-bulk"[^>]*action="\/admin\/users\/bulk\?lang=vi"/,
@@ -181,4 +213,42 @@ test('identity lists HTTP: checked people are made active or inactive together, 
   assert.equal(activated.status, 303)
   assert.equal(await active('portal-guest'), true)
   assert.equal(await active('left'), true)
+})
+
+test('identity lists HTTP: the access-rules page is a frame and its rules a read, for whoever may list them', async (t) => {
+  const app = await boot(t)
+  const html = await (await app.client.get('/admin/access-policies?lang=vi')).text()
+  assert.match(html, /data-island="backend\.row-list"[\s\S]*?data-ui="kt-placeholder"/)
+  assert.match(html, /id="user-policy-help"/)
+  const read = (href: string) =>
+    app.client.post('/admin/access-policies/read?lang=vi', JSON.stringify({ href }), {
+      headers: { 'content-type': 'application/json' },
+    })
+  const response = await read('/admin/access-policies?lang=vi')
+  assert.equal(response.status, 200)
+  const answer = ((await response.json()) as { value: { isEmpty: boolean; total: number } }).value
+  assert.equal(answer.isEmpty, true, 'no rule yet, which the list tells apart from no match')
+  assert.equal(answer.total, 0)
+
+  // Someone who may not list rules is refused the read, which the island shows as denied.
+  await app.fixture.call(
+    'user.createUser',
+    { id: 'clerk', login: 'clerk', password: 'correct horse', name: 'Clerk' },
+    { scope: { company: 'acme', branch: 'root:acme', branches: ['root:acme'] } },
+  )
+  await app.fixture.call(
+    'user.grantCompany',
+    { id: 'clerk:acme', userId: 'clerk', companyId: 'acme' },
+    { scope: { company: 'acme', branch: 'root:acme', branches: ['root:acme'] } },
+  )
+  await app.client.login({ login: 'clerk', password: 'correct horse' })
+  assert.equal((await read('/admin/access-policies?lang=vi')).status, 403)
+  assert.equal(
+    (
+      await app.client.post(`${ROLES}/read?lang=vi`, JSON.stringify({ href: `${ROLES}?lang=vi` }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    ).status,
+    403,
+  )
 })

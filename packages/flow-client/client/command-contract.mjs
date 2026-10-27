@@ -44,6 +44,19 @@ const organization = new Set([
 ])
 const operations = new Set(['form.save', 'form.submit', 'inbox.read', 'view.save', 'preferences.save'])
 
+/** Every compatibility request the Core client can resolve, for contract audits. */
+export function flowCommandVocabulary() {
+  return [
+    ...Object.keys(entities).map((collection) => ['flow.entity.save', { collection }]),
+    ...Object.entries(entities).flatMap(([collection, entity]) =>
+      (actions[entity] ?? []).map((action) => ['flow.entity.action', { collection, action }]),
+    ),
+    ...[...organization].map((action) => ['flow.organization.command', { action }]),
+    ...[...operations].map((action) => ['flow.operations.command', { action }]),
+    ['flow.document.command', {}],
+  ]
+}
+
 export function resolveFlowCommand(name, input = {}) {
   const args = { ...input }
   if (name === 'flow.document.command') return { name: 'flow.page.share', input: args }
@@ -57,6 +70,11 @@ export function resolveFlowCommand(name, input = {}) {
       delete args.action
       if (entity !== 'page') delete args.parentId
       if (entity === 'view') args.expectedRevision ??= input.expectedRevision
+      // The server has no separate move: a page save that names only the parent moves it.
+      if (entity === 'page' && verb === 'move') {
+        args.parentId ??= null
+        return { name: 'flow.page.save', input: args }
+      }
       return { name: `flow.${entity}.${verb}`, input: args }
     }
   } else if (name === 'flow.organization.command' && organization.has(args.action)) {
@@ -184,6 +202,12 @@ export function prepareFlowCommand(name, input, data) {
   return prepared
 }
 
+const moveFields = new Set(['id', 'parentId', 'expectedVersion', 'idempotencyKey'])
+const isPageMove = (input) =>
+  Boolean(input.id) &&
+  Object.hasOwn(input, 'parentId') &&
+  Object.keys(input).every((key) => moveFields.has(key))
+
 // Only Atlas uses the reverse adapter. Production never imports fixture code.
 export function atlasFlowCommand(name, input, data = {}) {
   if (name === 'flow.field.save') {
@@ -198,6 +222,11 @@ export function atlasFlowCommand(name, input, data = {}) {
     delete input.ownerId
   }
   if (name === 'flow.page.share') return { name: 'flow.document.command', input }
+  if (name === 'flow.page.save' && isPageMove(input))
+    return {
+      name: 'flow.entity.action',
+      input: { ...input, collection: 'pages', entityId: input.id, action: 'move' },
+    }
   if (['flow.workspace.create', 'flow.workspace.update'].includes(name))
     return {
       name: 'flow.organization.command',

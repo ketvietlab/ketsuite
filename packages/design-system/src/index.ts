@@ -320,7 +320,7 @@ export type {
   TablePager,
   TableSelection,
 } from './patterns/data-table/index.tsx'
-export { BulkActions, ListChrome, PagerBar } from './patterns/list-chrome/index.tsx'
+export { BULK_CLEAR_COMMAND, BulkActions, ListChrome, PagerBar } from './patterns/list-chrome/index.tsx'
 export type {
   BulkAction,
   BulkActionsProps,
