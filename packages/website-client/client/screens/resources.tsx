@@ -52,7 +52,13 @@ export function createResourceScreens(ctx: StudioContext) {
       read: (route, signal) =>
         ctx.call<ResourceList>(
           'website_studio.listResources',
-          { siteId: ctx.site().id, kind, search: route.query.q ?? '', set: route.query.set },
+          {
+            // The company's website list is the way to its first site, so it reads without one.
+            siteId: kind === 'sites' ? (ctx.boot().site?.id ?? null) : ctx.site().id,
+            kind,
+            search: route.query.q ?? '',
+            set: route.query.set,
+          },
           { signal },
         ),
       view: (data, route) => {
@@ -64,7 +70,7 @@ export function createResourceScreens(ctx: StudioContext) {
                   [
                     'title',
                     ...(kind === 'sites'
-                      ? ['companyId', 'host', 'state', 'defaultLocale']
+                      ? ['host', 'defaultLocale']
                       : schema.fields
                           .filter((f) => f.name !== 'title')
                           .slice(0, 2)
@@ -88,6 +94,21 @@ export function createResourceScreens(ctx: StudioContext) {
                           : ctx.tr(`website.option.${row[field.name]}`)
                         : (resourceValue(row[field.name]) ?? '—'),
                 })),
+              ...(kind === 'sites'
+                ? [
+                    {
+                      key: 'state',
+                      label: ctx.tr('website.site.state'),
+                      kind: 'status' as const,
+                      cell: (r: ResourceRecord): JSXChild => (
+                        <Status
+                          label={ctx.tr(`website.option.${r.state === 'paused' ? 'paused' : 'active'}`)}
+                          tone={r.state === 'paused' ? 'neutral' : 'positive'}
+                        />
+                      ),
+                    },
+                  ]
+                : []),
               ...(kind === 'taxonomy-sets'
                 ? ['termCount']
                 : ['menus', 'themes', 'seo'].includes(kind)
@@ -583,17 +604,6 @@ export function createResourceScreens(ctx: StudioContext) {
                                       }
                                       if (logo && field.name === 'logo')
                                         return logo.view(String(props.value), props.disabled)
-                                      if (kind === 'sites' && field.name === 'companyId')
-                                        return (
-                                          <Select
-                                            {...props}
-                                            value={data.companyId ?? ctx.boot().companies?.[0]?.id}
-                                            options={(ctx.boot().companies ?? []).map((r) => ({
-                                              value: r.id,
-                                              label: r.name,
-                                            }))}
-                                          />
-                                        )
                                       if (kind === 'taxonomy' && field.name === 'taxonomyId')
                                         return (
                                           <Select

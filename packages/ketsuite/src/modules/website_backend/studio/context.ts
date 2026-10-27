@@ -39,6 +39,8 @@ export const studioContext: FnSpec = defineFn({
     revisions: 'json',
     publications: 'json',
     domains: 'json',
+    /** Every company site's primary domain, for lists that name each site. */
+    primaryDomains: 'json',
     sections: 'json',
   },
   effects: [
@@ -53,6 +55,9 @@ export const studioContext: FnSpec = defineFn({
       const sites = tx.scope.company
         ? await tx.db.select('website.Site', { companyId: tx.scope.company })
         : []
+      const primaryDomains = tx.scope.company
+        ? await tx.db.select('website.SiteDomain', { companyId: tx.scope.company, primary: true })
+        : []
       const site = input.siteId == null ? sites[0] : sites.find((row) => row.id === input.siteId)
       if (!site)
         return {
@@ -62,6 +67,7 @@ export const studioContext: FnSpec = defineFn({
           revisions: [],
           publications: [],
           domains: [],
+          primaryDomains: input.siteId == null ? primaryDomains : [],
           sections: {},
         }
       const domains = await tx.db.select('website.SiteDomain', { siteId: site.id })
@@ -75,6 +81,7 @@ export const studioContext: FnSpec = defineFn({
         sites,
         site,
         domains,
+        primaryDomains,
         entries: entries.map((row) =>
           entryProjection(row, byId.get(row.currentRevisionId), String(site.defaultLocale)),
         ),

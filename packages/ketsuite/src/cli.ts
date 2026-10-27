@@ -2,10 +2,9 @@
 
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { scaffoldKetsuite } from './scaffold/index.ts'
+import { scaffoldKetsuite, VERSION } from './scaffold/index.ts'
 import { watchKetsuite } from './cli-watch.ts'
 
-const VERSION = '0.1.40'
 const DEFAULT_KETSUITE_DEPLOYMENT = 'commerce'
 const DEPLOYMENTS = ['commerce', 'hospitality', 'office', 'dev']
 const CHOICES = DEPLOYMENTS.join(' | ')

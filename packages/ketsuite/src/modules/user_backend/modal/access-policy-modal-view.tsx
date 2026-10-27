@@ -101,7 +101,14 @@ const stateSelect = (
   c: Context,
   props: { name: string; label: string; value: string; options: FieldOption[] },
 ): FieldProps => {
-  const base = field(c, { name: props.name, label: props.label, type: 'select', required: true })
+  // The draft's baseline is the choice shown, so an untouched form closes without asking.
+  const base = field(c, {
+    name: props.name,
+    label: props.label,
+    type: 'select',
+    value: props.value,
+    required: true,
+  })
   return {
     ...base,
     options: props.options,

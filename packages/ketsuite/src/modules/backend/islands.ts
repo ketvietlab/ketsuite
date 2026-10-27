@@ -10,6 +10,14 @@ import {
 import { createChartView, type ChartSpec } from '../../ui/client/chart-view.tsx'
 import { ketTable } from '../../ui/client/ket-table-view.tsx'
 import { searchFilter } from '../../ui/client/search-filter-view.tsx'
+import {
+  ROW_LIST_KEY,
+  ROW_LIST_PROPS,
+  rowList,
+  rowListControls,
+  rowListFooter,
+} from '../../ui/client/row-list-island.tsx'
+import type { RowListProps } from '../../ui/client/row-list-island.tsx'
 
 type ChartProps = { id: string; config: ChartSpec }
 type RelationSelectProps = { id: string; config: RelationSelectConfig }
@@ -58,5 +66,30 @@ export const islands = {
     client: 'client/search-filter.mjs',
     export: 'searchFilter',
     view: (props) => searchFilter(props),
+  }),
+  /**
+   * A collection as three islands over one paged read (`rowListIslands`): its query
+   * controls, its rows and its pager, sharing one store in the browser.
+   */
+  'backend.row-list-controls': defineIsland<RowListProps>()({
+    props: ROW_LIST_PROPS,
+    key: ROW_LIST_KEY,
+    client: 'client/row-list.mjs',
+    export: 'rowListControls',
+    view: rowListControls,
+  }),
+  'backend.row-list': defineIsland<RowListProps>()({
+    props: ROW_LIST_PROPS,
+    key: ROW_LIST_KEY,
+    client: 'client/row-list.mjs',
+    export: 'rowList',
+    view: rowList,
+  }),
+  'backend.row-list-footer': defineIsland<RowListProps>()({
+    props: ROW_LIST_PROPS,
+    key: ROW_LIST_KEY,
+    client: 'client/row-list.mjs',
+    export: 'rowListFooter',
+    view: rowListFooter,
   }),
 }

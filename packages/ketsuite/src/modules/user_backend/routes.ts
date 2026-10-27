@@ -1,12 +1,22 @@
 import { managedRoleRoutes } from './managed-role-routes.ts'
 import { accessPolicyRoutes } from './access-policy-routes.ts'
-import { rowListSearch } from '../backend/row-list.ts'
+import { rowListAnswer, rowListBar, rowListMenu, rowListTarget } from '../backend/row-list-read.ts'
+import { rowListIslands, rowListReadRoute } from '../backend/row-list-islands.ts'
 import { userListSearch } from './search.ts'
 import { randomUUID } from 'node:crypto'
 import { text } from '@ketvietlab/ketjs'
 import type { Route, RouteEntry, ServeContext, SessionContext, Translator } from '@ketvietlab/ketjs'
+import type { JSXChild } from '@ketvietlab/ketjs-view'
 import { readForm, seeOther } from '../backend/forms.ts'
-import { profileScreen, userPageScreen, usersGrid, usersScreen } from './screens/index.ts'
+import {
+  profileScreen,
+  userGridRow,
+  userGroupLabel,
+  userListBarOptions,
+  userListProps,
+  userPageScreen,
+  usersScreen,
+} from './screens/index.ts'
 import type { RoleRow, SessionRow, UserRow } from './screens/index.ts'
 import {
   RECORD_NEW_ID,
@@ -17,11 +27,9 @@ import {
 import type { RecordPageIslandProps } from '../../ui/record-modal.tsx'
 import { pageTrailItems } from '../../ui/navigation.tsx'
 import { USER_RECORD_MODAL_LABELS } from '../user/modal-labels.ts'
-import type { TableSelection, TailMenu } from '../../ui/index.ts'
-import { tableGrid } from '../backend/ket-table.ts'
+import type { Frame, TableSelection } from '../../ui/index.ts'
 import { adminPage, inLocale } from '../backend/screen.ts'
 import type { AnyRow, Req } from '../backend/screen.ts'
-import { PAGE_SIZE, pageOf, pager, searchOf, withParam } from '../backend/paging.ts'
 
 const crossSite = (req: Req): boolean => {
   const origin = req.headers.origin as string | undefined
@@ -47,7 +55,8 @@ const safeUserReturnTo = (url: URL, submitted?: string | null): string => {
   const lang = url.searchParams.get('lang')
   if (lang) target.searchParams.set('lang', lang)
   else target.searchParams.delete('lang')
-  return `${target.pathname}${target.search}`
+  // The list's row anchor (`#row=<id>`, design system `rowAnchorHref`) brings the reader back to that row.
+  return `${target.pathname}${target.search}${target.hash.startsWith('#row=') ? target.hash : ''}`
 }
 
 const withUserReturnTo = (url: URL, path: string, returnTo: string): string => {
@@ -56,8 +65,90 @@ const withUserReturnTo = (url: URL, path: string, returnTo: string): string => {
   return `${target.pathname}${target.search}`
 }
 
+/** The people list, and where its islands read one page of it. */
+export const USERS_PATH = '/admin/users'
+export const USERS_READ_PATH = '/admin/users/read'
+
 const userDetailPath = (url: URL, id: string, returnTo: string): string =>
   withUserReturnTo(url, `/admin/users/${encodeURIComponent(id)}`, returnTo)
+
+/** Where a deployment that owns its people's sign-in serves their page; see `userPageRoute`. */
+const deploymentUserPageRoute = ['/admin/users/{id}', 'profile'].join('/')
+
+/** What a person's page is read from: the record modal's envelope, as `user.userModalContext` answers it. */
+export type UserPageEnvelope = {
+  data?: { record?: { name?: string; login?: string } } & Record<string, unknown>
+  messages?: Record<string, string>
+} & Record<string, unknown>
+
+/**
+ * A person's page as a route: the envelope this viewer may read, the way back to the people list as it
+ * was left, and the record page island placed by `joint`, inside the administration shell.
+ *
+ * KetSuite serves it at `/admin/users/{id}`. A deployment whose people sign in through a service of its
+ * own reads a different envelope (the service's account state) and posts different commands, so it
+ * serves the page at `/admin/users/{id}/profile` with this route, its own island placed by a joint it
+ * fills, and `/admin/users/{id}` sends there. `beside` goes next to the page in the content slot: the
+ * screen's guide.
+ */
+export const userPageRoute =
+  (options: {
+    joint: string
+    context?: (
+      ctx: ServeContext,
+      url: URL,
+      req: Req,
+      id: string,
+      locale: 'vi' | 'en',
+    ) => Promise<UserPageEnvelope | null>
+    beside?: (_: Translator, title: string, frame: Frame) => JSXChild
+  }) =>
+  (ctx: ServeContext): Route =>
+  async (url, req, params) => {
+    if (req.method !== 'GET') return text('GET', { status: 405 })
+    const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
+    const id = params.id!
+    // The page arrives with the same permission-checked read the browser would make.
+    const envelope = options.context
+      ? await options.context(ctx, url, req, id, lang)
+      : ((await ctx.call('user.userModalContext', { id, locale: lang }, url, req)) as UserPageEnvelope | null)
+    const record = envelope?.data?.record
+    if (!record) return text('not found', { status: 404 })
+    const title = record.name || record.login || id
+    const returnTo = safeUserReturnTo(url, url.searchParams.get('returnTo'))
+    return adminPage(ctx, url, req, {
+      title,
+      translate: false,
+      active: '/admin/users',
+      body: async (_, frame) => {
+        // The collection step returns to the list as it was left.
+        const items = pageTrailItems(title, frame)
+        // Settings live on the app rail, outside the main navigation tree.
+        // Keep the collection step even when that tree has no active user menu.
+        if (!items.some((item) => 'href' in item && item.href === '/admin/users'))
+          items.unshift({ id: 'users', label: _('user_backend.users.title'), href: '/admin/users' })
+        const trail = items.map((item) => ({
+          label: item.label,
+          href: 'href' in item && item.href ? (item.href === '/admin/users' ? returnTo : item.href) : null,
+        }))
+        const props: RecordPageIslandProps = {
+          id,
+          title,
+          loadingLabel: USER_RECORD_MODAL_LABELS[lang]['recordModal.loading']!,
+          trail,
+          trailLabel: _('user_backend.users.title'),
+          envelope,
+        }
+        const page = await ctx.joint(url, req, options.joint, props)
+        return userPageScreen(
+          _,
+          title,
+          options.beside ? [page, options.beside(_, title, frame)] : page,
+          frame,
+        )
+      },
+    })
+  }
 
 /**
  * One narrowing question, offered beside paging.
@@ -65,23 +156,6 @@ const userDetailPath = (url: URL, id: string, returnTo: string): string =>
  * Choosing the row that is already chosen clears it, so the menu is both how a
  * filter is set and how it is dropped.
  */
-const listFilterMenu = (
-  url: URL,
-  param: string,
-  label: string,
-  current: string,
-  options: AnyRow[],
-): TailMenu => ({
-  id: param,
-  label,
-  items: options.map((option) => ({
-    id: `${param}:${String(option.id)}`,
-    label: String(option.name ?? option.id),
-    path: withParam(url, param, current === String(option.id) ? null : String(option.id)),
-    active: current === String(option.id),
-  })),
-})
-
 const translatedErrors = (ctx: ServeContext, url: URL, req: Req, result: unknown): string[] => {
   const _ = ctx.translate(ctx.localeOf(url, req))
   return ((result as { errors?: Array<{ field?: string; code?: string }> } | null)?.errors ?? []).map(
@@ -141,25 +215,6 @@ const sessionRows = async (ctx: ServeContext, url: URL, req: Req, userId: string
   }))
 }
 
-const userSearchFunctions = {
-  apply: 'user_backend.applySearchFilter',
-  saveFavorite: 'user_backend.saveSearchFavorite',
-  deleteFavorite: 'user_backend.deleteSearchFavorite',
-  setDefaultFavorite: 'user_backend.setDefaultSearchFavorite',
-}
-
-/** An access kind, a role source, or a boolean column, in the reader's language. */
-const userGroupLabel = (_: Translator, key: string, value: unknown): string => {
-  const raw = value == null ? '' : String(value)
-  if (key === 'active') return _(`user_backend.state.${raw === 'false' ? 'archived' : 'active'}`)
-  if (key === 'passwordReady')
-    return _(`user_backend.state.${raw === 'false' ? 'invitationPending' : 'passwordReady'}`)
-  if (!raw) return _('backend.chrome.groupEmpty')
-  if (key === 'accessKind' && _.resolves(`user_backend.access.${raw}`)) return _(`user_backend.access.${raw}`)
-  if (key === 'mode' && _.resolves(`user_backend.role.${raw}`)) return _(`user_backend.role.${raw}`)
-  return raw
-}
-
 export const routes: Record<string, RouteEntry> = {
   ...accessPolicyRoutes,
   ...managedRoleRoutes,
@@ -178,55 +233,18 @@ export const routes: Record<string, RouteEntry> = {
       // An identity adapter that owns account creation keeps its own page; only the
       // deployments without one open the create action in the record modal.
       const deploymentCreatesAccounts = !!live.routes[accountCreationRoute]
-      const _ = ctx.translate(ctx.localeOf(url, req))
-      const companyFilter = url.searchParams.get('company') ?? ''
-      const roleFilter = url.searchParams.get('role') ?? ''
-      const [companies, roles] = (await Promise.all([
-        ctx.call('company.listCompanies', {}, url, req),
-        ctx.call('user.listRoles', {}, url, req),
-      ])) as [AnyRow[], AnyRow[]]
+      if (!(await ctx.allows('user.listUsers', url, req))) return text('Forbidden', { status: 403 })
       // The create action is offered to whoever the create modal would answer; a
       // viewer who may only read people is not shown a button that opens a refusal.
       const mayCreate = await ctx.allows('user.createUser', url, req)
       const mayChangeActive = await ctx.allows('user.archiveUser', url, req)
-      const includeArchived = url.searchParams.get('archived') === '1'
-      const allRows = (await ctx.call(
-        'user.listUsers',
-        {
-          includeArchived,
-          companyId: url.searchParams.get('company') || undefined,
-          roleId: url.searchParams.get('role') || undefined,
-        },
-        url,
-        req,
-      )) as UserRow[]
       return adminPage(ctx, url, req, {
         title: 'user_backend.users.title',
         active: '/admin/users',
         body: async (_, frame) => {
-          const returnTo = safeUserReturnTo(url, `${url.pathname}${url.search}`)
-          const search = await rowListSearch(ctx, url, req, {
-            spec: userListSearch,
-            rows: allRows.map((row) => ({
-              ...row,
-              // A row opens the person's page; its way back keeps the collection's
-              // query, page and archive state.
-              detailHref: userDetailPath(url, row.id, returnTo),
-            })),
-            frame,
-            name: 'user-people-filter',
-            bodyId: 'user-people-list',
-            functions: userSearchFunctions,
-            labels: { searchPlaceholder: _('user_backend.search.users') },
-            groupLabel: (key, value) => userGroupLabel(_, key, value),
-          })
-          search.frame.chrome = {
-            ...search.frame.chrome,
-            tailMenus: [
-              listFilterMenu(url, 'company', _('user_backend.field.company'), companyFilter, companies),
-              listFilterMenu(url, 'role', _('user_backend.field.role'), roleFilter, roles),
-            ],
-          }
+          const target = rowListTarget(url, `${url.pathname}${url.search}`, USERS_PATH)!
+          const returnTo = safeUserReturnTo(url, `${target.pathname}${target.search}`)
+          const bar = await rowListBar(ctx, url, req, userListSearch, target, userListBarOptions(_))
           // Rows are checked to change many people at once; the form only exists for
           // a viewer who may change whether someone is active.
           const selection: TableSelection | null = mayChangeActive
@@ -241,32 +259,67 @@ export const routes: Record<string, RouteEntry> = {
                 ],
               }
             : null
-          const prepared = usersGrid(_, search.frame, {
-            rows: search.rows,
-            ...(search.groups ? { groups: search.groups } : {}),
-            rowHrefTemplate: userDetailPath(url, '__row__', returnTo).replace('__row__', '{id}'),
+          const islands = rowListIslands(
+            userListProps(_, {
+              href: `${target.pathname}${target.search}`,
+              read: inLocale(url, USERS_READ_PATH),
+              bar,
+              lang: url.searchParams.get('lang'),
+              selection,
+            }),
+          )
+          return usersScreen(_, frame, {
+            islands,
             selection,
-          })
-          const grid = await tableGrid(ctx, url, req, 'user-people-table', prepared.config)
-          return usersScreen(_, prepared.frame, {
-            grid,
-            empty: !search.rows.length && !search.groups?.length,
-            clearHref:
-              companyFilter || roleFilter || url.searchParams.get('q') ? inLocale(url, '/admin/users') : null,
-            total: search.groups
-              ? search.groups.reduce((sum, group) => sum + group.count, 0)
-              : search.rows.length,
+            lang: _.locale === 'en' ? 'en' : 'vi',
             createHref: !mayCreate
               ? null
               : deploymentCreatesAccounts
                 ? withUserReturnTo(url, '/admin/users/new', returnTo)
-                : recordModalCreateHref(`${url.pathname}${url.search}`, {
-                    kind: 'user.user',
-                  }),
+                : recordModalCreateHref(`${target.pathname}${target.search}`, { kind: 'user.user' }),
           })
         },
       })
     },
+
+  // One page of people, for whoever may list them: searched and narrowed by the list's spec, and by
+  // a company or a role through `user.listUsers` itself, whose choices come with the answer.
+  [USERS_READ_PATH]: rowListReadRoute(async (ctx, url, req, href) => {
+    if (!(await ctx.allows('user.listUsers', url, req))) return null
+    const target = rowListTarget(url, href, USERS_PATH)
+    if (!target) return undefined
+    const _ = ctx.translate(ctx.localeOf(url, req))
+    const [companies, roles, people] = (await Promise.all([
+      ctx.call('company.listCompanies', {}, url, req),
+      ctx.call('user.listRoles', {}, url, req),
+      ctx.call(
+        'user.listUsers',
+        {
+          includeArchived: target.searchParams.get('archived') === '1',
+          companyId: target.searchParams.get('company') || undefined,
+          roleId: target.searchParams.get('role') || undefined,
+        },
+        url,
+        req,
+      ),
+    ])) as [AnyRow[], AnyRow[], UserRow[]]
+    const answer = await rowListAnswer(ctx, url, req, {
+      spec: userListSearch,
+      rows: people,
+      target,
+      view: userGridRow(_),
+      search: userListBarOptions(_),
+      groupLabel: (key, value) => userGroupLabel(_, key, value),
+      filters: ['company', 'role'],
+    })
+    return {
+      ...answer,
+      menus: [
+        rowListMenu(target, 'company', _('user_backend.field.company'), companies),
+        rowListMenu(target, 'role', _('user_backend.field.role'), roles),
+      ],
+    }
+  }),
 
   // Many people made active or inactive at once, from the rows checked in the list.
   // Each person goes through `user.archiveUser` on its own, so the guard that keeps
@@ -301,56 +354,17 @@ export const routes: Record<string, RouteEntry> = {
         }),
       )
     },
-  '/admin/users/{id}':
-    (ctx: ServeContext): Route =>
-    async (url, req, params) => {
+  '/admin/users/{id}': (ctx: ServeContext): Route => {
+    const page = userPageRoute({ joint: 'user_backend:user.record-page' })(ctx)
+    return async (url, req, params) => {
       if (req.method !== 'GET') return text('GET', { status: 405 })
-      const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
-      // The page arrives with the same permission-checked read the browser would make.
-      const envelope = (await ctx.call(
-        'user.userModalContext',
-        { id: params.id, locale: lang },
-        url,
-        req,
-      )) as {
-        data?: { record?: { name?: string; login?: string } }
-      } | null
-      const record = envelope?.data?.record
-      if (!record) return text('not found', { status: 404 })
-      const title = record.name || record.login || params.id
-      const returnTo = safeUserReturnTo(url, url.searchParams.get('returnTo'))
-      return adminPage(ctx, url, req, {
-        title,
-        translate: false,
-        active: '/admin/users',
-        body: async (_, frame) => {
-          // The collection step returns to the list as it was left.
-          const items = pageTrailItems(title, frame)
-          // Settings live on the app rail, outside the main navigation tree.
-          // Keep the collection step even when that tree has no active user menu.
-          if (!items.some((item) => 'href' in item && item.href === '/admin/users'))
-            items.unshift({ id: 'users', label: _('user_backend.users.title'), href: '/admin/users' })
-          const trail = items.map((item) => ({
-            label: item.label,
-            href: 'href' in item && item.href ? (item.href === '/admin/users' ? returnTo : item.href) : null,
-          }))
-          const props: RecordPageIslandProps = {
-            id: params.id,
-            title,
-            loadingLabel: USER_RECORD_MODAL_LABELS[lang]['recordModal.loading']!,
-            trail,
-            trailLabel: _('user_backend.users.title'),
-            envelope,
-          }
-          return userPageScreen(
-            _,
-            title,
-            await ctx.joint(url, req, 'user_backend:user.record-page', props),
-            frame,
-          )
-        },
-      })
-    },
+      // A deployment whose people sign in elsewhere serves the person's page itself, with that
+      // service's state and commands; every link written for this one lands there.
+      if ((await ctx.live(req)).routes[deploymentUserPageRoute])
+        return seeOther(`/admin/users/${encodeURIComponent(params.id!)}/profile${url.search}`)
+      return page(url, req, params)
+    }
+  },
   '/admin/users/{id}/sessions/{sessionId}':
     (ctx: ServeContext): Route =>
     async (url, req, params) => {

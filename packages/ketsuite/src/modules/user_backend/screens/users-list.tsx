@@ -1,41 +1,31 @@
 import type { Translator } from '@ketvietlab/ketjs'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
-import type { KetTableColumn, KetTableConfig, KetTableRow } from '@ketvietlab/design-system'
+import type { KetTableColumn, KetTableRow, SearchFilterConfig } from '@ketvietlab/design-system'
 import {
   collectionActions,
-  collectionControls,
-  collectionGridLabels,
   collectionSelection,
-  emptyState,
   formatDateTime,
   LinkButton,
   ListPage,
-  prepareCollectionGrid,
   shell,
 } from '../../../ui/index.ts'
-import type { Frame, TableGroup, TableSelection } from '../../../ui/index.ts'
+import type { Frame, TableSelection } from '../../../ui/index.ts'
+import { rowListLabels } from '../../backend/row-list-islands.ts'
+import type { RowListSearchOptions } from '../../backend/row-list-read.ts'
+import type { RowListProps } from '../../../ui/client/row-list-island.tsx'
+import { LIST_HELP_WORDS, listHelpDrawer, userListHelp } from './list-help.tsx'
 import type { UserRow } from './types.ts'
 
-export type UserListRow = UserRow & { detailHref: string }
-
-export type UsersGridOptions = {
-  rows: readonly UserListRow[]
-  groups?: readonly TableGroup<UserListRow>[]
-  /** A `{id}` href that opens a person on their own page. */
-  rowHrefTemplate: string
-  /** The bulk form the row checkboxes post to; null when the viewer may not change people in bulk. */
-  selection?: TableSelection | null
-}
+export type UserListRow = UserRow
 
 export type UsersListScreenOptions = {
-  /** The KetTable island the caller rendered from `usersGrid`. */
-  grid: JSXChild
-  /** True when nothing matched, so the screen says why instead of drawing an empty grid. */
-  empty: boolean
-  clearHref?: string | null
-  total: number
+  /** The list's three islands (`rowListIslands(userListProps(...))`). */
+  islands: { controls: JSXChild; body: JSXChild; footer: JSXChild }
   /** Null when the viewer may not create a user: the header then offers no create action. */
   createHref: string | null
+  /** The bulk form rows are checked into; null when the viewer may not change people in bulk. */
+  selection: TableSelection | null
+  lang: 'vi' | 'en'
 }
 
 // Date before time, as the record modal writes it: "28/09/2026 08:42".
@@ -118,7 +108,7 @@ export const userGridColumns = (_: Translator): KetTableColumn[] => [
 /** The JSON row the island draws: every value already in the reader's words. */
 export const userGridRow =
   (_: Translator) =>
-  (row: UserListRow): KetTableRow => ({
+  (row: UserRow): KetTableRow => ({
     id: row.id,
     name: row.name,
     superuser: row.superuser,
@@ -130,64 +120,107 @@ export const userGridRow =
     state: row.active ? 'active' : 'archived',
   })
 
-/** The toolbar state and island config for one page of people. */
-export const usersGrid = (
-  _: Translator,
-  frame: Frame,
-  options: UsersGridOptions,
-): { frame: Frame; config: KetTableConfig } =>
-  prepareCollectionGrid(
-    _,
-    frame,
-    {
-      columns: userGridColumns(_),
-      rows: options.rows,
-      ...(options.groups ? { groups: options.groups } : {}),
-      id: (row) => row.id,
-      view: userGridRow(_),
-      rowHrefTemplate: options.rowHrefTemplate,
-      selection: options.selection ?? null,
-      labels: collectionGridLabels(_, _('user_backend.users.empty'), _('user_backend.users.emptyHint')),
-    },
-    { paginate: !options.groups?.length },
-  )
+/** An access kind, a role source, or a boolean column, in the reader's language. */
+export const userGroupLabel = (_: Translator, key: string, value: unknown): string => {
+  const raw = value == null ? '' : String(value)
+  if (key === 'active') return _(`user_backend.state.${raw === 'false' ? 'archived' : 'active'}`)
+  if (key === 'passwordReady')
+    return _(`user_backend.state.${raw === 'false' ? 'invitationPending' : 'passwordReady'}`)
+  if (!raw) return _('backend.chrome.groupEmpty')
+  if (key === 'accessKind' && _.resolves(`user_backend.access.${raw}`)) return _(`user_backend.access.${raw}`)
+  if (key === 'mode' && _.resolves(`user_backend.role.${raw}`)) return _(`user_backend.role.${raw}`)
+  return raw
+}
 
+/** The people list's bar: what it is called and the functions it applies and saves through. */
+export const userListBarOptions = (_: Translator): RowListSearchOptions => ({
+  name: 'user-people-filter',
+  bodyId: 'user-people-list',
+  functions: {
+    apply: 'user_backend.applySearchFilter',
+    saveFavorite: 'user_backend.saveSearchFavorite',
+    deleteFavorite: 'user_backend.deleteSearchFavorite',
+    setDefaultFavorite: 'user_backend.setDefaultSearchFavorite',
+  },
+  labels: { searchPlaceholder: _('user_backend.search.users') },
+})
+
+/**
+ * The people list's islands: a person opens on their own page (`/admin/users/{id}`), whose way back is
+ * this list at that row; rows are checked into the bulk form when the viewer may change people.
+ */
+export const userListProps = (
+  _: Translator,
+  options: {
+    href: string
+    read: string
+    bar: SearchFilterConfig
+    lang?: string | null
+    selection?: TableSelection | null
+    pin?: string[]
+  },
+): RowListProps => ({
+  read: options.read,
+  href: options.href,
+  marker: 'user-people-list',
+  lang: _.locale === 'en' ? 'en' : 'vi',
+  columns: userGridColumns(_).map((column) =>
+    column.key === 'name' || column.key === 'login' ? { ...column, sortKey: column.key } : column,
+  ),
+  labels: rowListLabels(_, {
+    empty: _('user_backend.users.empty'),
+    emptyHint: _('user_backend.users.emptyHint'),
+    noMatch: _('user_backend.users.noMatch'),
+    announce: _('user_backend.users.announce'),
+    announceNone: _('user_backend.users.announceNone'),
+  }),
+  controls: { kind: 'bar', config: options.bar },
+  open: {
+    kind: 'page',
+    path: `/admin/users/{id}${options.lang ? `?lang=${encodeURIComponent(options.lang)}` : ''}`,
+    returnPath: '/admin/users',
+  },
+  chooseColumns: true,
+  ...(options.selection ? { selection: { formId: options.selection.formId } } : {}),
+  ...(options.pin ? { pin: options.pin } : {}),
+})
+
+/**
+ * The people collection: the title, its create action and the bulk form from the server, everything
+ * the query changes from the three islands, and the page's guide beside it.
+ */
 export const usersScreen = (_: Translator, frame: Frame, options: UsersListScreenOptions): TemplateResult =>
   shell(
     _,
     _('user_backend.users.title'),
-    <ListPage
-      variant="operational"
-      frame={frame}
-      title={_('user_backend.users.title')}
-      headerActions={
-        options.createHref ? (
-          <LinkButton
-            label={_('user_backend.action.createUser')}
-            href={options.createHref}
-            variant="primary"
-          />
-        ) : undefined
-      }
-      actions={collectionActions(_, frame)}
-      controls={collectionControls(_, _('user_backend.users.title'), frame)}
-      selection={collectionSelection(_, frame)}
-      status={`${_('user_backend.users.title')}: ${String(options.total)}`}
-      body={
-        !options.empty
-          ? options.grid
-          : options.clearHref
-            ? emptyState(_('user_backend.users.noMatch'), _('user_backend.users.noMatchHint'), {
-                actions: (
-                  <LinkButton
-                    label={_('user_backend.action.clearFilters')}
-                    href={options.clearHref}
-                    variant="secondary"
-                  />
-                ),
-              })
-            : emptyState(_('user_backend.users.empty'), _('user_backend.users.emptyHint'))
-      }
-    />,
-    { ...frame, chrome: null, topbar: false },
+    <>
+      <ListPage
+        variant="operational"
+        frame={frame}
+        title={_('user_backend.users.title')}
+        headerActions={
+          options.createHref ? (
+            <LinkButton
+              label={_('user_backend.action.createUser')}
+              href={options.createHref}
+              variant="primary"
+            />
+          ) : undefined
+        }
+        actions={collectionActions(_, frame)}
+        controls={options.islands.controls}
+        selection={collectionSelection(_, frame, options.selection)}
+        body={options.islands.body}
+        footer={options.islands.footer}
+      />
+      {listHelpDrawer('user-people-help', userListHelp[options.lang], options.lang)}
+    </>,
+    {
+      ...frame,
+      chrome: null,
+      topbar: false,
+      ...(frame.applications
+        ? { applications: { ...frame.applications, helpLabel: LIST_HELP_WORDS[options.lang].trigger } }
+        : {}),
+    },
   )

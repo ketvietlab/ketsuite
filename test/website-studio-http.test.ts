@@ -102,7 +102,14 @@ test('Website Studio foundation crosses ERP sessions, managed roles and active w
       const publish = { id: entry.id, expectedRevisionId: saved.revisionId, publishAt: null }
       assert.equal((await request(editor, 'website.publishEntry', publish)).status, 403)
       assert.equal((await request(reader, 'website.publishEntry', publish)).status, 403)
+      const live = async () =>
+        (await value(publisher, 'website_studio.overview', { siteId: 'site-a' })).live as Row | null
+      assert.equal(await live(), null, 'nothing is served before the first page goes out')
       assert.equal((await value(publisher, 'website.publishEntry', publish)).ok, true)
+      // A page published on its own is served without a site release, so the site is live.
+      const served = await live()
+      assert.deepEqual([served?.state, served?.entryCount, served?.activatedBy], ['active', 1, null])
+      assert.ok(served?.activatedAt)
       assert.equal(
         ((await value(reader, 'website.getEntry', { id: entry.id })).entry as Row).title,
         draft.title,

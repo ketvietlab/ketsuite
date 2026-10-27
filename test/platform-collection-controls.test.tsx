@@ -4,8 +4,6 @@ import type { Translator } from '@ketvietlab/ketjs'
 import { renderToString } from '@ketvietlab/ketjs-view'
 import { collectionSearchFrame } from '../packages/ketsuite/src/modules/backend/collection-search.ts'
 import { employeesListScreen } from '../packages/ketsuite/src/modules/hr_backend/screens/employees-list.tsx'
-import { usersGrid, usersScreen } from '../packages/ketsuite/src/modules/user_backend/screens/users-list.tsx'
-import { withGrid } from './helpers/user-grid.ts'
 import { projectsListScreen } from '../packages/ketsuite/src/modules/flow_backend/screens/projects-list.tsx'
 
 const translate = ((key: string) => key) as Translator
@@ -56,49 +54,6 @@ test('employee complete collection pages actual rows and preserves search and lo
   assert.doesNotMatch(render(hiddenTimezone), /data-col="timezone"/)
   assert.ok(html.indexOf('data-ui="chrome-search"') < html.indexOf('data-ui="pager"'))
   assert.ok(html.indexOf('data-ui="pager"') < html.indexOf('data-ui="ket-table"'))
-})
-
-test('users already paged by the route retain their row and exact total with toolbar columns', () => {
-  const url = new URL('https://ket.test/admin/users?archived=1&lang=en&page=2')
-  const rows = [
-    {
-      id: 'user-31',
-      login: 'ada',
-      name: 'Ada',
-      accessKind: 'internal',
-      securityVersion: 1,
-      passwordReady: true,
-      active: false,
-      superuser: false,
-      detailHref: '/admin/users/user-31?lang=en',
-    },
-  ]
-  const html = renderToString(
-    withGrid(
-      translate,
-      collectionSearchFrame(
-        url,
-        {
-          chrome: {
-            pager: { from: 31, to: 31, total: 31, prev: '/admin/users?archived=1&lang=en', next: null },
-          },
-        },
-        'Search users',
-      ),
-      usersGrid,
-      { rows, rowHrefTemplate: '/admin/users/{id}?lang=en' },
-      (frame, grid) =>
-        usersScreen(translate, frame, {
-          grid,
-          empty: false,
-          total: 31,
-          createHref: '/admin/users/new?lang=en',
-        }),
-    ),
-  )
-  assert.match(html, /31-31 \/ 31/)
-  assert.match(html, /data-ui="kt-row-link"[^>]*href="\/admin\/users\/user-31\?lang=en"/)
-  assert.ok(links(html).some((target) => target.searchParams.has('columns')))
 })
 
 test('projects existing page controls sit above the table in the shared command bar', () => {

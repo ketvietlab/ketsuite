@@ -10,18 +10,13 @@
 
 import type { Translator } from '@ketvietlab/ketjs'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
-import type { KetTableColumn, KetTableConfig, KetTableRow } from '@ketvietlab/design-system'
-import {
-  collectionActions,
-  collectionControls,
-  collectionGridLabels,
-  emptyState,
-  LinkButton,
-  ListPage,
-  prepareCollectionGrid,
-  shell,
-} from '../../../ui/index.ts'
-import type { Frame, TableGroup } from '../../../ui/index.ts'
+import type { KetTableColumn, KetTableRow, SearchFilterConfig } from '@ketvietlab/design-system'
+import { collectionActions, LinkButton, ListPage, shell } from '../../../ui/index.ts'
+import type { Frame } from '../../../ui/index.ts'
+import { rowListLabels } from '../../backend/row-list-islands.ts'
+import type { RowListSearchOptions } from '../../backend/row-list-read.ts'
+import type { RowListProps } from '../../../ui/client/row-list-island.tsx'
+import { LIST_HELP_WORDS, accessPolicyListHelp, listHelpDrawer } from './list-help.tsx'
 
 export type AccessPolicyMatchKind = 'idpGroup' | 'department' | 'jobTitle'
 
@@ -33,25 +28,14 @@ export type AccessPolicyRow = {
   grants: Array<{ roleName: string; scope: string }>
   memberCount: number
   active: boolean
-  detailHref: string
-}
-
-export type AccessPoliciesGridOptions = {
-  rows: readonly AccessPolicyRow[]
-  groups?: readonly TableGroup<AccessPolicyRow>[]
-  /** A `{id}` href that opens a rule in the record modal. */
-  rowHrefTemplate: string
 }
 
 export type AccessPoliciesListScreenOptions = {
-  /** The KetTable island the caller rendered from `accessPoliciesGrid`. */
-  grid: JSXChild
-  /** True when nothing matched, so the screen says why instead of drawing an empty grid. */
-  empty: boolean
-  clearHref?: string | null
-  total: number
+  /** The list's three islands (`rowListIslands(accessPolicyListProps(...))`). */
+  islands: { controls: JSXChild; body: JSXChild; footer: JSXChild }
   /** Null when the viewer may not write rules: the header then offers no create action. */
   createHref: string | null
+  lang: 'vi' | 'en'
 }
 
 export const accessPolicyGridColumns = (_: Translator): KetTableColumn[] => [
@@ -101,27 +85,52 @@ export const accessPolicyGridRow =
     state: row.active ? 'active' : 'paused',
   })
 
-/** The toolbar state and island config for the access-rules collection. */
-export const accessPoliciesGrid = (
-  _: Translator,
-  frame: Frame,
-  options: AccessPoliciesGridOptions,
-): { frame: Frame; config: KetTableConfig } =>
-  prepareCollectionGrid(
-    _,
-    frame,
-    {
-      columns: accessPolicyGridColumns(_),
-      rows: options.rows,
-      ...(options.groups ? { groups: options.groups } : {}),
-      id: (row) => row.id,
-      view: accessPolicyGridRow(_),
-      rowHrefTemplate: options.rowHrefTemplate,
-      labels: collectionGridLabels(_, _('user_backend.policy.empty'), _('user_backend.policy.emptyHint')),
-    },
-    { paginate: !options.groups?.length },
-  )
+/** The access-rules list's bar: what it is called and the functions it applies and saves through. */
+export const accessPolicyListBarOptions = (_: Translator): RowListSearchOptions => ({
+  name: 'user-policy-filter',
+  bodyId: 'user-policy-list',
+  functions: {
+    apply: 'user_backend.applySearchFilter',
+    saveFavorite: 'user_backend.saveSearchFavorite',
+    deleteFavorite: 'user_backend.deleteSearchFavorite',
+    setDefaultFavorite: 'user_backend.setDefaultSearchFavorite',
+  },
+  labels: { searchPlaceholder: _('user_backend.search.policies') },
+})
 
+/** The access-rules list's islands: a rule opens in its record modal over the list, on its rule. */
+export const accessPolicyListProps = (
+  _: Translator,
+  options: { href: string; read: string; bar: SearchFilterConfig; createHref: string | null; pin?: string[] },
+): RowListProps => ({
+  read: options.read,
+  href: options.href,
+  marker: 'user-policy-list',
+  lang: _.locale === 'en' ? 'en' : 'vi',
+  columns: accessPolicyGridColumns(_).map((column) => ({
+    ...column,
+    ...(column.key === 'name' ? { sortKey: 'name' } : {}),
+    ...(column.key === 'members' ? { sortKey: 'memberCount' } : {}),
+  })),
+  labels: rowListLabels(_, {
+    empty: _('user_backend.policy.empty'),
+    emptyHint: _('user_backend.policy.emptyHint'),
+    noMatch: _('user_backend.policy.noMatch'),
+    announce: _('user_backend.policy.announce'),
+    announceNone: _('user_backend.policy.announceNone'),
+    ...(options.createHref ? { create: _('user_backend.action.createPolicy') } : {}),
+  }),
+  controls: { kind: 'bar', config: options.bar },
+  open: { kind: 'record', record: 'user.accessPolicy', tab: 'rule' },
+  createHref: options.createHref,
+  chooseColumns: true,
+  ...(options.pin ? { pin: options.pin } : {}),
+})
+
+/**
+ * The access-rules collection: the title and its create action from the server,
+ * everything the query changes from the three islands, and the page's guide beside it.
+ */
 export const accessPoliciesScreen = (
   _: Translator,
   frame: Frame,
@@ -130,37 +139,33 @@ export const accessPoliciesScreen = (
   shell(
     _,
     _('user_backend.policy.title'),
-    <ListPage
-      variant="operational"
-      frame={frame}
-      title={_('user_backend.policy.title')}
-      headerActions={
-        options.createHref ? (
-          <LinkButton
-            label={_('user_backend.action.createPolicy')}
-            href={options.createHref}
-            variant="primary"
-          />
-        ) : undefined
-      }
-      actions={collectionActions(_, frame)}
-      controls={collectionControls(_, _('user_backend.policy.title'), frame)}
-      status={`${_('user_backend.policy.title')}: ${String(options.total)}`}
-      body={
-        !options.empty
-          ? options.grid
-          : options.clearHref
-            ? emptyState(_('user_backend.policy.noMatch'), _('user_backend.users.noMatchHint'), {
-                actions: (
-                  <LinkButton
-                    label={_('user_backend.action.clearFilters')}
-                    href={options.clearHref}
-                    variant="secondary"
-                  />
-                ),
-              })
-            : emptyState(_('user_backend.policy.empty'), _('user_backend.policy.emptyHint'))
-      }
-    />,
-    { ...frame, chrome: null, topbar: false },
+    <>
+      <ListPage
+        variant="operational"
+        frame={frame}
+        title={_('user_backend.policy.title')}
+        headerActions={
+          options.createHref ? (
+            <LinkButton
+              label={_('user_backend.action.createPolicy')}
+              href={options.createHref}
+              variant="primary"
+            />
+          ) : undefined
+        }
+        actions={collectionActions(_, frame)}
+        controls={options.islands.controls}
+        body={options.islands.body}
+        footer={options.islands.footer}
+      />
+      {listHelpDrawer('user-policy-help', accessPolicyListHelp[options.lang], options.lang)}
+    </>,
+    {
+      ...frame,
+      chrome: null,
+      topbar: false,
+      ...(frame.applications
+        ? { applications: { ...frame.applications, helpLabel: LIST_HELP_WORDS[options.lang].trigger } }
+        : {}),
+    },
   )

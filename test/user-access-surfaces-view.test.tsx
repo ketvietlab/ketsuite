@@ -16,16 +16,25 @@ import type { RoleModalData } from '../packages/ketsuite/src/modules/user_backen
 import { userModalDefinition } from '../packages/ketsuite/src/modules/user_backend/modal/user-modal-view.tsx'
 import type { UserModalData } from '../packages/ketsuite/src/modules/user_backend/modal/user-modal-view.tsx'
 import {
-  accessPoliciesGrid,
   accessPoliciesScreen,
+  accessPolicyGridRow,
+  accessPolicyListProps,
 } from '../packages/ketsuite/src/modules/user_backend/screens/index.ts'
-import { withGrid } from './helpers/user-grid.ts'
+import { rowListIslands } from '../packages/ketsuite/src/modules/backend/row-list-islands.ts'
+import type { RowListAnswer } from '../packages/ketsuite/src/modules/backend/row-list-read.ts'
+import { searchFilterLabels } from '../packages/ketsuite/src/modules/backend/search-filter.ts'
+import type { SearchFilterConfig } from '@ketvietlab/design-system'
+import { rowListHarness, settled } from './helpers/row-list-harness.ts'
 import type {
   RecordModalContext,
   RecordModalDefinition,
 } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 
-import { recordModalCreateHref, readRecordModalTarget } from '../packages/ketsuite/src/ui/record-modal.tsx'
+import {
+  RECORD_NEW_ID,
+  recordModalCreateHref,
+  readRecordModalTarget,
+} from '../packages/ketsuite/src/ui/record-modal.tsx'
 
 test('access policy uses a valid URL-backed record kind', () => {
   const href = recordModalCreateHref('/admin/access-policies', { kind: accessPolicyModalDefinition.kind })
@@ -209,6 +218,42 @@ test('nobody is offered a change to their own access', () => {
     ),
   )
   assert.doesNotMatch(role, /previewUnassign/)
+})
+
+test('a choice that reshapes the form starts its draft at the value it shows, so an untouched form closes quietly', () => {
+  // The record runtime asks before discarding when a field differs from the baseline
+  // `draft()` seeded; a select seeded empty while showing a choice reads as edited.
+  const seeded = <Data,>(context: RecordModalContext<Data>) => {
+    const baselines: Record<string, string> = {}
+    return {
+      baselines,
+      context: {
+        ...context,
+        draft: (name: string, fallback = '') => {
+          baselines[name] ??= fallback
+          return fallback
+        },
+      } as RecordModalContext<Data>,
+    }
+  }
+  const rule = seeded(contextOf('user.accessPolicy', RECORD_NEW_ID, policyData(), { creating: true }))
+  const ruleHtml = render(viewOf(accessPolicyModalDefinition, 'rule').view(rule.context))
+  for (const name of ['matchKind', 'scopeKind', 'companyId']) {
+    const shown = ruleHtml.match(
+      new RegExp(`<select[^>]*name="${name}"[\\s\\S]*?<option[^>]*value="([^"]*)"[^>]*selected`),
+    )?.[1]
+    assert.ok(shown, `the rule shows a ${name}`)
+    assert.equal(rule.baselines[name], shown, `${name} starts at the choice shown`)
+  }
+  const assign = seeded(user(userData(), { dialog: { name: 'assign', params: {} } }))
+  const assignHtml = render(userModalDefinition.dialogs!.assign.view(assign.context))
+  for (const name of ['scopeKind', 'companyId']) {
+    const shown = assignHtml.match(
+      new RegExp(`<select[^>]*name="${name}"[\\s\\S]*?<option[^>]*value="([^"]*)"[^>]*selected`),
+    )?.[1]
+    assert.ok(shown, `the assignment shows a ${name}`)
+    assert.equal(assign.baselines[name], shown, `${name} starts at the choice shown`)
+  }
 })
 
 test('a security-tier role is offered disabled, and said why, to anyone but a superuser', () => {
@@ -448,7 +493,24 @@ translate.locale = 'vi'
 translate.has = () => true
 translate.resolves = () => true
 
-const SEARCH_FRAME = { chrome: { search: { name: 'q', value: '', placeholder: 'Tìm quy tắc' } } }
+const POLICIES = '/admin/access-policies'
+const policyBar: SearchFilterConfig = {
+  name: 'user-policy-filter',
+  applyOnInput: true,
+  query: '',
+  facets: [],
+  filters: [],
+  groupBy: [],
+  favorites: [],
+  customFilterFields: [],
+  customFilters: [],
+  labels: searchFilterLabels(translate),
+  manager: {
+    applyFunction: 'user_backend.applySearchFilter',
+    bodyId: 'user-policy-list',
+    applyInput: { listKey: 'user.access-policies', returnTo: POLICIES },
+  },
+}
 
 const policyRow = {
   id: 'p1',
@@ -457,43 +519,69 @@ const policyRow = {
   grants: [{ roleName: 'Nhân viên bán hàng', scope: 'An Việt Miền Bắc' }],
   memberCount: 5,
   active: true,
-  detailHref: '/admin/access-policies?record=user.accessPolicy%3Ap1',
 }
+
+const policyProps = (createHref: string | null) => (href: string) =>
+  accessPolicyListProps(translate, { href, read: '/admin/access-policies/read', bar: policyBar, createHref })
+
+const policyAnswer = (href: string): RowListAnswer => ({
+  query: { q: '', page: 1 },
+  href,
+  total: 1,
+  page: 1,
+  pages: 1,
+  pageSize: 30,
+  rows: [accessPolicyGridRow(translate)(policyRow)],
+  groups: null,
+  counts: {},
+  isEmpty: false,
+  sort: {},
+  sorted: null,
+  previous: null,
+  next: null,
+  clear: POLICIES,
+  search: policyBar,
+})
 
 test('the rules collection keeps title and create, then filters, then the table', () => {
   const screen = (createHref: string | null) =>
     renderToString(
-      withGrid(
+      accessPoliciesScreen(
         translate,
-        SEARCH_FRAME,
-        accessPoliciesGrid,
-        { rows: [policyRow], rowHrefTemplate: '/admin/access-policies?record=user.accessPolicy%3A{id}' },
-        (frame, grid) => accessPoliciesScreen(translate, frame, { grid, empty: false, total: 1, createHref }),
+        {},
+        { islands: rowListIslands(policyProps(createHref)(POLICIES)), createHref, lang: 'vi' },
       ),
     )
   const html = screen('/admin/access-policies?record=user.accessPolicy%3Anew')
   assert.match(
     html,
-    /data-ui="list-page-title-row"[\s\S]*?record=user\.accessPolicy%3Anew[\s\S]*?<\/header>[\s\S]*?data-ui="list-page-controls"[\s\S]*?data-ui="ket-table"/,
+    /data-ui="list-page-title-row"[\s\S]*?record=user\.accessPolicy%3Anew[\s\S]*?<\/header>[\s\S]*?data-ui="list-page-controls"[\s\S]*?data-ui="search-filter"[\s\S]*?data-ui="list-page-body"[\s\S]*?data-ui="kt-placeholder"/,
   )
-  assert.match(html, /ketviet-sales-hn/)
+  // The rules are the island's to read; the server sends none.
+  assert.doesNotMatch(html, /ketviet-sales-hn/)
+  assert.match(html, /id="user-policy-help"[\s\S]*?Tự động gán vai trò|id="user-policy-help"/)
+  const readOnly = screen(null)
+  assert.doesNotMatch(readOnly, /record=user\.accessPolicy%3Anew|action\.createPolicy/)
+  assert.match(readOnly, /data-island="backend\.row-list"/)
+})
+
+test('the rules collection: a rule opens on its rule, with the roles and the place in their own columns', async (t) => {
+  const list = rowListHarness(t, policyProps(null), policyAnswer, POLICIES)
+  await settled()
+  assert.match(list.html(), /ketviet-sales-hn/)
   // The roles and the place they apply sit in their own columns, not joined in one cell.
-  assert.match(html, /user_backend\.policy\.grantsColumn[\s\S]*?user_backend\.field\.scope/)
+  assert.match(list.html(), /user_backend\.policy\.grantsColumn[\s\S]*?user_backend\.field\.scope/)
   assert.match(
-    html,
+    list.html(),
     /data-col="grants"[\s\S]*?Nhân viên bán hàng[\s\S]*?data-col="scope"[\s\S]*?An Việt Miền Bắc/,
   )
   assert.match(
-    html,
-    /data-ui="kt-row-link"[^>]*href="\/admin\/access-policies\?record=user\.accessPolicy%3Ap1"/,
+    list.html(),
+    /data-ui="kt-row-link"[^>]*href="\/admin\/access-policies\?record=user\.accessPolicy%3Ap1&amp;tab=rule"/,
   )
   // Rules change one at a time, from their modal: nothing to check a row for.
-  assert.doesNotMatch(html, /data-ui="kt-row-select"/)
-  assert.doesNotMatch(html, /Nhân viên bán hàng · An Việt Miền Bắc/)
-
-  const readOnly = screen(null)
-  assert.doesNotMatch(readOnly, /record=user\.accessPolicy%3Anew|action\.createPolicy/)
-  assert.match(readOnly, /data-ui="ket-table"/)
+  assert.doesNotMatch(list.html(), /data-ui="kt-row-select"/)
+  assert.doesNotMatch(list.html(), /Nhân viên bán hàng · An Việt Miền Bắc/)
 })
 
 test('role and policy screens have no change-reason fields', () => {

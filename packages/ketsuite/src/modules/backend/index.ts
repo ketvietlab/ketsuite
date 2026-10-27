@@ -168,6 +168,16 @@ export {
   rowListSearch,
 } from './row-list.ts'
 export type { RowListSpec, RowPreset } from './row-list.ts'
+/** A collection as client islands over one paged read, and the read for one held in memory. */
+export { rowListAnswer, rowListBar, rowListMenu, rowListTarget } from './row-list-read.ts'
+export type { RowListAnswer, RowListMenu, RowListSearchOptions } from './row-list-read.ts'
+export { rowListIslands, rowListLabels, rowListReadRoute } from './row-list-islands.ts'
+export type {
+  RowListColumn,
+  RowListControls,
+  RowListLabels,
+  RowListProps,
+} from '../../ui/client/row-list-island.tsx'
 
 /**
  * The kit, re-exported.
