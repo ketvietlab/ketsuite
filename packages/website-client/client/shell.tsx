@@ -249,8 +249,22 @@ export function studioFrame(ctx: StudioContext, content: StudioContent, toasts: 
 export const loadingView = () => <LoadingState label={tr('website.loading')} lines={3} />
 
 /** A missing record is not an outage: no retry, and a way back to the list it belongs to. */
-export function failureView(error: unknown, back?: { label: string; href: string }) {
+export function failureView(
+  error: unknown,
+  back?: { label: string; href: string },
+  create?: { label: string; href: string },
+) {
   const { code, message } = (error ?? {}) as { code?: string; message?: string }
+  // A company without a website yet: its first site is the next step, not a failure to retry.
+  if (code === 'noSite')
+    return (
+      <EmptyState
+        visual="start"
+        title={tr('website.error.noSiteTitle')}
+        message={tr(create ? 'website.error.noSiteCreate' : 'website.error.noSiteAsk')}
+        actions={create ? <LinkButton label={create.label} href={create.href} variant="primary" /> : null}
+      />
+    )
   const denied = code === 'forbidden',
     missing = code === 'notFound'
   return (

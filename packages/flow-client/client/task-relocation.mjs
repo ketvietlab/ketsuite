@@ -143,7 +143,7 @@ export function createTaskRelocation(ctx) {
     const destination = s.projects.find((p) => p.id === s.target)
     if (!destination) return false
     const ok = await ctx.mutate(
-      `flow.issue.${mode() === 'copy' ? 'copyTo' : 'transfer'}`,
+      mode() === 'copy' ? 'flow.issue.copyTo' : 'flow.issue.transfer',
       {
         id: ctx.task().id,
         ...mapping(),

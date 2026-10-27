@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { sqliteAdapter } from '@ketvietlab/ketjs'
 import { verifyPassword } from '@ketvietlab/ketsuite'
 import { ensureDevelopmentAdmin } from '../packages/ketsuite/src/development.ts'
-import { scaffoldKetsuite } from '../packages/ketsuite/src/scaffold/index.ts'
+import { VERSION, scaffoldKetsuite } from '../packages/ketsuite/src/scaffold/index.ts'
 
 test('KetSuite scaffold writes the packaged app and safe development scripts', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'ketsuite-scaffold-'))
@@ -20,6 +20,8 @@ test('KetSuite scaffold writes the packaged app and safe development scripts', a
     // to remember to move.
     const shipped = JSON.parse(await readFile('package.json', 'utf8')).version
     assert.equal(pkg.dependencies['@ketvietlab/ketsuite'], `^${shipped}`)
+    // `ketsuite --version` prints the same constant, so it cannot fall behind the release.
+    assert.equal(VERSION, shipped)
     // KetJS has its own version line, so the app asks for the KetJS release the package
     // itself depends on rather than reusing the KetSuite number.
     const suite = JSON.parse(await readFile('packages/ketsuite/package.json', 'utf8'))

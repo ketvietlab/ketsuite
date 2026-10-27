@@ -72,6 +72,7 @@ for (const name of registeredNames) {
 }
 
 const infrastructureAllowlist = new Set([
+  'BULK_CLEAR_COMMAND',
   'HOOKS',
   'OWNERS',
   'attachClientModalInteractions',

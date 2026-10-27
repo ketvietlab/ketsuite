@@ -112,6 +112,11 @@ const entries = [
     source: join(UI_CLIENT_DIR, 'search-filter-view.tsx'),
     output: join(BACKEND_CLIENT_DIR, 'search-filter.mjs'),
   },
+  // A collection's controls, rows and pager: three islands over one paged read.
+  {
+    source: join(UI_CLIENT_DIR, 'row-list-island.tsx'),
+    output: join(BACKEND_CLIENT_DIR, 'row-list.mjs'),
+  },
   {
     source: join(DESIGN_SYSTEM_DIR, 'interactions/lightbox/index.tsx'),
     output: join(BACKEND_CLIENT_DIR, 'lightbox.mjs'),

@@ -1,6 +1,6 @@
 {
   "name": "@ketvietlab/ketsuite",
-  "version": "0.1.42",
+  "version": "0.1.43",
   "description": "KetSuite — business modules built on Ket, using only the contract a third-party module has.",
   "type": "module",
   "license": "MIT",
@@ -86,12 +86,12 @@
     }
   },
   "dependencies": {
-    "@ketvietlab/flow-client": "0.1.42",
-    "@ketvietlab/flow-ui": "0.1.42",
-    "@ketvietlab/design-system": "0.1.42",
+    "@ketvietlab/flow-client": "0.1.43",
+    "@ketvietlab/flow-ui": "0.1.43",
+    "@ketvietlab/design-system": "0.1.43",
     "@ketvietlab/ketjs": "0.6.1",
     "@ketvietlab/ketjs-view": "0.6.1",
-    "@ketvietlab/website-client": "0.1.42",
+    "@ketvietlab/website-client": "0.1.43",
     "chart.js": "4.5.1",
     "ioredis": "^6.0.0",
     "marked": "18.1.0",

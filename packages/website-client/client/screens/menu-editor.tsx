@@ -3,7 +3,6 @@ import { signal } from '@ketvietlab/ketjs-view'
 import {
   Surface,
   Stack,
-  Grid,
   TextField,
   Select,
   CheckboxGroup,
@@ -418,50 +417,16 @@ export function createMenuEditor(ctx: StudioContext): MenuEditorScreen {
                   <Surface
                     title={tr('website.menuEditor.settings')}
                     body={
-                      <Grid
-                        columns={3}
-                        items={[
-                          field(
-                            'menu-title',
-                            tr('website.resource.menus.title'),
-                            draft!.title,
-                            (value) => {
-                              draft!.title = value
-                            },
-                            { required: true },
-                          ),
-                          select(
-                            'menu-position',
-                            tr('website.resource.menus.position'),
-                            draft!.position ?? 'header',
-                            [
-                              {
-                                value: 'header',
-                                label: tr('website.option.header'),
-                              },
-                              {
-                                value: 'footer',
-                                label: tr('website.option.footer'),
-                              },
-                            ],
-                            (value) => {
-                              draft!.position = value
-                            },
-                          ),
-                          select(
-                            'menu-locale',
-                            tr('website.entry.locale'),
-                            draft!.locale ?? 'vi',
-                            (ctx.site().locales ?? ['vi', 'en']).map((value) => ({
-                              value,
-                              label: value.toUpperCase(),
-                            })),
-                            (value) => {
-                              draft!.locale = value
-                            },
-                          ),
-                        ]}
-                      />
+                      // The site serves one header menu in its default language; nothing else to choose yet.
+                      field(
+                        'menu-title',
+                        tr('website.resource.menus.title'),
+                        draft!.title,
+                        (value) => {
+                          draft!.title = value
+                        },
+                        { required: true },
+                      )
                     }
                   />,
                   <div class="website-menu-workspace">
@@ -595,8 +560,8 @@ export function createMenuEditor(ctx: StudioContext): MenuEditorScreen {
         if (!draft!.title?.trim() || menuIssues(draft!.items).length) throw error()
         const values = {
           title: draft!.title.trim(),
-          locale: draft!.locale ?? 'vi',
-          position: draft!.position ?? 'header',
+          locale: ctx.site().defaultLocale ?? 'vi',
+          position: 'header',
           items: flattenMenu(draft!.items).map(({ depth: _depth, ...item }, position) => ({
             ...item,
             position,

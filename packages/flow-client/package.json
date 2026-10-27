@@ -1,6 +1,6 @@
 {
   "name": "@ketvietlab/flow-client",
-  "version": "0.1.42",
+  "version": "0.1.43",
   "description": "MIT Flow core client and extension contracts for KetSuite deployments.",
   "type": "module",
   "license": "MIT",
@@ -75,8 +75,8 @@
     "atlas": "node atlas/server.mjs"
   },
   "dependencies": {
-    "@ketvietlab/design-system": "0.1.42",
-    "@ketvietlab/flow-ui": "0.1.42",
+    "@ketvietlab/design-system": "0.1.43",
+    "@ketvietlab/flow-ui": "0.1.43",
     "@ketvietlab/ketjs-view": "0.6.1",
     "@ketvietlab/ketjs": "0.6.1"
   },

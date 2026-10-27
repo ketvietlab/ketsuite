@@ -206,6 +206,15 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
     const current = route()
     const screen = screenOf(current.key)
     const back = routes[current.key]?.modal?.back
+    if ((routes[current.key]?.scope ?? 'site') === 'site' && boot() && !boot()!.site) {
+      reading?.abort()
+      readKey = null
+      batch(() => {
+        data.set({ key: current.key, value: null, back: null, extras: {} })
+        failure.set({ code: 'noSite' })
+      })
+      return
+    }
     const key = JSON.stringify([current.key, screen?.readKey?.(current) ?? current, boot()?.site?.id])
     if (!force && key === readKey && data()) return
     reading?.abort()
@@ -397,6 +406,8 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
   }
 
   /** The list a record route belongs to, for leaving a missing record. */
+  const createSite = () =>
+    can('website.site.manage') ? { label: tr('website.site.create'), href: href('sites-edit') } : undefined
   const listOf = (key: string) => {
     const owner = activeEntry(key)
     return owner && owner !== key && routes[owner]
@@ -414,7 +425,7 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
       body: !ready
         ? null
         : failure()
-          ? failureView(failure(), listOf(current.key))
+          ? failureView(failure(), listOf(current.key), createSite())
           : screenOf(current.key)?.view(loaded!.value, current),
       background: back && ready && !failure() ? screenOf(back)?.view(loaded!.back, current) : null,
     }
@@ -438,13 +449,13 @@ export function createWebsiteStudio(props: StudioProps = {}, dependencies: Studi
     const values = regions()
     if (id === 'studio.toasts') return html`${values.get(id)}`
     if (!data() || data()?.key !== route().key) {
-      if (failure() && id.endsWith('.body')) return failureView(failure(), listOf(route().key))
+      if (failure() && id.endsWith('.body')) return failureView(failure(), listOf(route().key), createSite())
       return html`${trustedMarkup(initial)}`
     }
     const value = values.has(id)
       ? values.get(id)
       : id.endsWith('.body') && failure()
-        ? failureView(failure(), listOf(route().key))
+        ? failureView(failure(), listOf(route().key), createSite())
         : null
     return html`${value}`
   }

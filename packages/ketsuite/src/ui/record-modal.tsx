@@ -167,6 +167,19 @@ export type RecordPageIslandProps = {
   envelope?: unknown
 }
 
+/**
+ * The trail as the record reads now. Its last, unlinked step is the record the server titled; once the record is
+ * renamed in the page, that step reads the new title, as the heading and the document title do.
+ */
+export const renamedTrail = (
+  trail: readonly RecordPageTrailItem[] | null | undefined,
+  was: string,
+  now: string,
+): readonly RecordPageTrailItem[] | null | undefined =>
+  trail?.map((item, index) =>
+    index === trail.length - 1 && !item.href && item.label === was ? { ...item, label: now } : item,
+  )
+
 /** The location strip above a record page, the same markup as other pages'. */
 export const recordPageTrail = (
   trail: readonly RecordPageTrailItem[] | null | undefined,

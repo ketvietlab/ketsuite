@@ -1151,8 +1151,13 @@ test('routes: every path a screen builds is a path some module serves', () => {
 
   // Hospitality hands a property's channels and its service stock to extensions a
   // deployment may add; KetSuite serves neither, and its screens offer them only
-  // where the extension answers.
-  const EXTENSIONS = ['/admin/hospitality/ota/connections', '/admin/hospitality/product-fulfillments']
+  // where the extension answers. A deployment whose people sign in through its own
+  // service serves their page, and `/admin/users/{id}` sends there only when it does.
+  const EXTENSIONS = [
+    '/admin/hospitality/ota/connections',
+    '/admin/hospitality/product-fulfillments',
+    '/admin/users/{}/profile',
+  ]
   // One hospitality record context per catalogue entry, built from the entry's
   // path; checked against the routes entry by entry below.
   const BY_DEFINITION =

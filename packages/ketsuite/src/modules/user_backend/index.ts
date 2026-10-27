@@ -42,15 +42,15 @@ export default defineModule({
   },
 })
 
-export { routes } from './routes.ts'
+export { routes, userPageRoute } from './routes.ts'
+export type { UserPageEnvelope } from './routes.ts'
 export {
-  accessPoliciesGrid,
   accessPoliciesScreen,
   profileScreen,
-  rolesGrid,
   rolesScreen,
   sessionsScreen,
-  usersGrid,
+  userListBarOptions,
+  userListProps,
   usersScreen,
 } from './screens/index.ts'
 

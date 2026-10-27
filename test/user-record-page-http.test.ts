@@ -6,11 +6,13 @@
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import type { Row } from '@ketvietlab/ketjs'
+import { defineDeployment, defineModule } from '@ketvietlab/ketjs'
 import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { ketsuite } from '../apps/ketsuite/deployment.ts'
+import { userPageRoute } from '../packages/ketsuite/src/modules/user_backend/index.ts'
 
-const boot = async (t: TestContext) => {
-  const app = await createTestDeployment(ketsuite, { worker: false })
+const boot = async (t: TestContext, deployment = ketsuite) => {
+  const app = await createTestDeployment(deployment, { worker: false })
   t.after(() => app.close())
   const scope = { company: 'acme', branch: 'root:acme', branches: ['root:acme'] }
   const fixture = (name: string, input: Record<string, unknown>) =>
@@ -33,7 +35,7 @@ const boot = async (t: TestContext) => {
 /** The JSON an island was handed, as the page wrote it. */
 const islandProps = (html: string, name: string): Record<string, unknown> => {
   const tag = html.match(
-    new RegExp(`<ket-island[^>]*data-island="${name.replace('.', '\\.')}"[^>]*>`, 'u'),
+    new RegExp(`<(?:ket-island|div)\\b[^>]*data-island="${name.replace('.', '\\.')}"[^>]*>`, 'u'),
   )?.[0]
   assert.ok(tag, `the page places ${name}`)
   const raw = tag.match(/data-props="([^"]*)"/u)?.[1] ?? '{}'
@@ -44,10 +46,10 @@ test('user page HTTP: a row opens the person on their own page, which arrives co
   const app = await boot(t)
 
   const list = await (await app.client.get('/admin/users?lang=vi&q=Trang')).text()
-  // The way back rides along, so the trail returns to the list as it was left.
-  assert.match(list, /\/admin\/users\/trang\?lang=vi&amp;returnTo=%2Fadmin%2Fusers%3Flang%3Dvi%26q%3DTrang/u)
-  // Only creating still opens over the list; nobody existing is a modal any more.
-  assert.doesNotMatch(list, /record=user\.user%3A(?!new)/u)
+  // A row opens the person's page (the list's islands build its link, with the way back to this
+  // list at that row); only creating still opens over the list.
+  const open = islandProps(list, 'backend.row-list').open
+  assert.deepEqual(open, { kind: 'page', path: '/admin/users/{id}?lang=vi', returnPath: '/admin/users' })
   assert.match(list, /record=user\.user%3Anew/u)
 
   const page = await app.client.get(
@@ -65,6 +67,13 @@ test('user page HTTP: a row opens the person on their own page, which arrives co
   assert.match(html, /data-record-layer="page"/u)
   assert.match(html, /data-ui="record-page"[^>]*data-variant="operational"[^>]*data-width="default"/u)
   assert.match(html, /<a\b[^>]*href="\/admin\/users\?lang=vi&amp;q=Trang"[^>]*>/u)
+  // The row the reader left rides back on the trail, so the list returns to it.
+  const anchored = await (
+    await app.client.get(
+      '/admin/users/trang?lang=vi&returnTo=%2Fadmin%2Fusers%3Flang%3Dvi%26q%3DTrang%23row%3Dtrang',
+    )
+  ).text()
+  assert.match(anchored, /<a\b[^>]*href="\/admin\/users\?lang=vi&amp;q=Trang#row=trang"[^>]*>/u)
   const props = islandProps(html, 'user.user-page')
   assert.equal(props.id, 'trang')
   assert.equal(props.title, 'Minh Trang')
@@ -89,4 +98,62 @@ test('user page HTTP: a link written for the old modal lands on the page', async
   // Creating someone still opens over the list.
   const create = await app.client.get('/admin/users?lang=vi&record=user.user%3Anew', { redirect: 'manual' })
   assert.equal(create.status, 200)
+})
+
+test('user page HTTP: a deployment that serves its own person page receives every link to the person', async (t) => {
+  // A deployment whose people sign in through a service of its own reads the person with that service's
+  // state and serves the page with `userPageRoute`, placing the island through a joint it fills.
+  const own = defineModule({
+    name: 'user_page_probe',
+    depends: ['user', 'user_backend'],
+    joints: {
+      'user.page': {
+        props: {
+          id: 'id',
+          title: 'text',
+          loadingLabel: 'text',
+          trail: 'json?',
+          trailLabel: 'text?',
+          envelope: 'json?',
+        },
+      },
+    },
+    fills: { 'user_page_probe:user.page': '{% island "user.user-page" %}' },
+    routes: {
+      '/admin/users/{id}/profile': userPageRoute({
+        joint: 'user_page_probe:user.page',
+        context: async (ctx, url, req, id, locale) => {
+          const base = (await ctx.call('user.userModalContext', { id, locale }, url, req)) as {
+            data: Record<string, unknown>
+          } | null
+          return base && { ...base, data: { ...base.data, signInService: 'probe' } }
+        },
+        beside: (_, title) => `Guide for ${title}`,
+      }),
+    },
+  })
+  const app = await boot(t, defineDeployment({ ...ketsuite, modules: [...ketsuite.modules, own] }))
+  const returnTo = '%2Fadmin%2Fusers%3Flang%3Dvi%26q%3DTrang'
+  const moved = await app.client.get(`/admin/users/trang?lang=vi&returnTo=${returnTo}`, {
+    redirect: 'manual',
+  })
+  assert.equal(moved.status, 303)
+  assert.equal(moved.headers.get('location'), `/admin/users/trang/profile?lang=vi&returnTo=${returnTo}`)
+
+  const page = await app.client.get(`/admin/users/trang/profile?lang=vi&returnTo=${returnTo}`)
+  assert.equal(page.status, 200)
+  const html = await page.text()
+  const props = islandProps(html, 'user.user-page')
+  assert.equal((props.envelope as { data: { signInService?: string } }).data.signInService, 'probe')
+  // The way back is the list as it was left, and what the deployment puts beside the page is there.
+  assert.match(html, /<a\b[^>]*href="\/admin\/users\?lang=vi&amp;q=Trang"[^>]*>/u)
+  // The row the reader left rides back on the trail, so the list returns to it.
+  const anchored = await (
+    await app.client.get(
+      '/admin/users/trang?lang=vi&returnTo=%2Fadmin%2Fusers%3Flang%3Dvi%26q%3DTrang%23row%3Dtrang',
+    )
+  ).text()
+  assert.match(anchored, /<a\b[^>]*href="\/admin\/users\?lang=vi&amp;q=Trang#row=trang"[^>]*>/u)
+  assert.match(html, /Guide for Minh Trang/u)
+  assert.equal((await app.client.get('/admin/users/nobody/profile?lang=vi')).status, 404)
 })

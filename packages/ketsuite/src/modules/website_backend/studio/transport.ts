@@ -71,6 +71,7 @@ export type Snapshot = {
   revisions: Row[]
   publications: Row[]
   domains: Row[]
+  primaryDomains: Row[]
   sections: unknown
 }
 const row = (value: unknown): Row =>
@@ -427,7 +428,9 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
   const publicSite = (site: Row, domains: Row[]) => ({
     ...site,
     name: site.title || site.name,
-    host: domains.find((d) => d.primary)?.host ?? '',
+    host: domains.find((d) => d.primary && d.siteId === site.id)?.host ?? '',
+    // The model keeps one switch; the Studio names it as the state its lists show.
+    state: site.active === false ? 'paused' : 'active',
     locales: [site.defaultLocale],
     revisionId: String(site.updatedAt ?? site.id),
     timezone: 'Asia/Ho_Chi_Minh',
@@ -519,7 +522,7 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
         sites: data.sites.map((s) => ({
           id: s.id,
           name: s.title || s.name,
-          host: s.id === data.site?.id ? (data.domains.find((d) => d.primary)?.host ?? '') : '',
+          host: data.primaryDomains.find((d) => d.siteId === s.id)?.host ?? '',
         })),
         offer: null,
         home: '/admin',
@@ -553,6 +556,12 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
       const entries = data.entries.filter((e) => e.state !== 'trash')
       const queue = entries.filter((e) => e.state !== 'published')
       const active = data.publications.find((p) => p.id === data.site?.activePublicationId)
+      // Without a site release, visitors read each page's own published revision.
+      const served = entries.filter((e) => e.publishedRevisionId)
+      const latest = served
+        .map((e) => String(e.publishedAt ?? ''))
+        .sort()
+        .at(-1)
       // Unopened submissions across the site's forms, for whoever may see the queue at all.
       let newSubmissions = 0
       const submissions: Row[] = []
@@ -571,7 +580,11 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
           issues: 0,
         },
         queue,
-        live: active ? publicationRow(active) : null,
+        live: active
+          ? publicationRow(active)
+          : served.length
+            ? { state: 'active', activatedAt: latest || null, activatedBy: null, entryCount: served.length }
+            : null,
         submissions: submissions
           .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
           .slice(0, 5),
@@ -1075,7 +1088,7 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
       if (input.kind === 'themes') return { rows: [await themeResource(data.site!)] }
       if (input.kind === 'menus') return { rows: [await menuOf(data.site!)], creatable: false }
       if (input.kind === 'domains') return { rows: data.domains.map(domainOf) }
-      if (input.kind === 'sites') return { rows: data.sites.map((s) => publicSite(s, data.domains)) }
+      if (input.kind === 'sites') return { rows: data.sites.map((s) => publicSite(s, data.primaryDomains)) }
       if (input.kind === 'seo') {
         const entries = seoEntries(data.entries)
         const search = String(input.search ?? '')
