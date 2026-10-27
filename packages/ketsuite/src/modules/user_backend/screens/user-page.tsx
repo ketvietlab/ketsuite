@@ -6,8 +6,9 @@ import type { Frame } from '../../../ui/index.ts'
 /**
  * A person's own page, inside the administration shell. The record page island
  * is the content: its frame, sections and dialogs belong to the record runtime,
- * placed through the `user.record-page` joint so a deployment can stand in for it.
- * The record page carries the title, so the shell's own topbar steps aside.
+ * placed through a joint (`user.record-page` here; a deployment serving its own
+ * page with `userPageRoute` fills one of its own). The record page carries the
+ * title, so the shell's own topbar steps aside.
  */
 export const userPageScreen = (
   _: Translator,

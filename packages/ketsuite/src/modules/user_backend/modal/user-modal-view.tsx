@@ -22,12 +22,18 @@ import {
   Surface,
   Text,
 } from '@ketvietlab/design-system'
-import type { FieldOption, FieldProps } from '@ketvietlab/design-system'
+import type {
+  FieldOption,
+  FieldProps,
+  RelationSelectConfig,
+  RelationSelectLabels,
+} from '@ketvietlab/design-system'
 import type { JSXChild } from '@ketvietlab/ketjs-view'
 import {
   createRecordModal,
   createRecordPage,
   RECORD_COMMAND_FIELD,
+  recordIsland,
 } from '../../../ui/client/record-modal.tsx'
 import type { RecordModalContext, RecordModalDefinition } from '../../../ui/client/record-modal.tsx'
 import { USER_RECORD_MODAL_LABELS } from '../../user/modal-labels.ts'
@@ -202,10 +208,12 @@ const stateSelect = (
     required?: boolean
   },
 ): FieldProps => {
+  // The draft's baseline is the choice shown, so an untouched form closes without asking.
   const base = field(c, {
     name: props.name,
     label: props.label,
     type: 'select',
+    value: props.value,
     required: props.required,
   })
   return {
@@ -407,6 +415,62 @@ const profileFields = (c: Context): FieldProps[] => [
 ]
 
 const companyFieldName = (companyId: string): string => `company_${companyId}`
+
+/** `backend.relation-select`'s labels, from this record's messages. */
+const relationLabels = (c: Context, dialogTitle: string): RelationSelectLabels => ({
+  choose: c.t('backend.relation.choose'),
+  search: c.t('backend.relation.search'),
+  more: c.t('backend.relation.more'),
+  noRecords: c.t('backend.relation.noRecords'),
+  loading: c.t('backend.relation.loading'),
+  loadError: c.t('backend.relation.loadError'),
+  dialogTitle,
+  close: c.t('backend.relation.close'),
+  select: c.t('backend.relation.select'),
+  create: c.t('backend.relation.create'),
+  edit: c.t('backend.relation.edit'),
+  save: c.t('backend.relation.save'),
+  cancel: c.t('backend.relation.cancel'),
+  remove: c.t('backend.relation.remove'),
+  confirmRemove: c.t('backend.relation.confirmRemove'),
+  retry: c.t('backend.relation.retry'),
+  clear: c.t('backend.relation.clear'),
+  chosen: c.t('backend.relation.chosen'),
+})
+
+/**
+ * The company or branch the person lands in, picked like every other relation: a `RelationSelect`
+ * over the places ticked above, its trigger carrying the field's id, error and required state.
+ */
+const workplacePicker = (
+  c: Context,
+  props: { name: string; label: string; value: string; options: FieldOption[] },
+): FieldProps => {
+  const base = field(c, {
+    name: props.name,
+    label: props.label,
+    type: 'select',
+    required: true,
+    value: props.value,
+  })
+  const config: RelationSelectConfig = {
+    name: props.name,
+    ariaLabel: props.label,
+    triggerId: base.id,
+    value: String(base.value ?? '') || null,
+    required: true,
+    disabled: base.disabled === true,
+    invalid: !!base.error,
+    describedBy: base.error ? `${base.id}-error` : null,
+    options: props.options,
+    labels: relationLabels(c, props.label),
+  }
+  return {
+    ...base,
+    options: props.options,
+    control: recordIsland('backend.relation-select', { id: base.id, config }),
+  }
+}
 const branchFieldName = (branchId: string): string => `branch_${branchId}`
 
 const selectedIds = (form: FormData, rows: AnyRow[], name: (id: string) => string): string[] =>
@@ -457,22 +521,18 @@ const workplaceFields = (c: Context): FieldProps[] => {
         checked: branches.includes(String(branch.id)),
       })),
     }),
-    field(c, {
+    workplacePicker(c, {
       name: 'defaultCompanyId',
       label: t(c, 'field.defaultCompany'),
-      type: 'select',
-      required: true,
       value: c.data.record.defaultCompanyId ?? String(chosenCompanies[0]?.id ?? ''),
       options: chosenCompanies.map((company) => ({
         value: String(company.id),
         label: String(company.name),
       })),
     }),
-    field(c, {
+    workplacePicker(c, {
       name: 'defaultBranchId',
       label: t(c, 'field.defaultBranch'),
-      type: 'select',
-      required: true,
       value: c.data.record.defaultBranchId ?? '',
       options: offeredBranches.map((branch) => ({
         value: String(branch.id),
@@ -2008,8 +2068,13 @@ const pageBody = (c: Context): JSXChild => (
 )
 
 /** The page's own commands: change who they are, and give them a role. */
-const pageActions = (c: Context): JSXChild | undefined => {
+/**
+ * The page's commands, as one group. A deployment that adds its own (the page's screen help) leads with it in the
+ * same group, so the commands wrap together on a phone rather than stacking in rows of their own.
+ */
+export const userPageActions = (c: Context, lead: readonly JSXChild[] = []): JSXChild | undefined => {
   const actions = [
+    ...lead,
     ...(c.data.permissions.save
       ? [
           RecordDialogTrigger({
@@ -2311,7 +2376,7 @@ export const userPageDefinition: RecordModalDefinition<UserModalData> = {
   tabs: undefined,
   extensionTabs: undefined,
   body: pageBody,
-  pageActions,
+  pageActions: (c) => userPageActions(c),
   dialogs: {
     ...userModalDefinition.dialogs,
     // Who the person is, alone: where they work has a card and a dialog of its own.

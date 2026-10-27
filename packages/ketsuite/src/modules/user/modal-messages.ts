@@ -5,7 +5,8 @@ import { USER_RECORD_MODAL_LABELS } from './modal-labels.ts'
 export const userModalMessages = (ctx: Pick<Ctx, 'manifest'>, lang: string): Record<string, string> => {
   const out: Record<string, string> = { ...USER_RECORD_MODAL_LABELS[lang === 'en' ? 'en' : 'vi'] }
   for (const [key, message] of Object.entries(ctx.manifest.messages?.[lang] ?? {})) {
-    if (!key.startsWith('user_backend.') && !key.startsWith('user.')) continue
+    // `backend.relation.*` labels the workplace pickers.
+    if (!['user_backend.', 'user.', 'backend.relation.'].some((prefix) => key.startsWith(prefix))) continue
     const text =
       typeof message === 'string' ? message : String(message.other ?? Object.values(message)[0] ?? key)
     out[key] = text

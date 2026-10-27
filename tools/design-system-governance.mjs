@@ -32,6 +32,7 @@ const runtimeExports = [...publicIndex.matchAll(/export\s+\{([\s\S]*?)\}\s+from\
   .filter(
     (name) =>
       ![
+        'BULK_CLEAR_COMMAND',
         'HOOKS',
         'OWNERS',
         'attachDesignSystemInteractions',

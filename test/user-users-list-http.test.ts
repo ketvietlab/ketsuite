@@ -35,35 +35,48 @@ const boot = async (t: TestContext) => {
   return app
 }
 
-test('users HTTP list searches before exact paging and preserves locale/archive state', async (t) => {
+type Answer = {
+  total: number
+  page: number
+  rows: Row[]
+  clear: string
+  href: string
+  menus?: Array<{ id: string; items: Array<{ id: string; label: string; href: string; active: boolean }> }>
+}
+
+/** One page of people, as the list's islands read it. */
+const read = async (app: Awaited<ReturnType<typeof boot>>, href: string): Promise<Answer> => {
+  const response = await app.client.post('/admin/users/read?lang=en', JSON.stringify({ href }), {
+    headers: { 'content-type': 'application/json' },
+  })
+  assert.equal(response.status, 200, href)
+  return ((await response.json()) as { value: Answer }).value
+}
+
+test('users HTTP list: the page is a frame, its people a read that searches before exact paging', async (t) => {
   const app = await boot(t)
   const first = await (await app.client.get('/admin/users?lang=en')).text()
   assert.match(first, /data-ui="list-page"/)
-  assert.match(first, /data-island="backend\.search-filter"/)
-  assert.match(first, /1-30 \/ 31/)
-  assert.doesNotMatch(first, /user-31/)
+  assert.match(first, /data-island="backend\.row-list"[\s\S]*?data-ui="kt-placeholder"/)
+  assert.doesNotMatch(first, /login-01/, 'no person is rendered on the server')
 
-  const second = await (await app.client.get('/admin/users?page=2&lang=en')).text()
-  assert.match(second, /31-31 \/ 31/)
+  const page1 = await read(app, '/admin/users?lang=en')
+  assert.equal(page1.total, 31)
+  assert.equal(page1.rows.length, 30)
+  assert.ok(!page1.rows.some((row) => row.id === 'user-31'))
+  assert.equal((await read(app, '/admin/users?page=2&lang=en')).rows.length, 1)
 
-  const archived = await (await app.client.get('/admin/users?archived=1&page=2&lang=en')).text()
-  assert.match(archived, /31-32 \/ 32/)
-  // A row opens the person's own page and carries the list state it came from.
-  assert.match(
-    archived,
-    /data-ui="kt-row-link"[^>]*href="\/admin\/users\/user-31\?lang=en&amp;returnTo=%2Fadmin%2Fusers%3Farchived%3D1%26page%3D2%26lang%3Den"/,
-  )
+  const archived = await read(app, '/admin/users?archived=1&page=2&lang=en')
+  assert.equal(archived.total, 32)
+  assert.equal(archived.rows.length, 2)
 
-  const byName = await (await app.client.get('/admin/users?q=needle&lang=en')).text()
-  assert.match(byName, /Search Needle/)
-  assert.match(byName, /Users: 2/)
-  assert.match(byName, /needle@example\.test|login-08/)
+  const byName = await read(app, '/admin/users?q=needle&lang=en')
+  assert.deepEqual(byName.rows.map((row) => row.id).sort(), ['user-07', 'user-08'])
 
-  const stateful = await (await app.client.get('/admin/users?q=user&archived=1&page=2&lang=en')).text()
-  // The search-filter bar owns the query and the archived toggle now, so what
-  // the page must keep is the state the URL names, not a GET form.
-  assert.match(stateful, /data-island="backend\.search-filter"/)
-  assert.doesNotMatch(stateful, /name="q"[^>]*data-ui="chrome-search-input"/)
+  // A page past the end comes back clamped, with the URL that says so.
+  const past = await read(app, '/admin/users?page=9&lang=en')
+  assert.equal(past.page, 2)
+  assert.equal(past.href, '/admin/users?lang=en&page=2')
   assert.equal((await app.client.request('/admin/users?lang=en', { method: 'PUT' })).status, 405)
 })
 
@@ -78,16 +91,13 @@ test('the create action opens a person in the record modal, while a row opens th
   )
   // The closed host is what opens that link once the page hydrates.
   assert.match(page, /data-ui="record-modal-host" data-record-kind="user\.user"/)
-  // A row is the other way in: administration records are pages of their own, so it opens the
-  // person's page and carries the list state back through returnTo rather than opening a modal.
-  assert.match(
-    page,
-    /data-ui="kt-row-link"[^>]*href="\/admin\/users\/[^"?]+\?lang=en&amp;returnTo=%2Fadmin%2Fusers%3Fq%3Duser%26archived%3D1%26page%3D2%26lang%3Den"/,
-  )
-  assert.doesNotMatch(page, /data-ui="kt-row-link"[^>]*href="[^"]*record=user\.user/)
+  // A row is the other way in: the island opens the person's own page, whose way back is the list.
+  const props = page.match(/data-island="backend\.row-list"[^>]*data-props="([^"]*)"/)?.[1] ?? ''
+  const open = JSON.parse(props.replaceAll('&quot;', '"').replaceAll('&amp;', '&')).open
+  assert.deepEqual(open, { kind: 'page', path: '/admin/users/{id}?lang=en', returnPath: '/admin/users' })
 })
 
-test('the list narrows by where people work and what they hold, and says so removably', async (t) => {
+test('the list narrows by where people work and what they hold, and clearing drops both', async (t) => {
   const app = await boot(t)
   const scope = { company: 'acme', branch: 'root:acme', branches: ['root:acme'] }
   const fixture = (name: string, input: Record<string, unknown>) =>
@@ -95,23 +105,33 @@ test('the list narrows by where people work and what they hold, and says so remo
   await fixture('user.saveRole', { id: 'cashier', name: 'Thu ngân' })
   await fixture('user.assignRole', { id: 'a-01', userId: 'user-01', roleId: 'cashier' })
 
-  // Both questions are offered beside paging.
-  const plain = await (await app.client.get('/admin/users?lang=en')).text()
-  assert.match(plain, /Thu ngân/)
+  // Both questions come with the read, each choice a link back to the list.
+  const plain = await read(app, '/admin/users?lang=en')
+  const role = plain.menus?.find((menu) => menu.id === 'role')
+  const cashier = role?.items.find((item) => item.id === 'cashier')
+  assert.equal(cashier?.label, 'Thu ngân')
+  assert.equal(cashier?.href, '/admin/users?lang=en&role=cashier')
 
-  // Only the person who works at that company is left, and the chip drops it again.
-  const byCompany = await (await app.client.get('/admin/users?company=acme&lang=en')).text()
-  assert.match(byCompany, /Users: 1/)
-  assert.match(byCompany, /login-00/)
-  assert.match(byCompany, /href="\/admin\/users\?lang=en"/)
+  // Only the person who works at that company is left; choosing it again drops it.
+  const byCompany = await read(app, '/admin/users?company=acme&lang=en')
+  assert.deepEqual(
+    byCompany.rows.map((row) => row.login),
+    ['login-00'],
+  )
+  const acme = byCompany.menus
+    ?.find((menu) => menu.id === 'company')
+    ?.items.find((item) => item.id === 'acme')
+  assert.equal(acme?.active, true)
+  assert.equal(acme?.href, '/admin/users?lang=en')
 
   // Only the person holding that role is left.
-  const byRole = await (await app.client.get('/admin/users?role=cashier&lang=en')).text()
-  assert.match(byRole, /Users: 1/)
-  assert.match(byRole, /login-01/)
+  assert.deepEqual(
+    (await read(app, '/admin/users?role=cashier&lang=en')).rows.map((row) => row.login),
+    ['login-01'],
+  )
 
-  // Asked for both at once nobody qualifies, and the way out is dropping the question.
-  const neither = await (await app.client.get('/admin/users?company=acme&role=cashier&lang=en')).text()
-  assert.match(neither, /Users: 0/)
-  assert.match(neither, /Clear the filters/)
+  // Asked for both at once nobody qualifies, and the way out drops both questions.
+  const neither = await read(app, '/admin/users?company=acme&role=cashier&q=login&lang=en')
+  assert.equal(neither.total, 0)
+  assert.equal(neither.clear, '/admin/users?lang=en')
 })

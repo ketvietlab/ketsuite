@@ -10,7 +10,9 @@
     "pretest:website": "npm --prefix .. run build --silent",
     "test:website": "E2E_MODULE=website_backend playwright test",
     "pretest:loyalty": "npm --prefix .. run build --silent",
-    "test:loyalty": "E2E_MODULE=loyalty_backend playwright test"
+    "test:loyalty": "E2E_MODULE=loyalty_backend playwright test",
+    "pretest:user": "npm --prefix .. run build --silent",
+    "test:user": "E2E_MODULE=user_backend playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"

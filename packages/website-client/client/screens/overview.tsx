@@ -18,7 +18,7 @@ import type { Screen, StudioContext } from '../types.ts'
 /** `website_studio.overview`: what needs attention on the selected site. */
 export type Overview = {
   counts: { pages: number; changed: number; newSubmissions: number; issues: number }
-  live: { state: string; activatedAt: string; activatedBy: string; entryCount: number } | null
+  live: { state: string; activatedAt: string | null; activatedBy: string | null; entryCount: number } | null
   queue: { id: string; type: string; title: string; state: string; updatedAt: string }[]
   submissions: { id: string; formId: string; formTitle: string; summary: string; createdAt: string }[]
   /** What keeps the site from going live: a domain to verify, a submission to resolve. */
@@ -123,9 +123,13 @@ export function createOverview(ctx: StudioContext): Screen<Overview> {
                           {
                             id: 'at',
                             label: tr('website.publication.activatedAt'),
-                            value: formatTime(live.activatedAt),
+                            value: live.activatedAt ? formatTime(live.activatedAt) : '—',
                           },
-                          { id: 'by', label: tr('website.publication.activatedBy'), value: live.activatedBy },
+                          {
+                            id: 'by',
+                            label: tr('website.publication.activatedBy'),
+                            value: live.activatedBy ?? '—',
+                          },
                           {
                             id: 'entries',
                             label: tr('website.publication.entryCount'),

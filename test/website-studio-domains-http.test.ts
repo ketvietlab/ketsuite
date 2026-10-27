@@ -247,6 +247,14 @@ test('Studio domains: an operator policy proves and serves the hosts', async (t)
       ).map((d) => [d.title, d.role]),
     )
   assert.deepEqual(await roles(), { 'site-new.operator.test': 'primary', 'moi.test': 'redirect' })
+  // The company's site list names each site by its own primary host, whichever site is open.
+  const listed = (await designer('website_studio.listResources', { siteId: 'site-a', kind: 'sites' })).value
+    .rows as Row[]
+  assert.deepEqual(Object.fromEntries(listed.map((s) => [s.id, [s.host, s.state]])), {
+    'site-a': ['moi.lanh.test', 'active'],
+    'site-a2': ['', 'active'],
+    'site-new': ['site-new.operator.test', 'active'],
+  })
   // A retried create is the same site: the operator is not handed it twice.
   await designer('website_studio.saveResource', {
     siteId: 'site-a',

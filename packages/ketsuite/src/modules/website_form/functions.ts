@@ -782,9 +782,14 @@ export const functions: Record<string, FnSpec> = {
         return invalid('formId', 'website_form.error.staleForm')
       // A form that shows a notice is asking for agreement to it. Storing
       // consent: false against such a form would record a submission nobody
-      // agreed to.
-      if (form.consentText && args.consent !== true)
-        return invalid('consent', 'website_form.error.consentRequired')
+      // agreed to. The visitor hears it with every field to fix, in one pass.
+      const errors = [
+        ...(form.consentText && args.consent !== true
+          ? [{ field: 'consent', message: 'website_form.error.consentRequired' }]
+          : []),
+        ...validatePayload(form.schema, args.payload),
+      ]
+      if (errors.length) return { ok: false, errors }
       // And a page that will not say which notice it showed cannot be recorded
       // as agreeing to the current one. The version check above is opt-in,
       // which is harmless for fields — but stamping an unversioned submission
@@ -792,8 +797,6 @@ export const functions: Record<string, FnSpec> = {
       // visitor may never have seen. No version, no truthful record, no write.
       if (form.consentText && args.schemaVersion == null)
         return invalid('schemaVersion', 'website_form.error.consentVersionRequired')
-      const errors = validatePayload(form.schema, args.payload)
-      if (errors.length) return { ok: false, errors }
 
       const now = new Date()
       const key = fingerprint(args.formId, String(args.rateKey ?? 'anonymous').slice(0, 500))

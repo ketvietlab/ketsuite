@@ -44,6 +44,7 @@ import {
 } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 
 import { USER_RECORD_MODAL_LABELS } from '../packages/ketsuite/src/modules/user/modal-labels.ts'
+import { renamedTrail } from '../packages/ketsuite/src/ui/record-modal.tsx'
 import { httpServerSource } from './helpers/ketjs-internals.ts'
 const runtime = readFileSync('packages/ketsuite/src/ui/client/record-modal.tsx', 'utf8')
 const bootstrap = httpServerSource()
@@ -1264,6 +1265,37 @@ test('record page: both client-read and route-context factories adopt their serv
     const page = factory(routeProps)
     assert.equal(renderToString(page.view()), renderToString(recordPageShell(routeProps)))
   }
+})
+
+test('record page: a rename shows on the trail as on the heading', () => {
+  const trail = [
+    { label: 'Users', href: '/admin/users?q=An' },
+    { label: 'Nguyễn An', href: null },
+  ]
+  assert.deepEqual(renamedTrail(trail, 'Nguyễn An', 'Nguyễn An Bình'), [
+    { label: 'Users', href: '/admin/users?q=An' },
+    { label: 'Nguyễn An Bình', href: null },
+  ])
+  // Only the record's own step follows it: a linked step, or a last step that is not the record, stays.
+  const collection = [{ label: 'Nguyễn An', href: '/admin/users' }]
+  assert.deepEqual(renamedTrail(collection, 'Nguyễn An', 'Nguyễn An Bình'), collection)
+  const elsewhere = [{ label: 'Users', href: '/admin/users' }, { label: 'Profile' }]
+  assert.deepEqual(renamedTrail(elsewhere, 'Nguyễn An', 'Nguyễn An Bình'), elsewhere)
+  assert.equal(renamedTrail(null, 'a', 'b'), undefined)
+  // Both kinds of page draw the trail from the record they have read, and the server's until they have one; a
+  // route-context page retitles the tab only where the server titled it with the record.
+  assert.match(
+    runtime,
+    /context \? renamedTrail\(mode\.props\.trail, mode\.props\.title, title\) : mode\.props\.trail/u,
+  )
+  assert.match(
+    runtime,
+    /trail: context \? renamedTrail\(pageProps!\.trail, pageProps!\.title, title\) : pageProps!\.trail/u,
+  )
+  assert.match(
+    runtime,
+    /if \(document\.title === was\) queueMicrotask\(\(\) => \(document\.title = title\)\)/u,
+  )
 })
 
 test('record page: Back guards client-read drafts and returns; route-context profiles stay open', async () => {

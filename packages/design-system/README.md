@@ -342,6 +342,11 @@ this way; an existing server-rendered list moves to it when it is next changed.
   - `isEmpty` tells "nothing recorded yet" from "nothing matches".
   The function enforces permissions and scope. The browser never loads the whole collection
   or reads per row.
+  A list readable only by whoever may open its page (its rows come from a function in a
+  sensitive bundle) answers through a same-origin module route instead, `POST <list path>/read`
+  with `{ href }`, which checks the list's own function and answers the same shape; KetSuite's
+  shared `backend.row-list*` islands read this way (KetSuite docs, `design-system.md`,
+  "Shared row-list islands").
   `ListChrome` owns wrapping inside its filter group at every width: controls move intact
   to the next line when the group exceeds the available canvas.
 - **URL and history.** The query lives in the URL with defaults omitted. Filters, facets,

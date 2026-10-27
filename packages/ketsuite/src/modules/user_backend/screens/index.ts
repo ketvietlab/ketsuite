@@ -1,10 +1,11 @@
 export {
   userGridColumns,
   userGridRow,
-  usersGrid,
+  userGroupLabel,
+  userListBarOptions,
+  userListProps,
   usersScreen,
   type UserListRow,
-  type UsersGridOptions,
   type UsersListScreenOptions,
 } from './users-list.tsx'
 export type { UserRow } from './types.ts'
@@ -14,10 +15,10 @@ export type { SessionRow } from './types.ts'
 export {
   roleGridColumns,
   roleGridRow,
-  rolesGrid,
+  roleListBarOptions,
+  roleListProps,
   rolesScreen,
   type RoleListRow,
-  type RolesGridOptions,
   type RolesListScreenOptions,
 } from './roles-list.tsx'
 export type { PermissionRow, RoleRow } from './types.ts'
@@ -26,10 +27,11 @@ export { userPageScreen } from './user-page.tsx'
 export {
   accessPolicyGridColumns,
   accessPolicyGridRow,
-  accessPoliciesGrid,
+  accessPolicyListBarOptions,
+  accessPolicyListProps,
   accessPoliciesScreen,
-  type AccessPoliciesGridOptions,
   type AccessPolicyMatchKind,
   type AccessPolicyRow,
   type AccessPoliciesListScreenOptions,
 } from './access-policies-list.tsx'
+export { accessPolicyListHelp, roleListHelp, userListHelp } from './list-help.tsx'

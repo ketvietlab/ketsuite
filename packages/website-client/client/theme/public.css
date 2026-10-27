@@ -25,6 +25,39 @@
   display: block;
   padding-inline-start: 1rem;
 }
+/* On a wide screen a submenu opens under its parent on hover or keyboard focus, without script. */
+@media (min-width: 54.0625rem) {
+  .wt-public .wt-theme-header nav li {
+    position: relative;
+  }
+  .wt-public .wt-theme-header nav ul ul {
+    position: absolute;
+    inset-block-start: 100%;
+    inset-inline-start: -0.75rem;
+    z-index: 30;
+    min-inline-size: 12rem;
+    padding: 0.5rem 0;
+    border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    border-radius: 0.5rem;
+    background: var(--wt-paper, #fff);
+    color: var(--wt-ink, inherit);
+    visibility: hidden;
+    opacity: 0;
+  }
+  .wt-public .wt-theme-header nav ul ul ul {
+    inset-block-start: -0.5rem;
+    inset-inline-start: 100%;
+  }
+  .wt-public .wt-theme-header nav li:is(:hover, :focus-within) > ul {
+    visibility: visible;
+    opacity: 1;
+  }
+  .wt-public .wt-theme-header nav ul ul a {
+    display: block;
+    padding: 0.375rem 0.75rem;
+    white-space: nowrap;
+  }
+}
 .wt-public-post {
   max-width: 56rem;
   margin-inline: auto;

@@ -125,7 +125,7 @@ export const resourceSchemas: Record<string, ResourceSchema> = {
       {
         name: 'position',
         label: 'website.resource.menus.position',
-        kind: 'select:header,footer',
+        kind: 'select:header',
         required: false,
       },
       {
@@ -242,21 +242,9 @@ export const resourceSchemas: Record<string, ResourceSchema> = {
     group: 'settings',
     capability: 'website.site.manage',
     fields: [
-      { name: 'companyId', label: 'website.site.companyField', kind: 'text' },
+      // Only what the host stores: the company is the one signed in, and the rest is set elsewhere.
       { name: 'code', label: 'website.site.code', kind: 'text' },
       { name: 'googleTagManagerId', label: 'website.settings.googleTagManagerId', kind: 'text' },
-      { name: 'timezone', label: 'website.site.timezone', kind: 'text', defaultValue: 'Asia/Ho_Chi_Minh' },
-      {
-        name: 'state',
-        label: 'website.site.state',
-        kind: 'select:draft,active,paused',
-        defaultValue: 'draft',
-      },
-      { name: 'realm', label: 'website.site.realm', kind: 'text', defaultValue: 'customers' },
-      { name: 'retentionDays', label: 'website.site.retentionDays', kind: 'text', defaultValue: '90' },
-      { name: 'consentVersion', label: 'website.site.consentVersion', kind: 'text', defaultValue: 'v1' },
-      { name: 'authReady', label: 'website.site.authReady', kind: 'select:yes,no', defaultValue: 'no' },
-
       {
         name: 'title',
         label: 'website.resource.sites.title',

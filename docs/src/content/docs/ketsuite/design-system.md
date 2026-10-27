@@ -171,6 +171,44 @@ a new list does not use it, and an existing one moves when it is next changed. P
 read function. Inside a list island, KetTable is used in its server form (`columns[].cell`, `sortHref`)
 rendered by the island; the RPC `manager` mode keeps its fixed-input client loading for embedded tables.
 
+#### Shared row-list islands
+
+A list whose route reads its whole authorised collection and narrows it on the server (a `RowListSpec`
+from `backend/row-list.ts`, or a small pure answer function) uses KetSuite's shared collection islands
+instead of writing its own: `backend.row-list-controls`, `backend.row-list` and `backend.row-list-footer`
+(`ui/client/row-list-island.tsx`). People (`/admin/users`), roles (`/admin/roles`), access rules
+(`/admin/access-policies`) and the identity deployment's people list (`/admin/users/directory`) use them.
+
+- **Page.** The route renders the title, header actions and guide, and places
+  `rowListIslands(props)` in `ListPage` `controls`, `body` and `footer`. Props name the `read` path, the
+  list `href`, a `marker`, the `columns` (`sortKey` for a sortable one), the words (`rowListLabels`), the
+  controls (`{ kind: 'bar', config }` from `rowListBar`, or `{ kind: 'search', facets }`), what a row
+  opens (`{ kind: 'record', record, tab? }` for a record modal, `{ kind: 'page', path: '…/{id}…',
+  returnPath? }` for a page whose `returnTo` names the row as `#row=<id>`), `createHref`, `chooseColumns`
+  (`?columns=` through a `Menu`) and `pin`, the parameters another list on the same path differs by.
+  `selection: { formId }` checks rows into a bulk form the page renders on the server (`ListPage`
+  `selection`, `collectionSelection`); it posts natively. The check marks live in the list's store
+  (KetTable `selectionState`), so a re-render keeps them, a new read clears them, the bar's "Clear
+  selection" clears them, and the form's `returnTo` follows the list's URL.
+- **Read.** `rowListReadRoute(read)` at `<list path>/read` takes a same-origin `POST { href }` (at most
+  16KB) and answers `{ ok, value }` with `cache-control: no-store`; `read` returns `null` for a viewer who
+  may not list (403, shown as denied) and `undefined` for a URL that is not the list (400). It checks the
+  list's own function (`ctx.allows('user.listRoles')`) and calls it, so the list needs no `/_ket/fn`
+  function or grant of its own. `rowListAnswer` applies the spec to the URL and answers
+  `RowListAnswer`: the query as applied, the clamped page, rows as the table draws them, groups, the count
+  behind each preset (ignoring its own group), every link the list shows (sort headers, pager, groups),
+  `clear` (the URL less its query, keeping language, columns and anything else it carries) and the bar
+  for the applied query. A list whose own read narrows by a parameter outside the spec (people by
+  `company` or `role`, through `user.listUsers`) names it in `filters`: clearing drops it, and rows it
+  leaves empty read as "nothing matches", not "nothing yet". `rowListMenu(target, param, label, options)`
+  answers such a choice in `menus`; the controls draw each as a single-choice `Menu` whose items are
+  links followed in place, and choosing the chosen item again drops it.
+- **Navigation.** Fragment navigation mounts a page's islands before it writes the new URL, so an island
+  adopts `location` only when it is the list (same path, no `record`, pinned parameters equal) and
+  otherwise starts from its `href` prop. The search field shows the query in force after a link (clear
+  filters) or Back. A row anchor survives Back; a trail link back to the list is a new visit, read
+  again, and lands at the top.
+
 The server form owns initial loading rows through `loading: { rows, lines? }` (1–100):
 decorative skeletons, the normal columns and selection gutter, disabled checkboxes,
 and no record or sort links. Use `busy` for a delayed refresh with retained rows.

@@ -332,7 +332,25 @@ refusals behave exactly as in the modal.
    commands below the title once the page is narrower than 48rem.
 
 `close`, `reload`, `open` and tab afters only close the top dialog; the page itself never closes,
-and `ket:records-changed` for its id reloads it in place.
+and `ket:records-changed` for its id reloads it in place. A rename saved in the page shows on the
+trail's last step (the record's own, unlinked step) and, where the server titled the tab with the
+record, on the tab, as it does on the heading.
+
+### A deployment's own person page
+
+A deployment whose people sign in through its own adapter (an external identity provider) serves the
+person's page itself, so its commands and context reach the account, never through a modal over the
+list. KetSuite's `user_backend` exports `userPageRoute({ joint, context?, beside? })`: the same page,
+trail and `returnTo` as `/admin/users/{id}`, filling the deployment's own joint with its record-page
+island, reading the envelope from `context` (default `user.userModalContext`) and placing `beside`
+(the screen guide) next to it. The deployment serves it at `/admin/users/{id}/profile`, and
+`/admin/users/{id}` redirects there, query kept, whenever a live route serves that path; every link to
+a person (rows, `?record=user.user:<id>`) lands on the one page. Its client builds the page with
+`createRecordPage({ ...userPageDefinition, kind, context, commands })` from
+`@ketvietlab/ketsuite/user-modal-client`; `userPageActions(c, lead)` keeps a page-owned control (the
+`screen-help` button, the page's way to the guide on a phone) in the same action group as the
+commands, so they wrap as one. Where people work is its own dialog: the default company and branch are
+`RelationSelect` pickers whose `triggerId` is the field id.
 
 ### CSR accounting consumers
 

@@ -39,6 +39,7 @@ import {
   recordPageTrail,
   recordPageFrame,
   recordPageShell,
+  renamedTrail,
 } from '../record-modal.tsx'
 import type { RecordModalTarget, RecordPageIslandProps } from '../record-modal.tsx'
 
@@ -1856,6 +1857,7 @@ const recordController =
 
     // The record as the page itself: the trail back to its collection, its
     // identity and commands, then the body. Dialogs still open over it.
+    let shownTitle = pageProps?.title
     const serverPageView = (): TemplateResult => {
       if (!adopted()) return recordPageShell(pageProps!)
       const current = open()!
@@ -1866,11 +1868,17 @@ const recordController =
         : status() === 'error'
           ? failureTitle()
           : pageProps!.title
+      // A rename shows on the trail and, where the server titled the tab with the record, on the tab.
+      if (context && title !== shownTitle) {
+        const was = shownTitle
+        shownTitle = title
+        if (document.title === was) queueMicrotask(() => (document.title = title))
+      }
       return (
         <>
           {recordPageFrame({
             title,
-            trail: pageProps!.trail,
+            trail: context ? renamedTrail(pageProps!.trail, pageProps!.title, title) : pageProps!.trail,
             trailLabel: pageProps!.trailLabel,
             meta: context ? (definition.description?.(context) ?? undefined) : undefined,
             status: context ? definition.status?.(context) : undefined,
@@ -1924,7 +1932,10 @@ const recordController =
           {RecordPage({
             variant: 'operational',
             width: size === 'large' ? 'wide' : 'default',
-            context: recordPageTrail(mode.props.trail, mode.props.trailLabel ?? mode.props.title),
+            context: recordPageTrail(
+              context ? renamedTrail(mode.props.trail, mode.props.title, title) : mode.props.trail,
+              mode.props.trailLabel ?? mode.props.title,
+            ),
             title,
             status: context ? definition.status?.(context) : undefined,
             actions: context

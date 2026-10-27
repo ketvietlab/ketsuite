@@ -12,3 +12,4 @@ export function atlasFlowCommand(
   input: FlowCommandInput,
   data?: FlowCommandInput,
 ): FlowResolvedCommand
+export function flowCommandVocabulary(): Array<[string, FlowCommandInput]>

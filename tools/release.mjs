@@ -390,6 +390,15 @@ const smoke = (tarballs, version, parent) => {
   run(node, [join(generatedSuite, 'node_modules/@ketvietlab/ketsuite/dist/cli.js'), '--help'], {
     cwd: generatedSuite,
   })
+  const cliVersion = run(
+    node,
+    [join(generatedSuite, 'node_modules/@ketvietlab/ketsuite/dist/cli.js'), '--version'],
+    {
+      cwd: generatedSuite,
+      capture: true,
+    },
+  ).trim()
+  if (cliVersion !== version) fail(`ketsuite --version printed ${cliVersion}, not ${version}`)
 
   console.log('tarball consumer imports and all generated application smoke tests passed')
 }

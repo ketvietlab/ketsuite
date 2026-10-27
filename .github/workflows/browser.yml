@@ -64,6 +64,7 @@ jobs:
           - loyalty_backend
           - stock_backend
           - website_backend
+          - user_backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

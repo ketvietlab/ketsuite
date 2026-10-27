@@ -5,9 +5,12 @@
 routes. No private feature package, token, license server or telemetry is required.
 
 Flow is delivered as a KetSuite deployment, not a separate framework or product
-repository. The existing `flow`, `flow_backend`, `livedoc`, identity, company, storage
-and mail modules provide its server foundations. This package does **not** replace
-those modules or claim that the new client API has already been wired to them.
+repository. A deployment composes the native `flow` module (`createFlowModule`) and the
+`flow_workspace` island host with the shared identity, company, storage, mail and
+`livedoc` modules; `production-entry.mjs` binds this client to that server. The older
+`flow` + `flow_backend` backend remains for deployments that have not moved. Composing
+the modules does not by itself accept a feature: `API-CONTRACT.md` records each
+contract and what is still open.
 
 ## Package entry
 
