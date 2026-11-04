@@ -22,7 +22,9 @@ jobs:
   publish:
     if: github.repository == 'ketvietlab/ketsuite'
     runs-on: ${{ vars.CI_RUNNER == 'self-hosted' && 'kv-ci' || 'ubuntu-24.04' }}
-    timeout-minutes: 20
+    # release:check runs the whole verify suite before packing; at 0.1.44 the tests alone
+    # take more than 18 minutes on a hosted runner.
+    timeout-minutes: 60
     environment: npm
     env:
       DATABASE_URL: postgres://dev:devpassword@127.0.0.1:5432/ketjs_ci
