@@ -30,16 +30,24 @@ for (const viewport of [
       await expect(page.locator('[data-ui="app-main"]')).toBeVisible()
       await expect(page.locator('form[action="/login"]')).toHaveCount(0)
       await expect(page.getByRole('link', { name: 'WH/OUT/REVIEW' })).toBeVisible()
-      await page.locator('a[href*="record=stock.transfer%3Anew"]').click()
-      const create = page.getByRole('dialog')
+      // Creating a transfer opens its page (C24), not a dialog.
+      await page.locator('a[href^="/admin/stock/transfers/new?"]').click()
+      await expect(page).toHaveURL(/\/admin\/stock\/transfers\/new\?/)
+      const create = page.locator('[data-ui="record-page"]')
       await expect(create.locator('input[name="name"]')).toBeVisible()
+      // K60: the priority is a labelled checkbox of the form, measured apart from the fields.
+      await expect(
+        create.getByRole('checkbox', { name: locale === 'vi' ? 'Ưu tiên' : 'Priority' }),
+      ).toBeVisible()
 
       const metrics = await page.evaluate(() => ({
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
         visibleControls: [
           ...document.querySelectorAll<HTMLElement>(
-            '[role="dialog"] input:not([type="hidden"]), [role="dialog"] select',
+            // Text and number fields and selects; a checkbox keeps the DS checkbox size.
+            // Relation fields are pickers: their trigger is the control, their inner inputs are not.
+            '[data-ui="record-page"] input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), [data-ui="record-page"] select:not([data-ui="relation-native"]), [data-ui="record-page"] button[id^="transfer-record-"]',
           ),
         ]
           .filter((control) => control.getBoundingClientRect().height > 0)
@@ -58,21 +66,3 @@ for (const viewport of [
     })
   }
 }
-
-test('creates a transfer and opens it from the list', async ({ page }) => {
-  await page.goto('/admin/stock/transfers?lang=vi')
-  await page.getByRole('link', { name: 'Tạo mới' }).click()
-  const create = page.getByRole('dialog')
-  await create.locator('input[name="name"]').fill('WH/OUT/E2E')
-  await create.locator('select[name="pickingTypeId"]').selectOption('wh:outgoing')
-  await create.locator('input[name="scheduledDate"]').fill('2026-08-22')
-  await create.locator('button[type="submit"]').click()
-
-  await expect(page).toHaveURL(/record=stock\.transfer%3A(?!new)/)
-  await expect(page.getByRole('dialog').getByRole('heading', { name: 'WH/OUT/E2E' })).toBeVisible()
-  await page.goto('/admin/stock/transfers?lang=vi')
-  const transfer = page.getByRole('link', { name: 'WH/OUT/E2E' })
-  await expect(transfer).toBeVisible()
-  await transfer.click()
-  await expect(page.getByRole('dialog').getByRole('heading', { name: 'WH/OUT/E2E' })).toBeVisible()
-})

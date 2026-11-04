@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": [
+    "test/flow-native-read-model-migration.test.ts",
+    "test/flow-native-label-migration.test.ts",
+    "test/flow-native-dependency-migration.test.ts"
+  ]
+}

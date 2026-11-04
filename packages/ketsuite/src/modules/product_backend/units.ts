@@ -49,12 +49,15 @@ export type UnitAnswer = {
 }
 
 export const UNIT_PAGE_SIZE = 50
+/** A unit's name is short: documents print it beside every quantity. */
+export const UNIT_NAME_MAX = 20
 export const UNIT_LIST_PATH = '/admin/product/uoms'
 /** Where the unit's record modal saves (units/routes.ts). */
 export const UNIT_COMMAND_PATH = '/admin/product/uoms/command'
 
-export const fold = (value: string): string =>
-  value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/gu, '').replace(/đ/gu, 'd')
+import { fold } from '../product/text-fold.ts'
+
+export { fold }
 
 /**
  * How many products use each unit: as their own unit (active products only, the ones a
@@ -151,9 +154,13 @@ export type UnitModalData = {
   lang: 'vi' | 'en'
   editable: boolean
   record: { id: string; name: string; referenceId: string; factor: string; active: boolean }
-  /** Units this one may count in: never itself or a unit counting in it. */
+  /**
+   * Units this one may count in: reference units only, one level as the catalogue keeps it,
+   * and none for a unit others count in. A unit kept from a deeper tree keeps its own.
+   */
   references: UnitChoice[]
-  usage: { products: number; packagings: number; locked: boolean }
+  /** `inUse`: on a product, a packaging, stock or a document, so its name and conversion stay. */
+  usage: { products: number; packagings: number; locked: boolean; inUse: boolean }
   /** The units that count in this one, archived ones marked. */
   derived: string[]
   /** How many of the family's reference unit one of this unit holds, for a unit that is not one. */
@@ -175,11 +182,15 @@ export const unitModalData = (
   })
   // A unit's chain is its parent path: a unit whose chain passes through this one counts in it.
   const chainOf = new Map(units.map((row) => [String(row.id), String(row.parentPath ?? '').split('/')]))
+  const counted = Boolean(unit && rows.some((row) => row.referenceId === unit.id))
   const references = rows
     .filter(
       (row) =>
-        (row.active || row.id === unit?.referenceId) &&
-        (!unit || !(chainOf.get(row.id) ?? [row.id]).includes(unit.id)),
+        row.id === unit?.referenceId ||
+        (row.active &&
+          row.referenceId === null &&
+          !counted &&
+          (!unit || !(chainOf.get(row.id) ?? [row.id]).includes(unit.id))),
     )
     .map((row) => ({
       value: row.id,
@@ -200,8 +211,13 @@ export const unitModalData = (
       : { id: '', name: '', referenceId: '', factor: '', active: true },
     references,
     usage: unit
-      ? { products: unit.products, packagings: unit.packagings, locked: unit.locked }
-      : { products: 0, packagings: 0, locked: false },
+      ? {
+          products: unit.products,
+          packagings: unit.packagings,
+          locked: unit.locked,
+          inUse: unit.locked || unit.products > 0 || unit.packagings > 0,
+        }
+      : { products: 0, packagings: 0, locked: false, inUse: false },
     derived: unit
       ? rows
           .filter((row) => row.referenceId === unit.id)
@@ -232,3 +248,8 @@ export const parseQuantity = (typed: string, lang: 'vi' | 'en'): string | null =
 /** A stored quantity as the reader types it: "0,5" in Vietnamese, "0.5" in English, no grouping. */
 export const typedQuantity = (stored: string, lang: 'vi' | 'en'): string =>
   lang === 'en' ? stored : stored.replace('.', ',')
+
+/** Shared by the unit collection and the catalogue search. */
+export async function readUnits(ctx: Ctx, input: Parameters<typeof unitAnswer>[1]) {
+  return unitAnswer(unitRowsOf(await ctx.db.select('uom.Unit'), await readUnitUsage(ctx)), input)
+}

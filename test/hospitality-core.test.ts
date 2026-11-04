@@ -2175,6 +2175,14 @@ test('hospitality reservations: no-show gives the nights back and charges what t
 })
 
 test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', async () => {
+  // A range before the property's business date is locked, so the stay sits two months from today.
+  const day = (offset: number): string => {
+    const date = new Date()
+    date.setUTCHours(0, 0, 0, 0)
+    date.setUTCDate(date.getUTCDate() + 60 + offset)
+    return date.toISOString().slice(0, 10)
+  }
+  const [arrival, nextDay, lastDay] = [day(0), day(1), day(2)]
   const adapter = await boot()
   try {
     await property(adapter)
@@ -2197,8 +2205,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
       {
         propertyId: 'hotel',
         roomTypeId: 'suite',
-        from: '2026-11-01',
-        to: '2026-11-01',
+        from: arrival,
+        to: arrival,
         stopSell: true,
       },
       adapter,
@@ -2217,8 +2225,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
         propertyId: 'hotel',
         roomTypeId: 'suite',
         partnerId: 'guest',
-        checkIn: '2026-11-01T07:00:00.000Z',
-        checkOut: '2026-11-02T05:00:00.000Z',
+        checkIn: `${arrival}T07:00:00.000Z`,
+        checkOut: `${nextDay}T05:00:00.000Z`,
       },
       adapter,
     )
@@ -2228,8 +2236,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
       {
         propertyId: 'hotel',
         roomTypeId: 'suite',
-        from: '2026-11-01',
-        to: '2026-11-01',
+        from: arrival,
+        to: arrival,
         minLos: 2,
         closedToArrival: true,
       },
@@ -2242,8 +2250,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
         propertyId: 'hotel',
         roomTypeId: 'suite',
         partnerId: 'guest',
-        checkIn: '2026-11-01T07:00:00.000Z',
-        checkOut: '2026-11-02T05:00:00.000Z',
+        checkIn: `${arrival}T07:00:00.000Z`,
+        checkOut: `${nextDay}T05:00:00.000Z`,
       },
       adapter,
     )
@@ -2256,8 +2264,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
       {
         propertyId: 'hotel',
         roomTypeId: 'suite',
-        from: '2026-11-01',
-        to: '2026-11-01',
+        from: arrival,
+        to: arrival,
       },
       adapter,
     )
@@ -2266,8 +2274,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
       {
         propertyId: 'hotel',
         roomTypeId: 'suite',
-        from: '2026-11-03',
-        to: '2026-11-03',
+        from: lastDay,
+        to: lastDay,
         closedToDeparture: true,
       },
       adapter,
@@ -2279,8 +2287,8 @@ test('hospitality inventory: restrictions enforce stop-sell, CTA, CTD and LOS', 
         propertyId: 'hotel',
         roomTypeId: 'suite',
         partnerId: 'guest',
-        checkIn: '2026-11-01T07:00:00.000Z',
-        checkOut: '2026-11-03T05:00:00.000Z',
+        checkIn: `${arrival}T07:00:00.000Z`,
+        checkOut: `${lastDay}T05:00:00.000Z`,
       },
       adapter,
     )

@@ -93,6 +93,9 @@ test('stock locations list: keeps hierarchy, columns, search and pager in ListPa
   assert.match(html, /data-col="warehouse"[\s\S]*?Kho trung tâm/)
   assert.match(html, /data-ui="kt-row-select"[^>]*form="stock-location-bulk"/)
   assert.doesNotMatch(html, /location-create-form/)
+  // K10: the screen's guide says each warehouse has its own vendor, customer, scrap and adjustment locations.
+  assert.match(html, /id="stock-locations-help"/)
+  assert.match(html, /Mỗi kho một bộ vị trí riêng/)
 })
 
 test('stock locations list: keeps the empty state and create action on the list baseline', () => {

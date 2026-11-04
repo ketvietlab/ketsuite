@@ -331,6 +331,12 @@ test('design system: column chart reads each period as text on a zero-based scal
   assert.match(plain, /data-printed="true">(?:<!--k\[?-->)*11\/10/)
   assert.match(plain, /data-printed="false">(?:<!--k\[?-->)*12\/10/)
   assert.match(plain, /data-printed="true">(?:<!--k\[?-->)*13\/10/)
+  // A few periods spread across the plot at a readable width; labels share the columns' tracks.
+  const chartCss = readFileSync('packages/design-system/src/data-display/column-chart/styles.css', 'utf8')
+  assert.match(
+    chartCss,
+    /\[data-ui="column-chart-columns"\],\s*:where\(\[data-kv-design-system\]\) \[data-ui="column-chart-labels"\] \{\s*display: grid;\s*grid-auto-columns: minmax\(0, 4rem\);\s*grid-auto-flow: column;\s*justify-content: space-evenly;/,
+  )
 
   const stacked = renderToString(
     <ColumnChart
@@ -1859,11 +1865,9 @@ test('design system: modal sheets expose route metadata and become fullscreen on
     css.match(
       /@media \(max-width: 47\.9375rem\)[\s\S]*?\[data-kind="confirm"\][\s\S]*?\[data-ui="modal-sheet"\]\[data-size\]\s*\{(?<body>[^}]+)\}/,
     )?.groups?.body ?? ''
-  assert.doesNotMatch(
-    phoneConfirm,
-    /height:\s*auto|border-radius:\s*var\(/,
-    'phone confirmations follow the shared full-screen modal geometry',
-  )
+  assert.match(phoneConfirm, /height:\s*auto/, 'phone confirmations remain a small centred card')
+  assert.match(phoneConfirm, /border-radius:\s*var\(--kv-radius-lg\)/)
+  assert.match(phoneConfirm, /max-height:\s*calc\(100dvh - var\(--kv-space-8\)\)/)
   assert.match(css, /\[data-ui="confirm-dialog-message"\] \+ \* \{\s*margin-top: var\(--kv-space-4\)/)
 
   const largeDialog =
@@ -2169,9 +2173,9 @@ test('design system: every KetSuite WorkspacePage consumer uses the operational 
     ].length
     assert.equal(contextual, calls, path)
   }
-  // Sales, purchase and stock overviews, and the hospitality room plan's canvas
-  // (with and without a property).
-  assert.equal(consumers, 5)
+  // Sales, purchase and stock overviews, the sales analysis, the deliveries workspace, the manufacturing
+  // operator skills grid, and the hospitality room plan's canvas (with and without a property).
+  assert.equal(consumers, 8)
 })
 
 test('design system: every KetSuite BoardPage consumer uses the operational workspace and page context', () => {
@@ -2909,7 +2913,7 @@ test('design system: catalogue renders every registered specimen', () => {
 
 test('design system: governance connects public components to owners and specimens', () => {
   const names = componentRegistry.map((component) => component.name)
-  assert.equal(names.length, 156)
+  assert.equal(names.length, 161)
   assert.equal(new Set(names).size, names.length)
   const examples = new Set(componentGroups.flatMap((group) => group.examples.map((example) => example.id)))
   assert.deepEqual(
@@ -2947,10 +2951,10 @@ test('design system: density, layer, focus, motion and container tokens are cont
 })
 
 test('design system: inventory classifies every public and compatibility export', () => {
-  assert.equal(designSystemInventory.summary.publicExports, 373)
-  assert.equal(designSystemInventory.summary.runtimeExports, 175)
+  assert.equal(designSystemInventory.summary.publicExports, 402)
+  assert.equal(designSystemInventory.summary.runtimeExports, 184)
   assert.equal(designSystemInventory.summary.plannedComponents, 0)
-  assert.equal(designSystemInventory.summary.compatibilityModules, 44)
+  assert.equal(designSystemInventory.summary.compatibilityModules, 45)
   assert.ok(designSystemInventory.rows.length > designSystemInventory.summary.publicExports)
   assert.deepEqual(
     designSystemInventory.rows.filter((row) => !row.owner || !row.decision || !row.gapTask),
@@ -3165,6 +3169,67 @@ test('design system: a leading rail comes before the record in the document and 
   assert.match(
     grouped,
     /\[data-kv-design-system\]\[data-presentation="grouped"\] \[data-ui="record-page"\]\[data-aside-stacked="before"\] \[data-ui="record-page-aside"\] \{ margin: var\(--kv-gap-section\) var\(--kv-page-padding-x\) 0;/u,
+  )
+})
+
+test('design system: a record holding a KetGrid keeps the wide measure and stacks its rail instead', () => {
+  const read = (path: string) => readFileSync(path, 'utf8').replace(/\s+/gu, ' ')
+  const css = read('packages/design-system/src/patterns/record-page/styles.css')
+  const tokens = read('packages/design-system/src/foundations/tokens.css')
+  // 91.5rem is the wide measure (68.75rem), the record's two 0.75rem insets and the 21.25rem rail.
+  assert.match(tokens, /--kv-right-rail-width: 21\.25rem;/u)
+  assert.match(tokens, /--kv-layout-gap: 0\.75rem;/u)
+  assert.match(tokens, /--kv-page-padding-x: var\(--kv-layout-gap\);/u)
+  // A grid in the record, or a page that asks for the wide measure (`asideBreakpoint="wide"`).
+  const page =
+    '\\[data-ui="record-page"\\]\\[data-has-aside="true"\\]:is\\( ?\\[data-aside-breakpoint="wide"\\], :has\\( ?\\[data-ui="record-page-body"\\] \\[data-ui="ket-grid-island"\\] ?\\) ?\\)'
+  const query =
+    css.match(/@container record-page \(max-width: 91\.5rem\) \{(?<body>.*?\}) \}/u)?.groups?.body ?? ''
+  // Only such a page with a rail: other records narrow to 40rem as before.
+  assert.match(
+    query,
+    new RegExp(
+      `^ :where\\(\\[data-kv-design-system\\]\\) ${page} \\[data-ui="record-page-layout"\\] \\{ grid-template-columns: minmax\\(0, calc\\(68\\.75rem \\+ var\\(--kv-page-padding-x\\) \\* 2\\)\\); row-gap: var\\(--kv-space-5\\); \\}`,
+      'u',
+    ),
+  )
+  assert.match(
+    query,
+    new RegExp(
+      `${page} \\[data-ui="record-page-aside"\\] \\{ position: static; max-height: none; padding-top: var\\(--kv-space-5\\); overflow: visible; border-top: 1px solid var\\(--kv-panel-divider\\); border-left: 0; \\}`,
+      'u',
+    ),
+  )
+  // A leading rail still leads, closed by its hairline below.
+  assert.match(
+    query,
+    new RegExp(
+      `${page}\\[data-aside-stacked="before"\\] \\[data-ui="record-page-layout"\\] \\{ row-gap: 0; \\}`,
+      'u',
+    ),
+  )
+  assert.match(
+    query,
+    new RegExp(
+      `${page}\\[data-aside-stacked="before"\\] \\[data-ui="record-page-aside"\\] \\{ padding-bottom: var\\(--kv-space-5\\); border-top: 0; border-bottom: 1px solid var\\(--kv-panel-divider\\); \\}`,
+      'u',
+    ),
+  )
+  // On a grouped canvas the stacked rail stays a card: its rule outranks the card's, so the card restates it.
+  const grouped = read('packages/design-system/src/layouts/grouped/styles.css')
+  assert.match(
+    grouped,
+    new RegExp(
+      `@container record-page \\(max-width: 91\\.5rem\\) \\{ \\[data-kv-design-system\\]\\[data-presentation="grouped"\\] ${page} \\[data-ui="record-page-aside"\\] \\{ margin: 0 var\\(--kv-page-padding-x\\) var\\(--kv-gap-section\\); padding: var\\(--kv-surface-inset\\); border: 1px solid var\\(--kv-panel-border\\); \\}`,
+      'u',
+    ),
+  )
+  assert.match(
+    grouped,
+    new RegExp(
+      `${page}\\[data-aside-stacked="before"\\] \\[data-ui="record-page-aside"\\] \\{ margin: var\\(--kv-gap-section\\) var\\(--kv-page-padding-x\\) 0; padding: var\\(--kv-surface-inset\\); border: 1px solid var\\(--kv-panel-border\\); \\}`,
+      'u',
+    ),
   )
 })
 
@@ -3730,4 +3795,22 @@ test('design system: a bounded table keeps scrolling and headings in the table o
   const css = readFileSync('packages/design-system/src/interactions/ket-table/styles.css', 'utf8')
   assert.match(css, /\[data-bounded="true"\][^{]*\{[^}]*overflow-y: auto/s)
   assert.match(css, /\[data-bounded="true"\][^{]*\[data-ui="kt-col"\][^{]*\{[^}]*position: sticky/s)
+})
+
+test('a form of one button in an actions slot is an inline form, so its button keeps its width', () => {
+  // A default record form measures nothing as a container. In a section, card or page head the
+  // slot is sized by its content, so the form collapses and its button spills past the edge (#1995).
+  const offenders: string[] = []
+  for (const path of [
+    ...globSync('packages/ketsuite/src/modules/**/*.tsx'),
+    ...globSync('../apps/ketsuite/modules/*/src/**/*.tsx'),
+  ]) {
+    const source = readFileSync(path, 'utf8')
+    for (const match of source.matchAll(/actions=\{\s*<RecordForm([\s\S]*?)\/>/gu)) {
+      const props = match[1] ?? ''
+      if (props.includes('fields={[]}') && !props.includes('layout="inline"'))
+        offenders.push(`${path}:${source.slice(0, match.index).split('\n').length}`)
+    }
+  }
+  assert.deepEqual(offenders, [])
 })

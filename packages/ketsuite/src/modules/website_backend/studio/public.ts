@@ -144,6 +144,11 @@ export function renderStudioPublic(scope: Record<string, unknown>) {
         title: record.title,
         descriptionHtml: description ? documentHtml(description, locale) : null,
         description: archive.description,
+        cover: (() => {
+          const cover = object(archive.cover)
+          const src = cover.src ? safeHref(cover.src) : '#'
+          return src === '#' ? null : { src, alt: String(cover.alt ?? '') }
+        })(),
         entries: entries(placements(archive.posts)),
         pager: pager(archive.previous, archive.next),
       }
@@ -200,6 +205,9 @@ export function renderStudioPublic(scope: Record<string, unknown>) {
         }
       : null
   const image = meta.ogImage && safeHref(meta.ogImage) !== '#' ? safeHref(meta.ogImage) : ''
+  // Open Graph takes only an absolute URL: a crawler does not resolve a path against the page.
+  const origin = String(object(scope.meta).origin ?? '')
+  const ogImage = image.startsWith('/') && !image.startsWith('//') ? (origin ? origin + image : '') : image
   const options = {
     mode: 'public' as const,
     readonlyForms: scope.readonlyForms === true,
@@ -262,7 +270,7 @@ export function renderStudioPublic(scope: Record<string, unknown>) {
           noindex: !!meta.noindex,
           canonical: meta.canonical ? safeHref(meta.canonical) : null,
           ogType: record.type === 'website.post' ? 'article' : 'website',
-          ogImage: image || null,
+          ogImage: ogImage || null,
           ogUrl:
             meta.canonical && /^https:\/\//.test(String(meta.canonical)) ? safeHref(meta.canonical) : null,
           siteName: site.title,

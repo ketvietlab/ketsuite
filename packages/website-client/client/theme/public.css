@@ -72,6 +72,13 @@
   margin-inline: auto;
   padding: 2rem 1rem;
 }
+.wt-public-archive__cover {
+  display: block;
+  width: 100%;
+  max-height: 24rem;
+  object-fit: cover;
+  border-radius: var(--wt-radius, 0.5rem);
+}
 :is(.wt-public-archive, .wt-public-search) ol {
   display: grid;
   gap: 1.5rem;

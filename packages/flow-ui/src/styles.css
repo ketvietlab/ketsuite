@@ -5754,6 +5754,32 @@
   object-fit: contain;
 }
 
+/* Every phone dialog uses the available viewport, including media/confirm sizes.
+   Its body scrolls while header and actions remain in the flex frame. */
+@media (max-width: 767px) {
+  [data-flow-ui] [data-flow="dialog"][open],
+  [data-flow-ui] [data-flow="dialog"][data-size][open] {
+    position: fixed;
+    inset: 0;
+    margin: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: initial;
+    box-shadow: none;
+  }
+  [data-flow-ui] [data-flow="dialog"] > [data-flow="dialog-body"] {
+    flex: 1;
+  }
+  [data-flow-ui] [data-flow="dialog"][data-size="media"] > [data-flow="dialog-body"] {
+    display: grid;
+    place-items: center;
+  }
+}
+
 /* Overview visuals. Tones use data-state, not data-tone, so the shared tag tint never paints these blocks. */
 [data-flow-ui] [data-flow="stat-grid"] {
   display: grid;

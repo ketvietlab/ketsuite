@@ -27,7 +27,7 @@ import {
 
 import { pagesInScope } from './navigation.mjs'
 import { documentSiblings, filterDocumentTree } from './document-tree.mjs'
-import { documentTitle, noteInput, untitledDocument } from './document-notes.mjs'
+import { documentTitle, noteInput, untitledDocument, nativeTitlePatch } from './document-notes.mjs'
 
 export const documentRoutes = new Set([
   'pages',
@@ -183,12 +183,33 @@ export function createDocuments(ctx) {
       }, 600),
     )
   }
-  const save = async (id = current()?.id, company = ctx.data().company.id) => {
+  const save = async (id = current()?.id, company = ctx.data().company.id, { retry = false } = {}) => {
     if (company !== ctx.data()?.company.id) return false
     const key = `${company}:${id}`
     const page = ctx.data().pages.find((p) => p.id === id)
     if (!page || disposed) return false
-    if (page.documentTransport) return liveControllers.get(key)?.flush() ?? false
+    if (page.documentTransport) {
+      if (saving.has(key)) return saving.get(key)
+      const draft = draftFor(page)
+      const operation = (async () => {
+        const editor = liveControllers.get(key)
+        if (!(await editor?.flush()) || company !== ctx.data()?.company.id || disposed) return false
+        if (draft.titleEdited) {
+          const title = draft.title
+          const latest = ctx.data().pages.find((p) => p.id === id)
+          const ok = await ctx.mutate('flow.page.save', nativeTitlePatch(draft, latest, retry), undefined, {
+            quiet: true,
+          })
+          if (!ok) return false
+          if (draft.title === title) draft.titleEdited = false
+          draft.dirty = !!draft.titleEdited || editor.isPending()
+          dirty.set([...drafts.values()].some((item) => item.dirty))
+        }
+        return true
+      })().finally(() => saving.delete(key))
+      saving.set(key, operation)
+      return operation
+    }
     if (!ctx.canWrite() || page.access?.write === false) return false
     if (saving.has(key)) return saving.get(key)
     clearTimeout(saveTimers.get(key))
@@ -249,11 +270,17 @@ export function createDocuments(ctx) {
   }
   const syncDocument = (id, company, state) => {
     if (disposed || company !== ctx.data()?.company.id) return
+    if (state.status === 'forbidden') {
+      ctx.refused?.({ code: 'forbidden', message: tr('flow.ui.access.denied') })
+      return
+    }
     const page = ctx.data().pages.find((p) => p.id === id)
     if (!page) return
     const draft = draftFor(page)
     draft.syncStatus = state.status
-    if (state.record?.page)
+    const accepted = state.record?.page && Number(state.record.page.version) >= Number(page.version)
+    if (accepted && state.record.page.title && !draft.titleEdited) draft.title = state.record.page.title
+    if (accepted)
       ctx.data.set({
         ...ctx.data(),
         pages: ctx
@@ -264,7 +291,7 @@ export function createDocuments(ctx) {
               : p,
           ),
       })
-    if (state.status === 'saved') draft.dirty = false
+    if (state.status === 'saved') draft.dirty = !!draft.titleEdited
     dirty.set([...drafts.values()].some((item) => item.dirty))
     refresh()
   }
@@ -622,7 +649,7 @@ export function createDocuments(ctx) {
             subtitle: html`${FlowAvatar({ name: ctx.data().user.name })}<span
                 >${ctx.data().user.name} ·
                 ${draft.syncStatus === 'offline' || draft.syncStatus === 'error' ? tr('flow.document.sync.' + draft.syncStatus) : draft.dirty ? tr('flow.ui.unsaved.changes') : tr(page.documentTransport ? 'flow.ui.saved' : 'flow.ui.saved.in.this.session')}</span
-              >${FlowButton({ label: ctx.busy() ? tr('flow.ui.saving') : tr('flow.ui.save.document'), size: 'sm', disabled: (!canEdit() && draft.syncStatus !== 'error') || ctx.busy(), onClick: () => save() })}${FlowScopeMenu(
+              >${FlowButton({ label: ctx.busy() ? tr('flow.ui.saving') : tr('flow.ui.save.document'), size: 'sm', disabled: (!canEdit() && draft.syncStatus !== 'error') || ctx.busy(), onClick: () => save(undefined, undefined, { retry: true }) })}${FlowScopeMenu(
                 {
                   label: tr('flow.ui.document.options'),
                   align: 'start',
@@ -689,9 +716,15 @@ export function createDocuments(ctx) {
             }),
             readOnly: !canEdit(),
             onTitle: (text) => {
+              if (!draft.titleEdited) {
+                draft.titleBase = page.title
+                draft.titleBaseVersion = page.version
+              }
               draft.title = text
+              draft.titleEdited = true
               draft.dirty = true
               draft.revision++
+              if (page.documentTransport) scheduleSave(page.id)
             },
             onText: (id, text, row, col) => {
               const b = draft.blocks.find((b) => b.id === id)
@@ -789,7 +822,7 @@ export function createDocuments(ctx) {
                   draft.dirty = true
                   draft.revision++
                 },
-              })}${FlowButton({ label: tr('flow.ui.save'), disabled: !canEdit(), onClick: () => save() })}`,
+              })}${FlowButton({ label: tr('flow.ui.save'), disabled: !canEdit(), onClick: () => save(undefined, undefined, { retry: true }) })}`,
             }),
           })
         : inspector() === 'history' && page

@@ -1,0 +1,12 @@
+// Markup belongs to the kit (packages/ketsuite/src/ui). A module says which rows,
+// columns and labels; what a card or table looks like is one decision, made once.
+// Only JSX elements count: a `<br>` inside a string or a comment is not markup.
+language js
+
+or {
+  JsxOpeningElement(name=$name),
+  JsxSelfClosingElement(name=$name)
+} where {
+  $name <: r"^[a-z][a-z0-9-]*$",
+  register_diagnostic(span=$name, message="[ketsuite/no-raw-jsx-tag] Markup belongs to the kit: render a ketsuite/ui component instead of a raw tag.")
+}

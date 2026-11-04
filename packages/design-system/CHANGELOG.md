@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Inter by default
+
+- Stop shipping KÉT Sans. Its license does not allow redistributing the font files and its use is limited to Két Việt products; 0.1.42 and 0.1.43 bundled KÉT Sans Optical 1.0. Inter 4.1 is now the interface typeface of the public package.
+- `--kv-font-sans` still names `"KÉT Sans"` before Inter, so a Két Việt product that registers KÉT Sans in its own stylesheet keeps it.
+- Declare `MIT AND ISC AND OFL-1.1` (code, Lucide icons, Inter) instead of `MIT`, and add the Inter notice to `LICENSE`.
+
 ## Unreleased — Product list and agent skill
 
 - Add opt-in `KetTableColumn.wrap` for readable descriptive columns in server and island tables, with token-owned minimum widths and content-driven row height.

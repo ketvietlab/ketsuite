@@ -527,6 +527,26 @@ from, the same shape `calendar_mail_transport.sendInvitations` uses. It is not c
 that would let the bridge observe a write without that dependency. Outbox administration also
 requires a signed-in user, which an anonymous submission does not have.
 
+### Following a notice per submission
+
+The Studio reports each submission's notice from the same outbox. The delivery id is derived from the
+submission (`website-form:<submissionId>`), so `website_form_mail.noticeStates` finds every row on a
+Studio page with one query, and the outbox stays the only ledger. The function is internal: the
+submission list, overview and detail call it only after reading those submissions under the viewer's
+own `website_form` permission, and it returns the delivery's state, attempts, last error and times,
+never its body or recipients.
+
+| What the Studio shows | When |
+| --- | --- |
+| Chưa cấu hình nơi nhận | the form has no recipient |
+| Báo qua email | the deployment does not compose `website_form_mail`, so the Studio cannot follow it |
+| Chưa gửi email | no delivery exists: nothing has queued this submission's notice |
+| Chờ gửi / Đang thử gửi lại | the delivery is `queued` or `sending` / `retryable` |
+| Đã gửi email / Gửi không thành công / Đã huỷ gửi email | the delivery is `sent` / `failed` / `cancelled` |
+
+"Chưa gửi email" is the honest answer while notices are queued explicitly; it is what a deployment
+sees until something calls `notifySubmission` for each submission.
+
 ## Public site search
 
 `website.searchPublished` matches a term against the **published** title and excerpt of each entry.
@@ -853,12 +873,63 @@ the field, so a page could only go live at the moment somebody pressed the butto
 is a form with a `datetime-local` field now — empty means now, which is what the contract's optional
 argument has always meant.
 
+### A moved schedule kept its old time, and a failed one waited forever
+
+The unique key on `website.publishScheduled` was the entry and the revision. A queue key only
+coalesces with a job still waiting, so scheduling the same revision again at another time found the
+first job holding the key and queued nothing: moved earlier, the page went out at the old time; moved
+later, the old job ran early, found the time not yet reached and returned, and nothing ran at the new
+time. The key carries the time now (`scheduleKey`), so each time has its own job and the one left at the
+old time finds nothing to do.
+
+A job the queue gave up on, or one a stopped worker never ran, left the entry saying `scheduled` with
+nobody to publish it. `website.publishOverdue` runs every five minutes across companies and hands each
+overdue schedule back to the queue under the same key: it coalesces with a job still waiting or
+retrying, and a discarded one no longer holds it. Cancelling, rescheduling and publishing meanwhile
+each change `status` or `scheduledRevisionId`, which the job's compare-and-set expects, so whichever
+lands first wins and a late job publishes nothing.
+
+### Archiving a live page was unpublishing by another name
+
+`trashEntry` sits in the author bundle so an author can clear away drafts, and it clears the published
+and scheduled revisions as it trashes. An author could therefore take a live page off the site, which
+`unpublishEntry` keeps for publishers. The Studio's `setEntryArchived` now asks for the unpublish grant
+before it archives a live or scheduled entry, and the archive control follows the same rule: a draft
+is the author's, anything visitors can reach is the publisher's. Calling `trashEntry` directly still
+follows the bundle, so moving it out of the author bundle is a catalogue decision of its own.
+
+The confirmation also names what will point at nothing afterwards. `entryHistory` returns `usage`:
+the header menu items and the other non-archived pages whose current or published revision links to
+the entry's path, including an anchor or a query on it and links inside rich text stored as JSON.
+
+### Page templates are expansions, not stored records
+
+`pageTemplates` (in `website/studio-content.ts`) are code. The Builder expands one with
+`templateLayout` when it is applied, writes the result as an ordinary revision after the editor
+confirms the replacement, and saves any unsaved draft first, so the page's earlier versions stay in
+its history and restore like any other. Nothing about a template is persisted, so changing one needs
+no data migration. The thing that can break is a template naming a section a deployment does not
+compose; the template tests check every template against the sections of each deployment the Studio
+ships in.
+
 ### A list you cannot search is a list of the first thirty
 
 `listEntries` and `countEntries` have both taken `search` and `status` since they were written, and no
 screen passed either. With paging added, a site with three hundred pages could be read thirty at a
 time in date order and no other way. Both filters are on the list now, in one GET form together with
 the site switcher — three separate forms would each drop the other two's state on submit.
+
+### The Studio lists drew every row at once
+
+`website.listEntries` in the Studio transport filtered the site snapshot and returned every match, so a
+site with six hundred posts rendered six hundred rows. The page and post lists now send `page`
+(`page` is a route query next to `q` and `status`, so a reload or a shared link reopens the same rows)
+and get thirty rows with `total`, `page` and `pageSize`; a page past the end reads the last one. The
+menu and Builder link pickers send no `page` and still receive every entry. The snapshot itself is
+still read whole on the server; paging it at the query is the next step for very large sites.
+
+A list emptied by a search or a status tab is not an empty site: it says nothing matched and offers
+Clear filters instead of the create action.
 
 ### A redirect could be created but never corrected
 
@@ -1380,8 +1451,104 @@ Enable workers: `website.collectImages` runs every minute and retries Object Sto
 Unreferenced attached objects have a separate 24-hour grace. Completed abandoned uploads lose bytes
 before metadata; unfinished uploads retain deletion tombstones to collect late writes. Tombstone
 metadata retention must be configured before a long-lived deployment. Generic `/files` attachment
-semantics remain unchanged, and taxonomy ownership is not covered by this entry-only bridge.
+semantics remain unchanged.
 
+## Category and tag images
+
+A category or tag has two images, `thumbnail` and `cover`, each with its alternative text. Studio
+uploads them through the same route with `owner=term`:
+`POST /website/images/{termId}/{thumbnail|cover}?site={siteId}&owner=term`. The route requires the
+`website.saveTerm` grant; `website.stageImage` also requires the editor or administrator site role,
+the term's site and a term that is not archived. A term that is not saved yet may stage images, as a
+new post does.
+
+`website.saveTerm` takes `images` (`{ thumbnail, thumbnailAlt, cover, coverAlt }`, each image a
+`/website/files/{id}` path). It claims the images in the same transaction as the term's
+compare-and-set. A refused save leaves the term unchanged and its uploads pending. Only an upload
+staged for this term can be claimed: an upload for a page, the site logo or another term is refused.
+Omitting `images` keeps the saved ones; `null` removes them. A cover needs its alternative text,
+because the term's public page shows it.
+
+On the public `/category/{slug}` and `/tag/{slug}` pages, the cover is drawn under the heading. The
+thumbnail is the sharing image (`og:image`), with the cover as fallback. Visitors can read the images
+only while the site is active and the term is not archived. `website.collectImages` keeps every image
+a term names, including an archived term, so a restored term keeps its pictures. A replaced or
+removed image is collected after the same 24-hour grace as other unreferenced images.
+
+Existing databases get the nullable `TaxonomyTerm.images` column from the deployment migration;
+terms saved before it have no images.
+
+
+## Retiring the legacy Page model
+
+Before the Studio, a page was a `website.Page` row (`savePage`, `publishPage`, `listPages`,
+`getPageByPath`) drawn by the deployment's KTL theme. It is still served, but only while a deployment
+has no active `website.Site` at all: `resolveSite` then answers with the `__legacy__` site, and
+`getPage` reads `website.Page`. As soon as one site exists, every public path resolves Studio entries
+and a `website.Page` row is stored and never shown.
+
+| Legacy `website.Page` | Studio `website.Entry` |
+| --- | --- |
+| `id` | `id` |
+| `path` | `path`, with `slug` its last segment (`home` for `/`) |
+| `title` | `title` |
+| `layout` (already `website.*` sections) | `layout` of the first revision |
+| `published: true` | `publishEntry` of that revision |
+| company scope | the site's company |
+
+The mapping is one to one because the legacy validator already accepted only sections the deployment
+composes. There is no migration helper: no deployment that has a site holds pages it could still
+show, and a deployment without a site keeps serving its legacy pages until it creates one. Writers
+move instead: anything that creates a site must write its pages with `saveEntry` and `publishEntry`,
+as the development seed now does. The legacy functions and the `__legacy__` fallback are removed once
+the storefront-without-Studio deployments are retired.
+
+## Translations
+
+Each language is its own entry. The entries of one piece of content share `Entry.translationGroupId`;
+there is no group table. A new entry starts its own group with its own id. One group holds one entry
+per language (unique `(siteId, translationGroupId, locale)`), and the slug is unique per type and
+language, so a translation may keep its source's slug.
+
+- **Languages of a site.** `Site.locales` is the ordered list of languages; the default language is
+  always one of them. `Site.localeFallback` is where the language switcher may send a visitor when a
+  page has no translation; it is empty by default. `website.saveSite` refuses to drop a language that
+  content is still written in (`website.error.localeInUse`).
+- **Language of an entry.** `Entry.locale` is the source. `website.saveEntry` takes `locale`; older
+  callers that still send `fields.locale` are read once and the field is not stored in the revision.
+  A language must be on the site, and a second entry in the same language joins no group.
+- **Paths.** The default language has no prefix (`/khuyen-mai`); every other language does
+  (`/en/khuyen-mai`, home `/en`). `createTranslation` derives the path; editors change it afterwards.
+  Reserving language prefixes, `hreflang` and the switcher belong to the public-paths work.
+- **Functions.**
+  - `website.createTranslation({ id, locale, copy?, newId? })` creates a draft in the source's group.
+    `copy: 'all'` copies layout and fields; `copy: 'structure'` keeps the layout, images and links
+    but empties section text (`heading`, `subheading`, `body`, `bodyDoc`, `caption`, `ctaLabel`,
+    `alt`) and a post's body and excerpt. A retry with the same `newId` returns the same entry.
+  - `website.linkTranslation({ id, targetId })` puts a separate entry of the same site and type into
+    the source's group; an entry that already has translations is unlinked first.
+  - `website.unlinkTranslation({ id })` gives the entry a new group; the others keep theirs.
+  - `website.listTranslations({ id })` lists the group in the site's language order.
+  - Creating, linking and unlinking use the same grant as `website.saveEntry`; listing is a read.
+- **Images.** Translations reuse each other's images: `saveEntry` may claim an image uploaded by
+  another entry of the same group, and an image is public while any published revision of an active
+  site references it. Images of other content still cannot be claimed.
+- **Studio.** The entry page has a Translations panel: the group's languages with their state,
+  links to the other translations, a form to translate into a missing language and an unlink action.
+  Page and post lists filter by language, and Settings chooses the site's languages and fallback.
+
+### Existing databases
+
+Rows saved before translations have no `locale` or `translationGroupId`; readers treat them as the
+site's default language and their own group, so nothing changes for visitors. The operator-owned job
+`website.migrateEntryLocales` names both: the language from the current revision's `fields.locale`,
+else the site's default. Nothing schedules it and no request runs it. Enqueue it once per database
+with `{ "dryRun": true }` first and read the count in the job log (`website.migrateEntryLocales`),
+then without it. Rows already set are skipped, so a rerun resumes after a failure. Never run it on a
+tenant as a local check.
+
+The unique slug index changes from `(type, slug)` to `(type, locale, slug)`; the deployment migration
+replaces it.
 
 ## Studio site appearance
 

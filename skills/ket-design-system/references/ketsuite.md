@@ -26,7 +26,7 @@ permissions, native routes and form behavior while applying the visual contract.
   right for desktop, native fullscreen modal on mobile with focus/scroll return.
   MarkdownContent renders safe GFM through a host lexer. All ecosystem Mermaid
   diagrams use the public DS token-based light/dark theme and lazy rendering
-  lifetime: KÉT Sans 13px (`--kv-font-sans`), semantic node states and consistent connectors. Content
+  lifetime: the interface font at 13px (`--kv-font-sans`), semantic node states and consistent connectors. Content
   may not override the theme; hosts supply pinned engines, the DS owns presentation. Below it, a settings
   gear opens a shared right-side Menu on click/touch or keyboard, never hover.
   Hosts supply `settings: { id, label, items }`; Escape closes this menu before the
@@ -41,6 +41,21 @@ permissions, native routes and form behavior while applying the visual contract.
   `docs/src/content/docs/ketsuite/design-system.md` for API examples.
 
 - Every full-page collection uses the KétSuite `ListPage`/`ListScreen` composition: app shell with its location band, title with primary creation and collection actions, filters and table tools, then `KetTable` and result footer.
+- Editing many rows in place (order lines, stock counts, price lists, live figures)
+  uses `KetGrid` (`ketGrid` island or `createKetGrid`), not an editable `KetTable`,
+  `DataTable` or a column of form fields; reading a collection stays `KetTable`.
+  A dialog that sets a quantity per variant is such a grid too: one row per variant
+  with its values, price and quantity, not a table whose cells hold fields.
+  The grid owns its fills, by cell: light green for a cell the reader may edit,
+  light yellow for an edited cell until the host calls `markSaved()`, plain for
+  read-only cells; a whole row is filled only when every cell is (all editable, or
+  the row is new or moved). Kinds of new row (`newRows`), rules from row data
+  (`lockedBy`, `minField`, `maxField`, `sets`), steps by another field (`tiers`, a
+  price by quantity) and computed columns (`compute`) are grid config, not consumer
+  scripts. The host owns saving; the grid commits an open
+  editor on an outside press or submit and stops its form's submit while a cell is
+  invalid. A paged grid passes its previous value as `carry` instead of keeping its
+  own store of other pages' edits. Contract: DS README "Editable grids: KetGrid".
 - `ListChrome.filterMenus` contains native Menu choices or DateRangePicker with
   `variant="filter"`, not FormGrid. Check individual control/label width and the
   opened phone disclosure; page overflow alone does not catch a collapsed input.
@@ -207,6 +222,14 @@ Full contract: `packages/design-system/README.md` "Peek beside a spatial view".
   README "Facts and the rail on a record page". A native record page chooses
   this through its definition's `pageAsideWhenStacked` (the runtime keeps
   `before` for existing pages, so a reference rail sets `after`).
+- A record page whose body holds a `KetGrid` (a document's lines) keeps the
+  wide measure: its rail stacks below 91.5rem of page instead of squeezing the
+  lines, with nothing to set. Fit the grid's columns to that measure (about
+  1064px with the handle) so every column shows on a 1440px screen. Source:
+  design-system README "Facts and the rail on a record page".
+- `RecordPage.asideBreakpoint="wide"` (native `pageAsideBreakpoint`) asks for the same
+  measure without a grid. Keep these mechanics in DS; consumers must not override
+  container CSS.
 - The record runtime asks before discarding typed input, and before a command
   whose `confirm` returns a question, in the shared small `ConfirmDialog`
   with Cancel focused — never the browser's `confirm()`. A read the server
@@ -299,6 +322,9 @@ selection on close, and discards an incomplete selection. Short scheduling dialo
 use ModalSheet small. DateTimePicker progressively enhances one native wall-time
 field into date/time controls; its disposable runtime owns synchronization and
 validation. Preserve the canonical name, permission state, help and validation.
+Days are written and typed in the order of the field's `locale` (English month first),
+never the browser's: the enhanced DatePicker shows its `date-entry` text field and keeps
+the native date field hidden as the submitted ISO value. Pass the screen's locale.
 
 `EmptyState` keeps complete, unbroken search terms inside narrow panels. Its grid and wrapping
 are owned by the public component; do not clip or truncate the message in a list consumer.
@@ -331,3 +357,16 @@ Compose financial metrics with `CardGrid({ minimum: "wide" })`. Metric owns the 
 AppShell gives its sidebar's only child the available block size, including a disposable island wrapper. Navigation keeps its viewport geometry and internal scrolling; consumers do not patch sidebar descendants. Producer CSS check/mutation and Account browser geometry cover this contract. Account's breadcrumb-free canvas is an explicit user choice and still exposes a separate list-return link.
 
 Record runtime exposes `draftScope` (`record` / `dialog`) to namespace input IDs by owning layer. Route dialog metadata is present on both layers and must not determine control IDs. A refused submit focuses the first invalid control after rendering the retained draft.
+
+## Child grids and record drafts
+
+A record hosting KetGrid must register the canonical empty `KetGridPosted` value as
+its initial draft: `{ added: [], updated: [], removed: [], order: null }`. The grid
+writes this value on mount. Registering an empty string instead makes an untouched
+record appear changed. Preserve nonempty carried drafts; reverting to the canonical
+empty change-set must clear the dirty guard without disabling protection for real edits.
+
+
+### Dependent edit intent in KetGrid
+
+A serialized column may declare `writeSets` for constant dependent values applied after a successful write (including a computed inverse). Use this for user-owned intent, such as choosing a product/unit to restore automatic pricing or entering a price/margin to choose manual pricing. Failed inverse writes do not apply these values. Declare boolean `draftFlags` when that intent must survive draft restoration after column writers replay. Row, tier and column lock flags are excluded; undeclared fields and non-boolean values are ignored. These flags never replace server authorization or server-owned amounts. The order-lines catalogue specimen demonstrates automatic/manual intent.

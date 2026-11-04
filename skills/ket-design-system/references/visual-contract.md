@@ -6,8 +6,9 @@ Dimensions are pinned to Shopify Polaris React **13.9.5**, polaris-tokens **9.4.
 standard theme. Do not mix the optional light-mobile theme into these responsive rules.
 Sources: [Polaris](https://www.npmjs.com/package/@shopify/polaris/v/13.9.5) and
 [tokens](https://www.npmjs.com/package/@shopify/polaris-tokens/v/9.4.2).
-Két retains its semantic colours, KÉT Sans font family (Inter for characters it lacks),
-400/500/600/700 weight roles (600 is drawn by KÉT Sans Medium, so it stays below Bold),
+Két retains its semantic colours, the `--kv-font-sans` family (Inter in the public package;
+KÉT Sans, with Inter for characters it lacks, in Két Việt products that register it),
+400/500/600/700 weight roles (under KÉT Sans, 600 is drawn by its Medium, so it stays below Bold),
 Lucide geometry, native navigation and ERP composition. Desktop density and side
 labels are Két policy, not a claim of complete Shopify parity.
 
@@ -94,6 +95,14 @@ modules do not position labels. Help/errors align with the control column. Singl
 checkbox labels stay beside their box. Align input/action rows by control boxes,
 not by wrappers whose label/help content differs.
 
+A control is as wide as its value needs. A field states the length with `width`:
+`xs` (7rem) for a rate, a percentage or a count of days; `sm` (11rem) for an amount,
+a quantity, a date, a reference or a barcode; `md` (18rem) for a short choice such as
+a unit, a group or a tax. The control keeps to the start of its column and never
+grows past it; label, help and error keep their tracks. A name, an address, a note or
+a long choice (an account) sets no width and fills the column. Modules choose the
+width from the value, never by CSS on the control.
+
 Desktop table rows have a 40px dense baseline in all density presets; wrapped content
 may increase height. Mobile row baselines are 44/52/60px for compact/default/comfortable.
 Do not clip long content to enforce a fixed row height. Theme changes colour only.
@@ -168,6 +177,9 @@ and current-row marks follow `dir="rtl"`.
 | Canvas | Page/list/workspace | Két canvas colour; no frame around the entire page |
 | Working surface | Surface/titled table on canvas | Surface fill, one subtle token border/radius, no default shadow |
 | Overlay | Modal/Dialog/Popover | One outer surface with its component's elevation and backdrop behavior |
+
+Only the page header may sit directly on canvas. All other content belongs to a
+working surface; put block titles inside that surface, not above it on the canvas.
 
 Section groups content within a level; it creates no new level. A nested Surface,
 DataTable, Disclosure or Metric becomes flat inside a working surface/overlay: no
@@ -286,4 +298,28 @@ quiet zone in both themes and in print; scanners need that contrast, so never ti
 it or place it on a themed fill. `label` names what scanning does. Anything a person
 must read without scanning (account, amount, reference) is written in `caption` or
 beside the code, never only inside it. The consumer builds the payload; do not add
-a separate QR library or draw codes with canvas.
+a separate QR library or draw codes with canvas. Where only an image fits (an `<img>` filled
+by a script, a download), serve `qrSvg(value, { label })`, which draws the plate into
+the file, and keep it inside the `qr-code` figure with its caption.
+
+### Printed documents and signatures
+
+A printed document (a voucher, a delivery note) is a standalone page composed of the
+public components: a `Surface` for the document, `DescriptionList` for who and what
+for, `DataTable` for the lines. Each place to sign is a `SignatureBlock` (role, how to
+sign, room to sign, then the known name or a dotted line); set them in a `Grid`. Do
+not make room to sign with empty elements, repeated line breaks or dotted text.
+
+### Numbers typed by a person
+
+Money and quantities a person types in their own language use `NumberField` or
+`MoneyField` with `locale`: the field shows "1.800.000" and reads "28.600" as 28600
+in Vietnamese, and the runtime submits the plain decimal. Never use a bare `Field`
+with `inputMode="decimal"` for an amount, and never parse grouped text in the view.
+
+### Entry rows on a phone
+
+A stacked table has no header row. Inputs in an entry row's first cell show their
+own labels there (the table owns that rule); give each such `Field` its real label
+with `labelHidden`, never an empty label or a placeholder instead. A column of row
+commands is `kind: 'actions'` so a stacked row shows them without the column name.

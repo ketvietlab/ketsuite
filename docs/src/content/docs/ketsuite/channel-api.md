@@ -223,6 +223,27 @@ strong ETag, and independently versioned positions. Create, update, archive, res
 through Stock's inventory commands under that version; there is no delete until a product's references can be
 checked. Service products, tax setup, BOMs, and pricelists are deliberately absent.
 
+Creation requires a SKU containing 2–20 uppercase ASCII letters, digits or hyphens. Assigning or
+changing a SKU uses the same company-scoped uniqueness policy as Product, including inactive and
+legacy identities. An assigned SKU cannot be cleared. An unchanged legacy SKU remains valid when
+editing other fields; a new assignment must follow the current policy. Product code edits also
+advance the template revision, so clients must refresh stale inventory versions before saving.
+
+Archive requests require `reason` (1–500 characters after trimming) as well as `expectedVersion`;
+restore only needs the version. Stock delegates to the same Product lifecycle service as the web:
+open quotations or stock moves block the operation, history and variant states commit atomically,
+and restore keeps separately archived SKUs inactive. An individually archived SKU under an active
+template offers update only; template restore is not advertised as a SKU restore. Native versions
+include the template revision, so a web edit invalidates an older native detail even when it changes
+a field outside that detail.
+Lifecycle and native saves also invalidate an older web draft. Validation returns 422; stale versions
+and open-document conflicts return 409. Existing clients must collect and submit a reason before
+using archive with this contract.
+
+Changing stock tracking/storage or a variant's cost is refused while physical stock or reservations
+remain in internal/transit locations. Omitting a cost or submitting its unchanged value preserves it.
+Stock writes and configuration/cost edits serialize on the product template inside their transaction.
+
 Purchase cost follows `product.listVariantCosts`. A viewer who may not call it reads `cost: null` in the list
 and the detail, and the management options report `costVisible: false`. A write may leave `cost` out, which
 keeps the stored cost, and a write that carries a cost the viewer may not read is refused with a `cost` field
@@ -299,7 +320,9 @@ a query string carries no types, values are coerced to the declared type before 
 Mutating operations that advertise idempotency require `Idempotency-Key`. Reusing a key with a different
 request body returns `409 channel_api.idempotencyConflict` instead of replaying the wrong result, and reusing
 it while the first attempt is still running returns `409 channel_api.idempotencyInFlight` with
-`retryable: true`. Invalid media types, oversized bodies, and invalid JSON are rejected at the HTTP boundary.
+`retryable: true`. A domain write that finds its record changed underneath it (a stale revision, a product's
+stock setup changed mid-operation) returns `409 channel_api.stale` with `retryable: false`: reload, then decide
+again. Invalid media types, oversized bodies, and invalid JSON are rejected at the HTTP boundary.
 Rate-limited requests return `429 channel_api.rateLimited`, set `retryable: true`, and publish a bounded
 `Retry-After` value derived from the declared route window so native clients do not invent a retry cadence.
 

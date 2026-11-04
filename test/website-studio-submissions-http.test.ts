@@ -101,7 +101,8 @@ test('Studio submissions: queue, detail, hold, export and overview through websi
     assert.doesNotMatch(JSON.stringify(all.rows), /0901/)
     assert.deepEqual(
       [...new Set((all.rows as Row[]).map((r) => `${r.status}/${r.deliveryState}`))],
-      ['new/mail'],
+      // This deployment composes the mail bridge, and nothing has queued these notices yet.
+      ['new/notQueued'],
     )
     const byName = Object.fromEntries((all.rows as Row[]).map((r) => [r.summary, r.id]))
 

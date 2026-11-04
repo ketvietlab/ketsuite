@@ -3,7 +3,29 @@ import test from 'node:test'
 import { createFixtureSession } from '../atlas/store.mjs'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
 import { fixtureResponse } from '../atlas/fixture-response.mjs'
-import { normalizeBulkOutcome, selectionAfterBulk, bulkReasonKey } from '../client/bulk.mjs'
+import {
+  normalizeBulkOutcome,
+  selectionAfterBulk,
+  bulkReasonKey,
+  bulkCatalogOptions,
+} from '../client/bulk.mjs'
+
+test('bulk status options include only effective catalogs of selected projects, once per stable ID', () => {
+  const tasks = [
+    { id: 'A', projectId: 'override' },
+    { id: 'B', projectId: 'company' },
+    { id: 'C', projectId: 'private' },
+  ]
+  const catalogs = {
+    override: [{ id: 'project-todo' }, { id: 'project-done' }],
+    company: [{ id: 'company-todo' }, { id: 'project-done' }],
+    private: [{ id: 'private-done' }],
+  }
+  const options = (ids) => bulkCatalogOptions(tasks, ids, (id) => catalogs[id]).map((c) => c.id)
+  assert.deepEqual(options(['A']), ['project-todo', 'project-done'])
+  assert.deepEqual(options(['A', 'B', 'A']), ['project-todo', 'project-done', 'company-todo'])
+  assert.deepEqual(options(['missing']), [])
+})
 
 const seed = (data) => {
   const base = data.tasks.find((t) => t.projectId === 'core')

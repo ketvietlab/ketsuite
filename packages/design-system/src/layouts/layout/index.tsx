@@ -20,6 +20,7 @@ export const HOOKS = [
   'disclosure-body',
   'disclosure-label',
   'disclosure-meta',
+  'disclosure-leading',
   'section',
   'section-head',
   'section-eyebrow',
@@ -204,17 +205,20 @@ export const Surface = (props: {
 export const Disclosure = (props: {
   summary: string
   meta?: JSXChild
+  /** What the line starts with, before its label: a small image or icon of the item (a variant's photo). */
+  leading?: JSXChild
   body: JSXChild
   open?: boolean
 }): TemplateResult => (
   <details data-ui="disclosure" open={props.open === true ? true : undefined}>
     <summary data-ui="disclosure-summary">
-      {props.meta === undefined ? (
+      {props.meta === undefined && props.leading === undefined ? (
         props.summary
       ) : (
         <>
+          {props.leading !== undefined && <span data-ui="disclosure-leading">{props.leading}</span>}
           <span data-ui="disclosure-label">{props.summary}</span>
-          <span data-ui="disclosure-meta">{props.meta}</span>
+          {props.meta !== undefined && <span data-ui="disclosure-meta">{props.meta}</span>}
         </>
       )}
     </summary>

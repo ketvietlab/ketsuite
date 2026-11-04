@@ -85,10 +85,10 @@ longer exists.
 | ID | Status | Screen | Route(s) | Current renderer | Target | Chatter | Owner |
 |---|---|---|---|---|---|---|---|
 | SALE-01 | keep | Sales overview | `/admin/sales` | `screens/overview.tsx::overviewScreen` | Specialized | no | Kant |
-| SALE-02 | done | Quotations | `/admin/sales/quotations`, `/admin/sales/quotations/new` | `screens/quotations-list.tsx`, `screens/quotation-create.tsx` | Split | list/new: no | Kant |
+| SALE-02 | done | Quotations | `/admin/sales/quotations`, `/admin/sales/quotations/new` | `screens/quotations-list.tsx`; create is the order's record page (SALE-04) | Split | list/new: no | Kant |
 | SALE-03 | done | Sales orders | `/admin/sales/orders` | `screens/sales-orders-list.tsx::salesOrdersListScreen` | ListPage | no | Kant |
-| SALE-04 | done | Quotation/order detail | `/admin/sales/quotations/{id}`, `/admin/sales/orders/{id}` | `screens/order-detail.tsx::orderDetailScreen` | FormPage | `sale_mail_backend` | Kant |
-| SALE-05 | done | Invoicing policies | `/admin/sales/invoicing-policies`, `/admin/sales/invoicing-policies/new` | `screens/invoicing-policies-list.tsx`, `screens/invoicing-policy-create.tsx` | Split | no | Kant |
+| SALE-04 | done | Quotation/order detail | `/admin/sales/quotations/{id}`, `/admin/sales/orders/{id}` | `screens/order-page.tsx` + `sale.order-page` record page (`modal/order-modal-view.tsx`, 23/10/2026) | RecordPage | `sale_mail_backend`, `sale_activity_backend` | Kant |
+| SALE-05 | done | Invoicing policies | `/admin/sales/invoicing-policies` (island list + `sale.invoicePolicy` record modal, D21) | `policies/*` | Split | no | Kant |
 
 ### Purchase lane
 
@@ -121,7 +121,7 @@ rendering from `screens.tsx` to `screens/shared.tsx`, then remove the old file.
 | STOCK-09 | done | Supply routes | `/admin/stock/routes`, `/admin/stock/routes/new` | `screens/stock-routes-list.tsx`, `screens/stock-route-create.tsx` | Split | list/new: no | Huygens + Kant |
 | STOCK-10 | done | Supply-route detail | `/admin/stock/routes/{id}` | `screens/stock-route-detail.tsx` | FormPage | no | Curie |
 | STOCK-11 | done | Replenishment rules | `/admin/stock/replenishment`, `/admin/stock/replenishment/new` | `screens/replenishment-list.tsx`, `screens/replenishment-create.tsx` | Split | list/new: no | Huygens |
-| STOCK-12 | keep | Stock forecast | `/admin/stock/forecast` | `screens/forecast.tsx` | Specialized | no | Curie |
+| STOCK-12 | done | Stock forecast | `/admin/stock/forecast`, `/admin/stock/forecast/{warehouseId}/{productId}` | `screens/forecast-collection.tsx`, `screens/forecast-detail.tsx` | Split | no | Commerce K40 |
 
 ### Product lane
 
@@ -224,7 +224,7 @@ routed Company renderer now lives in `company_backend/screens/` and the former r
 | COMPANY-02 | done | Company create/detail | `/admin/companies/new`, `/admin/companies/{id}` | `screens/company-form.tsx::companyFormScreen` | FormPage | Kant |
 | COMPANY-03 | done | Branch create/detail | `/admin/companies/{id}/branches/new`, `/admin/companies/{companyId}/branches/{id}` | `screens/branch-form.tsx::branchFormScreen` | FormPage | Codex |
 | COMPANY-04 | done | Company hierarchy | `/admin/companies/hierarchy` | `screens/hierarchy.tsx::hierarchyScreen` | Specialized | Codex |
-| COMPANY-05 | done | Active company/branch context | `/admin/context` | `screens/context.tsx::contextScreen` | FormPage/Specialized | Codex |
+| COMPANY-05 | done | Active company/branch context (one company per session) | `/admin/context` | `user_backend/screens/context.tsx::contextScreen` | FormPage/Specialized | Codex |
 
 ### User and authentication lanes
 
@@ -543,8 +543,8 @@ route, public storefronts, channel APIs, print/download responses, and fragment-
 - Inventory Adjustment remains Specialized: the one-shot adjustment command, configuration gate, applied
   result, live balances and summary must remain together for safe counting. Its renderer moved unchanged to
   `screens/inventory.tsx`.
-- Forecast remains Specialized: it is a filter → calculation → single report flow rather than collection or
-  record editing. Its renderer moved unchanged to `screens/forecast.tsx`.
+- Forecast was Specialized (a filter → calculation → single report flow) until Commerce K40 replaced it with
+  an island `ListPage` of one row per product in each warehouse and a `RecordPage` per product and warehouse.
 - Browser evidence confirms all four surfaces have no Chatter or horizontal overflow. The mobile
   Replenishment form preserves all eight fields with a 194 px control column at 390 px.
 - Validation scope: seven focused renderer tests, the affected stock HTTP scenario, four targeted browser

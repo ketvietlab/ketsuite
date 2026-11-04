@@ -107,6 +107,7 @@ export const programDesignFunctions: Record<string, FnSpec> = {
       try {
         return await ctx.tx(async (tx) => {
           const existing = (await tx.db.select('loyalty.Program', { id: args.id }))[0]
+          if (existing?.salePolicyVersion === 1) return invalid(issue('id', 'loyalty.error.useConfiguration'))
           if (n(existing?.configVersion) !== args.expectedVersion)
             throw new Rejected(invalid(issue('version', 'loyalty.error.concurrent')))
           if (!args.values || typeof args.values !== 'object' || Array.isArray(args.values))
@@ -243,6 +244,7 @@ export const programDesignFunctions: Record<string, FnSpec> = {
         return await ctx.tx(async (tx) => {
           const program = (await tx.db.select('loyalty.Program', { id: args.id }))[0]
           if (!program) return invalid(issue('id', 'loyalty.error.programMissing'))
+          if (program.salePolicyVersion === 1) return invalid(issue('id', 'loyalty.error.useConfiguration'))
           if (n(program.configVersion) !== args.expectedVersion)
             return invalid(issue('version', 'loyalty.error.concurrent'))
           if (!['activate', 'archive', 'restore'].includes(String(args.action)))

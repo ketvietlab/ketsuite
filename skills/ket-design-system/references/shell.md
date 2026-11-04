@@ -83,7 +83,9 @@ sang các trang không được đụng tới chỉ để thực hiện một cu
 
 Dùng `HelpDrawer` trong content slot của màn hình, `MarkdownContent` với Markdown
 VI/EN, lexer do host cấp và `headingOffset={1}`. Cấp `AppSwitcher.helpLabel`
-khi hướng dẫn của màn hiện tại hoạt động. Hook `ket:screen-help-request` và runtime
+khi hướng dẫn của màn hiện tại hoạt động. Điều hướng fragment giữ rail, nên host
+truyền `AppSwitcher.helpSlot` và gửi lại `AppSwitcherHelp` trong slot đó cùng nội dung
+mới (KetSuite: `backend.app-help`); không thì `?` giữ nhãn của màn trước. Hook `ket:screen-help-request` và runtime
 `attachDesignSystemInteractions` nối nút rail tới drawer; không viết listener riêng.
 Runtime đóng drawer bằng Escape, nút đóng, bấm `?` lần nữa và bấm chuột ra ngoài
 drawer trên desktop (đóng kiểu này không kéo focus về `?`).
@@ -94,7 +96,7 @@ Mermaid dùng loader do host bundle và theme chung của DS:
 Không CDN hoặc theme riêng cho từng app; giữ nguồn đọc được nếu chưa có JavaScript
 hoặc diagram lỗi. Xem [Screen help and ecosystem Mermaid](../../../packages/design-system/README.md#screen-help-and-ecosystem-mermaid)
 để dùng đúng các nhãn, lớp ngữ nghĩa và cơ chế sáng/tối.
-Theme chung dùng box 12px, connector bo góc, KÉT Sans 13px (`--kv-font-sans`) và khoảng cách sơ đồ gọn.
+Theme chung dùng box 12px, connector bo góc, phông giao diện 13px (`--kv-font-sans`) và khoảng cách sơ đồ gọn.
 Điểm quyết định gọn dùng `Q("Câu hỏi?"):::kv-decision` (vàng, nét đứt);
 nhánh phải có nhãn, kết quả dùng `kv-positive`/`kv-warning`/`kv-danger`.
 Không đoán màu theo câu chữ ở runtime. Chuỗi ngang dài chuyển sang luồng dọc hoặc

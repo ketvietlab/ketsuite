@@ -116,6 +116,7 @@ test('commerce catalog: durable binding, live owner data, company/site boundary 
     active: false,
     expectedRevisionId: current.revisionId,
     confirmed: true,
+    reason: 'Ngừng bán',
   })
   assert.equal(
     await call('website_catalog.getEntryByPath', { siteId: 'site-catalog-a', path: '/p/tui-giay' }),
@@ -301,7 +302,11 @@ test('commerce catalog: atomic Studio create, editorial override, redirect and s
   )
   const variant = await call('product.listVariants', {})
   assert.equal((variant as unknown as Row[]).filter((v) => v.templateId === input.id).length, 1)
-  await assert.rejects(call('product.archiveTemplate', { id: input.id, active: false }), /Conflict/)
+  // Without the revision it read, a bound product refuses to change state (the message is translated).
+  await assert.rejects(
+    call('product.archiveTemplate', { id: input.id, active: false, reason: 'Ngừng bán' }),
+    (error: unknown) => (error as { code?: string }).code === 'conflict',
+  )
   const content = [
     {
       id: 'editorial',
@@ -361,6 +366,7 @@ test('commerce catalog: atomic Studio create, editorial override, redirect and s
     active: false,
     expectedRevisionId: source.revisionId,
     confirmed: true,
+    reason: 'Ngừng bán',
   })
   assert.equal((await call('website_catalog.searchIndexed', { siteId: input.siteId, q: 'túi' })).total, 0)
   assert.equal(

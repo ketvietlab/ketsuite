@@ -3,23 +3,23 @@
 
 import { defineFn } from '@ketvietlab/ketjs'
 import type { FnSpec } from '@ketvietlab/ketjs'
+import { companyCalendar, SUPPLIER_VALIDITY_EFFECTS, supplierValidity } from './supplier-validity.ts'
 
 const LIMIT = 20
 
 export const productVendorFunctions: Record<string, FnSpec> = {
   listProductVendors: defineFn({
     input: { templateId: 'id' },
-    effects: ['read:purchase.SupplierInfo', 'read:partner.Partner'],
+    effects: ['read:purchase.SupplierInfo', 'read:partner.Partner', ...SUPPLIER_VALIDITY_EFFECTS],
     agent: true,
     handler: async (ctx, args) => {
       const company = ctx.scope.company
       if (!company) return []
-      const now = Date.now()
-      const at = (value: unknown) =>
-        value == null || value === '' ? null : new Date(String(value)).getTime()
+      const calendar = await companyCalendar(ctx)
+      const now = new Date()
       const rows = (await ctx.db.select('purchase.SupplierInfo', { productTemplateId: args.templateId }))
         .filter((row) => String(row.companyId) === company)
-        .filter((row) => (at(row.dateStart) ?? -Infinity) <= now && now <= (at(row.dateEnd) ?? Infinity))
+        .filter((row) => supplierValidity(row, now, calendar) === 'current')
         .sort(
           (a, b) =>
             Number(a.sequence ?? 10) - Number(b.sequence ?? 10) ||

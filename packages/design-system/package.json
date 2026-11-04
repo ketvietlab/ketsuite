@@ -1,9 +1,9 @@
 {
   "name": "@ketvietlab/design-system",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "description": "K\u00e9t Vi\u1ec7t's public, server-rendered operational design system.",
   "type": "module",
-  "license": "MIT",
+  "license": "MIT AND ISC AND OFL-1.1",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "repository": {

@@ -82,6 +82,8 @@ export const taxRelationControl = (
     required?: boolean
     allowEmpty?: boolean
     typeTaxUse?: string
+    /** The form's document date field: the picker then offers only the rates in effect on that date. */
+    dateField?: string
   },
 ): Promise<JSXChild> =>
   relationControl(ctx, url, req, options.id, {
@@ -94,14 +96,8 @@ export const taxRelationControl = (
     manager: {
       listFunction: 'account.listTaxes',
       ...(options.typeTaxUse ? { listInput: { typeTaxUse: options.typeTaxUse } } : {}),
-      saveFunction: 'account.saveTax',
-      saveDefaults: {
-        amountType: 'percent',
-        ...(options.typeTaxUse ? { typeTaxUse: options.typeTaxUse } : {}),
-      },
-      fields: [
-        { name: 'name', label: _('account_backend.field.name'), required: true },
-        { name: 'amount', label: _('account_backend.field.amount'), required: true },
-      ],
+      ...(options.dateField ? { listInputFields: { on: options.dateField } } : {}),
+      searchInDropdown: true,
+      labelField: 'name',
     },
   })

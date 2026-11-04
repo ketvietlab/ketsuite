@@ -26,8 +26,11 @@ import {
   company,
   partner,
   product,
+  purchase,
   report,
   REPORT_FILTERS,
+  sale,
+  stock,
   uom,
 } from '@ketvietlab/ketsuite'
 
@@ -179,6 +182,52 @@ test('report templates publish immutable versions and invalidate cache metadata'
     >
     assert.equal(template.publishedVersion, 1)
     assert.equal(Array.isArray((await call('report.listVersions', { reportId: 'orders.order' })).value), true)
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('every built-in report template saves as a draft and publishes from the template editor', async () => {
+  // The editor checked a template without the translation and document filters, so `_`, `amount` and
+  // `date` were unknown filters and not one shipped template could be saved, edited or published.
+  const modules = [source, report]
+  const manifest = compose(modules, { headless: true, companies: true })
+  const adapter = sqliteAdapter()
+  await adapter.open()
+  try {
+    await migrateOne(adapter, manifest)
+    registerFunctions(modules)
+    const call = (name: string, args: Record<string, unknown>) =>
+      callFn(name, args, { adapter, manifest, scope: { company: 'acme' } })
+    const shipped = [account, purchase, sale, stock].flatMap((module) =>
+      Object.entries(module.reports ?? {}).map(([id, definition]) => [
+        `${module.name}.${id}`,
+        definition.template,
+      ]),
+    )
+    assert.ok(shipped.length >= 10, String(shipped.length))
+    let revision = 0
+    for (const [id, template] of shipped) {
+      const saved = (await call('report.saveDraft', { reportId: 'orders.order', source: template, revision }))
+        .value as { ok: boolean; revision: number; errors?: unknown }
+      assert.equal(saved.ok, true, `${id}: ${JSON.stringify(saved.errors)}`)
+      revision = saved.revision
+      const published = (await call('report.publish', { reportId: 'orders.order', revision })).value as {
+        ok: boolean
+        errors?: unknown
+      }
+      assert.equal(published.ok, true, `${id}: ${JSON.stringify(published.errors)}`)
+    }
+    // A filter no document knows is still refused.
+    const refused = (
+      await call('report.saveDraft', {
+        reportId: 'orders.order',
+        source: '<report><text>{{ name | shout }}</text></report>',
+        revision,
+      })
+    ).value as { ok: boolean; errors: Array<{ field: string }> }
+    assert.equal(refused.ok, false)
+    assert.equal(refused.errors[0]?.field, 'source')
   } finally {
     await adapter.close()
   }

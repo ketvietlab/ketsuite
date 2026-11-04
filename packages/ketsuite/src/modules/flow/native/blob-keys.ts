@@ -9,13 +9,15 @@ export const flowBlobPrefix = (company: string) => `blobs/${company}/flow/`
 export const flowUploadKey = (company: string, id: string, checksum: string) =>
   `${flowBlobPrefix(company)}uploads/${id}/${checksum}`
 
-export const flowSnapshotKey = (company: string, kind: 'page' | 'issue', id: string, checksum: string) =>
+export type FlowDocumentKind = 'page' | 'issue' | 'project' | 'epic'
+
+export const flowSnapshotKey = (company: string, kind: FlowDocumentKind, id: string, checksum: string) =>
   `${flowBlobPrefix(company)}documents/${kind}/${ownerKey(id)}/${randomUUID()}/${checksum}`
 
 export function isFlowSnapshotKey(
   key: string,
   company: string,
-  kind: 'page' | 'issue',
+  kind: FlowDocumentKind,
   id: string,
   checksum: string,
 ) {
@@ -31,8 +33,8 @@ export function isExclusiveFlowBlob(key: string, company: string) {
   const prefix = flowBlobPrefix(company)
   return (
     key.startsWith(prefix) &&
-    new RegExp(`^(uploads/${uuid}/${digest}|documents/(page|issue)/${digest}/${uuid}/${digest})$`).test(
-      key.slice(prefix.length),
-    )
+    new RegExp(
+      `^(uploads/${uuid}/${digest}|documents/(page|issue|project|epic)/${digest}/${uuid}/${digest})$`,
+    ).test(key.slice(prefix.length))
   )
 }

@@ -197,6 +197,17 @@ export const componentRegistry: readonly ComponentRegistration[] = [
   entry('createKetTableView', 'Data operations', 'interactions/ket-table', 'interactions', 'ket-table'),
   entry('ketTable', 'Data operations', 'interactions/ket-table', 'interactions', 'ket-table'),
   entry('KetTable', 'Data operations', 'interactions/ket-table', 'interactions', 'ket-table'),
+  entry('createKetGrid', 'Data operations', 'interactions/ket-grid', 'data-operations', 'ket-grid'),
+  entry('ketGrid', 'Data operations', 'interactions/ket-grid', 'data-operations', 'ket-grid'),
+  entry(
+    'KetGridPlaceholder',
+    'Data operations',
+    'interactions/ket-grid',
+    'data-operations',
+    'ket-grid',
+    'stable',
+    ['default', 'loading'],
+  ),
   entry(
     'createRelationSelectView',
     'Forms',
@@ -269,6 +280,14 @@ export const componentRegistry: readonly ComponentRegistration[] = [
   entry('BarChart', 'Data display', 'data-display/bar-chart', 'data-operations', 'bar-chart'),
   entry('ColumnChart', 'Data display', 'data-display/column-chart', 'data-operations', 'column-chart'),
   entry('QrCode', 'Data display', 'data-display/qr-code', 'record-workspace', 'qr-code'),
+  entry('qrSvg', 'Data display', 'data-display/qr-code', 'record-workspace', 'qr-code'),
+  entry(
+    'SignatureBlock',
+    'Data display',
+    'data-display/signature-block',
+    'record-workspace',
+    'signature-block',
+  ),
   entry(
     'TimeframeFilter',
     'Data operations',

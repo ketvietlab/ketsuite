@@ -1,6 +1,7 @@
 import { styleKeys, studioStyleDefaults } from '../../website/studio-style.ts'
 import type { StudioPreset } from '../../website/studio-style.ts'
 import { pageTemplates } from '../../website/studio-content.ts'
+import { siteLocales } from '../../website/translations.ts'
 import { csvCell, safeFilename } from '../csv.ts'
 import { entryProjection } from './context.ts'
 import { CUSTOMER_SIGNIN_PATH } from './public.ts'
@@ -163,8 +164,29 @@ const retentionUntil = (form: Row, createdAt: unknown) =>
   form.retentionDays && createdAt
     ? new Date(new Date(String(createdAt)).getTime() + Number(form.retentionDays) * DAY).toISOString()
     : null
+/** A form notice as `website_form_mail.noticeStates` reports it. */
+type Notice = {
+  state: string
+  attempts: number
+  error: string | null
+  queuedAt: string | null
+  sentAt: string | null
+}
+/**
+ * Where the email telling the form's owner stands. Without a recipient there is nothing to send;
+ * without the mail bridge composed the Studio cannot follow it; with both, a submission the outbox
+ * has no row for was never queued.
+ */
+const noticeState = (form: Row, notice: Notice | null | undefined, followed: boolean) => {
+  if (!form.notifyTo) return 'notConfigured'
+  if (!followed) return 'mail'
+  if (!notice) return 'notQueued'
+  if (notice.state === 'sent' || notice.state === 'failed' || notice.state === 'cancelled')
+    return notice.state
+  return notice.state === 'retryable' ? 'retrying' : 'pending'
+}
 /** A submission as the Studio's queue shows it: no answers beyond those classified public. */
-const submissionRow = (form: Row, s: Row) => ({
+const submissionRow = (form: Row, s: Row, notice: Notice | null | undefined, followed: boolean) => ({
   id: s.id,
   formId: s.formId,
   status: s.held ? 'held' : s.status === 'new' ? 'new' : 'read',
@@ -174,8 +196,7 @@ const submissionRow = (form: Row, s: Row) => ({
       .map(String)
       .join(' · ') || '—',
   excerpt: s.id,
-  // The form's own notice goes through the mail outbox; the Studio does not follow it per row.
-  deliveryState: form.notifyTo ? 'mail' : 'notConfigured',
+  deliveryState: noticeState(form, notice, followed),
   retentionUntil: s.held ? null : retentionUntil(form, s.createdAt),
   // Where the request went beyond the Website, and where the receiver says it stands.
   destinationState: s.deliveryState ?? null,
@@ -213,6 +234,52 @@ const formUsage = (formId: unknown, data: Snapshot) => {
     )
     .map((e) => ({ id: e.id, title: e.title, type: e.publishedRevisionId ? 'publication' : 'draft' }))
 }
+/**
+ * Whether a stored value links to `path`: an href equal to it or to one of its anchors or queries,
+ * found anywhere in a layout or field set, including a rich-text document saved as JSON text.
+ */
+const linksTo = (value: unknown, path: string): boolean => {
+  if (typeof value === 'string') {
+    if (value === path || value.startsWith(`${path}#`) || value.startsWith(`${path}?`)) return true
+    if (!/^\s*[[{]/.test(value)) return false
+    try {
+      return linksTo(JSON.parse(value), path)
+    } catch {
+      return false
+    }
+  }
+  if (Array.isArray(value)) return value.some((v) => linksTo(v, path))
+  if (value && typeof value === 'object') return Object.values(value).some((v) => linksTo(v, path))
+  return false
+}
+/**
+ * What still points at an entry: the header menu items and the other pages linking to it. Archiving
+ * leaves each of them pointing at nothing, so the confirmation names them first.
+ */
+const entryUsage = (entry: Row, data: Snapshot, menuItems: Row[]) => {
+  const path = String(entry.path ?? '')
+  if (!path) return []
+  const revisions = new Map(data.revisions.map((r) => [r.id, r]))
+  const pages = data.entries
+    .filter(
+      (e) =>
+        e.id !== entry.id &&
+        !e.trashed &&
+        [e.currentRevisionId, e.publishedRevisionId].some((id) => {
+          const revision = id ? revisions.get(id) : undefined
+          return revision && linksTo([revision.layout, revision.fields], path)
+        }),
+    )
+    .map((e) => ({ id: e.id, title: e.title, type: e.publishedRevisionId ? 'publication' : 'draft' }))
+    .sort((a, b) => String(a.title).localeCompare(String(b.title), 'vi'))
+  const menu = menuItems
+    .filter((item) => linksTo(item.href, path))
+    .map((item) => ({ id: item.id, title: item.label, type: 'menu' }))
+  return [...menu, ...pages]
+}
+
+/** Rows on one page of the Studio's page and post lists. */
+const ENTRY_PAGE = 30
 /** A stored form as the Studio's form editor reads it. */
 const formResource = (form: Row, versions: Row[], usage: unknown[], destinations: Row[]) => {
   const schema = row(form.schema)
@@ -258,6 +325,7 @@ const postsNaming = (term: Row, entries: Row[]) =>
 const termResource = (term: Row, entries: Row[]) => {
   const type = String(term.taxonomy).replace(/^website\./, '')
   const seo = row(term.seo)
+  const images = row(term.images)
   return {
     id: term.id,
     siteId: term.siteId,
@@ -275,10 +343,10 @@ const termResource = (term: Row, entries: Row[]) => {
     seoDescription: seo.description ?? '',
     canonical: seo.canonical ?? '',
     indexing: seo.indexing === 'noindex' ? 'noindex' : 'index',
-    thumbnail: '',
-    thumbnailAlt: '',
-    cover: '',
-    coverAlt: '',
+    thumbnail: images.thumbnail ?? '',
+    thumbnailAlt: images.thumbnailAlt ?? '',
+    cover: images.cover ?? '',
+    coverAlt: images.coverAlt ?? '',
     postCount: postsNaming(term, entries).length,
     revisionId: term.revisionId,
     archived: !!term.archivedAt,
@@ -347,6 +415,21 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
     const value = row(result)
     if (value.ok === false) refuse(value.errors)
     return result
+  }
+  /** Whether this deployment composes the bridge that emails a form's owner. */
+  const followsNotices = Boolean(ctx.manifest.modules.website_form_mail)
+  /**
+   * The outbox state of these submissions' notices, by submission. Callers have already read the
+   * submissions themselves under the viewer's own permission, which is what this lookup rides on.
+   */
+  const noticesOf = async (form: Row, ids: unknown[]) => {
+    if (!followsNotices || !form.notifyTo || !ids.length) return new Map<string, Notice>()
+    const result = row(
+      await ctx.callUnchecked('website_form_mail.noticeStates', { submissionIds: ids.map(String) }, url, req),
+    )
+    return new Map(
+      ((result.rows as Row[]) ?? []).map((n) => [String(n.submissionId), n as unknown as Notice]),
+    )
   }
   /** A refused write, in the words and status the Studio shows for it. */
   const refuse = (errors: unknown): never => {
@@ -431,7 +514,8 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
     host: domains.find((d) => d.primary && d.siteId === site.id)?.host ?? '',
     // The model keeps one switch; the Studio names it as the state its lists show.
     state: site.active === false ? 'paused' : 'active',
-    locales: [site.defaultLocale],
+    locales: siteLocales(site),
+    localeFallback: Array.isArray(site.localeFallback) ? site.localeFallback : [],
     revisionId: String(site.updatedAt ?? site.id),
     timezone: 'Asia/Ho_Chi_Minh',
   })
@@ -531,14 +615,25 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
     'website.listEntries': async (input) => {
       const data = await snapshot(input.siteId)
       const search = String(input.search ?? '').toLocaleLowerCase('vi')
+      const matches = data.entries.filter(
+        (e) =>
+          e.type === input.type &&
+          (input.status === 'trash' ? e.state === 'trash' : e.state !== 'trash') &&
+          (!input.status || input.status === 'all' || e.state === input.status) &&
+          (!input.locale || e.locale === input.locale) &&
+          (!search || `${e.title} ${e.path}`.toLocaleLowerCase('vi').includes(search)),
+      )
+      // The lists ask for one page: a site with hundreds of posts drew every one of them into one
+      // table. The menu and Builder link pickers ask for no page and still get every entry.
+      if (input.page == null) return { rows: matches, total: matches.length }
+      const pageSize = Math.min(Math.max(Math.trunc(Number(input.pageSize)) || ENTRY_PAGE, 1), 100)
+      const pages = Math.max(Math.ceil(matches.length / pageSize), 1)
+      const page = Math.min(Math.max(Math.trunc(Number(input.page)) || 1, 1), pages)
       return {
-        rows: data.entries.filter(
-          (e) =>
-            e.type === input.type &&
-            (input.status === 'trash' ? e.state === 'trash' : e.state !== 'trash') &&
-            (!input.status || input.status === 'all' || e.state === input.status) &&
-            (!search || `${e.title} ${e.path}`.toLocaleLowerCase('vi').includes(search)),
-        ),
+        rows: matches.slice((page - 1) * pageSize, page * pageSize),
+        total: matches.length,
+        page,
+        pageSize,
       }
     },
     'website.getEntry': async (input) => {
@@ -570,7 +665,16 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
           const filter = { formId: form.id, status: 'new', held: false }
           newSubmissions += Number(row(await call('website_form.countSubmissions', filter)).count ?? 0)
           const rows = (await call('website_form.listSubmissions', { ...filter, limit: 5 })) as Row[]
-          submissions.push(...rows.map((s) => ({ ...submissionRow(form, s), formTitle: form.name })))
+          const notices = await noticesOf(
+            form,
+            rows.map((s) => s.id),
+          )
+          submissions.push(
+            ...rows.map((s) => ({
+              ...submissionRow(form, s, notices.get(String(s.id)), followsNotices),
+              formTitle: form.name,
+            })),
+          )
         }
       return {
         counts: {
@@ -631,7 +735,14 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
         offset: input.offset ?? 0,
       })) as Row[]
       const total = row(await call('website_form.countSubmissions', { formId: form.id, ...filter })).count
-      return { rows: rows.map((s) => submissionRow(form, s)), total: Number(total ?? 0) }
+      const notices = await noticesOf(
+        form,
+        rows.map((s) => s.id),
+      )
+      return {
+        rows: rows.map((s) => submissionRow(form, s, notices.get(String(s.id)), followsNotices)),
+        total: Number(total ?? 0),
+      }
     },
     'website_form.readSubmission': async (input) => {
       const found = row(await call('website_form.readSubmission', { id: input.id, reason: 'studio' }))
@@ -680,6 +791,7 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
         formId: form.id,
         submissionId: found.id,
       })) as Row[]
+      const notice = (await noticesOf(form, [found.id])).get(String(found.id))
       const reader = destinationReaders[String(found.destination)]
       const mayOpen = !reader || (await ctx.allows(reader, url, req))
       return {
@@ -691,7 +803,15 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
           formRevisionId: `v${version}`,
           consentVersion: found.consentText ?? null,
           retentionUntil: found.holdReason ? null : retentionUntil(form, found.createdAt),
-          delivery: null,
+          delivery: form.notifyTo
+            ? {
+                state: noticeState(form, notice, followsNotices),
+                attempts: notice?.attempts ?? 0,
+                error: notice?.error ?? null,
+                queuedAt: notice?.queuedAt ?? null,
+                sentAt: notice?.sentAt ?? null,
+              }
+            : null,
           destination: found.destination
             ? {
                 name: found.destination,
@@ -799,6 +919,11 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
       return {
         entry,
         resources: [await themeResource(dataSet.site!), ...menus],
+        usage: entryUsage(
+          entry,
+          dataSet,
+          menus.flatMap((m) => m.items as Row[]),
+        ),
         liveRevisionId: entry.publishedRevisionId,
         revisions: dataSet.revisions
           .filter((r) => r.entryId === entry.id)
@@ -912,10 +1037,6 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
         if (existing.id && existing.siteId !== data.site!.id) fail('notFound', 'Không tìm thấy chủ đề.')
         if (existing.id && existing.taxonomy !== `website.${type}`)
           fail('validation', 'Không đổi chuyên mục thành thẻ hoặc ngược lại.')
-        // Images for terms need their own storage owner; until then a value here would be
-        // stored and never shown, so it is refused rather than dropped.
-        if (['thumbnail', 'cover'].some((key) => String(values[key] ?? '').trim()))
-          fail('validation', 'Ảnh của chuyên mục và thẻ chưa được hỗ trợ trên hệ thống này.')
         await call('website.saveTerm', {
           id: input.id,
           siteId: data.site!.id,
@@ -931,6 +1052,12 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
             canonical: String(values.canonical ?? ''),
             indexing: values.indexing === 'noindex' ? 'noindex' : 'index',
           },
+          images: Object.fromEntries(
+            ['thumbnail', 'thumbnailAlt', 'cover', 'coverAlt'].map((key) => [
+              key,
+              String(values[key] ?? '').trim(),
+            ]),
+          ),
           expectedRevisionId: input.expectedRevisionId ?? null,
         })
         return termDetail(await termOf(input), (await snapshot(input.siteId)).entries)
@@ -1012,6 +1139,11 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
           name: String(values.code ?? site.name).trim(),
           title: String(values.title ?? site.title).trim(),
           defaultLocale: String(values.defaultLocale || site.defaultLocale),
+          // An older Settings form sends no languages; the saved ones stay.
+          locales: Array.isArray(values.locales) ? values.locales : (site.locales ?? null),
+          localeFallback: Array.isArray(values.localeFallback)
+            ? values.localeFallback
+            : (site.localeFallback ?? null),
           googleTagManagerId: String(values.googleTagManagerId ?? site.googleTagManagerId ?? ''),
           // Unedited fields keep their value, so an older Settings form cannot switch tracking off.
           visitConsent:
@@ -1298,6 +1430,14 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
       if (entry.siteId !== input.siteId) fail('notFound', 'Không tìm thấy nội dung.')
       if (!input.expectedRevisionId || typeof input.archived !== 'boolean')
         fail('validation', 'Thông tin không hợp lệ.')
+      // Archiving a live or scheduled page also takes it off the site, which is unpublishing: the
+      // author bundle may archive its drafts, and only someone who may unpublish archives the rest.
+      if (
+        input.archived &&
+        (entry.publishedRevisionId || entry.scheduledRevisionId) &&
+        !(await ctx.allows('website.unpublishEntry', url, req))
+      )
+        fail('forbidden', 'Trang đang công khai hoặc đã lên lịch: cần quyền gỡ xuất bản để lưu trữ.')
       return call(input.archived ? 'website.trashEntry' : 'website.untrashEntry', {
         id: input.id,
         expectedRevisionId: input.expectedRevisionId,
@@ -1516,6 +1656,10 @@ export function studioTransport(ctx: ServeContext, url: URL, req: Req, options: 
   queries['product.archiveTemplate'] = (input) => call('product.archiveTemplate', input)
   for (const name of [
     'website.publishEntry',
+    'website.createTranslation',
+    'website.linkTranslation',
+    'website.unlinkTranslation',
+    'website.listTranslations',
     'website.cancelScheduledEntry',
     'website.diffRevisions',
     'website.createPreviewToken',

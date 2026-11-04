@@ -1,5 +1,5 @@
 import { defineFn } from '@ketvietlab/ketjs'
-import type { FnSpec, ReportDef } from '@ketvietlab/ketjs'
+import type { FnSpec, ReportDef, Row } from '@ketvietlab/ketjs'
 import { ours } from './scope.ts'
 
 /**
@@ -18,8 +18,14 @@ const template = (title: string) => `<report paper="A4" margin="42">
   <row gap="12">{% if validityDate %}<text size="9" tone="muted">{{ 'sale.report.validity' | _ }} · {{ validityDate | date }}</text>{% endif %}{% if clientOrderRef %}<text size="9" tone="muted" align="right">{{ 'sale.report.reference' | _ }} · {{ clientOrderRef }}</text>{% endif %}</row>
   <text size="8" weight="semibold" tone="muted" gap="3">{{ 'sale.report.customer' | _ }}</text>
   <text size="12" weight="semibold" gap="18">{{ partner.name }}</text>
-  <table><thead><tr><th>{{ 'sale.report.description' | _ }}</th><th>{{ 'sale.report.quantity' | _ }}</th><th>{{ 'sale.report.uom' | _ }}</th><th>{{ 'sale.report.unitPrice' | _ }}</th><th>{{ 'sale.report.discount' | _ }}</th><th>{{ 'sale.report.subtotal' | _ }}</th></tr></thead>
-  <tbody>{% for line in lines %}<tr><td>{{ line.name }}</td><td>{{ line.productUomQty }}</td><td>{{ line.uomName }}</td><td>{{ line.priceUnit | amount: currency }}</td><td>{{ line.discount }}</td><td>{{ line.priceSubtotal | amount: currency }}</td></tr>{% endfor %}</tbody></table>
+  {% for block in blocks %}
+  {% if block.kind == 'section' %}<text size="11" weight="semibold" gap="8">{{ block.name }}{% if block.optional %} · {{ 'sale.report.optional' | _ }}{% endif %}</text>
+  {% else %}{% if block.kind == 'note' %}<text size="9" tone="muted" gap="6">{{ block.name }}</text>
+  {% else %}
+  <table>{% if block.header %}<thead><tr><th>{{ 'sale.report.description' | _ }}</th><th>{{ 'sale.report.quantity' | _ }}</th><th>{{ 'sale.report.uom' | _ }}</th><th>{{ 'sale.report.unitPrice' | _ }}</th><th>{{ 'sale.report.discount' | _ }}</th><th>{{ 'sale.report.subtotal' | _ }}</th></tr></thead>{% endif %}
+  <tbody>{% for line in block.lines %}<tr><td>{{ line.name }}</td><td>{{ line.productUomQty }}</td><td>{{ line.uomName }}</td><td>{{ line.priceUnit | amount: currency }}</td><td>{{ line.discount }}</td><td>{{ line.priceSubtotal | amount: currency }}</td></tr>{% endfor %}</tbody></table>
+  {% endif %}{% endif %}
+  {% endfor %}
   <text size="9" tone="muted" align="right" gap="5">{{ 'sale.report.untaxed' | _ }} · {{ amountUntaxed | amount: currency }}</text>
   <text size="9" tone="muted" align="right" gap="7">{{ 'sale.report.tax' | _ }} · {{ amountTax | amount: currency }}</text>
   <text size="15" weight="bold" tone="accent" align="right" gap="4">{{ 'sale.report.total' | _ }} · {{ amountTotal | amount: currency }}</text>
@@ -48,15 +54,41 @@ async function data(ctx: Parameters<FnSpec['handler']>[0], id: unknown, states: 
   const paymentTerm = order.paymentTermId
     ? (await ctx.db.select('account.PaymentTerm', { id: order.paymentTermId }))[0]
     : null
-  const lines = await ours(ctx, 'sale.OrderLine', { orderId: id })
+  const lines = (await ours(ctx, 'sale.OrderLine', { orderId: id })).sort(
+    (a, b) => Number(a.sequence) - Number(b.sequence) || String(a.id).localeCompare(String(b.id)),
+  )
   // A quantity without its unit is not a quantity a customer can check.
   const units = new Map((await ctx.db.select('uom.Unit')).map((unit) => [String(unit.id), String(unit.name)]))
+  const printableLines: Row[] = lines.map((line) => ({
+    ...line,
+    uomName: units.get(String(line.productUomId)) ?? '',
+  }))
+  // The public report grammar has no merged table cells. Compose structural text
+  // blocks and contiguous commercial tables with the same six-column layout.
+  const blocks: Row[] = []
+  for (const line of printableLines) {
+    if (line.displayType === 'section' || line.displayType === 'note') {
+      blocks.push({
+        kind: line.displayType,
+        name: line.name,
+        optional: line.displayType === 'section' && line.optionalSection === true,
+      })
+    } else {
+      let block = blocks.at(-1)
+      if (block?.kind !== 'lines') {
+        block = { kind: 'lines', header: !blocks.some((held) => held.kind === 'lines'), lines: [] }
+        blocks.push(block)
+      }
+      ;(block.lines as Row[]).push(line)
+    }
+  }
   return {
     ...order,
     company: companyParty ?? { name: '' },
     partner: partner ?? { name: '' },
     paymentTermName: paymentTerm ? String(paymentTerm.name) : null,
-    lines: lines.map((line) => ({ ...line, uomName: units.get(String(line.productUomId)) ?? '' })),
+    lines: printableLines,
+    blocks,
   }
 }
 
@@ -83,6 +115,7 @@ const output = {
   company: 'json',
   partner: 'json',
   lines: 'json',
+  blocks: 'json',
 }
 export const reportFunctions: Record<string, FnSpec> = {
   // A cancelled order prints as a quotation: it is listed with the quotations

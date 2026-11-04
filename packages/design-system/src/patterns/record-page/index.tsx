@@ -52,6 +52,8 @@ export type RecordPageProps = {
    * still places it in the rail column.
    */
   asideWhenStacked?: 'after' | 'before'
+  /** Keep a wide editing region: stack the rail through 91.5rem of page width. */
+  asideBreakpoint?: 'wide'
   slots?: RecordPageSlots
 }
 
@@ -82,6 +84,7 @@ export const recordPage = (props: RecordPageProps, compatibilityKind?: RecordPag
       data-scope={props.scope ?? null}
       data-has-aside={String(props.aside !== undefined)}
       data-aside-stacked={props.aside !== undefined && props.asideWhenStacked === 'before' ? 'before' : null}
+      data-aside-breakpoint={props.asideBreakpoint ?? null}
       data-variant={props.variant ?? null}
       data-width={props.width ?? 'default'}
       data-pattern="record"

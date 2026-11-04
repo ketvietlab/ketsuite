@@ -4,6 +4,10 @@ const moduleName = process.env.E2E_MODULE ?? 'product_backend'
 
 export default defineConfig({
   testDir: `./${moduleName}`,
+  // One tsconfig for every file a spec loads. Without it a spec that imports the built app
+  // in-process (count-adjustment's fixture) picks up ketsuite's tsconfig paths, which point
+  // flow-client imports at their .d.mts declarations.
+  tsconfig: './tsconfig.json',
   outputDir: './test-results',
   timeout: 120_000,
   expect: { timeout: 8_000 },

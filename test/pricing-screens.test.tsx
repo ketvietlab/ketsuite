@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { parseListState } from '@ketvietlab/ketjs'
+import { listSearchFilterConfig } from '../packages/ketsuite/src/modules/backend/search-filter.ts'
+import { listLabels } from '../packages/ketsuite/src/modules/pricing_backend/list/read.ts'
+import { pricelistListSearch } from '../packages/ketsuite/src/modules/pricing_backend/search.ts'
 import type { Translator } from '@ketvietlab/ketjs'
 import { renderToString } from '@ketvietlab/ketjs-view'
 import {
@@ -19,22 +23,30 @@ test('pricelist collection uses ListPage and route-owned navigation', () => {
       translate,
       {},
       {
-        rows: [
-          {
-            id: 'retail/a',
-            name: 'Retail',
-            currency: 'VND',
-            state: 'active',
-            sequence: '16',
-            detailHref: '/admin/pricing/pricelists/retail%2Fa?lang=en',
-          },
-        ],
+        props: {
+          key: 'test-list',
+          source: '/admin/pricing/pricelists/read?lang=en',
+          query: { href: '/admin/pricing/pricelists?lang=en', q: '', page: 1, pageSize: 50 },
+          labels: listLabels(translate),
+          search: listSearchFilterConfig(translate, {
+            name: 'pricing-pricelist-filter',
+            bodyId: 'pricing-pricelist-list',
+            spec: pricelistListSearch,
+            state: parseListState(pricelistListSearch, new URL('http://local/admin/pricing/pricelists'))
+              .state,
+            favorites: [],
+            functions: { apply: 'pricing_backend.applySearchFilter' },
+          }),
+        },
         createHref: '/admin/pricing/pricelists?lang=en&create=1',
       },
     ),
   )
   assert.match(html, /data-ui="list-page"/)
-  assert.match(html, /data-row-href="\/admin\/pricing\/pricelists\/retail%2Fa\?lang=en"/)
+  assert.match(html, /pricing.list-controls/)
+  assert.match(html, /pricing.list-results/)
+  assert.match(html, /pricing.list-footer/)
+  assert.doesNotMatch(html, /data-row-href=/)
   assert.match(html, /href="\/admin\/pricing\/pricelists\?lang=en&amp;create=1"/)
 })
 

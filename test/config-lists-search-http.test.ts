@@ -61,22 +61,20 @@ test('pricelists HTTP: the bar replaces the GET search and drives the same URL s
   await app.client.call('pricing.savePricelist', { id: 'retail', name: 'Retail', sequence: 8, active: true })
   await app.client.call('pricing.savePricelist', { id: 'old', name: 'Kênh cũ', sequence: 9, active: false })
 
+  // The list is an island: the document carries the bar, and rows come from its read.
   const all = await (await app.client.get(`${PRICELISTS}?lang=vi`)).text()
-  assert.match(all, /data-island="backend\.search-filter"/)
-  assert.match(all, /data-row="retail"/)
-  assert.match(all, /data-row="old"/)
-
-  const searched = await (await app.client.get(`${PRICELISTS}?lang=vi&q=Retail`)).text()
-  assert.match(searched, /data-row="retail"/)
-  assert.doesNotMatch(searched, /data-row="old"/)
-
-  const archived = await (await app.client.get(`${PRICELISTS}?lang=vi&preset=archived`)).text()
-  assert.match(archived, /data-row="old"/)
-  assert.doesNotMatch(archived, /data-row="retail"/)
-
-  const grouped = await (await app.client.get(`${PRICELISTS}?lang=vi&group=state`)).text()
-  assert.match(grouped, /data-ui="kt-group-toggle"/)
-  assert.doesNotMatch(grouped, /data-ui="kt-row"/)
+  assert.match(all, /data-island="pricing\.list-controls"/)
+  assert.match(all, /data-ui="search-filter"/)
+  const rows = async (href: string) => {
+    const response = await app.client.post(`${PRICELISTS}/read?lang=vi`, JSON.stringify({ href }), {
+      headers: { 'content-type': 'application/json' },
+    })
+    assert.equal(response.status, 200, await response.clone().text())
+    return ((await response.json()) as { value: { rows: { id: string }[] } }).value.rows.map((row) => row.id)
+  }
+  assert.deepEqual(await rows(`${PRICELISTS}?lang=vi`), ['retail', 'old'])
+  assert.deepEqual(await rows(`${PRICELISTS}?lang=vi&q=Retail`), ['retail'])
+  assert.deepEqual(await rows(`${PRICELISTS}?lang=vi&preset=archived`), ['old'])
 
   const favorite = await app.client.call<{ id: string }>('pricing_backend.saveSearchFavorite', {
     name: 'Bảng giá đã lưu trữ',

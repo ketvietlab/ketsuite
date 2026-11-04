@@ -197,3 +197,49 @@ test('relation select: closing the "more" dialog stays inside it so an enclosing
     }
   }
 })
+
+test('relation select: a local picker matches label and description ignoring case and accents', () => {
+  class Input {
+    value = ''
+  }
+  const globals = globalThis as unknown as Record<string, unknown>
+  const previousInput = globals.HTMLInputElement
+  globals.HTMLInputElement = Input
+  const controller = createRelationSelectView({
+    id: 'supplier',
+    config: {
+      ...relationSelectDemoConfig,
+      value: null,
+      options: [
+        { value: 'lotus', label: 'Công ty TNHH Bông Sen Việt', description: 'Nhà cung cấp' },
+        { value: 'east', label: 'Công ty CP Hóa mỹ phẩm Đông Á' },
+        { value: 'spa', label: 'Spa Hoa Mai', description: 'Khách hàng' },
+      ],
+    },
+  })
+  const host = countingHost()
+  const root = host.root()
+  const view = mount(host, root, controller.view)
+  const search = (value: string) => {
+    const input = new Input()
+    input.value = value
+    host.fire(byUi(root, 'relation-search')[0]!, 'input', { currentTarget: input })
+    return byUi(root, 'relation-option').map(textOf)
+  }
+  try {
+    host.fire(byUi(root, 'relation-trigger')[0]!, 'click')
+    assert.equal(byUi(root, 'relation-option').length, 3)
+    const [lotus] = search('bong')
+    assert.match(lotus ?? '', /Bông Sen Việt/)
+    assert.equal(search('bong').length, 1)
+    assert.equal(search('DONG A').length, 1, 'case and đ fold too')
+    assert.equal(search('nha cung').length, 1, 'the description is searched')
+    assert.equal(search('cong ty').length, 2)
+    assert.equal(search('bông sen').length, 1, 'accents as typed still match')
+  } finally {
+    view.dispose()
+    controller.dispose?.()
+    if (previousInput === undefined) delete globals.HTMLInputElement
+    else globals.HTMLInputElement = previousInput
+  }
+})

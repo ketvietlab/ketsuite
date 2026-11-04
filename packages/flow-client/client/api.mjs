@@ -17,10 +17,12 @@ const fieldErrorMessages = {
   scope: 'flow.validation.scope',
   scope_changed: 'flow.validation.scopeChanged',
   upload_expired: 'flow.validation.uploadExpired',
+  live_document_required: 'flow.validation.liveDocument',
   catalog_owner_locked: 'flow.catalog.ownerImmutable',
   catalog_owner_invalid: 'flow.catalog.ownerInvalid',
   incompatible_values: 'flow.catalog.incompatibleExistingValues',
   catalog_duplicate_title: 'flow.catalog.duplicateTitle',
+  catalog_reserved_field: 'flow.catalog.reservedField',
   catalog_required_group: 'flow.catalog.requiredStatusGroup',
   catalog_invalid_kind: 'flow.catalog.invalidKind',
   catalog_invalid_icon: 'flow.catalog.invalidIcon',
@@ -30,6 +32,27 @@ const fieldErrorMessage = (message) =>
   typeof message === 'string' && Object.hasOwn(fieldErrorMessages, message)
     ? tr(fieldErrorMessages[message])
     : null
+/** A refused function call looks the same whether the session ended or a permission is missing;
+ * the deployment answers 401 here only when nobody is signed in. Network trouble is not a lost session. */
+export async function flowSessionEnded({ fetch: send = globalThis.fetch } = {}) {
+  try {
+    const response = await send('/flow/session', {
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    })
+    return response.status === 401
+  } catch {
+    return false
+  }
+}
+const requireFlowAccess = (response) => {
+  if (response.status === 401 || response.status === 403)
+    throw new FlowApiError(
+      tr(response.status === 401 ? 'flow.ui.session.expired' : 'flow.ui.access.denied'),
+      response.status === 401 ? 'unauthenticated' : 'forbidden',
+    )
+}
 export async function selectFlowCompany(companyId, fromCompany, { fetch: send = globalThis.fetch } = {}) {
   const response = await send('/flow/context', {
     method: 'POST',
@@ -74,11 +97,7 @@ export function createFnClient({ fetch: send = globalThis.fetch, headers = {} } 
       body: JSON.stringify(input),
       signal: options.signal,
     })
-    if (response.status === 401 || response.status === 403)
-      throw new FlowApiError(
-        tr(response.status === 401 ? 'flow.ui.session.expired' : 'flow.ui.access.denied'),
-        response.status === 401 ? 'unauthenticated' : 'forbidden',
-      )
+    requireFlowAccess(response)
     let payload
     try {
       payload = await response.json()
@@ -128,6 +147,7 @@ export function createFileUploader({ fetch: send = globalThis.fetch, headers = {
       body,
       signal: options.signal,
     })
+    requireFlowAccess(response)
     let payload
     try {
       payload = await response.json()
@@ -136,7 +156,11 @@ export function createFileUploader({ fetch: send = globalThis.fetch, headers = {
     }
     if (!response.ok || payload.ok === false || typeof payload.uploadId !== 'string')
       throw new FlowApiError(
-        payload.message ?? tr('flow.ui.unable.to.process.the.request'),
+        (payload.code === 'upload_quota'
+          ? tr('flow.validation.uploadQuota')
+          : payload.code === 'upload_size'
+            ? tr('flow.ui.file.too.large', [file.name, Number(payload.limitBytes) / (1024 * 1024)])
+            : payload.message) ?? tr('flow.ui.unable.to.process.the.request'),
         payload.code ?? `http.${response.status}`,
       )
     return payload

@@ -57,10 +57,11 @@ test('purchase overview stays specialized: preserves workflow counts, locale lin
   assert.match(html, /href="\/admin\/partner\/partners"/)
   // The primary action opens the RFQ create modal over the RFQ list.
   assert.match(html, /href="\/admin\/purchase\/rfqs\?lang=vi&amp;record=purchase\.order%3Anew"/)
-  assert.match(html, /href="\/admin\/purchase\/rfqs\?state=draft&amp;lang=vi"/)
-  assert.match(html, /href="\/admin\/purchase\/rfqs\?state=sent&amp;lang=vi"/)
-  assert.match(html, /href="\/admin\/purchase\/rfqs\?state=to\+approve&amp;lang=vi"/)
+  assert.match(html, /href="\/admin\/purchase\/rfqs\?preset=draft&amp;lang=vi"/)
+  assert.match(html, /href="\/admin\/purchase\/rfqs\?preset=sent&amp;lang=vi"/)
+  assert.match(html, /href="\/admin\/purchase\/rfqs\?preset=to-approve&amp;lang=vi"/)
   assert.match(html, /href="\/admin\/purchase\/orders\?lang=vi"/)
+  assert.match(html, /href="\/admin\/purchase\/orders\?preset=to-invoice&amp;lang=vi"/)
   assert.match(html, /Chờ gửi[\s\S]*?data-ui="metric-value"[^>]*>[\s\S]*?2/)
   assert.match(html, /Chờ phản hồi[\s\S]*?data-ui="metric-value"[^>]*>[\s\S]*?1/)
   assert.match(html, /Chờ duyệt[\s\S]*?data-ui="metric-value"[^>]*>[\s\S]*?1/)
@@ -76,4 +77,65 @@ test('purchase overview omits setup rejection when prerequisites exist', () => {
   // Without purchase.createOrder the route passes no createHref, so there is no create action.
   assert.doesNotMatch(html, /record=purchase\.order|\/rfqs\/new/)
   assert.match(html, /data-ui="metric-value"[^>]*>[\s\S]*?0/)
+})
+
+test('#1737 purchase overview lists the open requests stock reorder rules drafted, and only those', () => {
+  const words = {
+    ...messages,
+    'purchase_backend.dashboard.replenishment': 'Nhu cầu bổ sung từ kho',
+    'purchase_backend.dashboard.replenishmentEmpty': 'Không có nhu cầu bổ sung đang chờ.',
+    'purchase_backend.dashboard.warehouse': 'Kho nhận',
+    'purchase_backend.state.draft': 'RFQ',
+    'purchase_backend.state.sent': 'RFQ đã gửi',
+  }
+  const _ = ((key: string) => words[key as keyof typeof words] ?? key) as Translator
+  _.locale = 'vi'
+  _.has = (key) => key in words
+  _.resolves = _.has
+  const group = '["acme","wh","wh:stock","wh:incoming","lotus"]'
+  const html = renderToString(
+    purchaseOverviewScreen(
+      _,
+      [
+        {
+          id: 'asked',
+          name: 'PO00001',
+          state: 'draft',
+          replenishmentGroup: group,
+          partnerName: 'Lotus',
+          warehouseName: 'Kho HCM',
+          amountTotal: '3600000',
+          currency: 'VND',
+        },
+        {
+          id: 'sent',
+          name: 'PO00002',
+          state: 'sent',
+          replenishmentGroup: group,
+          partnerName: 'Lotus',
+          warehouseName: 'Kho HCM',
+        },
+        { id: 'manual', name: 'PO00003', state: 'draft', partnerName: 'East' },
+        {
+          id: 'confirmed',
+          name: 'PO00004',
+          state: 'purchase',
+          replenishmentGroup: group,
+          partnerName: 'Lotus',
+        },
+      ],
+      {},
+      '?lang=vi',
+      { pickingTypes: 1, vendors: 1, rowHref: (row) => `/admin/purchase/rfqs/${String(row.id)}` },
+    ),
+  ).replace(/<!--k\[?-->/g, '')
+  const section = html.slice(html.indexOf('Nhu cầu bổ sung từ kho'))
+  assert.match(section, /PO00001[\s\S]*?Lotus[\s\S]*?Kho HCM[\s\S]*?RFQ/)
+  assert.match(section, /PO00002[\s\S]*?RFQ đã gửi/)
+  assert.match(section, /href="\/admin\/purchase\/rfqs\/asked"/)
+  // A request someone drafted by hand, and one already confirmed, are not stock demands.
+  assert.doesNotMatch(section, /PO00003|PO00004/)
+  assert.match(html, /id="purchase-overview-help"/)
+  const empty = renderToString(purchaseOverviewScreen(_, [], {}, '', { pickingTypes: 1, vendors: 1 }))
+  assert.match(empty, /Không có nhu cầu bổ sung đang chờ\./)
 })

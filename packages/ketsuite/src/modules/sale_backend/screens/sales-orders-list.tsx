@@ -16,6 +16,7 @@ import {
 } from '../../../ui/index.ts'
 import type { Column, DataTable, Frame } from '../../../ui/index.ts'
 import { labelOf } from './shared.tsx'
+import { SalesOrdersHelp } from './sales-orders-help.tsx'
 
 export type SalesOrderRow = Record<string, unknown>
 
@@ -26,6 +27,10 @@ export type SalesOrdersListScreenOptions = {
   printReport?: { id: string; title: string } | undefined
   total?: number
   table?: Partial<DataTable<SalesOrderRow>>
+  /** The variant the list is narrowed to (P32), and the way back to every order. */
+  narrowedTo?: { label: string; clearHref: string }
+  /** Picks the screen guide's language. */
+  lang?: 'vi' | 'en'
 }
 
 const invoiceTone = (status: unknown) =>
@@ -139,24 +144,49 @@ export const salesOrdersListScreen = (
       : []),
   ].join(' · ')
 
+  const table =
+    options.rows.length || options.table?.groups?.length
+      ? collectionTable(_, collection.table)
+      : emptyState(_('sale_backend.orderList.empty'), _('sale_backend.orderList.emptyHint'), {
+          icon: icon('shopping-bag'),
+        })
   return shell(
     _,
     _('sale_backend.orders.title'),
-    <ListPage
-      variant="operational"
-      frame={collection.frame}
-      title={_('sale_backend.orderList.title')}
-      actions={collectionActions(_, collection.frame, undefined, selection)}
-      controls={collectionControls(_, _('sale_backend.orderList.title'), collection.frame)}
-      footer={summary}
-      body={
-        options.rows.length || options.table?.groups?.length
-          ? collectionTable(_, collection.table)
-          : emptyState(_('sale_backend.orderList.empty'), _('sale_backend.orderList.emptyHint'), {
-              icon: icon('shopping-bag'),
-            })
-      }
-    />,
+    <>
+      <ListPage
+        variant="operational"
+        frame={collection.frame}
+        title={_('sale_backend.orderList.title')}
+        actions={collectionActions(_, collection.frame, undefined, selection)}
+        controls={collectionControls(_, _('sale_backend.orderList.title'), collection.frame)}
+        footer={summary}
+        body={
+          options.narrowedTo ? (
+            <designSystem.Stack
+              items={[
+                <designSystem.Notice
+                  tone="info"
+                  title={_('sale_backend.orderList.byVariant.title', { variant: options.narrowedTo.label })}
+                  message={_('sale_backend.orderList.byVariant.message')}
+                  actions={
+                    <designSystem.LinkButton
+                      href={options.narrowedTo.clearHref}
+                      label={_('sale_backend.orderList.byVariant.clear')}
+                      variant="secondary"
+                    />
+                  }
+                />,
+                table,
+              ]}
+            />
+          ) : (
+            table
+          )
+        }
+      />
+      <SalesOrdersHelp lang={options.lang ?? 'vi'} />
+    </>,
     { ...collection.frame, chrome: null, topbar: false },
   )
 }

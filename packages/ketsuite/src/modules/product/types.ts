@@ -9,5 +9,5 @@
  * template with whether it is tracked. the domain contract's three states still map one to one —
  * service · goods+untracked · goods+tracked — so a migration is mechanical.
  */
-export type ProductType = 'goods' | 'service'
-export const PRODUCT_TYPES: readonly ProductType[] = ['goods', 'service']
+export type ProductType = 'goods' | 'service' | 'combo'
+export const PRODUCT_TYPES: readonly ProductType[] = ['goods', 'service', 'combo']

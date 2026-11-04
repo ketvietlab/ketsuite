@@ -15,6 +15,7 @@ export const HOOKS = [
   'app-switcher-tooltip',
   'app-switcher-footer',
   'app-switcher-help',
+  'app-switcher-help-slot',
   'app-switcher-settings',
   'app-switcher-settings-link',
   'app-shell-topbar',
@@ -73,6 +74,11 @@ export type AppSwitcherProps = {
   brand?: { label: string; href: string; image: string; darkImage?: string }
   navigation?: { controls: string; label: string; tools?: NavigationToolsProps }
   helpLabel?: string
+  /**
+   * A fragment slot around Help, for a host whose navigation swaps the content and keeps the rail:
+   * each screen names its own guide, so the host sends Help again with the content it navigates to.
+   */
+  helpSlot?: string
   /**
    * Settings beside Help: a menu of `items`, or, with `href`, a link to the
    * settings page that gathers every module's configuration. `current` marks
@@ -146,7 +152,13 @@ export const AppSwitcher = (props: AppSwitcherProps): TemplateResult => (
       ))}
     </div>
     <footer data-ui="app-switcher-footer">
-      {props.helpLabel && <AppSwitcherHelp label={props.helpLabel} />}
+      {props.helpSlot ? (
+        <div data-ui="app-switcher-help-slot" data-ket-slot={props.helpSlot}>
+          {props.helpLabel && <AppSwitcherHelp label={props.helpLabel} />}
+        </div>
+      ) : (
+        props.helpLabel && <AppSwitcherHelp label={props.helpLabel} />
+      )}
       {props.settings?.href !== undefined && (
         <div data-ui="app-switcher-settings">
           <a

@@ -13,7 +13,7 @@ import {
   EmptyState,
 } from '@ketvietlab/design-system'
 import { CommandButton } from '../ui.tsx'
-import { destinationStatus, formatDate, formatTime, submissionStatus } from './format.ts'
+import { destinationStatus, formatDate, formatTime, noticeStatus, submissionStatus } from './format.ts'
 import type { Screen, StudioContext } from '../types.ts'
 
 const FILTERS = ['all', 'new', 'held']
@@ -211,7 +211,8 @@ export function createSubmissionList(ctx: StudioContext) {
                 {
                   key: 'delivery',
                   label: tr('website.formJourney.delivery'),
-                  cell: (row) => tr(`website.delivery.${row.deliveryState}`),
+                  cell: (row) => <Status {...noticeStatus(tr, row.deliveryState)} />,
+                  kind: 'status',
                 },
                 // Only forms routed to an ERP module have a hand-off to report.
                 ...(value.rows.some((row) => row.destinationState)

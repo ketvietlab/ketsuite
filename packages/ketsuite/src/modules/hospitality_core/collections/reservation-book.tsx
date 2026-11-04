@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — a #1044 collection island that draws its own result region and filter triggers — needs kit primitives that take handlers
 import { html, signal } from '@ketvietlab/ketjs-view'
 import type { IslandMountContext, TemplateResult } from '@ketvietlab/ketjs-view'
 import {

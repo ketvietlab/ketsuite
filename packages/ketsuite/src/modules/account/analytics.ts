@@ -77,11 +77,14 @@ type Unclassified = Exclude<(typeof ACCOUNT_TYPES)[number], (typeof CLASSIFIED)[
 const EVERY_TYPE_CLASSIFIED: Record<Unclassified, never> = {}
 void EVERY_TYPE_CLASSIFIED
 
-/** Debit and credit summed per account, over whichever moves were asked for. */
+/**
+ * Debit and credit summed per account, over whichever moves were asked for. Closing entries are
+ * left out: they move the result into equity, so with them every period would earn nothing.
+ */
 type Totals = Map<string, { debit: bigint; credit: bigint }>
 
 async function totalsOf(ctx: Ctx, dateFrom: unknown, dateTo: unknown, scale: number): Promise<Totals> {
-  const moves = await postedMoves(ctx, dateFrom, dateTo)
+  const moves = await postedMoves(ctx, dateFrom, dateTo, { closing: false })
   const totals: Totals = new Map()
   for (const line of await linesOfMoves(ctx, [...moves.keys()])) {
     const held = totals.get(String(line.accountId)) ?? { debit: 0n, credit: 0n }
@@ -288,7 +291,7 @@ export const analyticsFunctions: Record<string, FnSpec> = {
       const buckets = bucketsOf(String(args.dateFrom), String(args.dateTo), granularity)
       if (!buckets.length) return { currency, granularity, points: [] }
       const accounts = await accountsById(ctx)
-      const moves = await postedMoves(ctx, args.dateFrom, args.dateTo)
+      const moves = await postedMoves(ctx, args.dateFrom, args.dateTo, { closing: false })
       const lines = await linesOfMoves(ctx, [...moves.keys()])
       const points = buckets.map((bucket) => ({ ...bucket, revenue: 0n, costOfSales: 0n }))
       // One pass over the journal items, each landing in the bucket its move's

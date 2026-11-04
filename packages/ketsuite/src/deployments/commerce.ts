@@ -1,6 +1,7 @@
 import { defineDeployment, sqliteStore } from '@ketvietlab/ketjs'
 import type { OpenStore } from '@ketvietlab/ketjs'
 import * as suite from '../index.ts'
+import { companyCatalogueModules } from '../modules/product/company-catalogue.ts'
 import { commerceRoleTemplates } from '../role-templates.ts'
 import {
   commonBusinessModules,
@@ -10,13 +11,41 @@ import {
   productServe,
 } from './common.ts'
 
-const modules = [
+// Commerce keeps its catalogue per company; existing databases are split once by
+// `splitCatalogueByCompany` before this composition serves them.
+const modules = companyCatalogueModules([
   ...commonBusinessModules.map((m) =>
-    m.name === 'product_media' ? suite.productMediaWithWebsiteCatalog() : m,
+    m.name === 'product_media'
+      ? suite.productMediaWithWebsiteCatalog()
+      : m.name === 'product_backend'
+        ? suite.productBackendWith({ combinedInventoryTracking: true, variantPackagings: true })
+        : m.name === 'stock'
+          ? // A completed delivery counts on its sales order at once (K2).
+            suite.moduleWithSaleDeliveries(
+              suite.stockWithProductSuppliers({ make: suite.manufactureReplenishment }),
+              [
+                'completePicking',
+                'validatePicking',
+                // Handing a parcel over completes its delivery (K46).
+                'handOverShipment',
+                'handOverShipments',
+              ],
+            )
+          : m.name === 'sale'
+            ? suite.withSaleProductions(suite.saleWithLoyalty())
+            : m,
   ),
   suite.websiteCatalog,
   suite.pricing,
-  suite.account,
+  suite.crm,
+  suite.saleTemplatesWithLoyalty(),
+  suite.saleTemplatesBackend,
+  suite.pricingBackend,
+  // A cancelled or reversed sales invoice gives the order its quantity back (D10); a vendor bill
+  // is compared with its purchase orders before it is posted (#1737).
+  suite.moduleWithPurchaseBillMatching(
+    suite.moduleWithSaleInvoices(suite.account, ['cancelMove', 'reverseMove']),
+  ),
   suite.businessReportStaffChannel,
   suite.quality,
   suite.qualityStaffChannel,
@@ -26,12 +55,14 @@ const modules = [
   suite.posBackend,
   suite.posChannel,
   suite.loyalty,
+  suite.loyaltySale,
+  suite.salePromotionBackend,
   suite.loyaltyPos,
   suite.purchaseBackend,
   suite.accountBackend,
   suite.manufacturing,
   suite.manufacturingBackend,
-]
+])
 
 /** Commerce: selling, the counter, purchasing, stock, manufacturing and accounting. */
 export const createCommerceDeployment = (openStore: OpenStore = sqliteStore) =>

@@ -221,3 +221,33 @@ export const authTokenScreen = (
           }),
         }),
       ])
+
+/** Native sign-in approval uses the same responsive panel as browser sign-in. */
+export const authHandoffScreen = (options: {
+  title: string
+  description: string
+  action: string
+  approve: string
+  hidden: Record<string, string>
+}): TemplateResult => (
+  <div data-kv-design-system data-ui="login" data-presentation="grouped" data-density="compact">
+    <main data-ui="login-panel">
+      <section data-ui="login-form" aria-labelledby="native-handoff-title">
+        <div data-ui="login-heading">
+          <h1 id="native-handoff-title" data-ui="login-title">
+            {options.title}
+          </h1>
+          <p data-ui="login-subtitle">{options.description}</p>
+        </div>
+        {recordForm({
+          action: options.action,
+          fields: [],
+          hidden: options.hidden,
+          submit: options.approve,
+          submitVariant: 'primary',
+          submitSize: 'prominent',
+        })}
+      </section>
+    </main>
+  </div>
+)

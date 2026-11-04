@@ -99,7 +99,7 @@ test('customer invoice HTTP separates filtered ListPage from the stable full For
     'taxAccountId',
   ])
     assert.match(createHtml, new RegExp(`name="${name}"`), `missing ${name}`)
-  assert.equal((createHtml.match(/data-island="backend\.relation-select"/g) ?? []).length, 4)
+  assert.equal((createHtml.match(/data-island="backend\.relation-select"/g) ?? []).length, 6)
   assert.match(createHtml, /type="hidden" name="id" value="[^"]+"/)
   assert.match(createHtml, /href="\/admin\/accounting\/customer-invoices\?lang=vi&amp;preset=draft/)
   assert.doesNotMatch(

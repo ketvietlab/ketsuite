@@ -1,10 +1,13 @@
+import { AppSwitcherHelp, Surface } from '@ketvietlab/design-system'
+import { PartnerHelp } from './help.tsx'
+import { HELP } from '../../product_backend/screens/help-words.ts'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import type { Translator } from '@ketvietlab/ketjs'
 import {
   badge,
   button,
   FormCluster,
-  FormPage,
+  RecordPage,
   linkButton,
   modalWorkspace,
   RecordForm,
@@ -12,7 +15,6 @@ import {
   Section,
   shell,
   stack,
-  Surface,
 } from '../../../ui/index.ts'
 import type { FormOption, Frame } from '../../../ui/index.ts'
 import { localized } from '../../backend/screen.ts'
@@ -27,6 +29,7 @@ export const partnerFormScreen = (
     terms?: { creditLimit?: string | number | null; note?: string | null } | null
     errors?: string[]
     integration?: JSXChild
+    salesProfile?: JSXChild
     salesActions?: JSXChild
     collaboration: JSXChild
     addressForms: Array<{ title: string; body: JSXChild }>
@@ -35,6 +38,7 @@ export const partnerFormScreen = (
   frame: Frame,
   locale = '',
 ): TemplateResult => {
+  const lang = _.locale === 'en' ? 'en' : 'vi'
   const heldRoles = new Set(row.roles.map((role) => role.role))
   const status = badge(
     row.active ? _('partner_backend.state.active') : _('partner_backend.state.archived'),
@@ -93,47 +97,43 @@ export const partnerFormScreen = (
     />
   )
   const body = stack([
-    <Section
+    <PartnerHelp lang={lang} />,
+    <Surface
       title={_('partner_backend.detail.identity')}
       description={_('partner_backend.detail.identityHint')}
-      body={<Surface body={identityForm} />}
+      body={identityForm}
     />,
-    <Section
+    ...(options.salesProfile ? [options.salesProfile] : []),
+    <Surface
       title={_('partner_backend.addresses.title')}
       description={_('partner_backend.addresses.hint')}
       body={stack(
-        options.addressForms.map((address) => (
-          <Section title={address.title} body={<Surface body={address.body} />} />
-        )),
+        options.addressForms.map((address) => <Section title={address.title} body={address.body} />),
       )}
     />,
-    <Section
+    <Surface
       title={_('partner_backend.terms.title')}
       description={_('partner_backend.terms.hint')}
       body={
-        <Surface
-          body={
-            <RecordForm
-              action={localized(`/admin/partner/partners/${row.id}/terms`, locale)}
-              submit={_('partner_backend.action.saveTerms')}
-              submitVariant="secondary"
-              fields={[
-                {
-                  name: 'creditLimit',
-                  label: _('partner_backend.terms.creditLimit'),
-                  type: 'decimal',
-                  value: options.terms?.creditLimit,
-                },
-                {
-                  name: 'note',
-                  label: _('partner_backend.terms.note'),
-                  type: 'textarea',
-                  value: options.terms?.note,
-                  span: 'full',
-                },
-              ]}
-            />
-          }
+        <RecordForm
+          action={localized(`/admin/partner/partners/${row.id}/terms`, locale)}
+          submit={_('partner_backend.action.saveTerms')}
+          submitVariant="secondary"
+          fields={[
+            {
+              name: 'creditLimit',
+              label: _('partner_backend.terms.creditLimit'),
+              type: 'decimal',
+              value: options.terms?.creditLimit,
+            },
+            {
+              name: 'note',
+              label: _('partner_backend.terms.note'),
+              type: 'textarea',
+              value: options.terms?.note,
+              span: 'full',
+            },
+          ]}
         />
       }
     />,
@@ -142,6 +142,7 @@ export const partnerFormScreen = (
     <FormCluster
       label={_('partner_backend.detail.actions')}
       forms={[
+        <AppSwitcherHelp label={HELP[lang].trigger} />,
         button({
           label: _('partner_backend.action.save'),
           type: 'submit',
@@ -186,7 +187,7 @@ export const partnerFormScreen = (
   const workspace = shell(
     _,
     row.name,
-    <FormPage
+    <RecordPage
       variant="operational"
       frame={frame}
       title={row.name}
@@ -198,7 +199,14 @@ export const partnerFormScreen = (
       aside={options.collaboration}
       asideLabel={_('partner_backend.collaboration.label')}
     />,
-    { ...frame, topbar: false, titled: false },
+    {
+      ...frame,
+      topbar: false,
+      titled: false,
+      ...(frame.applications
+        ? { applications: { ...frame.applications, helpLabel: HELP[lang].trigger } }
+        : {}),
+    },
   )
   return options.overlay ? modalWorkspace(workspace, options.overlay) : workspace
 }

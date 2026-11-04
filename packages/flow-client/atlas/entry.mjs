@@ -1,5 +1,6 @@
 import { createFlowWorkspace } from '@ketvietlab/flow-client'
 import { createFnClient, createFileUploader } from '@ketvietlab/flow-client/api'
+import { createFixtureAuth } from './fixture-auth.mjs'
 
 let navigation
 export function attachAtlasNavigation(context) {
@@ -27,6 +28,7 @@ export function createAtlasWorkspace(props) {
       call: createFnClient({ headers }),
       upload: createFileUploader({ headers }),
       navigatePage: (target, options) => navigation.navigate(target, options),
+      fixtureAuth: createFixtureAuth,
     },
   )
 }

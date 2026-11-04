@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": [
+    "test/flow-native-read-audit.test.ts",
+    "test/flow-native-staff-channel.test.ts",
+    "test/flow-native-presence.test.ts",
+    "test/flow-native-upload-expiry.test.ts"
+  ]
+}

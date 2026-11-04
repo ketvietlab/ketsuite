@@ -138,17 +138,19 @@ export const attachmentKind = (type) =>
       : 'file'
 /** One attached file. With `url`, images/videos open `onPreview` and every file can be downloaded.
  * Without `url` the row explains that no content is stored.
- * @param {{title:string,meta?:string,type?:string|null,url?:string|null,onPreview?:()=>void}} p */
+ * @param {{title:string,meta?:string,size?:number,type?:string|null,url?:string|null,onPreview?:()=>void}} p */
 export function FlowAttachment(p) {
   const kind = attachmentKind(p.type),
-    preview = p.url && kind !== 'file' && p.onPreview
+    preview = p.url && kind !== 'file' && p.onPreview,
+    meta =
+      p.meta ?? (typeof p.size === 'number' && Number.isFinite(p.size) && p.size >= 0 ? fileSize(p.size) : '')
   const thumb =
     kind === 'image' && p.url
       ? html`<img src=${p.url} alt="" loading="lazy" decoding="async" />`
       : FlowIcon(kind === 'video' ? 'play' : kind === 'image' ? 'image' : 'file')
   return html`<div data-flow="attachment" data-kind=${kind}>
     ${preview ? html`<button type="button" data-flow="attachment-thumb" aria-label=${tr('flow.ui.preview.file', [p.title])} on:click=${p.onPreview}>${thumb}</button>` : html`<span data-flow="attachment-thumb" aria-hidden="true">${thumb}</span>`}
-    <div data-flow="attachment-text">${preview ? html`<button type="button" data-flow="attachment-title" title=${p.title} on:click=${p.onPreview}>${p.title}</button>` : html`<strong data-flow="attachment-title" title=${p.title}>${p.title}</strong>`}<small>${p.url ? (p.meta ?? '') : [p.meta, tr('flow.ui.no.stored.content')].filter(Boolean).join(' · ')}</small></div>
+    <div data-flow="attachment-text">${preview ? html`<button type="button" data-flow="attachment-title" title=${p.title} on:click=${p.onPreview}>${p.title}</button>` : html`<strong data-flow="attachment-title" title=${p.title}>${p.title}</strong>`}<small>${p.url ? meta : [meta, tr('flow.ui.no.stored.content')].filter(Boolean).join(' · ')}</small></div>
     ${p.url ? html`<a data-flow="button" data-variant="ghost" data-size="sm" href=${p.url + (p.url.includes('?') ? '&' : '?') + 'download=1'} download=${p.title} aria-label=${tr('flow.ui.download.file', [p.title])} title=${tr('flow.ui.download')}>${FlowIcon('download')}</a>` : null}
   </div>`
 }

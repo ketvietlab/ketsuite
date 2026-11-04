@@ -168,6 +168,12 @@ export const liveIdentity = async (ctx: Ctx, userId: string): Promise<LiveIdenti
 export const requestedIds = (value: unknown): string[] | null =>
   Array.isArray(value) ? [...new Set(value.map(String).filter(Boolean))] : null
 
+/**
+ * A session works in exactly one company: it reads and writes that company only, and
+ * working in another company means switching to it. A requested list of companies is
+ * therefore ignored. Branches narrow within the active company; a request naming none
+ * of its branches, as after a switch, reads all of them.
+ */
 export const contextFor = (
   live: LiveIdentity,
   requested: {
@@ -182,26 +188,22 @@ export const contextFor = (
   const liveVersion = Number(live.user.securityVersion ?? 0)
   if (Number(requested.securityVersion ?? 0) !== liveVersion)
     return invalid([issue('securityVersion', 'user.error.sessionRevoked')])
-  const allowedCompanies = new Set(live.companies.map((row) => String(row.id)))
-  const askedCompanies = requestedIds(requested.companies)
-  let companies = (askedCompanies ?? [...allowedCompanies]).filter((id) => allowedCompanies.has(id))
+  const allowedCompanies = live.companies.map((row) => String(row.id))
   const preferredCompany = String(requested.company ?? live.user.defaultCompanyId ?? '')
-  let company = companies.includes(preferredCompany) ? preferredCompany : ''
+  let company = allowedCompanies.includes(preferredCompany) ? preferredCompany : ''
   if (!company && !strict) {
     const fallback = String(live.user.defaultCompanyId ?? '')
-    company = allowedCompanies.has(fallback) ? fallback : (companies[0] ?? [...allowedCompanies][0] ?? '')
-    if (company && !companies.includes(company)) companies = [...companies, company]
+    company = allowedCompanies.includes(fallback) ? fallback : (allowedCompanies[0] ?? '')
   }
-  if (!company || !companies.length)
+  if (!company)
     return invalid([issue('companyId', strict ? 'user.error.contextCompany' : 'user.error.noLiveCompany')])
+  const companies = [company]
 
   const allowedBranches = new Map(
-    live.branches
-      .filter((row) => companies.includes(String(row.companyId)))
-      .map((row) => [String(row.id), row]),
+    live.branches.filter((row) => String(row.companyId) === company).map((row) => [String(row.id), row]),
   )
-  const askedBranches = requestedIds(requested.branches)
-  let branches = (askedBranches ?? [...allowedBranches.keys()]).filter((id) => allowedBranches.has(id))
+  const askedBranches = requestedIds(requested.branches)?.filter((id) => allowedBranches.has(id))
+  let branches = askedBranches?.length ? askedBranches : [...allowedBranches.keys()]
   const preferredBranch = String(requested.branch ?? live.user.defaultBranchId ?? '')
   let branch =
     branches.includes(preferredBranch) && allowedBranches.get(preferredBranch)?.companyId === company

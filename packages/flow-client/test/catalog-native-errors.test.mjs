@@ -3,12 +3,60 @@ import assert from 'node:assert/strict'
 import { createFnClient, FlowApiError } from '@ketvietlab/flow-client/api.mjs'
 import { setFlowLocale } from '@ketvietlab/flow-client/i18n.mjs'
 import { validateCustomFields } from '@ketvietlab/flow-client/custom-fields.mjs'
+import { isReservedTaskFieldTitle } from '@ketvietlab/flow-client/catalog-contract.mjs'
 import {
   atlasFlowCommand,
   prepareFlowCommand,
   resolveFlowCommand,
 } from '@ketvietlab/flow-client/command-contract.mjs'
 import { createFixtureSession } from '../atlas/store.mjs'
+import { flowClientMessages } from '../client/messages.mjs'
+
+test('reserved task field titles normalize Core locales and refusals stay localized', async () => {
+  for (const locale of Object.values(flowClientMessages))
+    for (const key of ['ui.due.date', 'ui.estimate.points'])
+      assert.equal(isReservedTaskFieldTitle(locale[key]), true, key)
+  for (const title of [
+    'Version',
+    ' Phiên   bản ',
+    'バージョン',
+    'Ｖｅｒｓｉｏｎ',
+    'AssigneeIds',
+    'Ngày bắt đầu',
+  ])
+    assert.equal(isReservedTaskFieldTitle(title), true, title)
+  for (const title of ['Release version', 'Phiên bản phát hành', 'Deployment note'])
+    assert.equal(isReservedTaskFieldTitle(title), false, title)
+  try {
+    for (const [locale, expected] of [
+      ['vi', 'Tên này dành'],
+      ['en', 'This name belongs'],
+      ['ja', 'この名前は標準'],
+    ]) {
+      setFlowLocale(locale)
+      const client = createFnClient({
+        fetch: async () =>
+          new Response(
+            JSON.stringify({
+              ok: true,
+              value: {
+                ok: false,
+                errors: [{ code: 'validation' }],
+                fields: { title: 'catalog_reserved_field' },
+              },
+            }),
+          ),
+      })
+      await assert.rejects(client('flow.field.save', {}), (error) => {
+        assert.ok(error instanceof FlowApiError)
+        assert.ok(error.fields.title.startsWith(expected))
+        return true
+      })
+    }
+  } finally {
+    setFlowLocale('vi')
+  }
+})
 
 test('catalog forms share a typed HTTP vocabulary and retain the Atlas reverse adapter', () => {
   const session = createFixtureSession()

@@ -120,10 +120,13 @@ export function prepareFlowCommand(name, input, data) {
   )
     args.expectedRevision ??= data.organizationRevision
   if (name === 'flow.operations.command' && !personal) args.expectedRevision ??= data.operationsRevision
+  if (['flow.view.save', 'flow.view.archive', 'flow.view.restore'].includes(name))
+    args.expectedRevision ??= data.operationsRevision
   const id = args.entityId ?? args.id
   const list = args.collection === 'types' ? 'taskTypes' : args.collection
   let held
   if (name.startsWith('flow.issue.') && id) held = data.tasks?.find((t) => t.id === id)
+  else if (name.startsWith('flow.view.') && id) held = data.views?.find((v) => v.id === id)
   else if (list && id) held = data[list]?.find((x) => x.id === id)
   else if (name === 'flow.organization.command' && id) {
     const domain = args.action.split('.')[0]
@@ -279,4 +282,19 @@ export function atlasFlowCommand(name, input, data = {}) {
     if (resolved) return resolved
   }
   return { name, input }
+}
+
+/** Explicit presenter opt-in; every command still authenticates and authorizes on the server. */
+export function canRunReadOnlyCommand(name, options = {}, extensions = []) {
+  if (['flow.inbox.read', 'flow.preferences.save'].includes(name)) return true
+  if (!options.allowReadOnly) return false
+  return (
+    [
+      'flow.issue.copyTo',
+      'flow.invitation.accept',
+      'flow.view.save',
+      'flow.view.archive',
+      'flow.view.restore',
+    ].includes(name) || extensions.some((extension) => extension.readOnlyCommands?.includes(name))
+  )
 }

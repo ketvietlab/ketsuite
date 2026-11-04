@@ -1,22 +1,61 @@
 import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
+import { eq, from } from '@ketvietlab/ketjs'
 import type { DocumentOwner } from '../../livedoc/index.ts'
 import { snapshotBlocksOf } from '../../livedoc/sync.ts'
 import { cas, mutate, now } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
-import { readableDocument } from './documents.ts'
-import { taskByKey } from './queries.ts'
-import { requireCapability, refuse, string } from './policy.ts'
+import { readableDocument, documentRecord } from './documents.ts'
+import { taskByKey, taskDocumentRecord } from './queries.ts'
+import { owned, requireCapability, refuse, string } from './policy.ts'
 import { flowSnapshotKey, isFlowSnapshotKey } from './blob-keys.ts'
+import type { FlowDocumentKind } from './blob-keys.ts'
+import { validFlowDocument } from './document-schema.ts'
 
 export const MAX_DOCUMENT_PRESENCE_INDEX = 10000
 
-export async function readLiveDocument(ctx: Ctx, input: Row, page: boolean, write = false): Promise<Row> {
-  const row = page ? await readableDocument(ctx, input.id, write) : await taskByKey(ctx, input.id)
-  if (!page)
-    await requireCapability(ctx, write ? 'project.write' : 'project.read', { projectId: row.projectId })
+type DocumentOwnerInput = boolean | FlowDocumentKind
+export const documentKind = (owner: DocumentOwnerInput): FlowDocumentKind =>
+  typeof owner === 'boolean' ? (owner ? 'page' : 'issue') : owner
+const modelOf = (kind: FlowDocumentKind) =>
+  ({ page: 'flow.Document', issue: 'flow.Task', project: 'flow.ProjectRecord', epic: 'flow.EpicRecord' })[
+    kind
+  ]
+const writeCapability = (kind: FlowDocumentKind) =>
+  kind === 'project' || kind === 'epic' ? 'project.manage' : 'project.write'
+
+export async function readLiveDocument(
+  ctx: Ctx,
+  input: Row,
+  owner: DocumentOwnerInput,
+  write = false,
+  includeRecord = true,
+): Promise<Row> {
+  const kind = documentKind(owner),
+    page = kind === 'page'
+  let row = page
+    ? await readableDocument(ctx, input.id, write)
+    : kind === 'issue'
+      ? await taskByKey(ctx, input.id)
+      : await owned(ctx, modelOf(kind), input.id)
+  if (!page) {
+    const projectId = kind === 'project' ? row.id : row.projectId
+    await requireCapability(ctx, write ? writeCapability(kind) : 'project.read', { projectId })
+    const project = kind === 'project' ? row : await owned(ctx, 'flow.ProjectRecord', projectId)
+    if (write && project.archived) return refuse('archived')
+    row = { ...row, projectId, workspaceId: project.workspaceId }
+  }
   if (write && row.archived) return refuse('archived')
+  if (includeRecord && page) row = { ...row, documentRecord: await documentRecord(ctx, row) }
+  if (includeRecord && kind === 'issue') row = { ...row, documentRecord: await taskDocumentRecord(ctx, row) }
+  if (includeRecord && kind === 'project')
+    row = { ...row, documentRecord: { ...row, ...(row.catalogOverrides as Row) } }
+  if (includeRecord && kind === 'epic') {
+    const U = ctx.table('user.User')
+    const who = row.ownerId ? await ctx.db.one(from(U).where(eq(U.id, row.ownerId))) : null
+    row = { ...row, documentRecord: { ...row, owner: who?.name ?? '' } }
+  }
   return {
     ...row,
     snapshot: page ? row.bodyDoc : row.descriptionDoc,
@@ -24,8 +63,17 @@ export async function readLiveDocument(ctx: Ctx, input: Row, page: boolean, writ
   }
 }
 
+const descriptionProjection = (row: Row, kind: FlowDocumentKind): Row => ({
+  [kind === 'issue' ? 'task' : kind]: row.documentRecord ?? {
+    id: kind === 'issue' ? row.key : row.id,
+    version: row.version,
+    description: row.description,
+  },
+})
+
 /** The existing editor's Yjs storage vocabulary, with no product markup. */
 function initialSnapshot(row: Row) {
+  if (row.contentAttachmentId) return null
   if (typeof row.snapshot === 'string' && row.snapshot) return Buffer.from(row.snapshot, 'base64')
   const doc = new Y.Doc()
   // Canonical genesis: separate workers must construct the same CRDT identities
@@ -38,8 +86,9 @@ function initialSnapshot(row: Row) {
         text = new Y.XmlText()
       element.setAttribute(
         'type',
-        (({ paragraph: 'p', heading: 'h2', subheading: 'h3' } as Row)[string(block.type)] as string) ??
-          string(block.type),
+        (({ paragraph: 'p', heading: 'h2', subheading: 'h3', task: 'check' } as Row)[
+          string(block.type)
+        ] as string) ?? string(block.type),
       )
       element.setAttribute('id', string(block.id) || `initial-${fragment.length}`)
       if (block.checked) element.setAttribute('checked', 'true')
@@ -65,16 +114,18 @@ function initialSnapshot(row: Row) {
 export async function commitLiveDocument(
   ctx: Ctx,
   input: Row,
-  page: boolean,
+  owner: DocumentOwnerInput,
   extensions: NativeServerExtension[],
 ) {
-  const held = await readLiveDocument(ctx, input, page, true)
+  const kind = documentKind(owner),
+    page = kind === 'page'
+  const held = await readLiveDocument(ctx, input, kind, true, false)
   if (
     !/^[a-f0-9]{64}$/.test(string(input.checksum)) ||
     !isFlowSnapshotKey(
       string(input.storeKey),
       string(ctx.scope.company),
-      page ? 'page' : 'issue',
+      kind,
       string(held.id),
       string(input.checksum),
     ) ||
@@ -84,12 +135,21 @@ export async function commitLiveDocument(
   )
     return refuse('validation')
   if (page && (!Array.isArray(input.blocks) || input.blocks.length > 10000)) return refuse('validation')
-  const acknowledgement = await mutate(
+  const acknowledgement = await mutate<Row>(
     ctx,
     {
-      name: `flow.${page ? 'page' : 'issue'}.document.commit`,
-      capability: held.projectId ? 'project.write' : 'workspace.write',
-      subjects: [{ model: page ? 'flow.Document' : 'flow.Task', id: held.id, projectId: held.projectId }],
+      name: `flow.${kind}.document.commit`,
+      capability: page ? (held.projectId ? 'project.write' : 'workspace.write') : writeCapability(kind),
+      subjects:
+        kind === 'project'
+          ? []
+          : [
+              {
+                model: kind === 'page' ? 'flow.Document' : kind === 'issue' ? 'flow.Task' : 'flow.EpicRecord',
+                id: held.id,
+                projectId: held.projectId,
+              },
+            ],
       input: {
         ...input,
         // The trusted route's per-attempt key is transport metadata. Retries of
@@ -103,14 +163,14 @@ export async function commitLiveDocument(
     },
     extensions,
     async (tx) => {
-      const current = await readLiveDocument(tx, input, page, true)
+      const current = await readLiveDocument(tx, input, kind, true, false)
       const id = randomUUID(),
         preview = string(input.previewText).slice(0, 1000000)
       await tx.db.insert('storage.Attachment', {
         id,
         name: 'document.yjs',
         kind: 'stored',
-        resModel: page ? 'flow.Document' : 'flow.Task',
+        resModel: modelOf(kind),
         resId: current.id,
         resField: 'content',
         storeKey: input.storeKey,
@@ -132,14 +192,21 @@ export async function commitLiveDocument(
               .find((line) => line.trim())
               ?.trim()
               .slice(0, 1000) || 'Untitle'
-      } else values.description = preview
-      const record = await cas(
-        tx,
-        page ? 'flow.Document' : 'flow.Task',
-        string(current.id),
-        input.expectedVersion,
-        values,
-      )
+      } else {
+        values.description = preview
+        values.descriptionDoc = null
+      }
+      const record = await cas(tx, modelOf(kind), string(current.id), input.expectedVersion, values)
+      if (current.contentAttachmentId) {
+        await tx.jobs.enqueue(
+          'flow.expireSnapshot',
+          { id: current.contentAttachmentId },
+          {
+            uniqueKey: 'flow-snapshot:' + current.contentAttachmentId,
+            runAt: new Date(Date.now() + 7200000),
+          },
+        )
+      }
       return {
         ok: true,
         id: current.id,
@@ -154,40 +221,36 @@ export async function commitLiveDocument(
                 blocks: record.blocks,
               },
             }
-          : { task: { id: record.key, version: record.version, description: record.description } },
+          : descriptionProjection(record, kind),
       }
     },
   )
   // A retry can arrive after another edit. Never send an old receipt's version
   // back to the editor and overwrite newer task/page metadata in its cache.
-  const current = await readLiveDocument(ctx, input, page)
+  const current = await readLiveDocument(ctx, input, kind)
   return {
     ...acknowledgement,
-    record: page
-      ? {
-          page: {
-            id: current.id,
-            version: current.version,
-            title: current.title,
-            content: current.body,
-            blocks: current.blocks,
-          },
-        }
-      : { task: { id: current.key, version: current.version, description: current.description } },
+    record: page ? { page: current.documentRecord } : descriptionProjection(current, kind),
   }
 }
 
-export const flowDocumentOwner = (page: boolean): DocumentOwner => ({
-  kind: page ? 'flow.Document' : 'flow.Task',
-  readFn: `flow.${page ? 'page' : 'issue'}.document.read`,
-  writeFn: `flow.${page ? 'page' : 'issue'}.document.write`,
-  commitFn: `flow.${page ? 'page' : 'issue'}.document.commit`,
-  attachmentOf: (row) => row.contentAttachmentId,
-  initialSnapshotOf: initialSnapshot,
-  durablePush: true,
-  presenceFn: `flow.${page ? 'page' : 'issue'}.document.presence`,
-  presenceMaxIndex: MAX_DOCUMENT_PRESENCE_INDEX,
-  presenceListFn: `flow.${page ? 'page' : 'issue'}.document.presence.list`,
-  snapshotKey: (company, id, checksum) => flowSnapshotKey(company, page ? 'page' : 'issue', id, checksum),
-  ...(page ? { snapshotMetadata: (ref) => ({ blocks: snapshotBlocksOf(ref) }) } : {}),
-})
+export const flowDocumentOwner = (owner: DocumentOwnerInput): DocumentOwner => {
+  const kind = documentKind(owner),
+    page = kind === 'page'
+  return {
+    kind: modelOf(kind),
+    readFn: `flow.${kind}.document.read`,
+    writeFn: `flow.${kind}.document.write`,
+    commitFn: `flow.${kind}.document.commit`,
+    attachmentOf: (row) => row.contentAttachmentId,
+    initialSnapshotOf: initialSnapshot,
+    durablePush: true,
+    validateSnapshot: validFlowDocument,
+    recordOf: (row) => (page ? { page: row.documentRecord } : descriptionProjection(row, kind)),
+    presenceFn: `flow.${kind}.document.presence`,
+    presenceMaxIndex: MAX_DOCUMENT_PRESENCE_INDEX,
+    presenceListFn: `flow.${kind}.document.presence.list`,
+    snapshotKey: (company, id, checksum) => flowSnapshotKey(company, kind, id, checksum),
+    ...(page ? { snapshotMetadata: (ref) => ({ blocks: snapshotBlocksOf(ref) }) } : {}),
+  }
+}

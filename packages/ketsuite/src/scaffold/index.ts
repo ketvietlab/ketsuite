@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // The KetSuite release this package is; the CLI reports it and `ketsuite new` asks for it.
-export const VERSION = '0.1.43'
+export const VERSION = '0.1.44'
 // The KetJS release this package depends on; KetJS versions independently of KetSuite.
 const KETJS_VERSION = '0.6.1'
 const TEMPLATES = new URL('./templates/', import.meta.url)

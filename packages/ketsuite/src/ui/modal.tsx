@@ -26,7 +26,7 @@ export const modalSheet = (options: {
   closeLabel: string
   body: JSXChild
   presentation?: 'sheet' | 'dialog'
-  size?: 'default' | 'large'
+  size?: 'small' | 'default' | 'large'
   /**
    * What to ask before closing over unsaved input. Closing is a link, so it
    * still works with scripting off — this catches the stray backdrop click, and
@@ -88,7 +88,7 @@ export const modalForm = (options: {
   closeLabel: string
   form: RecordFormOptions
   presentation?: 'sheet' | 'dialog'
-  size?: 'default' | 'large'
+  size?: 'small' | 'default' | 'large'
   unsavedPrompt?: string
 }): TemplateResult =>
   modalSheet({

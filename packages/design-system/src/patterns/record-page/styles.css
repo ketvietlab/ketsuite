@@ -210,6 +210,72 @@
     }
   }
 
+  /* A record whose body holds a KetGrid (a document's lines, as on a sales order) keeps the wide
+     measure: the rail stacks once the two no longer fit side by side at it (68.75rem, the record's
+     insets and the rail) instead of squeezing the lines, and the stacked page keeps the measure, the
+     rail following or leading the record in the same column. */
+  @container record-page (max-width: 91.5rem) {
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-has-aside="true"]:is(
+        [data-aside-breakpoint="wide"],
+        :has([data-ui="record-page-body"] [data-ui="ket-grid-island"])
+      )
+      [data-ui="record-page-layout"] {
+      grid-template-columns: minmax(0, calc(68.75rem + var(--kv-page-padding-x) * 2));
+      row-gap: var(--kv-space-5);
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-has-aside="true"]:is(
+        [data-aside-breakpoint="wide"],
+        :has([data-ui="record-page-body"] [data-ui="ket-grid-island"])
+      )
+      [data-ui="record-page-aside"] {
+      position: static;
+      max-height: none;
+      padding-top: var(--kv-space-5);
+      overflow: visible;
+      border-top: 1px solid var(--kv-panel-divider);
+      border-left: 0;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-has-aside="true"]:is(
+        [data-aside-breakpoint="wide"],
+        :has([data-ui="record-page-body"] [data-ui="ket-grid-island"])
+      )[data-aside-stacked="before"]
+      [data-ui="record-page-layout"] {
+      row-gap: 0;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-has-aside="true"]:is(
+        [data-aside-breakpoint="wide"],
+        :has([data-ui="record-page-body"] [data-ui="ket-grid-island"])
+      )[data-aside-stacked="before"]
+      [data-ui="record-page-body"],
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-has-aside="true"]:is(
+        [data-aside-breakpoint="wide"],
+        :has([data-ui="record-page-body"] [data-ui="ket-grid-island"])
+      )[data-aside-stacked="before"]
+      [data-ui="record-page-aside"] {
+      grid-row: auto;
+      grid-column: auto;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="record-page"][data-has-aside="true"]:is(
+        [data-aside-breakpoint="wide"],
+        :has([data-ui="record-page-body"] [data-ui="ket-grid-island"])
+      )[data-aside-stacked="before"]
+      [data-ui="record-page-aside"] {
+      padding-bottom: var(--kv-space-5);
+      border-top: 0;
+      border-bottom: 1px solid var(--kv-panel-divider);
+    }
+  }
+
   /* The commands drop below the record's identity on the page's own width, so a sidebar
      beside the page counts and a record code never breaks beside the commands. Title, status,
      meta and path read as one block; the commands follow it, 12px away (the header gap plus

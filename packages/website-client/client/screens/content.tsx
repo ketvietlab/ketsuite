@@ -1,6 +1,6 @@
 import { WorkspacePage, RecordPage } from '../page-regions.tsx'
 import { renderEntryBody } from '../post-document.tsx'
-import { ArchiveActions } from '../archive-actions.tsx'
+import { ArchiveActions, archiveCapability } from '../archive-actions.tsx'
 import { postFields, readPostFields } from './post-fields.tsx'
 import {
   Surface,
@@ -9,13 +9,14 @@ import {
   Field,
   TextField,
   Select,
+  Link,
   LinkButton,
   DataTable,
   Notice,
 } from '@ketvietlab/design-system'
 import { CommandButton, fragments } from '../ui.tsx'
 import { safeHref } from '../renderer.tsx'
-import { formatTime } from './format.ts'
+import { formatTime, revisionLabel } from './format.ts'
 import type { Entry, Screen, SiteTheme, StudioContext, TaxonomyTerm, Viewport } from '../types.ts'
 import type { EntryHistory, RevisionChange } from './builder-types.ts'
 
@@ -26,8 +27,122 @@ type PreviewData = {
   preview?: { audience: string; expiresAt: string; url?: string | null; token: string } | null
 }
 
+/** `website.listTranslations`: the entries of one group, one per language. */
+type Translation = {
+  id: string
+  locale: string
+  title: string
+  path: string
+  status: string
+  published: boolean
+}
+
+/** The languages a piece of content is written in, and the ones it can still be translated into. */
+function translationPanel(ctx: StudioContext, entryId: string, rows: Translation[]) {
+  const locales = ctx.site().locales
+  const missing = locales.filter((locale) => !rows.some((row) => row.locale === locale))
+  const writable = ctx.can('website.content.write')
+  const language = (locale: string) =>
+    ctx.tr(`website.locale.${locale}`) === `website.locale.${locale}`
+      ? locale.toUpperCase()
+      : ctx.tr(`website.locale.${locale}`)
+  return (
+    <Surface
+      title={ctx.tr('website.translation.title')}
+      description={ctx.tr('website.translation.help')}
+      body={
+        <Stack
+          divided
+          items={[
+            <DataTable
+              rows={rows}
+              id={(row) => row.id}
+              columns={[
+                { key: 'locale', label: ctx.tr('website.entry.locale'), cell: (row) => language(row.locale) },
+                {
+                  key: 'title',
+                  label: ctx.tr('website.entry.title'),
+                  priority: 'primary',
+                  cell: (row) =>
+                    row.id === entryId ? (
+                      row.title
+                    ) : (
+                      <Link label={row.title} href={ctx.href('entry-details', { id: row.id })} />
+                    ),
+                },
+                { key: 'path', label: ctx.tr('website.entry.path'), cell: (row) => row.path },
+                {
+                  key: 'status',
+                  label: ctx.tr('website.translation.state'),
+                  cell: (row) =>
+                    ctx.tr(row.published ? 'website.translation.published' : 'website.translation.draft'),
+                },
+              ]}
+              emptyTitle={ctx.tr('website.translation.none')}
+            />,
+            locales.length < 2 ? (
+              <p>{ctx.tr('website.translation.oneLanguage')}</p>
+            ) : !missing.length ? (
+              <p>{ctx.tr('website.translation.complete')}</p>
+            ) : (
+              <form id="translation-create" novalidate>
+                <Grid
+                  columns={2}
+                  items={[
+                    <Select
+                      id="translation-locale"
+                      name="locale"
+                      label={ctx.tr('website.translation.locale')}
+                      value={missing[0]}
+                      disabled={!writable}
+                      options={missing.map((value) => ({ value, label: language(value) }))}
+                    />,
+                    <Select
+                      id="translation-copy"
+                      name="copy"
+                      label={ctx.tr('website.translation.copy')}
+                      value="all"
+                      disabled={!writable}
+                      options={[
+                        { value: 'all', label: ctx.tr('website.translation.copyAll') },
+                        { value: 'structure', label: ctx.tr('website.translation.copyStructure') },
+                      ]}
+                    />,
+                  ]}
+                />
+              </form>
+            ),
+            <Stack
+              items={[
+                missing.length && locales.length > 1 ? (
+                  <CommandButton
+                    label={ctx.tr('website.translation.create')}
+                    command="content.translate"
+                    type="submit"
+                    form="translation-create"
+                    disabled={ctx.busy() || !writable}
+                  />
+                ) : null,
+                rows.length > 1 ? (
+                  <CommandButton
+                    label={ctx.tr('website.translation.unlink')}
+                    command="content.unlinkTranslation"
+                    variant="tertiary"
+                    disabled={ctx.busy() || !writable}
+                  />
+                ) : null,
+              ]}
+            />,
+          ]}
+        />
+      }
+    />
+  )
+}
+
 export function createEntryDetails(ctx: StudioContext) {
   let current: EntryHistory | undefined
+  let translations: Translation[] = []
   let compareRevision: string | null = null
   let terms: TaxonomyTerm[] = []
   let changes: RevisionChange[] = []
@@ -47,6 +162,11 @@ export function createEntryDetails(ctx: StudioContext) {
             { signal },
           )
         ).rows
+      translations = await ctx.call<Translation[]>(
+        'website.listTranslations',
+        { id: current.entry.id },
+        { signal },
+      )
       changes = ctx.can('website.content.write')
         ? ((
             await ctx.call<{ changes?: RevisionChange[] }>(
@@ -87,7 +207,14 @@ export function createEntryDetails(ctx: StudioContext) {
               id: 'entry-archive',
               title: data.entry.title,
               command: 'content.archive',
-              disabled: ctx.busy() || !ctx.can('website.content.write'),
+              // Archiving a live page takes it off the site, so that is the publisher's; a draft is the author's.
+              disabled: ctx.busy() || !ctx.can(archiveCapability(data.entry)),
+              usage: data.entry.trashed
+                ? []
+                : (data.usage ?? []).map((u) => ({
+                    ...u,
+                    title: ctx.tr(`website.entry.usage.${u.type}`, { title: u.title }),
+                  })),
               restore: data.entry.trashed,
             })}
           </>
@@ -129,6 +256,7 @@ export function createEntryDetails(ctx: StudioContext) {
                   </form>
                 }
               />,
+              translationPanel(ctx, data.entry.id, translations),
               <Surface
                 title={ctx.tr('website.content.compare')}
                 body={
@@ -139,7 +267,10 @@ export function createEntryDetails(ctx: StudioContext) {
                         name="revision"
                         label={ctx.tr('website.content.before')}
                         value={compareRevision ?? data.liveRevisionId ?? data.revisions.at(-1)?.revisionId}
-                        options={data.revisions.map((r) => ({ value: r.revisionId, label: r.revisionId }))}
+                        options={data.revisions.map((r) => ({
+                          value: r.revisionId,
+                          label: revisionLabel(r),
+                        }))}
                       />
                       <CommandButton
                         label={ctx.tr('website.content.compare')}
@@ -267,6 +398,22 @@ export function createEntryDetails(ctx: StudioContext) {
           expectedRevisionId: entry.revisionId,
         })
         ctx.notify(ctx.tr('website.resource.saved'))
+        await ctx.refresh()
+      },
+      'content.translate': async (_args, form) => {
+        const { entry } = current!
+        const created = await ctx.call<{ id: string }>('website.createTranslation', {
+          id: entry.id,
+          locale: String(form!.get('locale')),
+          copy: String(form!.get('copy') ?? 'all'),
+          newId: crypto.randomUUID(),
+        })
+        ctx.notify(ctx.tr('website.translation.created'))
+        await ctx.navigate('entry-details', { id: created.id })
+      },
+      'content.unlinkTranslation': async () => {
+        await ctx.call('website.unlinkTranslation', { id: current!.entry.id })
+        ctx.notify(ctx.tr('website.translation.unlinked'))
         await ctx.refresh()
       },
       'content.restore': async ({ revision }) => {

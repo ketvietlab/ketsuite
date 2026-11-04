@@ -122,3 +122,38 @@ test('website lists HTTP: authoring routes use CSR and retired SSR screens are a
   for (const path of ['/admin/website/pages', '/admin/website/health', '/admin/website/sites/site1/members'])
     assert.equal((await app.client.get(path)).status, 404, path)
 })
+
+test('website content HTTP: the page and post lists read one page of rows at a time', async (t) => {
+  const app = await boot(t)
+  for (let i = 1; i <= 63; i++)
+    await app.client.call('website.saveEntry', {
+      id: `p-trang-${i}`,
+      siteId: 'site1',
+      type: 'website.page',
+      slug: `trang-${i}`,
+      path: `/trang-${i}`,
+      title: `Trang số ${i}`,
+      layout: LAYOUT,
+    })
+  const list = async (input: Record<string, unknown>) => {
+    const response = await app.client.post('/website/api/website.listEntries', JSON.stringify(input), {
+      headers: { 'content-type': 'application/json' },
+    })
+    assert.equal(response.status, 200)
+    return ((await response.json()) as { value: Record<string, unknown> & { rows: unknown[] } }).value
+  }
+  const base = { siteId: 'site1', type: 'page', search: 'trang số' }
+  const first = await list({ ...base, page: 1 })
+  assert.deepEqual([first.rows.length, first.total, first.page, first.pageSize], [30, 63, 1, 30])
+  const last = await list({ ...base, page: 3 })
+  assert.deepEqual([last.rows.length, last.page], [3, 3])
+  assert.equal((await list({ ...base, page: 99 })).page, 3, 'a page past the end reads the last one')
+  const seen = new Set(
+    [...first.rows, ...(await list({ ...base, page: 2 })).rows, ...last.rows].map(
+      (r) => (r as { id: string }).id,
+    ),
+  )
+  assert.equal(seen.size, 63, 'the pages do not overlap and leave nothing out')
+  // The link pickers ask for no page and still see every entry.
+  assert.equal((await list(base)).rows.length, 63)
+})

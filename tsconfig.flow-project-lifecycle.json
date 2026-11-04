@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": ["test/flow-native-deletion.test.ts", "test/flow-native-relocation.test.ts"]
+}

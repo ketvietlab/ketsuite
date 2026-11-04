@@ -105,6 +105,13 @@ export const vendorPricelistListSearch = defineRowList({
       group: 'discount',
       match: (row) => Number(row.discount ?? 0) > 0,
     },
+    // Whether a price applies today in the company's calendar, as `purchase.listSupplierInfo` answers.
+    ...(['current', 'upcoming', 'expired'] as const).map((state) => ({
+      key: state,
+      label: `purchase_backend.validity.${state}`,
+      group: 'validity',
+      match: (row: Record<string, unknown>) => row.validity === state,
+    })),
   ],
   defaultSort: [{ key: 'partnerName', dir: 'asc' }],
 })

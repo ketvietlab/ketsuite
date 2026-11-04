@@ -10,7 +10,7 @@ import {
 } from '../channel_api/core.ts'
 // The domain owns the state machine; see the note in the sales channel. A
 // published enum that drifts from it now refuses a legitimate filter.
-import { PURCHASE_STATES } from '../purchase/functions.ts'
+import { PURCHASE_STATES } from '../purchase/types.ts'
 
 type Req = Parameters<Route>[1]
 type Row = Record<string, unknown>

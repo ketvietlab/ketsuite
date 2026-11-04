@@ -204,8 +204,8 @@ test('partner-e2e: directory, defaults, roles and accounting bridge cross real H
 
   const partnerForm = await (await e2e.client.get('/admin/partner/partners/customer?lang=vi')).text()
   assert.match(partnerForm, /id="partner-identity-form"/)
-  assert.match(partnerForm, /data-ui="form-page" data-has-aside="true"/)
-  assert.match(partnerForm, /data-ui="form-page-actions"[\s\S]*?form="partner-identity-form"/)
+  assert.match(partnerForm, /data-ui="record-page" data-has-aside="true"/)
+  assert.match(partnerForm, /data-ui="record-page-actions"[\s\S]*?form="partner-identity-form"/)
   assert.match(partnerForm, /action="\/admin\/partner\/partners\/customer\?lang=vi"/)
   assert.match(partnerForm, /12 Nguyễn Huệ/)
   assert.doesNotMatch(partnerForm, /data-ui="partner-detail-layout"/)
@@ -243,7 +243,7 @@ test('partner-e2e: directory, defaults, roles and accounting bridge cross real H
   assert.match(accountingForm, /name="paymentTermId"[\s\S]*?value="net30" selected="true"/)
   assert.match(accountingForm, /name="receivableAccountId"[\s\S]*?value="receivable" selected="true"/)
   assert.match(accountingForm, /name="payableAccountId"[\s\S]*?value="payable" selected="true"/)
-  assert.match(accountingForm, /data-ui="form-page-aside"[\s\S]*?data-island="mail\.chatter"/)
+  assert.match(accountingForm, /data-ui="record-page-aside"[\s\S]*?data-island="mail\.chatter"/)
   assert.doesNotMatch(accountingForm, /data-ui="record-workspace"/)
 
   const englishAccountingForm = await (

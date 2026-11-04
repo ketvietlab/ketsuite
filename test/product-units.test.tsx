@@ -78,6 +78,7 @@ const boot = async (t: TestContext) => {
   await call('product.archiveTemplate', {
     id: 'old',
     active: false,
+    reason: 'Discontinued',
     expectedRevisionId: old.revisionId ?? 'initial',
     confirmed: true,
   })
@@ -257,7 +258,7 @@ test('units list read: families smallest first, kinds, statuses, accent-free sea
   assert.deepEqual([paged.page, paged.pages, paged.rows.map((row) => row.id)], [2, 2, ['kg']])
 })
 
-test('unit record read: choices never loop back, archived units are marked, the viewer may only look', async (t) => {
+test('unit record read: choices are reference units one level deep, archived units are marked, the viewer may only look (P33)', async (t) => {
   const { call } = await boot(t)
   const read = async (input: Record<string, unknown>, actor = 'root') =>
     ((await call('product_backend.unitContext', input, actor)) as { data: UnitModalData } | null)?.data ??
@@ -265,8 +266,8 @@ test('unit record read: choices never loop back, archived units are marked, the 
   const box = (await read({ id: 'box' }))!
   assert.deepEqual(
     box.references.map((choice) => choice.value),
-    ['bottle', 'kg'],
-    'not itself, not the carton counting it',
+    ['bottle'],
+    'a unit others count in keeps the reference it has and takes no other',
   )
   assert.deepEqual(box.record, {
     id: 'box',
@@ -281,11 +282,14 @@ test('unit record read: choices never loop back, archived units are marked, the 
   const kg = (await read({ id: 'kg', locale: 'en' }))!
   assert.deepEqual(kg.derived, ['g (archived)'])
   assert.equal(kg.conversion, null)
-  assert.deepEqual(
-    kg.references.find((choice) => choice.value === 'carton'),
-    { value: 'carton', label: 'Thùng 24 chai · 24 Chai' },
-    'a choice says what it holds',
-  )
+  assert.deepEqual(kg.references, [], 'g counts in kg, so kg stays a reference unit')
+  // The carton was saved before one level: it keeps the box it counts in, which says what it holds.
+  const legacy = (await read({ id: 'carton', locale: 'en' }))!
+  assert.deepEqual(legacy.references, [
+    { value: 'bottle', label: 'Chai' },
+    { value: 'box', label: 'Hộp 6 chai · 6 Chai' },
+    { value: 'kg', label: 'kg' },
+  ])
   // An archived reference is offered only to the unit already counting in it.
   const g = (await read({ id: 'g' }))!
   assert.equal(
@@ -297,10 +301,15 @@ test('unit record read: choices never loop back, archived units are marked, the 
     false,
   )
   const carton = (await read({ id: 'carton' }))!
-  assert.deepEqual(carton.usage, { products: 0, packagings: 1, locked: true })
+  assert.deepEqual(carton.usage, { products: 0, packagings: 1, locked: true, inUse: true })
+  assert.equal((await read({ id: 'g' }))!.usage.inUse, false)
   const fresh = (await read({}))!
   assert.deepEqual(fresh.record, { id: '', name: '', referenceId: '', factor: '', active: true })
-  assert.equal(fresh.references.length, 4)
+  assert.deepEqual(
+    fresh.references.map((choice) => choice.value),
+    ['bottle', 'kg'],
+    'a new unit counts in an active reference unit',
+  )
   assert.equal(await read({ id: 'missing' }), null)
 
   const looking = (await read({ id: 'box' }, 'viewer'))!
@@ -382,7 +391,7 @@ test('unit save route: the form becomes uom.saveUnit, refusals come back in the 
   assert.deepEqual(await fields({ id: 'bottle', name: 'Chai', referenceId: '', factor: '', active: false }), [
     [
       'active',
-      'Còn 2 sản phẩm đang dùng đơn vị này làm đơn vị tính. Đổi đơn vị của chúng trước khi lưu trữ.',
+      'Còn 2 sản phẩm hoặc đóng gói đang dùng đơn vị này. Đổi đơn vị hoặc bỏ đóng gói của chúng trước khi lưu trữ.',
     ],
   ])
   const renamed = await post({ id: 'g', name: 'gam', referenceId: 'kg', factor: '0,001', active: false })
@@ -412,6 +421,72 @@ test('unit save route: the form becomes uom.saveUnit, refusals come back in the 
     (await post({ id: 'missing', name: 'Mới', referenceId: '', factor: '', active: true })).status,
     403,
   )
+})
+
+test('unit save route: names stay short, one level deep, and a unit in use keeps its name and conversion (P33, P34)', async (t) => {
+  const { post, unit } = await boot(t)
+  const fields = async (body: Record<string, unknown>, lang = 'vi') =>
+    (
+      (await post(body, { lang })).body.value as { errors: Array<{ field: string; message: string }> }
+    ).errors.map((error) => [error.field, error.message])
+  assert.deepEqual(
+    await fields({
+      id: null,
+      name: 'Thùng carton 24 chai lớn',
+      referenceId: 'bottle',
+      factor: '24',
+      active: true,
+    }),
+    [['name', 'Tên đơn vị tối đa 20 ký tự.']],
+  )
+  const twenty = await post({
+    id: null,
+    name: 'Thùng carton 24 chai',
+    referenceId: 'bottle',
+    factor: '24',
+    active: true,
+  })
+  assert.equal((twenty.body.value as Row).ok, true, 'twenty characters is fine')
+  // The box counts in the bottle: a new unit counts in the bottle itself, not through the box.
+  assert.deepEqual(
+    await fields({ id: null, name: 'Lốc 2 hộp', referenceId: 'box', factor: '2', active: true }),
+    [['referenceId', 'Đơn vị tham chiếu không còn. Chọn đơn vị khác.']],
+  )
+  // Bottles are two products' unit: name, reference and quantity stay.
+  for (const body of [
+    { id: 'bottle', name: 'Chai thuỷ tinh', referenceId: '', factor: '', active: true },
+    { id: 'bottle', name: 'Chai', referenceId: 'kg', factor: '1', active: true },
+    { id: 'carton', name: 'Thùng 24 chai', referenceId: 'box', factor: '5', active: true },
+  ]) {
+    const refused = await post(body, { lang: 'en' })
+    assert.equal(refused.status, 409, JSON.stringify(body))
+    assert.equal(
+      (refused.body.error as { message: string }).message,
+      'This unit is in use, so its name, reference and quantity stay. Create a new unit if you need another.',
+    )
+  }
+  assert.deepEqual([(await unit('bottle'))!.name, (await unit('carton'))!.factor], ['Chai', '4'])
+  // Saving it as it is still works; the carton packs a product, so it cannot be archived.
+  assert.equal(
+    (await post({ id: 'bottle', name: 'Chai', referenceId: '', factor: '', active: true })).status,
+    200,
+  )
+  assert.deepEqual(
+    await fields(
+      { id: 'carton', name: 'Thùng 24 chai', referenceId: 'box', factor: '4', active: false },
+      'en',
+    ),
+    [
+      [
+        'active',
+        '1 products or packagings still use this unit. Change their unit or remove the packaging before archiving it.',
+      ],
+    ],
+  )
+  // A unit no one uses is renamed freely.
+  const renamed = await post({ id: 'kg', name: 'Kilogram', referenceId: '', factor: '', active: true })
+  assert.equal((renamed.body.value as Row).ok, true)
+  assert.equal((await unit('kg'))!.name, 'Kilogram')
 })
 
 // ── The list island ─────────────────────────────────────────────────────────────
@@ -834,7 +909,7 @@ const data = (overrides: Partial<UnitModalData> = {}): UnitModalData => ({
     { value: 'bottle', label: 'Chai' },
     { value: 'kg', label: 'kg' },
   ],
-  usage: { products: 3, packagings: 1, locked: false },
+  usage: { products: 0, packagings: 0, locked: false, inUse: false },
   derived: ['Thùng 24 chai'],
   conversion: { quantity: 6, root: 'Chai' },
   ...overrides,
@@ -873,6 +948,7 @@ test('unit modal: the form, its facts, and what the save sends', () => {
   assert.match(body, /product_backend\.uom\.factProducts/)
   assert.match(body, /Thùng 24 chai/)
   assert.doesNotMatch(body, /data-ui="notice"/)
+  assert.match(body, /product_backend\.uom\.referenceCounted/, 'a unit others count in says why it stays one')
   // A reference unit has no quantity to ask for.
   assert.doesNotMatch(
     render(uomModalDefinition.body!(modal(data(), { state: { referenceId: '' } }))),
@@ -926,9 +1002,14 @@ test('unit modal: Help opens the screen’s guide inside the modal; the way out 
 
 test('unit modal: a fixed conversion travels as saved, and a viewer only reads', () => {
   const locked = render(
-    uomModalDefinition.body!(modal(data({ usage: { products: 1, packagings: 0, locked: true } }))),
+    uomModalDefinition.body!(
+      modal(data({ usage: { products: 1, packagings: 0, locked: true, inUse: true } })),
+    ),
   )
   assert.match(locked, /data-ui="notice"/)
+  assert.match(locked, /<input type="hidden" name="name" value="Hộp 6 chai"/)
+  assert.match(locked, /<input[^>]*name="name"[^>]*disabled/, 'a unit in use keeps its name (P34)')
+  assert.match(locked, /<input[^>]*name="name"[^>]*maxlength="20"/)
   assert.match(locked, /<input type="hidden" name="referenceId" value="bottle"/)
   assert.match(locked, /<input type="hidden" name="factor" value="0.5"/)
   assert.match(locked, /<select[^>]*name="referenceId"[^>]*disabled/)

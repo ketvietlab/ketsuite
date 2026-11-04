@@ -4,6 +4,9 @@
  */
 export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>> = {
   vi: {
+    'product_backend.ws.bulkHistory': 'Lịch sử sửa hàng loạt',
+    'product_backend.ws.importHistory': 'Lịch sử nhập',
+    'product_backend.ws.allImports': 'Xem mọi lần nhập',
     'recordModal.close': 'Đóng',
     'recordModal.loading': 'Đang tải…',
     'recordModal.loadFailed': 'Không đọc được sản phẩm.',
@@ -24,6 +27,9 @@ export const TEMPLATE_RECORD_LABELS: Record<'vi' | 'en', Record<string, string>>
     'recordModal.uploadFailed': 'Không tải được tệp lên. Hãy thử lại.',
   },
   en: {
+    'product_backend.ws.bulkHistory': 'Bulk edit history',
+    'product_backend.ws.importHistory': 'Import history',
+    'product_backend.ws.allImports': 'View all imports',
     'recordModal.close': 'Close',
     'recordModal.loading': 'Loading…',
     'recordModal.loadFailed': 'The product could not be read.',

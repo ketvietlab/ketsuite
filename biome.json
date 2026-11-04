@@ -63,5 +63,33 @@
         "organizeImports": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "packages/ketsuite/src/**/*.ts",
+        "packages/ketsuite/src/**/*.tsx",
+        "apps/**/*.ts",
+        "apps/**/*.tsx",
+        "!**/*.test.ts",
+        "!packages/ketsuite/src/modules/backend/screen.ts"
+      ],
+      "plugins": ["./lint/rules/no-shell-internals.grit", "./lint/rules/admin-route-uses-shell.grit"]
+    },
+    {
+      "includes": [
+        "packages/ketsuite/src/**/*.ts",
+        "packages/ketsuite/src/**/*.tsx",
+        "apps/**/*.ts",
+        "apps/**/*.tsx",
+        "!**/*.test.ts",
+        "!packages/ketsuite/src/ui/**"
+      ],
+      "plugins": ["./lint/rules/no-raw-jsx-tag.grit", "./lint/rules/no-markup-in-html.grit"]
+    },
+    {
+      "includes": ["packages/ketsuite/src/**/*.tsx", "apps/**/*.tsx", "!packages/ketsuite/src/ui/**"],
+      "plugins": ["./lint/rules/kit-component-as-jsx.grit"]
+    }
+  ]
 }

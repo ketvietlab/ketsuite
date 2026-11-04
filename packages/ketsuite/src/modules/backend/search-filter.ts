@@ -336,6 +336,7 @@ export const listSearchChrome = async (
     labels?: Partial<SearchFilterLabels>
     fieldLabel?: ListSearchFilterOptions['fieldLabel']
     presetLabel?: ListSearchFilterOptions['presetLabel']
+    fieldChoices?: ListSearchFilterOptions['fieldChoices']
   },
 ): Promise<{ frame: Frame; state: ListState }> => {
   const _ = ctx.translate(ctx.localeOf(url, req))
@@ -355,6 +356,7 @@ export const listSearchChrome = async (
       labels: options.labels,
       ...(options.fieldLabel ? { fieldLabel: options.fieldLabel } : {}),
       ...(options.presetLabel ? { presetLabel: options.presetLabel } : {}),
+      ...(options.fieldChoices ? { fieldChoices: options.fieldChoices } : {}),
       applyInput: { listKey: options.spec.key, returnTo: `${url.pathname}${url.search}` },
       functions: options.functions,
     }),

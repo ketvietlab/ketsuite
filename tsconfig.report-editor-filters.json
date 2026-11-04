@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rewriteRelativeImportExtensions": true,
+    "outDir": ".build"
+  },
+  "include": ["test/report.test.ts", "test/large-wave-page-frames.test.tsx"]
+}

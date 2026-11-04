@@ -100,6 +100,10 @@ export function canManageScope(data, scope, targetId, userId = data.user.id) {
   const member = data.members.find((m) => m.id === userId && m.status === 'active')
   if (!member || member.role === 'guest') return false
   if (['owner', 'admin'].includes(member.role)) return true
+  if (scope === 'project') {
+    const project = data.projects.find((p) => p.id === targetId)
+    if (project && accessFor(data, project, userId).role === 'admin') return true
+  }
   return data.grants.some(
     (g) =>
       g.scope === scope &&

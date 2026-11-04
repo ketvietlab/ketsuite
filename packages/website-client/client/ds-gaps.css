@@ -153,13 +153,14 @@
 /* GAP ds-narrow-workspace-controls: field rows and nowrap buttons overflow narrow desktop builder panels. Remove after DS container-aware fields/actions are available in the pin. */
 @container (max-width: 28rem) {
   :is(
-      .website-builder-panel,
-      .website-taxonomy-image,
-      .website-form-field,
-      .website-form-preview-column,
-      .website-form-authoring
-    )
-    [data-ui="field"] {
+    .website-builder-panel,
+    .website-taxonomy-image,
+    .website-form-field,
+    .website-form-preview-column,
+    .website-form-authoring
+  )
+  /* A checkbox or switch keeps its box beside the label; stacked, the label sat under the box. */
+  [data-ui="field"]:not([data-kind="checkbox"], [data-kind="switch"]) {
     grid-template-columns: minmax(0, 1fr);
   }
   :is(
@@ -169,10 +170,11 @@
       .website-form-preview-column,
       .website-form-authoring
     )
-    [data-ui="field"]
+    [data-ui="field"]:not([data-kind="checkbox"], [data-kind="switch"])
     > :is(
       [data-ui="field-control"],
       [data-ui="drop-zone"],
+      .website-theme-logo,
       [data-ui="field-options"],
       [data-ui="field-help"],
       [data-ui="field-error"]

@@ -1,3 +1,5 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the public catalogue and sales demo; its chrome is not a product screen
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — the public catalogue and sales demo; its chrome is not a product screen
 import { document, navigablePage, text, withHeaders } from '@ketvietlab/ketjs'
 import { demoHelp } from './help.tsx'
 import { html, renderIsland, renderToString, trustedMarkup } from '@ketvietlab/ketjs-view'
@@ -531,7 +533,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
       // A real design-system island (search, choose, create) rather than a plain
       // text field — wired against real listCustomers/createCustomer functions
       // (see demo-backend.ts), the same way relation-select wires against a real
-      // backend in production. See atlas/relation-select-hydration.ts for the
+      // backend in production. See atlas/island-hydration.ts for the
       // shared client-side registry this and the KetAtlas mock both hydrate from.
       const customerId = value('customer')
       const customerOptions = customers.map((c) => ({ value: c.id, label: c.name }))
@@ -781,6 +783,7 @@ export function createDemoRoutes<Base extends DemoBasePath = '/demo'>(
       main = (
         <RecordPage
           title={selected.id}
+          asideBreakpoint="wide"
           context={context}
           variant="operational"
           status={stateBadge(selected)}

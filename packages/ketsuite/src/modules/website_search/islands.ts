@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — an island, so its markup is behaviour — needs kit primitives that take handlers
 import { defineIsland, html, signal } from '@ketvietlab/ketjs-view'
 
 /**

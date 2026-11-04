@@ -61,7 +61,7 @@ export type VariantEditorAttribute = {
   attributeId: string
   name: string
   createVariant: string
-  values: Array<{ valueId: string; name: string }>
+  values: Array<{ valueId: string; name: string; defaultPriceExtra?: string }>
 }
 export type VariantEditorVariant = {
   id: string
@@ -287,7 +287,9 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
     invalidRows()
 
   /** Every value the line could hold: the catalogue's, then any the line keeps that it no longer lists. */
-  const optionsOf = (line: VariantEditorLine): Array<{ valueId: string; name: string }> => {
+  const optionsOf = (
+    line: VariantEditorLine,
+  ): Array<{ valueId: string; name: string; defaultPriceExtra?: string }> => {
     const listed = catalogue().find((entry) => entry.attributeId === line.attributeId)?.values ?? []
     return [
       ...listed,
@@ -316,7 +318,7 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
           name: attribute.name,
           createVariant: attribute.createVariant,
           displayType: 'select',
-          values: attribute.values.map((value) => ({ ...value, priceExtra: '0' })),
+          values: attribute.values.map((value) => ({ ...value, priceExtra: value.defaultPriceExtra ?? '0' })),
         },
       ])
       // After the form hands focus back to the picker: the next step is this line's values.
@@ -393,7 +395,10 @@ export function createVariantEditorView(props: VariantEditorProps): IslandContro
     const added = adding.flatMap((valueId) => {
       const option = options.find((entry) => entry.valueId === valueId)
       if (!option) return []
-      const priceExtra = savedLine?.values.find((value) => value.valueId === valueId)?.priceExtra ?? '0'
+      const priceExtra =
+        savedLine?.values.find((value) => value.valueId === valueId)?.priceExtra ??
+        option.defaultPriceExtra ??
+        '0'
       return [{ valueId, name: option.name, priceExtra }]
     })
     const order = (valueId: string) => options.findIndex((entry) => entry.valueId === valueId)

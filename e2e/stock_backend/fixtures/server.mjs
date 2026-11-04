@@ -83,7 +83,7 @@ const seed = async () => {
     saleOk: true,
     purchaseOk: true,
     defaultCode: 'STOCK-JACKET',
-    barcode: '8938500000200',
+    barcode: '8938500000201',
   })
   await call('stock.configureProduct', {
     templateId: 'stock-template',
@@ -124,6 +124,22 @@ const seed = async () => {
     productUomId: 'unit',
     productUomQty: '3',
   })
+  // K40: an overdue delivery of more than the warehouse holds, so the forecast runs short from today.
+  await call('stock.createPicking', {
+    id: 'forecast-late',
+    name: 'WH/OUT/LATE',
+    pickingTypeId: 'wh:outgoing',
+    scheduledDate: '2026-01-05T03:00:00.000Z',
+  })
+  await call('stock.addMove', {
+    id: 'move-forecast-late',
+    name: 'Áo khoác giao trễ',
+    pickingId: 'forecast-late',
+    productId: 'stock-template:default',
+    productUomId: 'unit',
+    productUomQty: '20',
+  })
+  await call('stock.confirmPicking', { id: 'forecast-late' })
   await adapter.close()
 }
 

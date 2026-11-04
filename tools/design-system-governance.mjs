@@ -34,6 +34,7 @@ const runtimeExports = [...publicIndex.matchAll(/export\s+\{([\s\S]*?)\}\s+from\
       ![
         'BULK_CLEAR_COMMAND',
         'HOOKS',
+        'KET_GRID_NO_CHANGES',
         'OWNERS',
         'attachDesignSystemInteractions',
         'attachClientModalInteractions',
@@ -41,6 +42,9 @@ const runtimeExports = [...publicIndex.matchAll(/export\s+\{([\s\S]*?)\}\s+from\
         'configureMermaidLoader',
         'clearFieldError',
         'showFieldError',
+        'formatLocaleNumber',
+        'numberControlValue',
+        'parseLocaleNumber',
         'readRowAnchor',
         'rememberRowAnchor',
         'restoreRowAnchor',

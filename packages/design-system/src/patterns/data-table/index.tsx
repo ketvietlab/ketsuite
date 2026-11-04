@@ -16,7 +16,8 @@ export type Column<Row> = {
   label: string
   cell: (row: Row) => Cell
   align?: 'start' | 'end'
-  kind?: 'text' | 'number' | 'currency' | 'date' | 'status' | 'identifier' | 'person' | 'media'
+  /** `actions`: a row's own commands. A stacked row shows them without the column's name. */
+  kind?: 'text' | 'number' | 'currency' | 'date' | 'status' | 'identifier' | 'person' | 'media' | 'actions'
   priority?: 'primary' | 'secondary' | 'tertiary'
   width?: 'narrow' | 'medium' | 'wide'
   hidden?: boolean

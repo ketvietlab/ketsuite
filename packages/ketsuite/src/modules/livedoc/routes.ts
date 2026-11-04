@@ -12,7 +12,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'
 import { type DocumentOwner, flatten, hydrate, readable, storedSnapshot, writable } from './documents.ts'
 import {
-  applySnapshot,
+  applySnapshotChanged,
   forget,
   currentGeneration,
   isLive,
@@ -54,7 +54,18 @@ async function durable(
           throw new Error('Document snapshot could not be read')
         if (update) {
           try {
-            applySnapshot(ref, Buffer.from(update, 'base64'))
+            const changed = applySnapshotChanged(ref, Buffer.from(update, 'base64'))
+            if (owner.validateSnapshot && !owner.validateSnapshot(ref)) throw new InvalidDocumentUpdate()
+            if (!changed && owner.recordOf) {
+              const current = await writable(ctx, owner, url, req, ref.id)
+              if (!current) throw new Error('Document write permission revoked')
+              return {
+                ok: true,
+                id: current.id,
+                contentAttachmentId: owner.attachmentOf(current),
+                record: owner.recordOf(current),
+              }
+            }
           } catch {
             throw new InvalidDocumentUpdate()
           }
@@ -145,6 +156,7 @@ export function documentRoutes(owner: DocumentOwner, base: string): Record<strin
         }
         return json({
           snapshot: Buffer.from(bytes).toString('base64'),
+          ...(owner.recordOf ? { record: owner.recordOf(row) } : {}),
           topic: topicFor(ref, currentGeneration(ref)),
           viewerId: viewer.id,
         })

@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the #1044 room plan draws its own tape-chart grid — needs a kit timeline board
 // The room plan (`/admin/hospitality/tape-chart`) as three islands sharing one store, as accepted in the mock
 // (design/shared/hospitality-room-plan.mjs): `hospitality.room-plan-controls` holds the filters, period and
 // pager, `hospitality.room-plan` the grid, `hospitality.room-plan-peek` one reservation beside it. The server

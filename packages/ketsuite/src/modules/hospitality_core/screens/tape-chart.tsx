@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — the tape-chart legend of the #1044 room plan, which draws its own grid — needs a kit timeline board
 import type { Translator } from '@ketvietlab/ketjs'
 import { renderIsland, trustedMarkup } from '@ketvietlab/ketjs-view'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'

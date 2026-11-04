@@ -2,17 +2,18 @@ import { asc, defineJob, deleteFrom, eq, from, gt, lte } from '@ketvietlab/ketjs
 import type { Ctx, Row } from '@ketvietlab/ketjs'
 import { hash, now } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
-import { MAX_DOCUMENT_PRESENCE_INDEX, readLiveDocument } from './live-document.ts'
+import { MAX_DOCUMENT_PRESENCE_INDEX, readLiveDocument, documentKind } from './live-document.ts'
+import type { FlowDocumentKind } from './blob-keys.ts'
 import { identity, refuse, string } from './policy.ts'
 
 const TTL = 90_000
-const kindOf = (page: boolean) => (page ? 'page' : 'issue')
+const kindOf = documentKind
 
 /** Ephemeral, actor-owned lease; never advances business collection epochs. */
 export async function announceDocumentPresence(
   ctx: Ctx,
   input: Row,
-  page: boolean,
+  page: boolean | FlowDocumentKind,
   extensions: NativeServerExtension[],
 ) {
   if (
@@ -22,7 +23,7 @@ export async function announceDocumentPresence(
   )
     return refuse('validation', { index: 'invalid' })
   return ctx.tx(async (tx) => {
-    const owner = await readLiveDocument(tx, input, page)
+    const owner = await readLiveDocument(tx, input, page, false, false)
     const who = await identity(tx),
       ownerKind = kindOf(page)
     const id = hash(JSON.stringify([who.companyId, ownerKind, owner.id, who.actorId]))
@@ -68,8 +69,8 @@ export async function announceDocumentPresence(
   })
 }
 
-export async function listDocumentPresence(ctx: Ctx, input: Row, page: boolean) {
-  const owner = await readLiveDocument(ctx, input, page),
+export async function listDocumentPresence(ctx: Ctx, input: Row, page: boolean | FlowDocumentKind) {
+  const owner = await readLiveDocument(ctx, input, page, false, false),
     P = ctx.table('flow.DocumentPresence')
   const leases = await ctx.db.all(
     from(P)
@@ -88,7 +89,7 @@ export async function listDocumentPresence(ctx: Ctx, input: Row, page: boolean) 
     // Revoked/disabled senders disappear even before their last heartbeat expires.
     const sender = { ...ctx, actor: string(lease.actorId) }
     try {
-      await readLiveDocument(sender, { id: owner.id }, page)
+      await readLiveDocument(sender, { id: owner.id }, page, false, false)
       const who = await identity(sender)
       items.push({
         id: who.actorId,

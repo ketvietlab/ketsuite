@@ -4,6 +4,7 @@ import { quoteTaxLine } from '../../account/functions.ts'
 import { compareDecimals } from '../../account/money.ts'
 import { functions as pricingFunctions } from '../../pricing/functions.ts'
 import { sellableProduct } from '../../product/sellable.ts'
+import { VARIANT_PRICE_EFFECTS } from '../../product/variant-price.ts'
 import { functions as stockFunctions } from '../../stock/functions.ts'
 import { appendAudit, claimDraftRevision, invalid, n, recompute, trackingAvailability } from './helpers.ts'
 
@@ -87,7 +88,7 @@ export async function addLineHandler(ctx: Ctx, args: Row) {
     if (result.ok !== true) return result
     priceUnit = result.price
   }
-  priceUnit ??= product.template.listPrice
+  priceUnit ??= product.listPrice
   if (
     compareDecimals(discount, '0') < 0 ||
     compareDecimals(discount, '100') > 0 ||
@@ -167,7 +168,7 @@ export async function updateLineHandler(ctx: Ctx, args: Row) {
     if (priced.ok !== true) return priced
     priceUnit = priced.price
   }
-  priceUnit ??= sellable.value.template.listPrice
+  priceUnit ??= sellable.value.listPrice
   const discount = args.discount ?? line.discount
   if (
     compareDecimals(discount, '0') < 0 ||
@@ -329,6 +330,7 @@ export const linesFunctions: Record<string, FnSpec> = {
       'read:uom.Unit',
       'read:pricing.Pricelist',
       'read:pricing.PricelistItem',
+      ...VARIANT_PRICE_EFFECTS,
       'read:account.Tax',
       'read:account.ProductTax',
       'read:company.Company',
@@ -368,6 +370,7 @@ export const linesFunctions: Record<string, FnSpec> = {
       'read:uom.Unit',
       'read:pricing.Pricelist',
       'read:pricing.PricelistItem',
+      ...VARIANT_PRICE_EFFECTS,
       'read:account.Tax',
       'read:account.ProductTax',
       'read:company.Company',

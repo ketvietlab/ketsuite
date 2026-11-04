@@ -1,9 +1,9 @@
-// A GET filter form rendered by `RecordForm({ applyOnInput: true })` has no submit step: a choice
+// A GET filter form rendered by `RecordForm({ applyOnInput: true })` or `FilterBar({ action })` has no submit step: a choice
 // applies at once and typed text after a pause. Whether the submit reloads the page or an island redraws
 // the form in place, the field the reader was typing in gets focus back with the caret at the end, so
 // typing continues.
 
-const FORM = 'form[data-ui="record-form"][data-apply="input"]'
+const FORM = 'form[data-ui="record-form"][data-apply="input"], form[data-ui="filter-bar"][data-apply="input"]'
 const FOCUS_KEY = 'kv.design-system.apply-on-input.focus'
 const TYPING_PAUSE = 400
 const FOCUS_WINDOW = 10_000

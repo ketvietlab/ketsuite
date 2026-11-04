@@ -196,6 +196,25 @@ test('customer Channel API supports isolated browser and bearer sessions', async
   await expect(page.locator('form[action="/login"]')).toHaveCount(0)
 })
 
+test('the Studio creates a translation and lists both languages', async ({ page }) => {
+  await page.goto('/website/entries/home-hospitality?site=hospitality-site')
+  await page.waitForFunction(() => (globalThis as { __ketNavigation?: unknown }).__ketNavigation)
+  const panel = page.locator('[data-ui="surface"]', { hasText: 'Bản dịch' })
+  await expect(panel.locator('#translation-locale')).toHaveValue('en')
+  await panel.getByRole('button', { name: 'Tạo bản dịch' }).click()
+  // The new translation opens on its own page, a draft under the English prefix.
+  await expect(page).toHaveURL(/\/website\/entries\/(?!home-hospitality)[^/?]+/)
+  const rows = page.locator('[data-ui="surface"]', { hasText: 'Bản dịch' }).locator('tbody tr')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: 'Tiếng Anh' })).toContainText('/en')
+  await expect(rows.filter({ hasText: 'Tiếng Việt' }).locator('a')).toHaveAttribute(
+    'href',
+    /entries\/home-hospitality/,
+  )
+  await expect(page.getByText('Đã có bản dịch cho mọi ngôn ngữ của website.')).toBeVisible()
+  await page.screenshot({ path: join(artifacts, 'studio-translations.png'), fullPage: true })
+})
+
 test('captures the KTL storefronts', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')

@@ -1,5 +1,5 @@
 import type { Translator } from '@ketvietlab/ketjs'
-import type { TemplateResult } from '@ketvietlab/ketjs-view'
+import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import {
   CardGrid,
   WorkspacePage,
@@ -16,6 +16,8 @@ import {
 import type { Frame } from '../../../ui/index.ts'
 import { localized } from '../../backend/screen.ts'
 import type { AnyRow } from '../../backend/screen.ts'
+import { HELP } from '../../product_backend/screens/help-words.ts'
+import { SalesReportHelp } from '../reporting/help.tsx'
 import { salesOrderColumns } from './sales-orders-list.tsx'
 
 /**
@@ -49,6 +51,9 @@ export const overviewScreen = (
     createHref?: string | null
     rowHref?: (row: AnyRow) => string
     awaiting?: AnyRow[]
+    /** The month's figures, for readers of sales figures (D18). */
+    report?: JSXChild | null
+    lang?: 'vi' | 'en'
   },
 ): TemplateResult => {
   // The reader's language travels in the query string, so every link this screen
@@ -90,88 +95,100 @@ export const overviewScreen = (
       label: _('sale_backend.dashboard.toInvoice'),
       value: o.counts.toInvoice,
       detail: _('sale_backend.dashboard.toInvoiceValue', { amount: money(o.counts.toInvoiceTotal) }),
-      href: orders,
+      // The orders waiting for an invoice, not every order (D19).
+      href: `${orders}${orders.includes('?') ? '&' : '?'}preset=${encodeURIComponent('to invoice')}`,
       tone: 'warning' as const,
     },
   ]
+  const lang = o.lang ?? 'vi'
   return shell(
     _,
     _('sale_backend.dashboard.title'),
-    <WorkspacePage
-      variant="operational"
-      frame={o.frame}
-      title={_('sale_backend.dashboard.title')}
-      actions={
-        o.createHref
-          ? linkButton({
-              label: _('sale_backend.action.create'),
-              href: o.createHref,
-              variant: 'primary',
-            })
-          : undefined
-      }
-      body={stack(
-        [
-          <CardGrid
-            items={cards}
-            id={(card) => card.id}
-            card={(card) => (
-              <Metric
-                label={card.label}
-                value={String(card.value)}
-                detail={card.detail}
-                tone={card.tone}
-                href={card.href}
-              />
-            )}
-          />,
-          <Section
-            title={_('sale_backend.dashboard.awaiting')}
-            actions={linkButton({
-              label: _('sale_backend.dashboard.recent.all'),
-              href: `${quotations}${quotations.includes('?') ? '&' : '?'}preset=sent`,
-              variant: 'tertiary',
-            })}
-            body={
-              o.awaiting?.length
-                ? dataTable(_, {
-                    columns: salesOrderColumns(_, localeQuery),
-                    responsive: 'scroll',
-                    gutter: 'compact',
-                    rows: o.awaiting,
-                    id: (row) => String(row.id),
-                    rowHref: o.rowHref,
-                  })
-                : emptyState(_('sale_backend.dashboard.queueEmpty'), '')
-            }
-          />,
-          <Section
-            title={_('sale_backend.dashboard.recent.title')}
-            description={_('sale_backend.dashboard.recent.hint')}
-            actions={linkButton({
-              label: _('sale_backend.dashboard.recent.all'),
-              href: orders,
-              variant: 'tertiary',
-            })}
-            body={
-              o.recent.length
-                ? dataTable(_, {
-                    columns: salesOrderColumns(_, localeQuery),
-                    responsive: 'scroll',
-                    gutter: 'compact',
-                    rows: o.recent,
-                    rowHref: o.rowHref,
-                    id: (row) => String(row.id),
-                  })
-                : emptyState(_('sale_backend.orderList.empty'), _('sale_backend.orderList.emptyHint'), {
-                    icon: icon('shopping-bag'),
-                  })
-            }
-          />,
-        ],
-        'loose',
-      )}
-    />,
-    { ...o.frame, topbar: false },
+    <>
+      <WorkspacePage
+        variant="operational"
+        frame={o.frame}
+        title={_('sale_backend.dashboard.title')}
+        actions={
+          o.createHref
+            ? linkButton({
+                label: _('sale_backend.action.create'),
+                href: o.createHref,
+                variant: 'primary',
+              })
+            : undefined
+        }
+        body={stack(
+          [
+            <CardGrid
+              items={cards}
+              id={(card) => card.id}
+              card={(card) => (
+                <Metric
+                  label={card.label}
+                  value={String(card.value)}
+                  detail={card.detail}
+                  tone={card.tone}
+                  href={card.href}
+                />
+              )}
+            />,
+            ...(o.report ? [o.report] : []),
+            <Section
+              title={_('sale_backend.dashboard.awaiting')}
+              actions={linkButton({
+                label: _('sale_backend.dashboard.recent.all'),
+                href: `${quotations}${quotations.includes('?') ? '&' : '?'}preset=sent`,
+                variant: 'tertiary',
+              })}
+              body={
+                o.awaiting?.length
+                  ? dataTable(_, {
+                      columns: salesOrderColumns(_, localeQuery),
+                      responsive: 'scroll',
+                      gutter: 'compact',
+                      rows: o.awaiting,
+                      id: (row) => String(row.id),
+                      rowHref: o.rowHref,
+                    })
+                  : emptyState(_('sale_backend.dashboard.queueEmpty'), '')
+              }
+            />,
+            <Section
+              title={_('sale_backend.dashboard.recent.title')}
+              description={_('sale_backend.dashboard.recent.hint')}
+              actions={linkButton({
+                label: _('sale_backend.dashboard.recent.all'),
+                href: orders,
+                variant: 'tertiary',
+              })}
+              body={
+                o.recent.length
+                  ? dataTable(_, {
+                      columns: salesOrderColumns(_, localeQuery),
+                      responsive: 'scroll',
+                      gutter: 'compact',
+                      rows: o.recent,
+                      rowHref: o.rowHref,
+                      id: (row) => String(row.id),
+                    })
+                  : emptyState(_('sale_backend.orderList.empty'), _('sale_backend.orderList.emptyHint'), {
+                      icon: icon('shopping-bag'),
+                    })
+              }
+            />,
+          ],
+          'loose',
+        )}
+      />
+      <SalesReportHelp lang={lang} screen="overview" />
+    </>,
+    {
+      ...o.frame,
+      topbar: false,
+      ...(o.frame.applications
+        ? { applications: { ...o.frame.applications, helpLabel: HELP[lang].trigger } }
+        : {}),
+    },
   )
 }

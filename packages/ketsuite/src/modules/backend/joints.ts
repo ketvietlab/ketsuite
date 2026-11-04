@@ -28,6 +28,12 @@ export const joints: Record<string, JointDef> = {
    */
   'table.grid': { props: { id: 'id', config: 'json' } },
   /**
+   * An editable `KetGrid` inside a server-rendered form. With `config.name` the grid keeps a
+   * hidden field of that name holding its posted changes (added, updated, removed rows), and
+   * blocks the form's submit while a changed cell is wrong, as a native field would.
+   */
+  'edit.grid': { props: { id: 'id', config: 'json' } },
+  /**
    * A `search-filter` island (`@ketvietlab/design-system`) — the free-text
    * search, filter menu and Group By picker for a screen's `table.grid`. Like
    * `table.grid`, the config is already computed, translated and formatted.

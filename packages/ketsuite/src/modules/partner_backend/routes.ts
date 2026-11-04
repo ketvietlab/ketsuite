@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { text } from '@ketvietlab/ketjs'
 import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'
 import { readForm, seeOther } from '../backend/forms.ts'
+import { optionalRead } from '../backend/optional-read.ts'
 import { PAGE_SIZE, colsHref, colsOf, pageOf, pager, searchOf } from '../backend/paging.ts'
 import { newPartnerScreen, partnerFormScreen, partnersScreen } from './screens/index.ts'
 import { partnerRelationControl } from './relation-control.ts'
-import { adminPage, inLocale } from '../backend/screen.ts'
+import { adminPage, inLocale, jointFor } from '../backend/screen.ts'
 import type { AnyRow, Req } from '../backend/screen.ts'
 import type { TableSelection } from '../../ui/index.ts'
 import { tableGrid } from '../backend/ket-table.ts'
@@ -92,8 +93,9 @@ const addressFormsFor = async (
   addresses: AnyRow[],
 ) => {
   const _ = ctx.translate(ctx.localeOf(url, req))
-  const installed = (await ctx.call('address.listCountries', {}, url, req)) as AnyRow[]
-  const available = (await ctx.call('address.availableCatalogs', {}, url, req)) as AnyRow[]
+  // The country lists belong to the address module; without them the form still offers VN.
+  const installed = await optionalRead<AnyRow[]>(ctx, 'address.listCountries', {}, url, req, [])
+  const available = await optionalRead<AnyRow[]>(ctx, 'address.availableCatalogs', {}, url, req, [])
   // Seed/demo records may bypass the address module's catalog validation. Never
   // serialize those synthetic ids into every address island: besides presenting
   // invalid choices, a large data-key can turn a small form into megabytes of
@@ -125,12 +127,14 @@ const addressFormsFor = async (
     const key = parentId ? `${countryCode}:${parentId}` : countryCode
     const held = cache.get(key)
     if (held) return held
-    const rows = (await ctx.call(
+    const rows = await optionalRead<AnyRow[]>(
+      ctx,
       'address.listDivisionChildren',
       { countryCode, parentId: parentId || null, limit: 1000 },
       url,
       req,
-    )) as AnyRow[]
+      [],
+    )
     cache.set(key, rows)
     return rows
   }
@@ -209,7 +213,8 @@ export const renderPartnerForm = async (
   const _ = ctx.translate(lang)
   const row = (await ctx.call('partner.getPartner', { id }, url, req)) as AnyRow | null
   if (!row) return text(_('partner_backend.error.notFound'), { status: 404 })
-  const [parents, terms, integration, salesActions, collaboration] = await Promise.all([
+  const [salesProfile, parents, terms, integration, salesActions, collaboration] = await Promise.all([
+    jointFor(ctx, url, req, 'partner_backend:record.salesProfile', { partnerId: id, lang }),
     partnerOptions(ctx, url, req, row.parentId ? String(row.parentId) : null, id),
     ctx.call('partner.getTerms', { partnerId: id }, url, req) as Promise<AnyRow | null>,
     ctx.joint(url, req, 'partner_backend:record.actions', {
@@ -222,7 +227,7 @@ export const renderPartnerForm = async (
       partnerId: id,
       lang,
     }),
-    ctx.joint(url, req, 'partner_backend:record.collaboration', {
+    jointFor(ctx, url, req, 'partner_backend:record.collaboration', {
       resModel: 'partner.Partner',
       resId: id,
       lang,
@@ -253,6 +258,7 @@ export const renderPartnerForm = async (
           errors,
           integration,
           salesActions,
+          salesProfile,
           collaboration,
           addressForms,
           parentControl,

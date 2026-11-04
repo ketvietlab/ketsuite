@@ -1,0 +1,28 @@
+export const bulkMessages = {
+  vi: {
+    'bulk.title': 'Sửa hàng loạt',
+    'bulk.selection': 'Sản phẩm đã chọn',
+    'bulk.field': 'Trường cần đổi',
+    'bulk.value': 'Giá trị mới',
+    'bulk.choose': 'Chọn…',
+    'bulk.chooseField': 'Chọn trường cần đổi để nhập giá trị mới.',
+    'bulk.atomic': 'Một sản phẩm bị từ chối thì cả nhóm không đổi. Giá trị đã đúng được giữ nguyên.',
+    'bulk.yes': 'Có',
+    'bulk.no': 'Không',
+    'bulk.cancel': 'Hủy',
+    'bulk.apply': 'Áp dụng',
+  },
+  en: {
+    'bulk.title': 'Bulk edit',
+    'bulk.selection': 'Selected products',
+    'bulk.field': 'Field to change',
+    'bulk.value': 'New value',
+    'bulk.choose': 'Choose…',
+    'bulk.chooseField': 'Choose a field to enter its new value.',
+    'bulk.atomic': 'If one product is refused, none change. Values that already match remain untouched.',
+    'bulk.yes': 'Yes',
+    'bulk.no': 'No',
+    'bulk.cancel': 'Cancel',
+    'bulk.apply': 'Apply',
+  },
+}

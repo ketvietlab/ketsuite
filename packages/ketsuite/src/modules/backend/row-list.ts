@@ -309,6 +309,7 @@ export const rowListSearch = async <R extends AnyRow>(
     bodyId: string
     functions: ListSearchFilterOptions['functions']
     labels?: ListSearchFilterOptions['labels']
+    fieldChoices?: ListSearchFilterOptions['fieldChoices']
     /** How a group's value reads in the reader's language. */
     groupLabel?: (key: string, value: unknown) => string
   },
@@ -327,6 +328,7 @@ export const rowListSearch = async <R extends AnyRow>(
     bodyId: options.bodyId,
     functions: options.functions,
     ...(options.labels ? { labels: options.labels } : {}),
+    ...(options.fieldChoices ? { fieldChoices: options.fieldChoices } : {}),
   })
   const { state } = chrome
   const rows = applyRowListState(spec, state, options.rows)

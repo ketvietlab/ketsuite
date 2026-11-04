@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { each, html, signal } from '@ketvietlab/ketjs-view'
 import { productEditorBehavior } from '../packages/ketsuite/src/modules/product_backend/client/editor-view.mjs'
-import { saleEditorBehavior } from '../packages/ketsuite/src/modules/sale_backend/client/editor-view.mjs'
 import { stockEditorBehavior } from '../packages/ketsuite/src/modules/stock_backend/client/editor-view.mjs'
 import { createRecordActivityView } from '../packages/ketsuite/src/ui/client/activity-view.mjs'
 import { createChatterView } from '../packages/ketsuite/src/ui/client/mail-view.mjs'
@@ -32,12 +31,8 @@ test('record editor behaviors bind document submits to their browser lifetime', 
       reload: () => {},
     }
     const context = { navigation, lifetime: lifetime.signal }
-    const cleanups = [
-      productEditorBehavior(context),
-      stockEditorBehavior(context),
-      saleEditorBehavior(context),
-    ]
-    assert.equal(added.length, 3)
+    const cleanups = [productEditorBehavior(context), stockEditorBehavior(context)]
+    assert.equal(added.length, 2)
     assert.ok(
       added.every(
         ([name, , options]) =>

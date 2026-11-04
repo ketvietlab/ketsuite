@@ -1,4 +1,4 @@
-// Bundles the KetAtlas island runtime (atlas/island-runtime.ts) into a single,
+// Bundles the KetAtlas island runtime (atlas/island-hydration.ts) into a single,
 // self-contained script with zero imports or exports — unlike the other client
 // builders here, @ketvietlab/ketjs-view is bundled IN rather than resolved to the
 // framework's /_ket/view/index.js, because a KetAtlas mock is a self-contained HTML
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const ENTRY = join(ROOT, 'packages/design-system/src/atlas/relation-select-hydration.ts')
+const ENTRY = join(ROOT, 'packages/design-system/src/atlas/island-hydration.ts')
 const OUTFILE = join(ROOT, 'packages/design-system/src/atlas/island-runtime.mjs')
 
 export async function buildDesignSystemAtlasRuntime() {

@@ -103,8 +103,9 @@ test('sale lists HTTP: the bar applies and saves searches through the shared fun
   assert.deepEqual(href.searchParams.getAll('preset'), ['draft'])
   assert.deepEqual(href.searchParams.getAll('group'), ['state'])
 
+  // A name no screen text carries: the quotation Help speaks of drafts too.
   const favorite = await app.client.call<{ id: string }>('sale_backend.saveSearchFavorite', {
-    name: 'Báo giá còn nháp',
+    name: 'Nháp của Minh',
     isDefault: true,
     state: {
       listKey: 'sale.quotations',
@@ -123,18 +124,18 @@ test('sale lists HTTP: the bar applies and saves searches through the shared fun
     customFilters: [],
   })
   assert.deepEqual(new URL(reopened.value.href, 'http://ket.local').searchParams.getAll('preset'), ['draft'])
-  assert.match(await (await app.client.get(returnTo)).text(), /Báo giá còn nháp/)
+  assert.match(await (await app.client.get(returnTo)).text(), /Nháp của Minh/)
 
   await app.client.call('sale_backend.deleteSearchFavorite', {
     listKey: 'sale.quotations',
     id: favorite.value.id,
   })
-  assert.doesNotMatch(await (await app.client.get(returnTo)).text(), /Báo giá còn nháp/)
+  assert.doesNotMatch(await (await app.client.get(returnTo)).text(), /Nháp của Minh/)
 })
 
 test('sale lists HTTP: every sales list carries the bar', async (t) => {
   const app = await boot(t)
-  for (const path of ['/admin/sales/quotations', '/admin/sales/orders', '/admin/sales/invoicing-policies']) {
+  for (const path of ['/admin/sales/quotations', '/admin/sales/orders']) {
     const response = await app.client.get(`${path}?lang=vi`)
     const html = await response.text()
     assert.equal(response.status, 200, path)

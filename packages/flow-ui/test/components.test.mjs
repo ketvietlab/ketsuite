@@ -23,7 +23,9 @@ test('date inputs compose the public DS calendar and retain one ISO form value',
   assert.match(output, /data-kv-design-system/)
   assert.match(output, /data-ui="date-picker"/)
   assert.match(output, /data-date-value="2026-10-11"/)
-  assert.equal((output.match(/<input/g) ?? []).length, 1)
+  // The native field carries the ISO value; the DS adds the field a reader types the day in.
+  assert.equal((output.match(/<input/g) ?? []).length, 2)
+  assert.match(output, /data-ui="date-entry"/)
   assert.match(output, /type="date"[^>]*name="due"[^>]*value="2026-10-11"/)
   assert.match(output, /min="2026-10-01"[^>]*max="2026-10-31"/)
   assert.match(output, /aria-invalid="true"/)

@@ -24,7 +24,8 @@ export default defineModule({
   depends: ['sale_backend', 'sale_mail_backend', 'activity_backend'],
   functions,
   fills: {
-    'sale_backend:order.collaboration': `{% island "activity.record" %}`,
+    // Only for a viewer who may read the order's activities and their types.
+    'sale_backend:order.collaboration': `{% if may.activity.listTypes %}{% if may.sale_activity_backend.list %}{% island "activity.record" %}{% endif %}{% endif %}`,
   },
 })
 

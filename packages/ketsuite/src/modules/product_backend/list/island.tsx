@@ -1,3 +1,5 @@
+import { savedFilterMenu } from '../filters/menu.tsx'
+import { recordModalHref } from '../../../ui/record-modal.tsx'
 // The product list, as three client islands over one paged read (design system:
 // "Collections are client islands"; the read is ./read.ts): the query controls in the
 // page's controls slot, the rows in its body and the pager in its footer, sharing one store.
@@ -15,10 +17,12 @@ import {
   ConfirmDialog,
   ContentCard,
   EmptyState,
+  Field,
   Inline,
   KetTable,
   LinkButton,
   ListChrome,
+  Menu,
   Notice,
   Button,
   Stack,
@@ -55,12 +59,13 @@ export type ProductListProps = IslandProps & {
   timezone: string
   lang: string
   pageSize: number
-  labels: ProductListLabels & KetTableLabels & { typeGoods: string; typeService: string; create: string }
+  labels: ProductListLabels &
+    KetTableLabels & { typeGoods: string; typeService: string; typeCombo?: string; create: string }
   /** The search bar for the URL the server rendered; the island keeps it in step after that. */
   search: SearchFilterConfig
   createHref?: string | null
   /** Where selected rows are archived or deleted, and which the viewer may do; absent for neither. */
-  bulk?: { action: string; archive: boolean; delete: boolean } | null
+  bulk?: { action: string; archive: boolean; delete: boolean; edit?: boolean } | null
   /** Whether the viewer may see product images; without it a row shows no picture, not a broken one. */
   images?: boolean
 }
@@ -168,6 +173,7 @@ export const productSearchConfig = (
     )
   return {
     ...base,
+    capabilities: { ...base.capabilities, favorites: false },
     // Typed text stays in the field (`applyOnInput`); it is never a chip.
     query: state.q ?? '',
     facets,
@@ -226,6 +232,11 @@ const createListStore = (props: ProductListProps, release: () => void) => {
   const lang = props.lang === 'en' ? 'en' : 'vi'
   const locale = lang === 'en' ? 'en-VN' : 'vi-VN'
   const money = new Intl.NumberFormat(locale, { style: 'currency', currency: 'VND' })
+  // Variants priced apart show where the product starts; one price shows as it is.
+  const price = (row: ProductListRow): string => {
+    const amount = money.format(Number(row.fromPrice ?? row.listPrice))
+    return row.priceVaries ? format(labels.priceFrom, { price: amount }) : amount
+  }
   const quantity = new Intl.NumberFormat(locale, { maximumFractionDigits: 3 })
   const percent = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 })
 
@@ -237,7 +248,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
   const confirming = signal<'archive' | 'delete' | null>(null)
   const currentRow = signal<string | undefined>(undefined)
   const missingRow = signal(false)
-  const bulkError = signal(false)
+  const bulkError = signal<'archive' | 'delete' | null>(null)
 
   const cache = new Map<string, ProductListAnswer>()
   let controller: AbortController | undefined
@@ -253,7 +264,10 @@ const createListStore = (props: ProductListProps, release: () => void) => {
   let opener: HTMLElement | null = null
 
   const search = createSearchFilterView(
-    { id: SEARCH_ID, config: props.search },
+    {
+      id: SEARCH_ID,
+      config: { ...props.search, capabilities: { ...props.search.capabilities, favorites: false } },
+    },
     {
       apply: async (input: SearchFilterApplyInput, signal: AbortSignal) => {
         const answer = await callFunction<{ href: string }>(
@@ -341,7 +355,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       selection.set({ ids: [], anchor: null })
       currentRow.set(undefined)
       missingRow.set(false)
-      bulkError.set(false)
+      bulkError.set(null)
       href.set(next)
     })
     anchor = null
@@ -397,7 +411,13 @@ const createListStore = (props: ProductListProps, release: () => void) => {
     })
   const dash = () => Text({ children: '—', variant: 'bodyMd' })
   const typeLabel = (type: string) =>
-    type === 'service' ? labels.typeService : type === 'goods' ? labels.typeGoods : type
+    type === 'service'
+      ? labels.typeService
+      : type === 'goods'
+        ? labels.typeGoods
+        : type === 'combo'
+          ? (labels.typeCombo ?? 'Combo')
+          : type
   // As the product page words it: archived, kept but not sold, or on sale.
   const status = (row: ProductListRow) =>
     Badge({
@@ -470,7 +490,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       column(
         'listPrice',
         labels['col.price'],
-        (row) => Text({ children: money.format(Number(row.listPrice)), variant: 'bodyMd', numeric: true }),
+        (row) => Text({ children: price(row), variant: 'bodyMd', numeric: true }),
         { align: 'end', kind: 'currency' },
         'listPrice',
       ),
@@ -579,10 +599,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       meta: Inline({
         align: 'between',
         blockAlign: 'center',
-        items: [
-          Text({ children: money.format(Number(row.listPrice)), variant: 'headingLg', numeric: true }),
-          status(row),
-        ],
+        items: [Text({ children: price(row), variant: 'headingLg', numeric: true }), status(row)],
       }),
     })
   const cards = (rows: readonly ProductListRow[]) =>
@@ -691,7 +708,8 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       return
     }
     // The saved-search form and other route modals are the shell's pages.
-    if (next.pathname !== LIST_PATH || next.searchParams.has('modal')) return
+    if (next.pathname !== LIST_PATH || next.searchParams.has('modal') || next.searchParams.has('record'))
+      return
     // preventDefault alone keeps the shell from following the link; the click
     // still bubbles so the document closes an open filter popover or menu.
     event.preventDefault()
@@ -705,6 +723,19 @@ const createListStore = (props: ProductListProps, release: () => void) => {
     // The dialog's own confirm button posts the selection; the toolbar's asks first.
     if (submitter?.closest('[data-ui="dialog"]')) return
     event.preventDefault()
+    if (
+      submitter?.value === 'edit' &&
+      props.bulk?.edit &&
+      selection().ids.length &&
+      selection().ids.length <= 200 &&
+      phase() === 'ready'
+    ) {
+      const target = new URL(href(), location.href)
+      target.searchParams.delete('bulkProduct')
+      for (const id of selection().ids) target.searchParams.append('bulkProduct', id)
+      location.assign(recordModalHref(target, { kind: 'product.bulkEdit', id: 'new' }))
+      return
+    }
     const action =
       submitter?.value === 'delete' ? 'delete' : submitter?.value === 'archive' ? 'archive' : null
     if (action && selection().ids.length && phase() === 'ready') openConfirm(action, submitter)
@@ -719,11 +750,37 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       const action = confirming()
       return (
         <IslandRegion marker="product-list-controls">
-          {props.bulk ? (
+          {props.bulk && !action ? (
             <HiddenPostForm id={BULK_FORM} action={props.bulk.action} fields={{ returnTo: href() }} />
           ) : null}
           {ListChrome({
             query: search.view(),
+            actions: LinkButton({
+              label: labels.exportCsv,
+              href: (() => {
+                const target = new URL(href(), 'http://ket.local')
+                target.pathname = '/admin/product/templates/export'
+                return target.pathname + target.search
+              })(),
+              variant: 'secondary',
+            }),
+            filterMenus: [
+              savedFilterMenu(href(), result()?.favorites ?? [], props.lang),
+              result()?.tags?.length
+                ? Menu({
+                    id: 'product-template-tags',
+                    label: `${labels.tags}: ${result()?.tags?.find((tag) => tag.active)?.name || labels.allTags}`,
+                    size: 'compact',
+                    selectionMode: 'single',
+                    items: result()!.tags!.map((tag) => ({
+                      id: tag.id || 'all',
+                      label: tag.name || labels.allTags,
+                      href: tag.href,
+                      checked: tag.active,
+                    })),
+                  })
+                : null,
+            ],
             viewsLabel: labels['view.label'],
             views: (['list', 'kanban'] as const).map((id) => ({
               id,
@@ -739,7 +796,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                     selectedCount: selected,
                     summary: format(labels.selected, { count: selected }),
                     clearLabel: labels['bulk.clear'],
-                    actions: (['archive', 'delete'] as const)
+                    actions: (['edit', 'archive', 'delete'] as const)
                       .filter((id) => props.bulk?.[id])
                       .map((id) => ({
                         id,
@@ -747,7 +804,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                         name: 'action',
                         value: id,
                         variant: id === 'delete' ? ('destructive' as const) : ('secondary' as const),
-                        disabled: phase() !== 'ready',
+                        disabled: phase() !== 'ready' || (id === 'edit' && selected > 200),
                       })),
                   },
                 }
@@ -765,6 +822,27 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                 confirmName: 'action',
                 confirmValue: action,
                 confirmForm: BULK_FORM,
+                details: props.bulk ? (
+                  <HiddenPostForm
+                    id={BULK_FORM}
+                    action={props.bulk.action}
+                    fields={{
+                      returnTo: href(),
+                      ...Object.fromEntries(selection().ids.map((id) => [`selected.${id}`, '1'])),
+                    }}
+                  >
+                    {action === 'archive' ? (
+                      <Field
+                        id="product-bulk-reason"
+                        name="reason"
+                        type="textarea"
+                        label={labels['archiveReason']}
+                        required
+                        maxLength={500}
+                      />
+                    ) : null}
+                  </HiddenPostForm>
+                ) : null,
                 confirmVariant: action === 'delete' ? 'destructive' : 'primary',
               })
             : null}
@@ -801,7 +879,7 @@ const createListStore = (props: ProductListProps, release: () => void) => {
                     Notice({
                       tone: 'danger',
                       title: labels['bulkError.title'],
-                      message: labels['bulkError.delete'],
+                      message: labels[bulkError() === 'archive' ? 'bulkError.archive' : 'bulkError.delete'],
                     }),
                   ]
                 : []),
@@ -836,12 +914,14 @@ const createListStore = (props: ProductListProps, release: () => void) => {
       root = context.root as unknown as HTMLElement
       anchor = takeRowAnchor()
       currentRow.set(anchor?.id)
-      // The bulk route answers a refused delete with this flag; it is said once and dropped.
-      const url = new URL(location.href)
-      if (url.searchParams.get('bulkError') === 'delete') {
-        bulkError.set(true)
+      // A fragment mounts before the shell updates location.href. Start from the
+      // list's own URL so reads and bulk returns cannot inherit the previous record.
+      const url = new URL(props.href, location.href)
+      if (['delete', 'archive'].includes(url.searchParams.get('bulkError') ?? '')) {
+        bulkError.set(url.searchParams.get('bulkError') === 'archive' ? 'archive' : 'delete')
         url.searchParams.delete('bulkError')
-        history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`)
+        if (new URL(location.href).pathname === url.pathname)
+          history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`)
       }
       href.set(`${url.pathname}${url.search}`)
       root.addEventListener('click', onClick, { signal: active })
@@ -850,7 +930,12 @@ const createListStore = (props: ProductListProps, release: () => void) => {
         (event) => {
           const next = new URL(location.href)
           // A route modal over the list (the saved-search form) is the shell's to close.
-          if (next.pathname !== LIST_PATH || next.searchParams.has('modal')) return
+          if (
+            next.pathname !== LIST_PATH ||
+            next.searchParams.has('modal') ||
+            next.searchParams.has('record')
+          )
+            return
           if (document.querySelector('[data-ui="modal-layer"][data-route-modal="true"]')) return
           event.preventDefault()
           if (confirming()) closeConfirm()

@@ -165,3 +165,88 @@ test('manufacturing work centers HTTP: modal CRUD keeps locale, numeric semantic
   assert.deepEqual(finalRows.value.map((row) => row.code).sort(), ['LEGACY', 'PACK'])
   assert.equal(finalRows.value.find((row) => row.id === 'packing')?.active, true)
 })
+
+test('manufacturing work centers HTTP: a reader without the grant gets the lock page, a viewer only reads', async (t) => {
+  const e2e = await bootWorkCenters(t)
+  const fixture = (name: string, input: Record<string, unknown>) =>
+    e2e.fixture.call(name, input, { scope: { company: 'acme', branches: null } })
+  await fixture('user.saveRole', { id: 'reader', name: 'Reader' })
+  await fixture('user.createUser', {
+    id: 'reader',
+    login: 'reader',
+    password: 'test-password',
+    name: 'Reader',
+    defaultCompanyId: 'acme',
+  })
+  await fixture('user.grantCompany', { id: 'reader-company', userId: 'reader', companyId: 'acme' })
+  await fixture('user.assignRole', { id: 'reader-role', userId: 'reader', roleId: 'reader' })
+  const reader = e2e.client.anonymous()
+  await reader.login({ login: 'reader', password: 'test-password' })
+
+  for (const [lang, title] of [
+    ['vi', 'Bạn chưa được xem khu sản xuất'],
+    ['en', 'You cannot view work centers yet'],
+  ]) {
+    const locked = await reader.get(`/admin/manufacturing/work-centers?lang=${lang}`)
+    assert.equal(locked.status, 403)
+    const html = await locked.text()
+    assert.match(html, /data-visual="locked"/)
+    assert.ok(html.includes(title))
+    assert.doesNotMatch(html, /PACK/)
+  }
+
+  for (const fnKey of ['manufacturing.listWorkCenters', 'manufacturing.getWorkCenter']) {
+    const granted = await fixture('user.grantFunction', { id: fnKey, roleId: 'reader', fnKey })
+    assert.notEqual(granted.ok, false, JSON.stringify(granted))
+  }
+  const list = await (await reader.get('/admin/manufacturing/work-centers?lang=vi')).text()
+  assert.match(list, /PACK/)
+  assert.match(list, /manufacturing-work-center-help/)
+  // Without the configure grant the list offers neither a create nor archive.
+  assert.doesNotMatch(list, /create=1/)
+  assert.doesNotMatch(list, /name="action" value="archive"/)
+  const view = await (await reader.get('/admin/manufacturing/work-centers?edit=packing&lang=vi')).text()
+  assert.match(view, /data-ui="modal-layer"/)
+  assert.match(view, /Hàng đợi/)
+  assert.match(view, /Không có công đoạn đang chờ/)
+  assert.doesNotMatch(view, /name="code"/)
+  const archive = await reader.post(
+    '/admin/manufacturing/work-centers?lang=vi',
+    new URLSearchParams({ action: 'archive', id: 'packing' }),
+    { headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual' },
+  )
+  assert.notEqual(archive.status, 303)
+  const rows = await e2e.client.call<Row[]>('manufacturing.listWorkCenters', {})
+  assert.equal(rows.value[0]?.active, true)
+})
+
+test('manufacturing work centers HTTP: the form keeps the skill and names the refused field', async (t) => {
+  const e2e = await bootWorkCenters(t)
+  const post = (path: string, form: URLSearchParams) =>
+    e2e.client.post(path, form, {
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+    })
+  const form = workCenterForm('cook-1', { name: 'Nấu', costPerHour: '90000' })
+  form.set('skill', 'cook')
+  const created = await post('/admin/manufacturing/work-centers?create=1&lang=vi', form)
+  assert.equal(created.status, 303)
+  const list = await (await e2e.client.get('/admin/manufacturing/work-centers?lang=vi')).text()
+  assert.match(list, /COOK-1/)
+  assert.match(list, />Nấu</)
+
+  const taken = await post('/admin/manufacturing/work-centers?create=1&lang=vi', workCenterForm('PACK'))
+  assert.equal(taken.status, 200)
+  assert.match(await taken.text(), /data-ui="form-errors"/)
+  const money = await post(
+    '/admin/manufacturing/work-centers?create=1&lang=en',
+    workCenterForm('MIX', { costPerHour: '12.5' }),
+  )
+  assert.equal(money.status, 200)
+  assert.match(await money.text(), /name="costPerHour"[^>]*value="12.5"/)
+  const rows = await e2e.client.call<Row[]>('manufacturing.listWorkCenters', {})
+  assert.deepEqual(rows.value.map((row) => [row.code, row.skill ?? null]).sort(), [
+    ['COOK-1', 'cook'],
+    ['PACK', null],
+  ])
+})

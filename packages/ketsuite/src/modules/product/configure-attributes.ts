@@ -1,3 +1,10 @@
+import { comboRefusal } from './combo-policy.ts'
+import { attributeNameKey, attributeFailure } from './attribute-policy.ts'
+import { VARIANT_LIMIT, VariantPolicyRefused } from './variant-policy.ts'
+import { BARCODE_EFFECTS, barcodeFailure } from './barcodes.ts'
+import { productCodeFailure } from './codes.ts'
+import { lockVariantTemplate, variantRetirementEffects } from './variant-lifecycle.ts'
+import { lockAttributes } from './attribute-policy.ts'
 // "Configure attributes" on the product page, as one form action.
 //
 // The dialog lists the product's attribute lines; a row is an existing attribute or one
@@ -12,6 +19,8 @@ import { randomUUID } from 'node:crypto'
 import { defineFn } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { applyVariantSetup, variantSetupOf } from './variant-setup.ts'
+import { FIELD_GROUP_FUNCTIONS, holdsFunction } from './functions/shared.ts'
+import { AUTHORIZATION_READ_EFFECTS } from '../user/authorization.ts'
 
 type Issue = { field: string; code: string; params?: Record<string, unknown> }
 
@@ -21,7 +30,7 @@ type PlannedValue = { valueId: string | null; name: string; priceExtra: string; 
 
 /** Most attribute lines one product may carry, and most variants one apply may make. */
 export const ATTRIBUTE_LINE_LIMIT = 10
-export const COMBINATION_LIMIT = 256
+export const COMBINATION_LIMIT = VARIANT_LIMIT
 const NAME_LIMIT = 60
 
 class Refused extends Error {
@@ -96,7 +105,9 @@ const planLines = (lines: LineInput[], attributes: Row[], values: Row[]) => {
     const chosen = new Set<string>()
     const planned = line.values.flatMap((value, position): PlannedValue[] => {
       const at = `${field}.values.${position}`
-      const priceExtra = signedAmount(value.priceExtra)
+      const priceExtra = signedAmount(
+        value.priceExtra || own.find((row) => row.id === value.valueId)?.defaultPriceExtra || '0',
+      )
       if (priceExtra === null)
         errors.push({ field: `${at}.priceExtra`, code: 'product.error.configure.extra' })
       if (value.valueId) {
@@ -128,6 +139,32 @@ const planLines = (lines: LineInput[], attributes: Row[], values: Row[]) => {
   return { plan, errors }
 }
 
+export async function configureProductAttributes(
+  ctx: Ctx,
+  args: Row,
+  options: { inTransaction?: boolean } = {},
+) {
+  const templateId = String(args.templateId)
+  const lines = readLines(args.lines)
+  if (!lines) return { ok: false, errors: [{ field: 'lines', code: 'product.error.configure.lines' }] }
+  const source = args.duplicateSourceId ? String(args.duplicateSourceId) : null
+  try {
+    return await (options.inTransaction
+      ? configure(ctx, templateId, lines, source)
+      : ctx.tx(async (tx) => configure(tx, templateId, lines, source)))
+  } catch (error) {
+    if (error instanceof Refused) return { ok: false, errors: error.errors }
+    if (error instanceof VariantPolicyRefused) return error.result
+    const refused = attributeFailure(error) ?? productCodeFailure(error) ?? barcodeFailure(error)
+    if (refused) return refused
+    throw error
+  }
+}
+
+export async function configureAttributesHandler(ctx: Ctx, args: Row) {
+  return configureProductAttributes(ctx, args)
+}
+
 export const configureAttributesFunctions: Record<string, FnSpec> = {
   /**
    * Apply the attribute rows of the product page's "Configure attributes" dialog.
@@ -136,18 +173,25 @@ export const configureAttributesFunctions: Record<string, FnSpec> = {
    * existing attribute names its id and a new one only its name; a value is an existing
    * `valueId` or a new `name`, each with a signed `priceExtra`. Field refusals name input
    * paths (`lines.0.values.2.name`); the page maps them back to its controls.
+   * `duplicateSourceId` names the product a copy was made from: each new variant takes
+   * the HS code of the source's variant with the same values (P31).
    */
   configureAttributes: defineFn({
-    input: { templateId: 'id', lines: 'json' },
+    input: { templateId: 'id', lines: 'json', duplicateSourceId: 'id?' },
     output: {
       ok: 'bool',
       created: 'json?',
       variants: 'int?',
       createdVariants: 'int?',
       archivedVariants: 'int?',
+      deletedVariants: 'int?',
       errors: 'json?',
     },
     effects: [
+      ...BARCODE_EFFECTS,
+      ...variantRetirementEffects,
+      ...AUTHORIZATION_READ_EFFECTS,
+      'write:product.Template',
       'read:product.Template',
       'read:product.Attribute',
       'write:product.Attribute',
@@ -165,21 +209,19 @@ export const configureAttributesFunctions: Record<string, FnSpec> = {
     ],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const templateId = String(args.templateId)
-      const lines = readLines(args.lines)
-      if (!lines) return { ok: false, errors: [{ field: 'lines', code: 'product.error.configure.lines' }] }
-      try {
-        return await ctx.tx(async (tx) => configure(tx, templateId, lines))
-      } catch (error) {
-        if (error instanceof Refused) return { ok: false, errors: error.errors }
-        throw error
-      }
-    },
+    handler: configureAttributesHandler,
   }),
 }
 
-const configure = async (tx: Ctx, templateId: string, lines: LineInput[]) => {
+const configure = async (tx: Ctx, templateId: string, lines: LineInput[], source: string | null) => {
+  const template = await lockVariantTemplate(tx, templateId)
+  if (!template)
+    return { ok: false, errors: [{ field: 'templateId', code: 'product.error.duplicate.missing' }] }
+  if (template.type === 'combo') return comboRefusal('templateId', 'noVariants')
+  await lockAttributes(
+    tx,
+    lines.flatMap((line) => (line.attributeId ? [line.attributeId] : [])),
+  )
   const setup = await variantSetupOf(tx, templateId)
   if (!setup) return { ok: false, errors: [{ field: 'templateId', code: 'product.error.duplicate.missing' }] }
   const [attributes, values] = await Promise.all([
@@ -188,8 +230,20 @@ const configure = async (tx: Ctx, templateId: string, lines: LineInput[]) => {
   ])
   // Attributes that only describe the product (no variant) are not in the dialog; their lines stay.
   const describing = setup.lines.filter((line) => line.createVariant === 'no_variant')
+  const retainedLines = lines.map((line) => ({
+    ...line,
+    values: line.values.map((value) => ({
+      ...value,
+      priceExtra:
+        value.priceExtra ||
+        setup.lines
+          .find((held) => held.attributeId === line.attributeId)
+          ?.values.find((held) => held.valueId === value.valueId)?.priceExtra ||
+        '',
+    })),
+  }))
   const { plan, errors } = planLines(
-    lines,
+    retainedLines,
     attributes.filter((row) => row.createVariant !== 'no_variant'),
     values,
   )
@@ -214,6 +268,7 @@ const configure = async (tx: Ctx, templateId: string, lines: LineInput[]) => {
       await tx.db.insert('product.Attribute', {
         id: attributeId,
         name: line.name,
+        nameKey: attributeNameKey(line.name),
         displayType: 'select',
         createVariant: 'always',
         sequence: 10,
@@ -274,13 +329,22 @@ const configure = async (tx: Ctx, templateId: string, lines: LineInput[]) => {
   const wasPossible = (valueIds: Record<string, string>) =>
     Object.keys(valueIds).length > 0 && Object.values(valueIds).every((valueId) => offered.has(valueId))
   const taken = new Set<string>()
+  // A copy's variant keeps the HS code its source's variant of the same values declares (P31).
+  // HS codes are stock fields (P28): a copier without stock setup makes the variants without.
+  const copyCodes = source !== null && (await holdsFunction(tx, FIELD_GROUP_FUNCTIONS.stock))
+  const copied = new Map(
+    (copyCodes ? ((await variantSetupOf(tx, source))?.variants ?? []) : []).flatMap((variant) =>
+      variant.hsCode ? [[key(variant.valueIds), variant.hsCode] as const] : [],
+    ),
+  )
   const variants = combos.map((valueIds) => {
     const variant = kept.get(key(valueIds)) ?? extended(valueIds)
     if (variant && !taken.has(variant.id)) {
       taken.add(variant.id)
       return { ...variant, valueIds, active: variant.active || !wasPossible(variant.valueIds) }
     }
-    return { id: null, valueIds, defaultCode: null, barcode: null, weight: '0', volume: '0', active: true }
+    const hsCode = copied.get(key(valueIds))
+    return { id: null, valueIds, active: true, ...(hsCode ? { hsCode } : {}) }
   })
   const setupLines = [
     ...resolved,
@@ -289,7 +353,7 @@ const configure = async (tx: Ctx, templateId: string, lines: LineInput[]) => {
       values: line.values.map((value) => ({ valueId: value.valueId, priceExtra: value.priceExtra })),
     })),
   ]
-  const applied = await applyVariantSetup(tx, templateId, setupLines, variants)
+  const applied = await applyVariantSetup(tx, templateId, setupLines, variants, { lockedTemplate: template })
   // Refused after the new attributes were written: roll them back with the rest.
   if (!applied.ok)
     throw new Refused(
@@ -306,5 +370,6 @@ const configure = async (tx: Ctx, templateId: string, lines: LineInput[]) => {
     variants: variants.length,
     createdVariants: applied.created,
     archivedVariants: applied.archived,
+    deletedVariants: applied.deleted,
   }
 }

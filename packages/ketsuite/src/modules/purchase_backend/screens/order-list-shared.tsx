@@ -1,5 +1,6 @@
 import type { Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
+import { formatDateTime } from '../../../ui/format.ts'
 import { badge, collectionTable, formatMoney } from '../../../ui/index.ts'
 import type { Column, DataTable } from '../../../ui/index.ts'
 import { labelOf, purchaseOrderPath } from './shared.tsx'
@@ -33,7 +34,14 @@ export const purchaseOrderListColumns = (_: Translator): Array<Column<PurchaseOr
   {
     key: 'date',
     label: _('purchase_backend.field.dateOrder'),
-    cell: (row) => String(row.dateOrder).slice(0, 10),
+    // The stored day, written as the viewer reads dates rather than as ISO.
+    cell: (row) =>
+      row.dateOrder
+        ? formatDateTime(_.locale, new Date(`${String(row.dateOrder).slice(0, 10)}T00:00:00Z`), {
+            dateStyle: 'short',
+            timeZone: 'UTC',
+          })
+        : '',
     kind: 'date',
   },
   {
