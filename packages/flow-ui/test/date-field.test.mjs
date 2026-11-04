@@ -29,7 +29,8 @@ test('unset and readonly dates retain an accessible placeholder and block edits'
   )
   assert.match(out, /Hạn: Chưa đặt/)
   assert.match(out, /Đặt hạn/)
-  assert.equal((out.match(/disabled="true"/g) ?? []).length, 4)
+  // The DS date picker's typed-day field is locked with the native one.
+  assert.equal((out.match(/disabled="true"/g) ?? []).length, 5)
 })
 test('overdue dates retain only the date visually and expose urgency to assistive technology', () => {
   const out = renderToStaticString(

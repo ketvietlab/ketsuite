@@ -4,8 +4,27 @@ export const permissions = {
   posture: 'permission-bearing',
   // `cost` stands apart from `view`: purchase cost and margin are management
   // figures, and a role can browse the catalogue without reading them.
-  bundles: ['configure', 'cost', 'operate', 'report', 'view'],
+  // A product record has three field groups, each with its own editors: general
+  // fields (`configure`), stock setup such as the barcode (`stock-setup`) and
+  // accounting such as the cost (`accounting`).
+  bundles: ['accounting', 'configure', 'cost', 'operate', 'report', 'stock-setup', 'view'],
   functions: {
+    bulkEditProducts: [
+      'configure',
+      ['configure', 'stock-setup', 'accounting'],
+      'product.configuration-audit',
+    ],
+    listBulkEdits: ['read', 'view'],
+    importProducts: ['configure', 'configure', 'product.configuration-audit'],
+    listImports: ['read', 'view'],
+    getImport: ['read', 'view'],
+    exportImportSheet: ['read', 'view'],
+    listCombos: ['read', 'view'],
+    saveCombo: ['configure', 'configure', 'product.configuration-audit'],
+    setComboActive: ['configure', 'configure', 'product.configuration-audit'],
+    listTags: ['read', 'view'],
+    saveTag: ['configure', 'configure', 'product.configuration-audit'],
+    setTagActive: ['configure', 'configure', 'product.configuration-audit'],
     addProductUom: ['operate', 'operate'],
     addTemplateUom: ['operate', 'operate'],
     archiveTemplate: ['configure', 'configure', 'product.configuration-audit'],
@@ -15,6 +34,8 @@ export const permissions = {
     duplicateTemplate: ['configure', 'configure', 'product.configuration-audit'],
     generateVariants: ['operate', 'operate'],
     getTemplate: ['read', 'view'],
+    getPackagingGrid: ['read', 'view'],
+    savePackagingGrid: ['configure', 'stock-setup', 'product.configuration-audit'],
     getVariant: ['read', 'view'],
     getVariantSummary: ['read', 'report'],
     groupTemplates: ['operate', 'operate'],
@@ -34,10 +55,16 @@ export const permissions = {
     saveAttributeValue: ['configure', 'configure', 'product.configuration-audit'],
     saveBrand: ['configure', 'configure', 'product.configuration-audit'],
     saveCategory: ['configure', 'configure', 'product.configuration-audit'],
+    saveCategoryRecord: ['configure', ['configure', 'accounting'], 'product.configuration-audit'],
+    setCategoryActive: ['configure', 'configure', 'product.configuration-audit'],
+    // The page's one save: each field group inside still needs its own function.
+    saveRecord: ['configure', ['configure', 'stock-setup', 'accounting'], 'product.configuration-audit'],
     saveTemplate: ['configure', 'configure', 'product.configuration-audit'],
     saveVariant: ['configure', 'configure', 'product.configuration-audit'],
     saveVariantSetup: ['configure', 'configure', 'product.configuration-audit'],
-    setCost: ['configure', 'configure', 'product.configuration-audit'],
+    saveVariantStock: ['configure', 'stock-setup', 'product.configuration-audit'],
+    setBarcode: ['configure', 'stock-setup', 'product.configuration-audit'],
+    setCost: ['configure', 'accounting', 'product.configuration-audit'],
     setPackagingBarcodes: ['operate', 'operate'],
     setProductUom: ['configure', 'configure', 'product.configuration-audit'],
     templateModalContext: ['read', 'view'],

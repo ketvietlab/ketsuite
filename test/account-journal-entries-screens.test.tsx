@@ -125,7 +125,7 @@ test('journal entry modal is URL-addressable and keeps list return state', () =>
     }),
   )
 
-  assert.match(html, /data-ui="modal-layer" data-route-modal="true" data-presentation="sheet"/)
+  assert.match(html, /data-ui="modal-layer" data-route-modal="true" data-presentation="dialog"/)
   assert.match(html, /action="\/admin\/accounting\/entries\?lang=vi&amp;state=draft&amp;create=1"/)
   assert.match(html, /href="\/admin\/accounting\/entries\?lang=vi&amp;state=draft"/)
   assert.match(html, /type="hidden" name="id" value="entry-request-modal"/)

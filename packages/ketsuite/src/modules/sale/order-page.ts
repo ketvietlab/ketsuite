@@ -10,9 +10,52 @@ import {
   defineListSearch,
   bucketEq,
   isNull,
+  not,
 } from '@ketvietlab/ketjs'
 import type { Ctx, ListState, FilterNode, Expr } from '@ketvietlab/ketjs'
 import { company } from './scope.ts'
+import { ordersTagged } from './tags.ts'
+import { ordersInTeams } from './teams.ts'
+
+/**
+ * The orders that sold one variant (P32): the analysis on the product page opens the
+ * order list narrowed to them. Read from the lines, which carry the variant; an order
+ * never does.
+ */
+export async function ordersSelling(ctx: Ctx, productId: unknown): Promise<string[]> {
+  const L = ctx.table('sale.OrderLine')
+  const rows = await ctx.db.all(
+    from(L)
+      .select(L.orderId)
+      .where(eq(L.companyId, company(ctx)), eq(L.productId, String(productId))),
+  )
+  return [...new Set(rows.map((row) => String(row.orderId)))]
+}
+
+/** The orders with a line for any variant of these templates (D19). */
+export async function ordersSellingTemplates(ctx: Ctx, templateIds: readonly string[]): Promise<string[]> {
+  if (!templateIds.length) return []
+  const L = ctx.table('sale.OrderLine'),
+    V = ctx.table('product.Product')
+  const variants = await ctx.db.all(
+    from(V)
+      .select(V.id)
+      .where(inArray(V.templateId, [...templateIds])),
+  )
+  if (!variants.length) return []
+  const rows = await ctx.db.all(
+    from(L)
+      .select(L.orderId)
+      .where(
+        eq(L.companyId, company(ctx)),
+        inArray(
+          L.productId,
+          variants.map((row) => String(row.id)),
+        ),
+      ),
+  )
+  return [...new Set(rows.map((row) => String(row.orderId)))]
+}
 
 /** SQL-backed workbench; never materialize the order history to display one page. */
 export async function orderPage(ctx: Ctx, args: Record<string, any>) {
@@ -42,6 +85,10 @@ export async function orderPage(ctx: Ctx, args: Record<string, any>) {
     },
     { key: 'locked', label: 'Locked', col: O.locked, type: 'boolean' as const },
     { key: 'amountTotal', label: 'Amount', col: O.amountTotal, type: 'number' as const },
+    // Who sold it, in which team, to whom (D19); "not set" is an order outside any team.
+    { key: 'userId', label: 'Salesperson', col: O.userId, type: 'reference' as const },
+    { key: 'teamId', label: 'Sales team', col: O.teamId, type: 'reference' as const },
+    { key: 'partnerId', label: 'Customer', col: O.partnerId, type: 'reference' as const },
   ]
   const spec = defineListSearch({
     key: 'sale.orders',
@@ -88,9 +135,16 @@ export async function orderPage(ctx: Ctx, args: Record<string, any>) {
       return node.op === 'and' ? and(...children) : or(...children)
     }
     if (node.field === 'partnerName') return partnerMatch({ ...empty, filters: [node] })
+    // A product is a template: the orders with a line for any of its variants (D19).
+    if (node.field === 'templateId') {
+      const ids = (Array.isArray(node.value) ? node.value : [node.value]).map(String)
+      const sold = await ordersSellingTemplates(ctx, ids)
+      return node.operator === 'notEquals' ? not(inArray(O.id, sold)) : inArray(O.id, sold)
+    }
     return compileListFilter(spec, { ...empty, filters: [node] }, { timezone })!
   }
   let query = from(O).where(eq(O.companyId, company(ctx)), eq(O.state, String(args.state ?? 'sale')))
+  if (args.productId) query = query.where(inArray(O.id, await ordersSelling(ctx, args.productId)))
   const preset = compileListFilter(spec, { ...empty, presets: state.presets ?? [] }, { timezone })
   if (preset) query = query.where(preset)
   if (state.q)
@@ -98,6 +152,10 @@ export async function orderPage(ctx: Ctx, args: Record<string, any>) {
       or(
         compileListFilter(spec, { ...empty, q: state.q }, { timezone })!,
         await partnerMatch({ ...empty, q: state.q }),
+        // Typing a tag's name finds the orders that carry it (D15).
+        inArray(O.id, await ordersTagged(ctx, String(state.q))),
+        // ...and a team's name the orders in it (D16).
+        inArray(O.id, await ordersInTeams(ctx, String(state.q))),
       ),
     )
   for (const node of state.filters ?? []) query = query.where(await filter(node))

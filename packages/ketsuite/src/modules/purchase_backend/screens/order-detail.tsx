@@ -1,4 +1,5 @@
 import type { Translator } from '@ketvietlab/ketjs'
+import { DescriptionList } from '@ketvietlab/design-system'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import {
   badge,
@@ -17,6 +18,8 @@ import {
   Surface,
 } from '../../../ui/index.ts'
 import type { ActionVariant, FormField, Frame } from '../../../ui/index.ts'
+import { formatDateTime } from '../../../ui/format.ts'
+import { PurchaseOrderHelp } from './order-help.tsx'
 import { labelOf, purchaseOrderPath, rejection } from './shared.tsx'
 
 type PurchaseDetailRow = Record<string, unknown>
@@ -41,10 +44,15 @@ export type PurchaseOrderDetailScreenOptions = {
   frame: Frame
   order: PurchaseOrderDetail
   actionPath?: string
-  lineFields: FormField[]
+  /** The order's record modal, where an open RFQ's lines are edited in one grid; null when it may not open. */
+  linesHref?: string | null
   billFields: FormField[]
   printActions?: JSXChild
   invalid?: string | null
+  /** Picks the page guide's language. */
+  lang?: 'vi' | 'en'
+  /** The company's timezone, which the planned date is read in, as in the record modal. */
+  timezone?: string
 }
 
 type PurchaseOrderAction = {
@@ -57,12 +65,37 @@ const detailActions = (_: Translator, order: PurchaseOrderDetail): PurchaseOrder
   const state = String(order.state)
   const actions: PurchaseOrderAction[] = []
   if (state === 'draft') actions.push({ value: 'send', label: _('purchase_backend.action.send') })
-  if (['draft', 'sent'].includes(state)) {
-    actions.push({ value: 'confirm', label: _('purchase_backend.action.confirm'), variant: 'primary' })
-    actions.push({ value: 'request-approval', label: _('purchase_backend.action.requestApproval') })
+  const approval = (order.approval ?? {}) as {
+    required?: number
+    pending?: string[]
+    draftedByCaller?: boolean
   }
-  if (state === 'to approve')
-    actions.push({ value: 'approve', label: _('purchase_backend.action.approve'), variant: 'primary' })
+  if (['draft', 'sent'].includes(state)) {
+    // From a threshold, confirming sends the order for approval.
+    if (Number(approval.required ?? 0) > 0)
+      actions.push({
+        value: 'confirm',
+        label: _('purchase_backend.action.requestApproval'),
+        variant: 'primary',
+      })
+    else {
+      actions.push({ value: 'confirm', label: _('purchase_backend.action.confirm'), variant: 'primary' })
+      actions.push({ value: 'request-approval', label: _('purchase_backend.action.requestApproval') })
+    }
+  }
+  // Whoever drafted the order cannot approve it, so they are not offered to.
+  if (state === 'to approve' && !approval.draftedByCaller) {
+    const pending = approval.pending ?? ['manager']
+    if (pending.includes('manager'))
+      actions.push({ value: 'approve', label: _('purchase_backend.action.approve'), variant: 'primary' })
+    // Once level one is given, the final approval is what is left to do.
+    if (pending.length)
+      actions.push({
+        value: 'final-approve',
+        label: _('purchase_backend.action.finalApprove'),
+        ...(pending.includes('manager') ? {} : { variant: 'primary' as const }),
+      })
+  }
   // Approving is not the only answer to a request under review, and refusing it
   // should not mean destroying it.
   if (['sent', 'to approve'].includes(state))
@@ -92,12 +125,8 @@ const stateTone = (state: string) =>
           ? 'info'
           : 'neutral'
 
-const lineTable = (
-  _: Translator,
-  options: PurchaseOrderDetailScreenOptions,
-  path: string,
-  editable: boolean,
-): TemplateResult => {
+// The lines read here; they are edited in the order's line grid (DS: no form controls in a table).
+const lineTable = (_: Translator, options: PurchaseOrderDetailScreenOptions): TemplateResult => {
   const lines = options.order.lines ?? []
   return lines.length
     ? dataTable(_, {
@@ -139,55 +168,67 @@ const lineTable = (
             align: 'end',
             kind: 'currency',
           },
-          ...(editable
-            ? [
-                {
-                  key: 'edit',
-                  label: _('purchase_backend.lines.edit'),
-                  cell: (row: PurchaseDetailRow) => (
-                    <RecordForm
-                      layout="inline"
-                      action={path}
-                      submit={_('purchase_backend.action.updateLine')}
-                      submitVariant="secondary"
-                      hidden={{ action: 'update-line', lineId: String(row.id) }}
-                      fields={[
-                        {
-                          name: 'productQty',
-                          label: _('purchase_backend.field.productQty'),
-                          type: 'decimal',
-                          value: String(row.productQty),
-                          required: true,
-                        },
-                        {
-                          name: 'priceUnit',
-                          label: _('purchase_backend.field.priceUnit'),
-                          type: 'decimal',
-                          value: String(row.priceUnit),
-                        },
-                      ]}
-                    />
-                  ),
-                },
-                {
-                  key: 'remove',
-                  label: '',
-                  cell: (row: PurchaseDetailRow) => (
-                    <RecordForm
-                      layout="inline"
-                      action={path}
-                      submit={_('purchase_backend.action.removeLine')}
-                      submitVariant="destructive"
-                      hidden={{ action: 'remove-line', lineId: String(row.id) }}
-                      fields={[]}
-                    />
-                  ),
-                },
-              ]
-            : []),
         ],
       })
     : emptyState(_('purchase_backend.lines.empty'), _('purchase_backend.lines.emptyHint'))
+}
+
+type ApprovalFacts = {
+  required?: number
+  given?: { level: string; approverName?: string | null; approvedBy?: string | null }[]
+  pending?: string[]
+  draftedByCaller?: boolean
+}
+/** How many levels the order needs, who approved it and who is still awaited, as in the record modal. */
+const approvalFacts = (_: Translator, order: PurchaseOrderDetail): JSXChild => {
+  const facts = (order.approval ?? {}) as ApprovalFacts
+  const given = facts.given ?? []
+  if (!facts.required && !given.length) return null
+  const level = (name: string) => _(`purchase_backend.approval.level.${name}`)
+  const waiting = String(order.state) === 'to approve'
+  return (
+    <Section
+      title={_('purchase_backend.approval.title')}
+      body={
+        <DescriptionList
+          items={[
+            {
+              id: 'required',
+              label: _('purchase_backend.approval.required'),
+              value: _(`purchase_backend.approval.levels.${Math.min(2, Number(facts.required ?? 0))}`),
+            },
+            {
+              id: 'given',
+              label: _('purchase_backend.approval.given'),
+              value: given.length
+                ? given
+                    .map((row) => `${level(row.level)}: ${row.approverName || row.approvedBy || '—'}`)
+                    .join(' · ')
+                : '—',
+            },
+            ...(waiting
+              ? [
+                  {
+                    id: 'pending',
+                    label: _('purchase_backend.approval.pending'),
+                    value: (facts.pending ?? []).map(level).join(' · ') || '—',
+                  },
+                ]
+              : []),
+            ...(waiting && facts.draftedByCaller
+              ? [
+                  {
+                    id: 'own',
+                    label: _('purchase_backend.approval.ownLabel'),
+                    value: _('purchase_backend.approval.own'),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      }
+    />
+  )
 }
 
 const receiptTable = (_: Translator, rows: PurchaseDetailRow[]): TemplateResult =>
@@ -269,7 +310,14 @@ export const purchaseOrderDetailScreen = (
   const identity = [
     String(order.partnerName ?? order.partnerId),
     order.datePlanned
-      ? `${_('purchase_backend.field.datePlanned')}: ${String(order.datePlanned).slice(0, 10)}`
+      ? `${_('purchase_backend.field.datePlanned')}: ${formatDateTime(
+          _.locale,
+          new Date(String(order.datePlanned)),
+          {
+            dateStyle: 'medium',
+            ...(options.timezone ? { timeZone: options.timezone } : {}),
+          },
+        )}`
       : null,
   ]
     .filter(Boolean)
@@ -302,25 +350,20 @@ export const purchaseOrderDetailScreen = (
       body={stack(
         [
           rejection(_, options.invalid),
-          <Section title={_('purchase_backend.lines.title')} body={lineTable(_, options, path, editable)} />,
-          editable ? (
-            <Section
-              title={_('purchase_backend.lines.add')}
-              body={
-                <Surface
-                  body={
-                    <RecordForm
-                      action={path}
-                      submit={_('purchase_backend.action.addLine')}
-                      submitVariant="secondary"
-                      hidden={{ action: 'add-line' }}
-                      fields={options.lineFields}
-                    />
-                  }
-                />
-              }
-            />
-          ) : null,
+          approvalFacts(_, order),
+          <Section
+            title={_('purchase_backend.lines.title')}
+            actions={
+              editable && options.linesHref
+                ? linkButton({
+                    label: _('purchase_backend.lines.editInGrid'),
+                    href: options.linesHref,
+                    variant: 'secondary',
+                  })
+                : undefined
+            }
+            body={lineTable(_, options)}
+          />,
           state === 'purchase' && order.invoiceStatus === 'to invoice' ? (
             <Section
               title={_('purchase_backend.bill.title')}
@@ -352,5 +395,13 @@ export const purchaseOrderDetailScreen = (
     />
   )
 
-  return shell(_, String(order.name), page, { ...options.frame, topbar: false, titled: false })
+  return shell(
+    _,
+    String(order.name),
+    <>
+      {page}
+      <PurchaseOrderHelp lang={options.lang ?? 'vi'} />
+    </>,
+    { ...options.frame, topbar: false, titled: false },
+  )
 }

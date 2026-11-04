@@ -1,3 +1,7 @@
+import { searchMessages } from './search/messages.ts'
+import { filterMessages } from './filters/words.ts'
+import { bulkMessages } from './bulk/messages.ts'
+import { importMessages } from './imports/messages.ts'
 import { defineModule } from '@ketvietlab/ketjs'
 import { functions } from './functions.ts'
 import { islands } from './islands.ts'
@@ -6,6 +10,10 @@ import { menus } from './menus.ts'
 import { workspaceMessages } from './workspace-messages.ts'
 import { listMessages } from './list/messages.ts'
 import { unitMessages } from './units/messages.ts'
+import { variantMessages } from './variants/messages.ts'
+import { comboMessages } from './combos/messages.ts'
+import { tagMessages } from './tags/messages.ts'
+import { categoryMessages } from './categories/messages.ts'
 
 /**
  * The catalogue, in the admin — kept out of `product`.
@@ -26,7 +34,7 @@ export default defineModule({
   version: '0.2.0',
   depends: ['product_media', 'backend'],
   // Authorization reads the user module's grants.
-  optional: ['user'],
+  optional: ['user', 'account', 'pricing'],
   title: 'Sản phẩm trong quản trị',
   summary: 'Màn hình danh mục sản phẩm và lối vào từ thanh điều hướng.',
   category: 'Hệ thống',
@@ -79,7 +87,15 @@ export default defineModule({
     'variant.editor': { props: { identity: 'text', productId: 'id', lang: 'text?' } },
     'media.upload': { props: { identity: 'text', action: 'text', label: 'text' } },
     'template.page': {
-      props: { id: 'text', tab: 'text?', title: 'text', loading: 'text', back: 'text', width: 'text?' },
+      props: {
+        id: 'text',
+        tab: 'text?',
+        title: 'text',
+        loading: 'text',
+        back: 'text',
+        width: 'text?',
+        sourceId: 'text',
+      },
     },
   },
   messages: {
@@ -87,6 +103,14 @@ export default defineModule({
       ...workspaceMessages.vi,
       ...listMessages.vi,
       ...unitMessages.vi,
+      ...categoryMessages.vi,
+      ...tagMessages.vi,
+      ...comboMessages.vi,
+      ...importMessages.vi,
+      ...searchMessages.vi,
+      ...bulkMessages.vi,
+      ...filterMessages.vi,
+      ...variantMessages.vi,
       'app.title': 'Sản phẩm trong quản trị',
       'app.summary': 'Màn hình danh mục sản phẩm và lối vào từ thanh điều hướng.',
       'app.category': 'Hệ thống',
@@ -115,6 +139,7 @@ export default defineModule({
       'state.archived': 'Đã lưu trữ',
       'type.goods': 'Hàng hoá',
       'type.service': 'Dịch vụ',
+      'type.combo': 'Combo',
       'media.title': 'Hình ảnh',
       'media.description': 'Ảnh chính và thư viện ảnh của sản phẩm.',
       'media.unavailable': 'Chưa kết nối dịch vụ hình ảnh.',
@@ -192,7 +217,7 @@ export default defineModule({
       'field.businessUse': 'Nghiệp vụ áp dụng',
       'field.productKind': 'Loại hàng hoá',
       'field.uom': 'Đơn vị tính',
-      'field.category': 'Danh mục',
+      'field.category': 'Nhóm sản phẩm',
       'field.active': 'Đang hoạt động',
       'field.createdAt': 'Ngày tạo',
       'field.updatedAt': 'Ngày cập nhật',
@@ -265,8 +290,17 @@ export default defineModule({
       'attributes.addLine': 'Thêm thuộc tính',
       'attributes.attribute': 'Thuộc tính',
       'attributes.values': 'Giá trị',
+      'attributes.defaultPriceExtra': 'Phụ thu mặc định',
+      'attributes.archive': 'Lưu trữ',
+      'attributes.restore': 'Khôi phục',
+      'attributes.archived': 'Đã lưu trữ',
+      'attributes.archiveConfirm':
+        'Lưu trữ thuộc tính này? Thuộc tính sẽ không còn trong danh sách chọn cho sản phẩm mới.',
+      'attributes.restoreConfirm': 'Khôi phục thuộc tính này để dùng cho sản phẩm?',
+      'attributes.valueCount': 'Số giá trị',
+      'attributes.usageCount': 'Sản phẩm sử dụng',
       'attributes.valuesHint': 'Chọn giá trị từ danh sách; có thể tạo mới ngay tại đây.',
-      'relation.categories': 'Danh mục sản phẩm',
+      'relation.categories': 'Nhóm sản phẩm',
       'relation.brands': 'Thương hiệu',
       'relation.units': 'Đơn vị tính',
       'relation.attributes': 'Thuộc tính sản phẩm',
@@ -427,6 +461,14 @@ export default defineModule({
       ...workspaceMessages.en,
       ...listMessages.en,
       ...unitMessages.en,
+      ...categoryMessages.en,
+      ...tagMessages.en,
+      ...comboMessages.en,
+      ...importMessages.en,
+      ...searchMessages.en,
+      ...bulkMessages.en,
+      ...filterMessages.en,
+      ...variantMessages.en,
       'app.title': 'Products in admin',
       'app.summary': 'The catalogue screen, and the way into it.',
       'app.category': 'System',
@@ -455,6 +497,7 @@ export default defineModule({
       'state.archived': 'Archived',
       'type.goods': 'Goods',
       'type.service': 'Service',
+      'type.combo': 'Combo',
       'media.title': 'Images',
       'media.description': 'Primary image and product gallery.',
       'media.unavailable': 'The image service is not connected.',
@@ -605,6 +648,15 @@ export default defineModule({
       'attributes.addLine': 'Add attribute',
       'attributes.attribute': 'Attribute',
       'attributes.values': 'Values',
+      'attributes.defaultPriceExtra': 'Default price extra',
+      'attributes.archive': 'Archive',
+      'attributes.restore': 'Restore',
+      'attributes.archived': 'Archived',
+      'attributes.archiveConfirm':
+        'Archive this attribute? It will no longer be offered when configuring new products.',
+      'attributes.restoreConfirm': 'Restore this attribute for use on products?',
+      'attributes.valueCount': 'Value count',
+      'attributes.usageCount': 'Products using it',
       'attributes.valuesHint': 'Pick values from the list; new ones can be created here.',
       'relation.categories': 'Product categories',
       'relation.brands': 'Brands',
@@ -774,7 +826,7 @@ export default defineModule({
     'product_backend:template.page': `{% island "product.template-page" %}`,
     // Attributes and units of measure open in client-side record modals: closed hosts
     // on every admin page, opened by a link naming `product.attribute` or `product.uom`.
-    'backend:runtime': `{% island "product.attribute-modal" %}{% island "product.uom-modal" %}`,
+    'backend:runtime': `{% island "product.attribute-modal" %}{% island "product.uom-modal" %}{% island "product.category-modal" %}{% island "product.tag-modal" %}{% island "product.combo-modal" %}{% island "product.import-modal" %}{% island "product.bulk-modal" %}{% island "product.filter-modal" %}`,
   },
 })
 

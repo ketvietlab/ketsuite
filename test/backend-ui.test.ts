@@ -1322,7 +1322,13 @@ test('backend shell: fragment navigation emits only replaceable slots', () => {
   assert.match(html, /^<ket-fragments data-title=/)
   assert.deepEqual(
     [...html.matchAll(/<template data-ket-slot="([^"]+)"/g)].map((match) => match[1]),
-    ['backend.sidebar-main', 'backend.topbar', 'backend.global-topbar', 'backend.content'],
+    [
+      'backend.app-help',
+      'backend.sidebar-main',
+      'backend.topbar',
+      'backend.global-topbar',
+      'backend.content',
+    ],
   )
   assert.match(html, /data-ui="app-location-bar"[\s\S]*?persistent foot/)
 })
@@ -1341,7 +1347,13 @@ test('backend shell: the document uses the design-system application shell', () 
   )
   assert.match(html, /<aside data-ui="app-sidebar">[\s\S]*?data-ui="app-navigation"/)
   assert.equal((html.match(/<main\b/g) ?? []).length, 1, 'one main landmark')
-  for (const slot of ['backend.sidebar-main', 'backend.topbar', 'backend.global-topbar', 'backend.content'])
+  for (const slot of [
+    'backend.app-help',
+    'backend.sidebar-main',
+    'backend.topbar',
+    'backend.global-topbar',
+    'backend.content',
+  ])
     assert.equal(
       (html.match(new RegExp(`data-ket-slot="${slot.replace('.', '\\.')}"`, 'g')) ?? []).length,
       1,

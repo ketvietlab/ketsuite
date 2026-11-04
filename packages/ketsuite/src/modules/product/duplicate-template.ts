@@ -1,3 +1,11 @@
+import { templateTagIds, validateTemplateTags, writeTemplateTags, tagFailure } from './tag-policy.ts'
+import { comboFailure } from './combo-policy.ts'
+import {
+  TEMPLATE_COMBO_EFFECTS,
+  templateComboIds,
+  validateTemplateCombos,
+  writeTemplateCombos,
+} from './template-combos.ts'
 // "Duplicate" on the product page: a new template with the same information and prices.
 //
 // Only this module's own fields are copied. The internal reference and barcode are not,
@@ -9,7 +17,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { defineFn } from '@ketvietlab/ketjs'
-import type { FnSpec } from '@ketvietlab/ketjs'
+import type { Ctx, Row, FnSpec } from '@ketvietlab/ketjs'
+import { categoryFailure, requireActiveCategory } from './category-policy.ts'
 
 const COPIED = [
   'type',
@@ -25,13 +34,72 @@ const COPIED = [
   'hsCode',
   'saleOk',
   'purchaseOk',
+  'saleDelay',
+  'saleWarning',
+  'saleVariantMode',
 ] as const
+
+export async function duplicateTemplateHandler(ctx: Ctx, args: Row) {
+  const source = (await ctx.db.select('product.Template', { id: args.sourceId }))[0]
+  if (!source) return { ok: false, errors: [{ field: 'sourceId', code: 'product.error.duplicate.missing' }] }
+  if ((await ctx.db.select('product.Template', { id: args.id }))[0])
+    return { ok: false, errors: [{ field: 'id', code: 'product.error.duplicate.taken' }] }
+  const name = (typeof args.name === 'string' && args.name.trim()) || `${String(source.name)} (bản sao)`
+  const sourceDefault = (await ctx.db.select('product.Product', { templateId: args.sourceId })).find(
+    (product) => String(product.combinationKey ?? '') === '',
+  )
+  try {
+    await ctx.tx(async (tx) => {
+      const comboIds =
+        source.type === 'combo'
+          ? await validateTemplateCombos(tx, args.id, await templateComboIds(tx, source.id))
+          : null
+      const tagIds = await validateTemplateTags(tx, source.id, await templateTagIds(tx, source.id))
+      await requireActiveCategory(tx, source.categoryId)
+      await tx.db.insert('product.Template', {
+        id: args.id,
+        name: name.slice(0, 200),
+        ...Object.fromEntries(COPIED.map((field) => [field, source[field] ?? null])),
+        listPrice: source.listPrice ?? '0',
+        saleOk: source.saleOk !== false,
+        purchaseOk: source.purchaseOk !== false,
+        active: true,
+        revisionId: randomUUID(),
+      })
+      await writeTemplateTags(tx, args.id, tagIds)
+      if (comboIds) await writeTemplateCombos(tx, args.id, comboIds)
+      await tx.db.insert('product.Product', {
+        id: `${String(args.id)}:default`,
+        templateId: args.id,
+        defaultCode: null,
+        barcode: null,
+        weight: sourceDefault?.weight ?? '0',
+        volume: sourceDefault?.volume ?? '0',
+        combinationKey: '',
+        active: true,
+      })
+      if (source.uomId) await tx.db.update('uom.Unit', { id: source.uomId }, { locked: true })
+    })
+  } catch (error) {
+    const refused = categoryFailure(error) ?? tagFailure(error) ?? comboFailure(error)
+    if (refused) return refused
+    throw error
+  }
+  return { ok: true, id: args.id }
+}
 
 export const duplicateTemplateFunctions: Record<string, FnSpec> = {
   duplicateTemplate: defineFn({
     input: { id: 'id', sourceId: 'id', name: 'text?' },
     output: { ok: 'bool', id: 'id?', errors: 'json?' },
     effects: [
+      ...TEMPLATE_COMBO_EFFECTS,
+      'read:product.Tag',
+      'write:product.Tag',
+      'read:product.TemplateTag',
+      'write:product.TemplateTag',
+      'read:product.Category',
+      'write:product.Category',
       'read:product.Template',
       'write:product.Template',
       'read:product.Product',
@@ -40,40 +108,6 @@ export const duplicateTemplateFunctions: Record<string, FnSpec> = {
     ],
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const source = (await ctx.db.select('product.Template', { id: args.sourceId }))[0]
-      if (!source)
-        return { ok: false, errors: [{ field: 'sourceId', code: 'product.error.duplicate.missing' }] }
-      if ((await ctx.db.select('product.Template', { id: args.id }))[0])
-        return { ok: false, errors: [{ field: 'id', code: 'product.error.duplicate.taken' }] }
-      const name = (typeof args.name === 'string' && args.name.trim()) || `${String(source.name)} (bản sao)`
-      const sourceDefault = (await ctx.db.select('product.Product', { templateId: args.sourceId })).find(
-        (product) => String(product.combinationKey ?? '') === '',
-      )
-      await ctx.tx(async (tx) => {
-        await tx.db.insert('product.Template', {
-          id: args.id,
-          name: name.slice(0, 200),
-          ...Object.fromEntries(COPIED.map((field) => [field, source[field] ?? null])),
-          listPrice: source.listPrice ?? '0',
-          saleOk: source.saleOk !== false,
-          purchaseOk: source.purchaseOk !== false,
-          active: true,
-          revisionId: randomUUID(),
-        })
-        await tx.db.insert('product.Product', {
-          id: `${String(args.id)}:default`,
-          templateId: args.id,
-          defaultCode: null,
-          barcode: null,
-          weight: sourceDefault?.weight ?? '0',
-          volume: sourceDefault?.volume ?? '0',
-          combinationKey: '',
-          active: true,
-        })
-        if (source.uomId) await tx.db.update('uom.Unit', { id: source.uomId }, { locked: true })
-      })
-      return { ok: true, id: args.id }
-    },
+    handler: duplicateTemplateHandler,
   }),
 }

@@ -131,6 +131,33 @@ export type {
   KetTableSelection,
   KetTableSort,
 } from './interactions/ket-table/index.tsx'
+export {
+  createKetGrid,
+  KET_GRID_NO_CHANGES,
+  ketGrid,
+  KetGridPlaceholder,
+} from './interactions/ket-grid/index.tsx'
+export type {
+  KetGridApi,
+  KetGridCell,
+  KetGridChangeEvent,
+  KetGridChanges,
+  KetGridColumn,
+  KetGridColumnType,
+  KetGridFullWidth,
+  KetGridIslandColumn,
+  KetGridIslandConfig,
+  KetGridIssue,
+  KetGridLabels,
+  KetGridOption,
+  KetGridOptions,
+  KetGridPosted,
+  KetGridRow,
+  KetGridSearch,
+  KetGridSummary,
+  KetGridTransaction,
+  KetGridValue,
+} from './interactions/ket-grid/index.tsx'
 export { attachDesignSystemInteractions } from './runtime/index.js'
 export { attachClientModalInteractions } from './runtime/client-modal.js'
 export { attachPeekInteractions } from './runtime/peek.js'
@@ -145,6 +172,7 @@ export {
 } from './runtime/row-anchor.js'
 // A form that posts with fetch shows the server's message on the Field, as Field's `error` renders it.
 export { clearFieldError, showFieldError } from './runtime/field-error.js'
+export { formatLocaleNumber, numberControlValue, parseLocaleNumber } from './runtime/number-entry.js'
 export { ContextButton } from './interactions/context-button/index.tsx'
 export type { ContextButtonProps } from './interactions/context-button/index.tsx'
 
@@ -239,7 +267,9 @@ export type {
   ColumnChartProps,
   ColumnChartReference,
 } from './data-display/column-chart/index.tsx'
-export { QrCode } from './data-display/qr-code/index.tsx'
+export { QrCode, qrSvg } from './data-display/qr-code/index.tsx'
+export { SignatureBlock } from './data-display/signature-block/index.tsx'
+export type { SignatureBlockProps } from './data-display/signature-block/index.tsx'
 export type { QrCodeProps, QrErrorCorrection } from './data-display/qr-code/index.tsx'
 export { TimeframeFilter } from './data-operations/timeframe-filter/index.tsx'
 export type { TimeframeFilterProps, TimeframeOption } from './data-operations/timeframe-filter/index.tsx'

@@ -56,6 +56,25 @@ export const DatePickerExamples = (props: { showStates?: boolean } = {}): Templa
         help="Chọn trên lịch hoặc nhập ngày trực tiếp."
       />,
       <DatePicker
+        id="date-english"
+        name="dueDate"
+        label="Due date · month first"
+        locale="en"
+        value="2026-11-25"
+        today="2026-11-20"
+        help="Type MM/DD/YYYY or pick a day on the calendar."
+      />,
+      <DateRangePicker
+        id="range-english"
+        label="Billing period"
+        locale="en"
+        today="2026-11-20"
+        start={{ id: 'billing-from', name: 'billingFrom', value: '2026-11-25' }}
+        end={{ id: 'billing-to', name: 'billingTo', value: '2026-12-03' }}
+        startLabel="From"
+        endLabel="To"
+      />,
+      <DatePicker
         id="date-japanese"
         name="releaseDate"
         label="公開日"

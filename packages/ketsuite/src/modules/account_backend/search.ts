@@ -329,6 +329,47 @@ export const closePeriodListSearch = defineRowList({
   presets: statePresets('state', 'state', 'wave1.state', CLOSE_STATES),
 })
 
+const AUDIT_ACTIONS = ['posted', 'reversed', 'controlsChanged', 'updated'] as const
+const AUDIT_SUBJECTS = [
+  'move',
+  'closePeriod',
+  'account',
+  'journal',
+  'tax',
+  'paymentTerm',
+  'defaults',
+] as const
+
+/** The audit log reads by who did what to which record, and when. */
+export const auditEventListSearch = defineRowList({
+  key: 'account.audit-log',
+  searchable: [{ key: 'actorName' }, { key: 'subjectName' }, { key: 'reason' }],
+  filterable: [
+    { key: 'actorName', label: 'account_backend.audit.actor', type: 'text' },
+    { key: 'action', label: 'account_backend.audit.action', type: 'selection', choices: AUDIT_ACTIONS },
+    {
+      key: 'subjectType',
+      label: 'account_backend.audit.subjectType',
+      type: 'selection',
+      choices: AUDIT_SUBJECTS,
+    },
+    { key: 'subjectName', label: 'account_backend.audit.subject', type: 'text' },
+    { key: 'accountingDate', label: 'account_backend.field.accountingDate', type: 'date' },
+    // The day in the company's time zone, which the route works out: `createdAt` is an instant.
+    { key: 'day', label: 'account_backend.audit.day', type: 'date' },
+  ],
+  groupable: [
+    { key: 'actorName', label: 'account_backend.audit.actor' },
+    { key: 'action', label: 'account_backend.audit.action' },
+    { key: 'subjectType', label: 'account_backend.audit.subjectType' },
+  ],
+  sortable: [
+    { key: 'createdAt', label: 'account_backend.audit.when' },
+    { key: 'accountingDate', label: 'account_backend.field.accountingDate' },
+  ],
+  presets: statePresets('action', 'action', 'auditAction', AUDIT_ACTIONS),
+})
+
 /** Every accounting list, for the seam that validates what a reader sends back. */
 export const accountListSpecs = [
   { spec: accountListSearch, path: '/admin/accounting/accounts' },
@@ -343,4 +384,5 @@ export const accountListSpecs = [
   { spec: partnerLedgerLineSearch, path: '/admin/accounting/partner-statement' },
   { spec: openingBatchListSearch, path: '/admin/accounting/opening-balances' },
   { spec: closePeriodListSearch, path: '/admin/accounting/period-closes' },
+  { spec: auditEventListSearch, path: '/admin/accounting/audit-log' },
 ] as const

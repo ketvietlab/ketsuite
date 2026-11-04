@@ -9,6 +9,7 @@ import {
   withHeaders,
 } from '@ketvietlab/ketjs'
 import type { Route, ServeContext } from '@ketvietlab/ketjs'
+import { amountWords } from '../../ui/amount-words.ts'
 import { formatMoney } from '../../ui/format.ts'
 
 const stable = (value: unknown): string => {
@@ -54,7 +55,22 @@ export const REPORT_FILTERS = (locale: string) => ({
   amount: (value: unknown, currency?: unknown) => formatMoney({ locale }, value, currency),
   // The calendar date, the way every admin table already shows one.
   date: (value: unknown) => String(value ?? '').slice(0, 10),
+  // An amount written out, as a voucher's total in words reads it ("Một triệu đồng").
+  words: (value: unknown, currency?: unknown) => amountWords(value, locale, String(currency ?? 'VND')),
 })
+
+/**
+ * A template compiled the way a document prints: translated, with the document filters, in one locale.
+ * The report route, the editor's preview and the check before a draft is saved all compile through it,
+ * so a template the editor accepts is one the route can print.
+ */
+export const compileReport = (
+  source: string,
+  name: string,
+  locale: string,
+  translate: (key: string) => string,
+): ReturnType<typeof compileReportTemplate> =>
+  compileReportTemplate(source, { name, translate, filters: REPORT_FILTERS(locale) })
 
 const safeName = (value: unknown) =>
   String(value ?? 'document')
@@ -115,11 +131,9 @@ export const reportRoute =
       }
     }
     const translate = ctx.translate(locale)
-    const document = compileReportTemplate(template.published, {
-      name: reportId,
-      translate,
-      filters: REPORT_FILTERS(locale),
-    }).render(data as Record<string, unknown>)
+    const document = compileReport(String(template.published), reportId, locale, translate).render(
+      data as Record<string, unknown>,
+    )
     const layout = (template.layout && typeof template.layout === 'object' ? template.layout : {}) as Record<
       string,
       unknown

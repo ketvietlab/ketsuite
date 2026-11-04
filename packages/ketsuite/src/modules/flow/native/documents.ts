@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, deleteFrom, eq, from, inArray, isNull, or } from '@ketvietlab/ketjs'
+import { and, asc, deleteFrom, eq, from, gt, inArray, isNull, or } from '@ketvietlab/ketjs'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
 import { cas, hash, mutate } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
 import { authority, owned, rank, refuse, string } from './policy.ts'
 import { timestamped } from './organization.ts'
+import { requireDocumentTransport } from './rich-content.ts'
 
 export async function documentAccess(ctx: Ctx, document: Row) {
   const a = await authority(ctx)
@@ -35,6 +36,64 @@ export async function readableDocument(ctx: Ctx, id: unknown, write = false) {
   const access = await documentAccess(ctx, document)
   if (!(write ? access.write : access.read)) return refuse('forbidden')
   return document
+}
+
+function documentRecordValue(row: Row, access: Row, readerIds: unknown[], readers?: Row[]) {
+  const { body, bodyDoc, blocks, ...metadata } = row
+  return {
+    ...metadata,
+    ownerId: row.authorId,
+    content: body ?? '',
+    blocks: blocks ?? [],
+    liveDoc: bodyDoc ?? null,
+    documentTransport: { base: '/flow/live/pages', docId: row.id },
+    readerIds,
+    ...(readers ? { readers } : {}),
+    access,
+  }
+}
+
+/** Complete editable metadata for the already-read version, without rereading
+ * the owner row and pairing a newer version with an older snapshot pointer. */
+export async function documentRecord(ctx: Ctx, row: Row) {
+  const access = await documentAccess(ctx, row)
+  if (!access.read) return refuse('forbidden')
+  const owner = row.authorId === ctx.actor,
+    G = ctx.table('flow.DocumentGrant'),
+    U = ctx.table('user.User')
+  const grants = await ctx.db.all(
+    from(G)
+      .where(
+        eq(G.companyId, ctx.scope.company),
+        eq(G.documentId, row.id),
+        ...(owner ? [] : [eq(G.userId, ctx.actor)]),
+      )
+      .orderBy(asc(G.id))
+      .limit(101),
+  )
+  if (grants.length > 100) return refuse('limit')
+  const users =
+    owner && grants.length
+      ? await ctx.db.all(
+          from(U)
+            .where(
+              inArray(
+                U.id,
+                grants.map((g) => g.userId),
+              ),
+            )
+            .select(U.id, U.name)
+            .limit(100),
+        )
+      : []
+  return documentRecordValue(
+    row,
+    access,
+    grants.map((g) => g.userId),
+    owner
+      ? grants.map((g) => ({ id: g.userId, name: string(users.find((u) => u.id === g.userId)?.name) }))
+      : undefined,
+  )
 }
 
 const blockInput = (value: unknown): Row[] => {
@@ -82,13 +141,39 @@ const documentScope = (document: Row) => ({
 })
 const capability = (document: Row) => (document.projectId ? 'project.write' : 'workspace.write')
 
+/** A reparent may increase every descendant's depth, including archived pages.
+ * Page children by ID, keeping only the current path and bounded read windows. */
+async function requireSubtreeDepth(ctx: Ctx, rootId: string, parentDepth: number) {
+  const D = ctx.table('flow.Document'),
+    path = new Set<string>()
+  const visit = async (id: string, depth: number): Promise<void> => {
+    if (depth > 128 || path.has(id)) return refuse('cycle')
+    path.add(id)
+    let after = ''
+    while (true) {
+      const children = await ctx.db.all(
+        from(D)
+          .where(eq(D.companyId, ctx.scope.company), eq(D.parentId, id), ...(after ? [gt(D.id, after)] : []))
+          .select(D.id)
+          .orderBy(asc(D.id))
+          .limit(100),
+      )
+      for (const child of children) await visit(string(child.id), depth + 1)
+      if (children.length < 100) break
+      after = string(children.at(-1)!.id)
+    }
+    path.delete(id)
+  }
+  await visit(rootId, parentDepth)
+}
+
 export async function saveDocument(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
   const existing = input.id ? await readableDocument(ctx, input.id, true) : null
-  const parent = input.parentId ? await readableDocument(ctx, input.parentId, true) : null
-  const projectId = existing?.projectId ?? parent?.projectId ?? input.projectId ?? null
+  const parentBefore = input.parentId ? await readableDocument(ctx, input.parentId, true) : null
+  const projectId = existing?.projectId ?? parentBefore?.projectId ?? input.projectId ?? null
   const project = projectId ? await owned(ctx, 'flow.ProjectRecord', projectId) : null
   const workspaceId =
-    existing?.workspaceId ?? parent?.workspaceId ?? project?.workspaceId ?? input.workspaceId
+    existing?.workspaceId ?? parentBefore?.workspaceId ?? project?.workspaceId ?? input.workspaceId
   const target = { projectId, workspaceId }
   return mutate(
     ctx,
@@ -96,6 +181,10 @@ export async function saveDocument(ctx: Ctx, input: Row, extensions: NativeServe
     extensions,
     async (tx) => {
       const current = existing ? await readableDocument(tx, existing.id, true) : null
+      requireDocumentTransport(current, input, true)
+      // Parent ancestry, privacy and archive state may change while waiting for
+      // the organization lock. Validate its current row inside the transaction.
+      const parent = parentBefore ? await readableDocument(tx, parentBefore.id, true) : null
       const blocks =
         input.blocks === undefined
           ? ((current?.blocks as Row[]) ?? [{ type: 'h1', text: 'Untitle' }])
@@ -121,6 +210,8 @@ export async function saveDocument(ctx: Ctx, input: Row, extensions: NativeServe
         if (ancestor.id === current?.id || ++depth > 128) return refuse('cycle')
         ancestor = ancestor.parentId ? await readableDocument(tx, ancestor.parentId) : null
       }
+      if (current && parent && parent.id !== current.parentId)
+        await requireSubtreeDepth(tx, string(current.id), depth)
       const body = input.description === undefined ? string(current?.body) : string(input.description)
       if (body.length > 1000000) return refuse('validation', { description: 'too_long' })
       if (
@@ -353,27 +444,24 @@ export async function listDocuments(ctx: Ctx, projects: Row[], workspaces: Row[]
     const owner = row.authorId === a.actorId
     const write =
       a.member?.role !== 'guest' && (rank[role ?? ''] ?? 0) >= 2 && (row.visibility !== 'private' || owner)
-    return {
-      ...row,
-      ownerId: row.authorId,
-      content: row.id === active ? opened?.body : '',
-      blocks: row.id === active ? opened?.blocks : [],
-      liveDoc: row.id === active ? opened?.bodyDoc : null,
-      documentTransport: { base: '/flow/live/pages', docId: row.id },
-      readerIds:
-        row === managed
-          ? shared.map((g) => g.userId)
-          : grants.filter((g) => g.documentId === row.id).map((g) => g.userId),
-      ...(row === managed
-        ? {
-            readers: shared.map((g) => ({
-              id: g.userId,
-              name: string(names.find((u) => u.id === g.userId)?.name),
-            })),
-          }
-        : {}),
-      access: { read: true, write, manage: owner },
-    }
+    return documentRecordValue(
+      {
+        ...row,
+        body: row.id === active ? opened?.body : '',
+        blocks: row.id === active ? opened?.blocks : [],
+        bodyDoc: row.id === active ? opened?.bodyDoc : null,
+      },
+      { read: true, write, manage: owner },
+      row === managed
+        ? shared.map((g) => g.userId)
+        : grants.filter((g) => g.documentId === row.id).map((g) => g.userId),
+      row === managed
+        ? shared.map((g) => ({
+            id: g.userId,
+            name: string(names.find((u) => u.id === g.userId)?.name),
+          }))
+        : undefined,
+    )
   })
 }
 

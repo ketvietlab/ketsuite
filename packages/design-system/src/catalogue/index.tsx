@@ -71,7 +71,7 @@ export const CATALOGUE_HOOKS = [
 ] as const
 
 export const CatalogueHead = (): TemplateResult =>
-  html`<meta name="description" content="Két Việt public component documentation"><link rel="stylesheet" href="/design-system/catalogue/styles.css"><script type="module" src="/design-system/runtime/auto.js"></script>`
+  html`<meta name="description" content="Két Việt public component documentation"><link rel="stylesheet" href="/design-system/catalogue/styles.css"><script type="module" src="/design-system/runtime/auto.js"></script><script src="/design-system/atlas/island-runtime.mjs" defer></script>`
 
 type CataloguePageProps = {
   theme?: 'light' | 'dark' | 'system'

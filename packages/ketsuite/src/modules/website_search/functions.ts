@@ -66,7 +66,12 @@ export const functions: Record<string, FnSpec> = {
       publicationId: 'text?',
       completedAt: 'datetime?',
     },
-    effects: ['read:website.Site', 'read:website.Entry', 'read:website_search.SearchIndexState'],
+    effects: [
+      'read:website.Site',
+      'read:website.Entry',
+      'read:website_search.SearchIndexState',
+      'read:website_search.SearchDocument',
+    ],
     agent: true,
     handler: async (ctx: Ctx, args) => {
       const site = await servedSite(ctx, args.siteId)

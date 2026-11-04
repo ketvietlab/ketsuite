@@ -9,6 +9,12 @@ export const PROJECT_CODE = /^[A-Z][A-Z0-9]{1,11}$/
 export const onboardingSteps = ['workspace', 'project', 'invite']
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+/** The deployment's login page, asked to return to where the session ran out. */
+export function sharedSignIn() {
+  const here = globalThis.location ? globalThis.location.pathname + globalThis.location.search : '/flow/'
+  return `/login?next=${encodeURIComponent(here)}`
+}
+
 /** A project code suggested from its name: initials of up to four words, or the first four letters of a single word, without Vietnamese marks. Empty when no valid code comes out. */
 export function projectCode(title) {
   const words =
@@ -41,8 +47,10 @@ export function parseInvites(text) {
   return { emails, invalid }
 }
 
-/** The owner of a new organization before Flow has anything in it: sign in with the issued password, replace it, then create the first workspace, project and invitations.
- * ctx: {call, reload, data, finish(workspaceId), demo?:{email,password}} — `demo` is only ever passed by Atlas. */
+/** The owner of a new organization before Flow has anything in it: create the first workspace, project and invitations.
+ * Signing in belongs to the deployment, so an expired session links to its shared login. Atlas has no accounts and
+ * supplies its own sign-in and password pages through `fixtureAuth`; the product never does.
+ * ctx: {call, reload, data, finish(workspaceId), signInHref?():string, fixtureAuth?(helpers), demo?:{email,password}} */
 export function createFirstRun(ctx) {
   const t = (key, values = []) => tr('flow.firstRun.' + key, values)
   const busy = signal(false),
@@ -51,9 +59,7 @@ export function createFirstRun(ctx) {
     revision = signal(0)
   const created = { workspaceId: '', workspaceTitle: '', projectId: '' }
   const invitationKeys = new Map()
-  const signIn = { email: '', password: '' },
-    secret = { password: '', confirm: '' },
-    workspace = { title: '', key: '' },
+  const workspace = { title: '', key: '' },
     project = { title: '', code: '', codeTouched: false, defaultView: 'board', plan: 'sprint', key: '' },
     invite = { emails: '', role: 'member' }
   const redraw = () => revision.set(revision() + 1)
@@ -88,110 +94,6 @@ export function createFirstRun(ctx) {
   const submit = (/** @type {string} */ label) =>
     FlowButton({ label, variant: 'primary', type: 'submit', loading: busy() })
   const brand = () => (ctx.data()?.company?.name ? `Flow · ${ctx.data().company.name}` : 'Flow')
-
-  const signInPage = () => {
-    revision()
-    return FlowEntryPage({
-      embedded: true,
-      brand: brand(),
-      title: t('signIn.title'),
-      description: t('signIn.description'),
-      onSubmit: (e) => {
-        e.preventDefault()
-        void run(
-          async () => {
-            await ctx.call('flow.auth.signIn', { email: signIn.email.trim(), password: signIn.password })
-            signIn.password = ''
-            await ctx.reload()
-          },
-          { credentials: 'password' },
-          e.currentTarget,
-        )
-      },
-      children: html`${FlowInput({
-        id: 'sign-in-email',
-        label: t('email'),
-        type: 'email',
-        autocomplete: 'username',
-        required: true,
-        value: signIn.email,
-        onInput: (e) => {
-          signIn.email = /** @type {HTMLInputElement} */ (e.target).value
-        },
-      })}${FlowInput({
-        id: 'sign-in-password',
-        label: t('password'),
-        type: 'password',
-        autocomplete: 'current-password',
-        required: true,
-        value: signIn.password,
-        error: errors().password,
-        onInput: (e) => {
-          signIn.password = /** @type {HTMLInputElement} */ (e.target).value
-        },
-      })}${formError()}${ctx.demo ? FlowHint({ tone: 'yellow', children: t('signIn.demo', [ctx.demo.email, ctx.demo.password]) }) : null}`,
-      actions: submit(t('signIn.submit')),
-      footer: t('signIn.help'),
-    })
-  }
-
-  const passwordPage = () => {
-    revision()
-    const check = () =>
-      secret.password.length < PASSWORD_MIN
-        ? { password: t('password.short', [PASSWORD_MIN]) }
-        : secret.confirm !== secret.password
-          ? { confirm: t('password.mismatch') }
-          : null
-    return FlowEntryPage({
-      embedded: true,
-      brand: brand(),
-      title: t('password.title'),
-      description: t('password.description', [PASSWORD_MIN]),
-      onSubmit: (e) => {
-        e.preventDefault()
-        const invalid = check()
-        if (invalid) {
-          errors.set(invalid)
-          focusInvalid(e.currentTarget)
-          return
-        }
-        void run(
-          async () => {
-            await ctx.call('flow.auth.setPassword', { password: secret.password, confirm: secret.confirm })
-            secret.password = secret.confirm = ''
-            await ctx.reload()
-          },
-          {},
-          e.currentTarget,
-        )
-      },
-      children: html`${FlowInput({
-        id: 'new-password',
-        label: t('password.new'),
-        type: 'password',
-        autocomplete: 'new-password',
-        required: true,
-        value: secret.password,
-        error: errors().password,
-        onInput: (e) => {
-          secret.password = /** @type {HTMLInputElement} */ (e.target).value
-        },
-      })}${FlowInput({
-        id: 'confirm-password',
-        label: t('password.confirm'),
-        type: 'password',
-        autocomplete: 'new-password',
-        required: true,
-        value: secret.confirm,
-        error: errors().confirm,
-        onInput: (e) => {
-          secret.confirm = /** @type {HTMLInputElement} */ (e.target).value
-        },
-      })}${formError()}`,
-      actions: submit(t('password.submit')),
-    })
-  }
 
   /** Onboarding runs while the organization has no workspace, and keeps running through its own steps after the first one creates it. */
   const needed = () => {
@@ -338,6 +240,7 @@ export function createFirstRun(ctx) {
       onInput: (e) => {
         project.code = /** @type {HTMLInputElement} */ (e.target).value.toUpperCase()
         project.codeTouched = true
+        redraw()
       },
     })}${errors().code ? null : FlowHint({ children: t('project.codeHint', [project.code || 'WEB']) })}${FlowSelectField(
       {
@@ -440,6 +343,31 @@ export function createFirstRun(ctx) {
     actions: html`${FlowButton({ label: t('invite.skip'), variant: 'ghost', disabled: busy(), onClick: () => void run(finish) })}${submit(t('invite.submit'))}`,
   })
 
+  const fixture = ctx.fixtureAuth?.({
+    t,
+    call: ctx.call,
+    reload: ctx.reload,
+    demo: ctx.demo,
+    run,
+    errors,
+    focusInvalid,
+    formError,
+    submit,
+    brand,
+    revision,
+  })
+
+  /** The deployment owns sign-in; Flow only sends people back to it and is reopened afterwards. */
+  const sessionPage = () =>
+    FlowEntryPage({
+      embedded: true,
+      brand: brand(),
+      title: t('session.title'),
+      description: t('session.description'),
+      // A full page load: the login page is the deployment's, not a Flow fragment.
+      actions: html`<a data-flow="button" data-variant="primary" data-size="md" data-ket-reload href=${(ctx.signInHref ?? sharedSignIn)()}>${t('session.submit')}</a>`,
+    })
+
   const onboardingPage = () => {
     revision()
     const key = current(),
@@ -464,9 +392,9 @@ export function createFirstRun(ctx) {
     page(/** @type {{code?:string}|null} */ failure) {
       if (!ctx.data())
         return failure?.code === 'unauthenticated'
-          ? signInPage()
+          ? (fixture?.signInPage() ?? sessionPage())
           : failure?.code === 'password_change'
-            ? passwordPage()
+            ? (fixture?.passwordPage() ?? null)
             : null
       return needed() ? onboardingPage() : null
     },

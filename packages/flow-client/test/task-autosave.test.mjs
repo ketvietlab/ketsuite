@@ -51,6 +51,50 @@ test('failed autosave retains changes for retry and isolates different tasks', a
   assert.deepEqual(calls, [{ id: 'KV-142', patch: { priority: 'high' } }])
   saver.dispose()
 })
+
+test('version conflict keeps the edit-time version and draft until explicit retry', async () => {
+  let visibleVersion = 1,
+    serverVersion = 1,
+    serverTitle = 'Original'
+  const attempted = []
+  const saver = createTaskAutosave({
+    version: () => visibleVersion,
+    save: async (_id, patch, expectedVersion = visibleVersion) => {
+      attempted.push(expectedVersion)
+      if (expectedVersion !== serverVersion) throw Object.assign(new Error('Conflict'), { code: 'conflict' })
+      serverTitle = patch.title
+      visibleVersion = ++serverVersion
+    },
+  })
+  try {
+    saver.edit('TASK-1', { title: 'My retained draft' }, { delay: 10000 })
+    visibleVersion = serverVersion = 2
+    serverTitle = 'Another editor changed this'
+    await saver.flush('TASK-1')
+    assert.equal(
+      saver.state('TASK-1'),
+      'error',
+      'background revalidation must not silently authorize an overwrite',
+    )
+    assert.equal(serverTitle, 'Another editor changed this')
+    assert.equal(saver.draft('TASK-1').title, 'My retained draft')
+    await saver.flushAll()
+    assert.equal(
+      serverTitle,
+      'Another editor changed this',
+      'automatic navigation flush keeps the old CAS version',
+    )
+    assert.equal(saver.state('TASK-1'), 'error', 'blur keeps the conflict and retry control visible')
+    assert.deepEqual(attempted, [1])
+    await saver.retry('TASK-1')
+    assert.equal(serverTitle, 'My retained draft')
+    assert.equal(saver.state('TASK-1'), 'saved')
+    assert.deepEqual(saver.draft('TASK-1'), {})
+    assert.deepEqual(attempted, [1, 2])
+  } finally {
+    saver.dispose()
+  }
+})
 test('creation captures description, properties, checklist, children and attachment metadata', () => {
   const f = createFixtureSession()
   const payload = taskCreatePayload(

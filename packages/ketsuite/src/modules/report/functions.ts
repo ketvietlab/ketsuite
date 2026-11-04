@@ -1,5 +1,14 @@
-import { compileReportTemplate, defineFn, sha256 } from '@ketvietlab/ketjs'
+import { defineFn, sha256 } from '@ketvietlab/ketjs'
 import type { FnSpec, Row } from '@ketvietlab/ketjs'
+import { compileReport } from './routes.ts'
+
+/**
+ * Compiles a template the way the report route will print it, with the translation and document
+ * filters (`_`, `amount`, `date`) every built-in template uses. Checked bare, each of them failed as an
+ * unknown filter, so no template could be saved or published. Labels are checked, not translated.
+ */
+const checkTemplate = (source: string, name: string) =>
+  compileReport(source, name, 'vi', (key) => key).render({})
 
 const now = () => new Date().toISOString()
 const definition = (ctx: Parameters<FnSpec['handler']>[0], id: unknown) => {
@@ -82,7 +91,7 @@ export const functions: Record<string, FnSpec> = {
     handler: async (ctx, args) => {
       const report = definition(ctx, args.reportId)
       try {
-        compileReportTemplate(String(args.source), { name: report.id }).render({})
+        checkTemplate(String(args.source), report.id)
       } catch (error) {
         return {
           ok: false,
@@ -135,7 +144,7 @@ export const functions: Record<string, FnSpec> = {
           errors: [{ field: 'revision', message: 'save the current draft before publishing' }],
         }
       try {
-        compileReportTemplate(String(row.draft), { name: report.id }).render({})
+        checkTemplate(String(row.draft), report.id)
       } catch (error) {
         return {
           ok: false,

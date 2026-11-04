@@ -111,7 +111,15 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
     child.once('exit', (code) => reject(new Error(`Atlas exited ${code}: ${errors}`)))
   })
   const base = `http://127.0.0.1:${port}`
-  for (const path of ['/__atlas/ready', '/flow/my-work', '/flow-ketjs-i18n.mjs', '/flow-live-doc.mjs']) {
+  // The browser loads the Atlas entry and its fixture sign-in; the stores behind them stay on the server.
+  for (const path of [
+    '/__atlas/ready',
+    '/flow/my-work',
+    '/flow-ketjs-i18n.mjs',
+    '/flow-live-doc.mjs',
+    '/atlas/entry.mjs',
+    '/atlas/fixture-auth.mjs',
+  ]) {
     const response = await fetch(base + path)
     assert.equal(response.status, 200, path)
     assert.ok((await response.text()).length > 0, path)
@@ -139,7 +147,12 @@ test('a fresh Atlas renderer builds browser assets before ready and survives a m
   const catalog = await import('data:text/javascript,' + encodeURIComponent(await plain.text()))
   assert.deepEqual(Object.keys(catalog.flowClientMessages), ['vi'])
   assert.equal(catalog.flowClientMessages.vi['ui.change.history'], 'Lịch sử thay đổi')
-  for (const path of ['/flow-pro-client/index.mjs', '/flow-pro-ui/styles.css', '/atlas/store.mjs'])
+  for (const path of [
+    '/flow-pro-client/index.mjs',
+    '/flow-pro-ui/styles.css',
+    '/atlas/store.mjs',
+    '/atlas/blank-organization.mjs',
+  ])
     assert.equal((await fetch(base + path)).status, 404)
   const session = JSON.parse(page.match(/id="flow-environment">(.*?)<\/script>/)[1]).session
   const call = async (name, input) =>

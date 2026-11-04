@@ -1,4 +1,5 @@
 import type { Translator } from '@ketvietlab/ketjs'
+import { DescriptionList } from '@ketvietlab/design-system'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import {
   badge,
@@ -25,6 +26,8 @@ export type AccountDefaultsScreenOptions = {
   action: string
   categoryAction: string
   defaultsFields: FormField[]
+  /** Defaults the accounting standard fixes: shown with their account, not offered for change. */
+  pinned?: readonly { id: string; label: string; value: string }[]
   categoryFields?: FormField[]
   rows: AccountDefaultRow[]
   accountLabel: (id: unknown) => string
@@ -116,18 +119,28 @@ export const accountDefaultsScreen = (
             description={_('account_backend.defaults.company.hint')}
             body={
               <Surface
-                body={
-                  <RecordForm
-                    id={defaultsFormId}
-                    scope="account-defaults"
-                    action={options.action}
-                    submit={_('account_backend.action.save')}
-                    submitVariant="primary"
-                    submitPlacement="external"
-                    fields={options.defaultsFields}
-                    errors={options.errors}
-                  />
-                }
+                body={stack(
+                  [
+                    <RecordForm
+                      id={defaultsFormId}
+                      scope="account-defaults"
+                      action={options.action}
+                      submit={_('account_backend.action.save')}
+                      submitVariant="primary"
+                      submitPlacement="external"
+                      fields={options.defaultsFields}
+                      errors={options.errors}
+                    />,
+                    options.pinned?.length ? (
+                      <Section
+                        title={_('account_backend.defaults.pinned.title')}
+                        description={_('account_backend.defaults.pinned.hint')}
+                        body={<DescriptionList items={[...options.pinned]} columns={1} />}
+                      />
+                    ) : null,
+                  ],
+                  'default',
+                )}
               />
             }
           />,

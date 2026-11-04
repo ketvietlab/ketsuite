@@ -12,11 +12,20 @@ export type FieldFrameProps = {
   labelHidden?: boolean
   selectionHidden?: boolean
   span?: 'half' | 'full'
+  /**
+   * How long the value is, so the control is no wider than it needs: `xs` a few characters (a rate, a
+   * count of months), `sm` a short value (an amount, a date, a reference, a barcode), `md` a short choice
+   * (a unit, a group, a warehouse). Without it the control fills its column. Label, help and error keep
+   * their tracks; the control never grows past its column.
+   */
+  width?: FieldWidth
   kind: string
   layout?: 'inline'
   group?: boolean
   action?: JSXChild
 }
+
+export type FieldWidth = 'xs' | 'sm' | 'md'
 
 export const describedBy = (id: string, help?: string | null, error?: string | null): string | null =>
   [help ? `${id}-help` : null, error ? `${id}-error` : null].filter(Boolean).join(' ') || null
@@ -46,6 +55,7 @@ export const FieldFrame = (props: FieldFrameProps): TemplateResult => {
       data-layout={props.layout ?? null}
       data-size={props.size ?? null}
       data-span={props.span ?? 'half'}
+      data-width={props.width ?? null}
       data-label-hidden={props.labelHidden ? 'true' : null}
       data-selection-hidden={props.selectionHidden ? 'true' : null}
       data-invalid={String(!!props.error)}

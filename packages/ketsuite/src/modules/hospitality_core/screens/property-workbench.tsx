@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form
 import { propertyStructure } from './property-structure.tsx'
 import { propertyGallery } from './property-gallery.tsx'
 import { recordModalHref } from '../../../ui/record-modal.tsx'

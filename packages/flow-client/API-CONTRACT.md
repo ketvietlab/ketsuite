@@ -1,5 +1,15 @@
 # Flow core client adapter contract
 
+## Custom task field names
+
+Active custom fields cannot use a built-in task property name or its VI/EN/JA
+label. The shared catalog vocabulary normalizes NFKC, whitespace and case for
+this check. Native create, rename and restore refuse with
+`fields.title: catalog_reserved_field`; clients translate this into a field error.
+Specific names such as `Release version` remain valid. Archived legacy definitions
+and stored answers are retained; rename a conflicting archived definition before
+restoring it. No task property or stored field value is renamed automatically.
+
 ## Native irreversible project deletion
 
 `flow.project.deletion.preview({id})` requires project management and returns
@@ -49,18 +59,35 @@ remain. Unlink them before requesting deletion. Immutable goal link events
 (identifiers only) remain as goal history. Core jobs never inherit Pro projection
 effects or write private tables; automatic cross-module cleanup remains unaccepted.
 
+Native Page, Task, Project and Epic owners use `/flow/live/{pages,issues,projects,epics}`.
+Page/Task writes retain their existing write authority; Project/Epic descriptions
+require project management authority, including inherited Workspace admin. Read-only
+embeddings fetch the same authorized snapshots and subscribe without enqueueing writes.
+Metadata forms never submit local CRDT snapshots; after native content exists, an
+attempt to replace it through a metadata save returns `live_document_required`.
+
 Native LiveDoc commits carry server-derived block metadata from the exact snapshot
 being written. The editor bytes, plain-text preview, content title and outline must
 describe the same revision, including after reload. Transport retries keep the
 original version for identical snapshot bytes. The first non-empty content line
-supplies the title; later paragraphs remain body content.
+supplies a content-derived page title; explicitly named pages retain their title.
+`/content` and push acknowledgements pair editable metadata with the same owner
+version. A native editor flush refreshes that metadata before a separate metadata
+save. A title changed remotely retains the original CAS until an explicit retry.
+Replaying an already merged Yjs update, including deletion-only updates, acknowledges
+the current record without adding a version or immutable blob, regardless of sender.
+The native rich schema accepts the editor's block types, legacy bare text/task blocks,
+and string-cell table matrices. Structured blocks contain one XmlText; at most10,000
+blocks and10,000 table cells are accepted inside the existing2MiB binary limit. Table
+cells contribute to the plain-text preview. Tables use a whole-matrix Yjs attribute;
+this contract does not promise independently merged concurrent edits to one cell.
 For native durable owners, `/content` and `/live` expose committed snapshots only.
 The SSE connection sends an initial checkpoint and polls the immutable snapshot
 pointer at approximately one-second intervals (rotating after 30 seconds), with
 owner authorization checked while idle and again after snapshot I/O. Workers may
 share the database/blob store without sharing an in-memory CRDT; failed pushes
 are discarded locally, and the client retains unacknowledged updates for retry.
-Native page/task presence uses Company-scoped server leases (90-second TTL,
+Native page/task/project/epic presence uses Company-scoped server leases (90-second TTL,
 30-second client heartbeat), shared across workers. The actor/name come from the
 session. Each snapshot filters senders through current owner permission; revoked
 recipients end their SSE, and leave/expiry/revocation emits `gone`. Heartbeats use
@@ -85,6 +112,22 @@ HTTP and command errors become `FlowApiError`. Reads accept AbortSignal. Late re
 must not replace the current organization. A mutation's idempotency key is sent in
 both its JSON input and the `Idempotency-Key` header. Retrying an uncertain write
 reuses the key; changing its payload creates a new operation.
+
+Task property autosave captures the task version when the first local edit is
+made. Background revalidation, blur and automatic flushes keep that version;
+a conflict retains the complete draft rather than overwriting remote changes.
+Explicit retry waits for any blur-triggered attempt, reloads the current record
+and rebases the retained draft. A definitive conflict/validation refusal retires
+its transport key, so the refreshed request gets a new key; uncertain failures
+retain the exact original request and key. Cross-project task relationship writes
+require read access to the target before validating the relationship itself.
+
+Bulk preview derives its status options from the effective catalogs of selected
+tasks' projects, deduplicated by stable ID. Its initial target is the first
+selected project's semantic Done (or first allowed status), not a literal `done`
+identifier. Company statuses excluded by that project's override are not offered
+for a selection confined to that project. Across projects the options are a union;
+the preview and native writer still evaluate applicability separately per task.
 
 Hosts compress documents, fragments, function responses and assets according to
 `Accept-Encoding` (`Vary: Accept-Encoding`). A document has one language: changing it
@@ -209,7 +252,8 @@ workspace and its tree/inspector mounted while the CSR read revalidates. The SSR
 projection filters revoked page IDs immediately. Tenant, owner or access changes
 discard the cached snapshot; access comparison is independent of JSON key order.
 An unknown page loads inside the reading region. Read failures retain the frame
-with Retry; denied reads remove cached content. Direct GET and refresh still SSR
+with Retry; denied or unauthenticated reads invalidate every cached read in the
+island, including other records inside the reuse window. Direct GET and refresh still SSR
 the shell and tabs. Archive requires confirmation and a successful draft save;
 accepted restore opens the document. Move changes only the parent within the same
 owner/visibility and excludes descendants, archived and read-only targets.
@@ -329,17 +373,19 @@ Registered extensions add their authorized records and destinations. No search
 keywords/raw document body need to be sent back with the results.
 Every route is a client screen the reader may open. A project opens on its
 default view (`board` or `project-issues`); a sprint opens `sprints` with
-`{project}`; a saved view opens `project-issues` with `{project, view, q, status}`,
-as the saved views screen does. Saved views are those of a project the reader can
+`{project}`; a saved view restores its allowlisted `sourceRoute` (`my-work`, `all-issues`,
+`board` or `project-issues`) with `{project, workspace?, view, q, status, sort, group}`.
+Legacy project views retain their project list destination. Saved views are those of a project the reader can
 read, owned by the reader or shared with the project, and the reader's own views
 without a project. A guest receives no workspace, form, person or team result.
 
 Every read must authenticate the tenant and reapply project, guest, document
 privacy and extension permissions; recent IDs never grant access. Production
 must provide an indexed, bounded read over authorized records rather than export
-the full bootstrap or build a global index in the browser. Atlas exercises this
-contract through its current scoped fixture projection. The typed production
-search adapter and real-data scale are not implemented or verified by this mock.
+the full bootstrap or build a global index in the browser. The native productivity adapter reapplies these permissions on each read and
+deduplicates recent items before enforcing the 60-item bound. Its scoped tests
+cover ordinary users, guests and revoked access. Release-scale performance is
+still outside this verification; Atlas remains a development-only fixture.
 
 The client cancels superseded requests and rejects late responses after query or
 tenant changes. Errors retain the query and expose retry. The sidebar owns the
@@ -352,9 +398,16 @@ search input always uses this global read.
 
 `flow.workspace.bootstrap` supplies the authorized user/company/workspace/project
 context, capabilities, task catalogs, tasks, sprints, epics, pages, forms, inbox and
-related collections. Atlas returns a bounded synthetic scenario. Production needs
-separate bounded collection/detail/options reads before the accepted large-tenant
-benchmark; never fetch the entire organization because the fixture does.
+related collections. Atlas returns a bounded synthetic scenario. Native production
+uses separate collection/detail/options reads: task bootstrap is a 50-row window
+with `collectionPage.total/cursor` and scoped `counts`; personal settings omit task
+collections/catalogs. `flow.issue.list` counts the authorized filtered collection
+before keyset paging, and returns summary records only. Detail reads supply body
+and activity separately. Cursors bind actor/Company/projects/filter/sort and the
+collection epoch; mutation or scope changes require restarting the window. Counts
+are never inferred from loaded row count. This contract is checked by
+`flow-native-paged-reads`; the accepted large-tenant performance benchmark remains
+separate. Never fetch the entire organization because the fixture does.
 
 The `inbox`/`notifications` and `personal-settings` reads retain authorized shell,
 personal preferences and inbox data, but do not load task collections, task catalogs,
@@ -558,6 +611,15 @@ CAS, and returns 409 for a stale source context. An already-selected target is
 idempotent. The client flushes drafts before selection and loads a fresh SSR
 document afterwards, discarding the previous tenant's data and read cache.
 Atlas simulates this HTTP response; it uses the same client selection path.
+
+Personal preferences are scoped by Company and authenticated user. Timezone and
+notification choices persist in `flow.UserPreference`; valid timezone input is
+trimmed before storage. Theme, density and language use browser storage keys built
+from `[companyId, userId, preference]`; pending identity uses safe defaults and
+never inherits the old unscoped browser keys. An explicit URL language wins.
+History and comment timestamps use the personal timezone, falling back to the
+Company timezone. Date-only due values stay literal; business-day boundaries
+continue to use the Company timezone.
 
 Company selection uses the shared KetSuite session, not a Flow authentication
 store. `POST /flow/context` takes `{companyId, fromCompany}` and returns `{ok}`.
@@ -831,6 +893,31 @@ task, derives size/checksum from the bytes and sanitizes the declared MIME type.
 Only safe preview types are served inline with nosniff. `flow.attachment.save` may
 finalize only that actor's unexpired lease for the same task. Generic storage
 reads also apply the Flow owner policy; generic writes cannot replace Flow files.
+Native filenames discard path segments, controls and bidi overrides, retain full
+Unicode code points, and use RFC5987 encoding. Unknown/active types download as
+octet-stream with attachment disposition and a sandbox CSP. Both `/flow/files/id`
+and shared `/files/id` apply the same native owner check and bounded single-range
+streaming (`206`, `416`, suffix/open-end, If-Range, HEAD). Native objects never
+redirect to a signed URL. Storage currently lacks ranged get, so remote backends
+may read/skip the prefix; no complete object buffer is allocated by the range helper.
+
+The multipart request ceiling is the lower of host `uploadMax` and25MiB, including
+its envelope. Known oversized bodies receive `413 upload_size` before spooling;
+the streaming parser also bounds bodies with no declared size. File reservation
+uses the Company organization lock and an SQL aggregate. The technical default
+is1GiB of native uploaded-file metadata, configurable with `uploadQuotaBytes` on
+`createFlowModule`; this is independent of Pro/cloud commercial entitlements.
+Pending and archived files count until expiry/purge actually release their rows.
+This quota does not count CRDT snapshots or promise a billing usage measure.
+Over-quota reservations return `413 upload_quota` before object storage writes.
+
+Draft leases expire after an hour. Cleanup rechecks finalization with CAS, removes
+expired metadata and uses storage's grace-aware sweep, including a delayed sweep
+for late puts. LiveDoc reserves reconciliation before object I/O, independent of
+owner-commit success. Superseded native pointer metadata stays for two hours for
+in-flight reads; scoped expiry keeps current pointers and releases the old row
+before sweeping unreferenced bytes. Archive keeps bytes for restore; project
+permanent deletion retains its separate D07 authorization and purge contract.
 Task creation stages bytes with `POST /flow/uploads?project=<id>` before sending
 `flow.issue.save`. Its `attachments` are upload references, never filenames alone.
 The command finalizes the actor's ready leases for that project in the same
@@ -1245,3 +1332,60 @@ DS runtime retain rendering, keyboard, mobile and focus ownership. Navigation,
 scope change or disposal before completion prevents a late drawer from opening.
 A failed load reports one error and the next explicit request retries. No
 Markdown parser or diagram engine is eagerly added to list startup.
+
+### C03 — revoked Team membership cleanup
+
+`flow.team.member` requires organization management in the authenticated Company. Adding requires an active non-guest member. Removing may clean up a revoked member, without reactivating membership or creating access. Organization revocation always overrides Team grants. The Team screen marks revoked access and still offers authorized cleanup; its VI/EN Help describes this rule.
+
+### C06 — guest Company projection
+
+Guest and not-yet-joined actors receive Company identity (`id`, `name`) without
+`version` or `acceptanceEnabled`. Internal members retain the existing editable
+Company projection. A full bootstrap of `organization-settings` refuses a guest;
+`shellOnly` may return shell identity without administrative configuration.
+Private extensions own authorization of their additional payloads and must not
+project license, performance rules or private profiles to guests. File, LiveDoc
+content/push/live and staff routes use native scope checks; an already-open live
+stream rechecks authorization and ends after revocation.
+
+
+### Native daily work and saved views
+
+Daily work uses the same authorized Task query for search, ordering and cursor
+pagination; multi-assignee Tasks occur once. Archived projects are excluded from
+the default worklist. Saved views persist route, query, status, sort and grouping.
+`flow.view.list` provides an authorized title/ID keyset page (default 25, maximum
+100), total and a scope-bound cursor. Private views are visible and mutable only
+to their owner; project sharing additionally requires Core project write access.
+Platform `flow.view.save` is still required. A Core viewer may manage their own
+private preferences without acquiring Task write permission. Organization
+administration does not grant permission to edit another owner's preferences.
+
+The nullable scalar `SavedView.visibility` mirrors legacy query metadata, and
+`workspaceId` scopes personal all-issues views. The explicit Company upgrade
+backfills visibility without changing ownership, version or authoritative query
+JSON. The indexed authorization predicate runs before pagination and search
+limits. A bounded compatibility path accepts at most 1,000 candidate legacy
+shared views; larger unupgraded scopes refuse with `migration_required` instead
+of returning a partial authorized page. Stop writers and run the native upgrade
+CLI before enabling the new version for an existing Company.
+
+
+### Native authenticated intake
+
+`flow.form.save` keeps provided field IDs rather than deriving them from row
+position; missing IDs receive UUIDs and duplicate/invalid IDs are refused. The
+client creates new IDs with UUIDs. Saving without `publish:true` produces a draft.
+Publishing atomically advances `schemaRevision` and appends a `FormSchema`
+snapshot. Published snapshots and responses are immutable in normal mutation
+contexts; authorized project retention drains them before removing their form.
+
+`flow.form.submit` checks the held record version and optional
+`expectedSchemaRevision`, current published state, project write access, internal
+member scope, required fields, declared types and current assignee eligibility.
+Task and response commit with the shared operations revision in one transaction.
+A replay reuses its original result and cannot create another Task; a changed
+replay is refused. Each response stores its schema revision and exact schema
+snapshot, so a later reorder/rename/publish cannot reinterpret old answers.
+Legacy published forms use their record version until explicitly republished;
+new response snapshots are durable. No public/anonymous endpoint is introduced.

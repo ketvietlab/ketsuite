@@ -37,17 +37,26 @@ const boot = async (t: TestContext) => {
   await fixture('user.grantCompany', { id: 'admin:acme', userId: 'admin', companyId: 'acme' })
   await app.client.login({ login: 'admin', password: 'correct horse' })
   await app.client.call('account.initializeCompany', {})
+  // A cash or bank journal names the cash account its money posts to.
+  await app.client.call('account.saveAccount', {
+    id: 'needle-money',
+    code: '1129',
+    name: 'Tiền NEEDLE',
+    accountType: 'asset_cash',
+  })
   await app.client.call('account.saveJournal', {
     id: 'needle-bank',
     code: 'NEEDLEB',
     name: 'Sổ NEEDLE ngân hàng',
     type: 'bank',
+    defaultAccountId: 'needle-money',
   })
   await app.client.call('account.saveJournal', {
     id: 'needle-cash',
     code: 'NEEDLEC',
     name: 'Sổ NEEDLE tiền mặt',
     type: 'cash',
+    defaultAccountId: 'needle-money',
   })
   await app.client.call('account.saveJournal', {
     id: 'needle-old',

@@ -1,5 +1,5 @@
 import { vendorPricelistDefinition } from '../packages/ketsuite/src/modules/purchase_backend/modal/pricelist-view.tsx'
-import { invoicingPolicyDefinition } from '../packages/ketsuite/src/modules/sale_backend/modal/policy-view.tsx'
+import { salePolicyModalDefinition } from '../packages/ketsuite/src/modules/sale_backend/policies/modal-view.tsx'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createTestDeployment } from '@ketvietlab/ketjs/testing'
@@ -73,7 +73,12 @@ test('every Commerce modal command satisfies its real public function input sche
   t.after(() => app.close())
   const check = <T,>(definition: RecordModalDefinition<T>) => {
     for (const [name, command] of Object.entries(definition.commands ?? {})) {
-      assert.ok(command.fn, `${definition.kind}.${name} must use a domain function`)
+      // A command posts to a domain function, or to a route that answers for several (the sales order's
+      // lifecycle commands), which checks its own input.
+      if (!command.fn) {
+        assert.ok(command.route, `${definition.kind}.${name} must use a domain function or a route`)
+        continue
+      }
       const fn = app.deployment.manifest.functions[command.fn]
       assert.ok(fn, `${command.fn} must exist`)
       const form = new FormData()
@@ -88,8 +93,11 @@ test('every Commerce modal command satisfies its real public function input sche
         )
       form.set('taxId', 'tax-1')
       form.set('receiptId', 'receipt-1')
+      // A deposit posts its percent or amount as `value`.
+      form.set('value', '2')
+      // A lines grid posts its changes as one JSON field.
+      form.set('lines', '{}')
       const c = context(definition)
-      if (definition.kind === 'stock.transfer') c.dialog = { name: 'line', params: { id: 'line:line-1' } }
       const args = command.input(form, c, {})
       assert.doesNotThrow(
         () => validateInput(command.fn!, app.deployment.manifest, args),
@@ -104,7 +112,7 @@ test('every Commerce modal command satisfies its real public function input sche
   check(inventoryCountDefinition)
   check(transferModalDefinition)
   check(vendorPricelistDefinition)
-  check(invoicingPolicyDefinition)
+  check(salePolicyModalDefinition)
 })
 
 test('read-only purchase and sale modal hide mutations; sent and external orders keep domain boundaries', () => {
@@ -112,7 +120,9 @@ test('read-only purchase and sale modal hide mutations; sent and external orders
     const c = context(definition as RecordModalDefinition<unknown>)
     const html = renderToString(template`${definition.body!(c as never)}`)
     assert.doesNotMatch(html, /data-record-dialog=/)
-    assert.doesNotMatch(renderToString(template`${definition.actions!(c as never)}`), /type="submit"/)
+    // A sales order opens on its own page, with no modal footer.
+    if (definition.actions)
+      assert.doesNotMatch(renderToString(template`${definition.actions(c as never)}`), /type="submit"/)
   }
   const c = context(saleOrderModalDefinition, { orderAuthority: 'external', state: 'sale' })
   c.data.permissions = {
@@ -124,7 +134,7 @@ test('read-only purchase and sale modal hide mutations; sent and external orders
     updateLine: true,
   }
   assert.doesNotMatch(renderToString(template`${saleOrderModalDefinition.body!(c)}`), /data-record-dialog=/)
-  assert.equal(saleOrderModalDefinition.actions!(c), undefined)
+  assert.equal(saleOrderModalDefinition.actions?.(c), undefined)
 })
 
 test('Commerce modal views resolve Vietnamese and English labels from the real catalogue', async (t) => {
@@ -135,7 +145,7 @@ test('Commerce modal views resolve Vietnamese and English labels from the real c
     saleOrderModalDefinition,
     transferModalDefinition,
     vendorPricelistDefinition,
-    invoicingPolicyDefinition,
+    salePolicyModalDefinition,
     inventoryCountDefinition,
     ...['warehouse', 'location', 'picking-type', 'lot', 'route', 'replenishment'].map(
       stockConfigurationDefinition,

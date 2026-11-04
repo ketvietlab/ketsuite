@@ -43,6 +43,13 @@
       "wave": 5,
       "gapTask": "DS-048"
     },
+    "./data-display/signature-block/index.tsx": {
+      "owner": "Data display",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 5,
+      "gapTask": "DS-049"
+    },
     "./data-display/data-grid/index.tsx": {
       "owner": "Data display",
       "maturity": "stable",
@@ -182,6 +189,13 @@
       "wave": 2,
       "gapTask": "DS-046"
     },
+    "./interactions/ket-grid/index.tsx": {
+      "owner": "Data operations",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 4,
+      "gapTask": "DS-031"
+    },
     "./interactions/skeleton/index.tsx": {
       "owner": "Feedback",
       "maturity": "stable",
@@ -311,6 +325,13 @@
       "decision": "keep",
       "wave": 4,
       "gapTask": "DS-019"
+    },
+    "./runtime/number-entry.js": {
+      "owner": "Forms",
+      "maturity": "stable",
+      "decision": "build",
+      "wave": 5,
+      "gapTask": "DS-049"
     },
     "./runtime/peek.js": {
       "owner": "Interactions",
@@ -609,6 +630,13 @@
       "target": "Public core",
       "wave": 1,
       "gapTask": "DS-010"
+    },
+    "./ket-grid-locale.ts": {
+      "owner": "Data operations",
+      "decision": "promote",
+      "target": "Public core",
+      "wave": 4,
+      "gapTask": "DS-031"
     },
     "./layout.tsx": {
       "owner": "Page patterns",

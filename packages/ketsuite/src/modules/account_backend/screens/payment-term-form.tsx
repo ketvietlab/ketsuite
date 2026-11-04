@@ -51,8 +51,8 @@ export const paymentTermFormModal = (
     description: options.editing ? String(options.editing.name) : _('account_backend.term.create.hint'),
     closeHref: options.cancelHref,
     closeLabel: _('account_backend.action.cancelEdit'),
-    presentation: 'sheet',
-    size: 'default',
+    presentation: 'dialog',
+    size: 'small',
     form: {
       id: 'payment-term-create-form',
       scope: 'account-payment-term',
@@ -78,8 +78,8 @@ export const paymentTermLineFormModal = (
     description: _('account_backend.term.line.create.hint'),
     closeHref: options.cancelHref,
     closeLabel: _('account_backend.action.cancelEdit'),
-    presentation: 'sheet',
-    size: 'large',
+    presentation: 'dialog',
+    size: 'small',
     form: {
       id: 'payment-term-line-form',
       scope: 'account-payment-term-line',

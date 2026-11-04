@@ -81,7 +81,7 @@ const boot = async (t: TestContext) => {
     id: 'mango',
     templateId: 'mango-template',
     defaultCode: 'XCAT-01',
-    barcode: '893000000001',
+    barcode: '893000000008',
     combinationKey: '',
   })
   await fixture('stock.configureProduct', {
@@ -340,7 +340,7 @@ test('staff warehouse channel covers claim, scanning, execution, and return as o
     {
       method: 'POST',
       headers: mutationHeaders(csrf, 'warehouse-scan-event-1', String(rejected.data.version)),
-      body: JSON.stringify({ expectedVersion: rejected.data.version, scan: '893000000001' }),
+      body: JSON.stringify({ expectedVersion: rejected.data.version, scan: '893000000008' }),
     },
   )
   assert.equal(scannedResponse.status, 200)

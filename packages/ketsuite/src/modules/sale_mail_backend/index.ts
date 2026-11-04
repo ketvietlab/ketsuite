@@ -27,7 +27,8 @@ export default defineModule({
   depends: ['sale_backend', 'mail_backend', 'mail_transport'],
   functions,
   fills: {
-    'sale_backend:order.collaboration': `{% island "mail.chatter" %}`,
+    // Only for a viewer who may read the timeline; the record page asks (recordIslandsFor).
+    'sale_backend:order.collaboration': `{% if may.sale_mail_backend.timeline %}{% island "mail.chatter" %}{% endif %}`,
   },
 })
 

@@ -49,6 +49,11 @@ export const permissions = {
     revokePreviewTokens: ['sensitive', ['sensitive', 'author'], 'website.sensitive-data'],
     saveDomain: ['configure', 'configure', 'website.configuration-audit'],
     saveEntry: ['configure', ['configure', 'author'], 'website.configuration-audit'],
+    // A translation is a new entry and a link changes two; the same grant as writing one.
+    createTranslation: ['configure', ['configure', 'author'], 'website.configuration-audit'],
+    linkTranslation: ['configure', ['configure', 'author'], 'website.configuration-audit'],
+    unlinkTranslation: ['configure', ['configure', 'author'], 'website.configuration-audit'],
+    listTranslations: ['read', 'view'],
     saveMediaMetadata: ['configure', 'configure', 'website.configuration-audit'],
     savePage: ['configure', ['configure', 'author'], 'website.configuration-audit'],
     saveRedirect: ['configure', 'configure', 'website.configuration-audit'],

@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { eq, from, inArray, KetError } from '@ketvietlab/ketjs'
-import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
+import type { Ctx, FnSpec, RouteEntry, Row } from '@ketvietlab/ketjs'
 import storage from '../../storage/index.ts'
 import { cas, mutate, now } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
-import { authority, owned, policyEffects, refuse, requireCapability, string } from './policy.ts'
+import { authority, FlowRefusal, owned, policyEffects, refuse, requireCapability, string } from './policy.ts'
 import { taskByKey } from './queries.ts'
 import { readableDocument } from './documents.ts'
 import { flowBlobPrefix, flowUploadKey, isExclusiveFlowBlob } from './blob-keys.ts'
+import { DEFAULT_FLOW_UPLOAD_QUOTA_BYTES, flowFilename, reserveFileQuota } from './file-policy.ts'
+import { flowFileResponse } from './file-response.ts'
 
 const ownerModels = new Set(['flow.Task', 'flow.Document', 'flow.ProjectRecord', 'flow.EpicRecord'])
 const quarantinedOwners = new Set(['flow.Project', 'flow.Issue', 'flow.Page'])
@@ -75,10 +77,17 @@ export function createFlowStorageModule() {
           })
         }
         if (ownerModels.has(string(attachment?.resModel ?? args.resModel))) {
+          if (name === 'getPublicAttachment') return null
           if (['createAttachment', 'removeAttachment', 'listAttachments'].includes(name))
             throw new KetError({ code: 'E_FLOW_ATTACHMENT_OWNER', message: 'Use the owning Flow command' })
-          if (attachment) await ownerAccess(ctx, attachment)
-          else if (args.resModel === 'flow.Document') await readableDocument(ctx, args.resId)
+          if (attachment) {
+            try {
+              await ownerAccess(ctx, attachment)
+            } catch (error) {
+              if (name === 'getAttachment' && error instanceof FlowRefusal) return null
+              throw error
+            }
+          } else if (args.resModel === 'flow.Document') await readableDocument(ctx, args.resId)
           else {
             const row = await owned(ctx, string(args.resModel), args.resId)
             await requireCapability(ctx, 'project.read', {
@@ -91,10 +100,35 @@ export function createFlowStorageModule() {
     }
   }
   // Flow builds on storage, so the ownership checks name Flow and the user grants optional.
-  return { ...storage, optional: [...(storage.optional ?? []), 'flow', 'user'], functions }
+  const originalEntry = storage.routes!['/files/{id}']!
+  const originalFile = typeof originalEntry === 'function' ? originalEntry : originalEntry.handler
+  const fileRoute: RouteEntry = (ctx) => async (url, req, params) => {
+    if (['GET', 'HEAD'].includes(req.method ?? '') && (await ctx.allows('storage.getAttachment', url, req))) {
+      const record = (await ctx.call('storage.getAttachment', { id: params.id }, url, req)) as Row | null
+      if (record && ownerModels.has(string(record.resModel))) return flowFileResponse(ctx, url, req, record)
+    }
+    return (await originalFile(ctx))(url, req, params)
+  }
+  return {
+    ...storage,
+    optional: [...(storage.optional ?? []), 'flow', 'user'],
+    functions,
+    routes: {
+      ...storage.routes,
+      '/files/{id}': {
+        ...(typeof originalEntry === 'object' ? originalEntry : {}),
+        handler: fileRoute,
+      },
+    },
+  }
 }
 
-export async function prepareAttachment(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
+export async function prepareAttachment(
+  ctx: Ctx,
+  input: Row,
+  extensions: NativeServerExtension[],
+  quotaBytes = DEFAULT_FLOW_UPLOAD_QUOTA_BYTES,
+) {
   const task = input.taskId ? await taskByKey(ctx, input.taskId) : null
   const projectId = task?.projectId ?? input.projectId
   if (!projectId) return refuse('validation')
@@ -119,9 +153,10 @@ export async function prepareAttachment(ctx: Ctx, input: Row, extensions: Native
       )
         return refuse('validation')
       const id = string(input.id)
+      await reserveFileQuota(tx, Number(input.size), quotaBytes)
       await tx.db.insert('storage.Attachment', {
         id,
-        name: string(input.name).slice(0, 1000),
+        name: flowFilename(string(input.name)),
         kind: 'stored',
         resModel: task ? 'flow.Task' : 'flow.ProjectRecord',
         resId: task?.id ?? projectId,
@@ -254,6 +289,7 @@ export async function saveAttachments(ctx: Ctx, input: Row, extensions: NativeSe
         records.some(
           (b) =>
             b.actorId !== tx.actor ||
+            b.projectId !== task.projectId ||
             b.taskId !== task.id ||
             !b.ready ||
             b.finalizedAt ||

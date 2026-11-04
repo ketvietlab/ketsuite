@@ -72,6 +72,16 @@
     text-decoration: none;
   }
 
+  /* Server-rendered hosts (LiveView) render options as buttons; they look like the links. */
+  :where([data-kv-design-system]) button[data-ui="combobox-option"] {
+    inline-size: 100%;
+    border: 0;
+    background: none;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
   :where([data-kv-design-system]) [data-ui="combobox-option"]:hover,
   :where([data-kv-design-system]) [data-ui="combobox-option"][aria-selected="true"] {
     background: var(--kv-interactive-hover);

@@ -127,3 +127,46 @@ test('Studio search: the results page, its filters and an index that follows eac
   assert.match(second.body, /<a rel="prev" href="\/search\?q=g%E1%BB%97\+m%E1%BB%99c&amp;type=post">/)
   assert.doesNotMatch(second.body, /rel="next"/)
 })
+
+test('Studio search: a site too large to index inline says so, and a draft save does not bring it back', async (t) => {
+  const { app, fixture } = await bootWebsiteStudio()
+  t.after(() => app.close())
+  await fixture('website.saveDomain', {
+    id: 'search-domain',
+    siteId: 'site-a',
+    host: '127.0.0.1',
+    primary: true,
+  })
+  const write = async (id: string, title: string, published = true) => {
+    const saved = (await fixture('website.saveEntry', {
+      id,
+      siteId: 'site-a',
+      type: 'website.post',
+      slug: id,
+      path: `/${id}`,
+      title,
+      layout: [{ id: `section-${id}`, type: 'website.rich_text', settings: { body: 'Trà ngon' } }],
+    })) as Row
+    if (published) await fixture('website.publishEntry', { id, expectedRevisionId: saved.revisionId })
+  }
+  await fixture('website.publishEntry', { id: 'page-site-a' })
+  // More than one search rebuilds inline (three passes of 200).
+  for (let i = 0; i < 610; i += 1) await write(`bai-${i}`, `Trà số ${i}`)
+
+  const visitor = app.client.anonymous()
+  const notice = async () => {
+    const body = (await (await visitor.get('/search?q=tr%C3%A0')).text()).replace(/<!--k\[?-->/g, '')
+    assert.match(body, /<p role="status">\d+ kết quả/)
+    return /Chỉ mục đang cập nhật, có thể còn thiếu kết quả\./.test(body)
+  }
+  assert.equal(await notice(), true, 'the first search answers from a partial index and says so')
+  await fixture('website_search.reindexSite', { siteId: 'site-a', passes: 10 })
+  assert.equal(await notice(), false, 'a finished index answers in full')
+
+  // Visitors still read the published revision: nothing to rebuild.
+  await write('bai-0', 'Trà số 0 bản nháp', false)
+  assert.equal(await notice(), false, 'a draft saved over a published post')
+
+  await write('bai-moi', 'Trà mới')
+  assert.equal(await notice(), true, 'a publish starts a rebuild the visitor is told about')
+})

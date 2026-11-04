@@ -11,10 +11,11 @@ import {
   PURCHASE_STATES,
   stock,
   uom,
+  user,
 } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
 
-const modules = [address, partner, company, uom, product, stock, account, purchase]
+const modules = [address, partner, company, user, uom, product, stock, account, purchase]
 const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>

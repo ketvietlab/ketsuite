@@ -413,3 +413,104 @@ test('account FX: the conditional gate stays disabled without owner approval evi
     await adapter.close()
   }
 })
+
+test('account assets: a posted debit on an acquisition account becomes one asset, once', async () => {
+  const adapter = await boot()
+  try {
+    const entry = async (
+      id: string,
+      debitAccount: string,
+      amount: string,
+      post: boolean,
+      creditAccount = 'inventory',
+    ) => {
+      await call(
+        'account.createMove',
+        { id, journalId: 'general', moveType: 'entry', date: '2026-03-15T00:00:00.000Z' },
+        adapter,
+      )
+      for (const [side, accountId] of [
+        ['debit', debitAccount],
+        ['credit', creditAccount],
+      ] as const)
+        await call(
+          'account.addMoveLine',
+          { id: `${id}:${side}`, moveId: id, name: `${id} ${side}`, accountId, [side]: amount },
+          adapter,
+        )
+      if (post) assert.equal((await call('account.postMove', { id }, adapter)).ok, true)
+    }
+    await call(
+      'account.saveAssetCategory',
+      {
+        id: 'retired-tools',
+        name: 'Retired tools',
+        kind: 'tool',
+        acquisitionAccountId: 'variance',
+        accumulatedAccountId: 'accumulated',
+        expenseAccountId: 'expense',
+        journalId: 'general',
+        usefulLifePeriods: 6,
+        active: false,
+      },
+      adapter,
+    )
+    await entry('buy-press', 'asset', '2400.00', true)
+    await entry('buy-draft', 'asset', '900.00', false)
+    await entry('buy-stock', 'variance', '300.00', true)
+    await entry('sell-old', 'inventory', '100.00', true, 'asset')
+
+    const lines = (await call('account.listAssetSourceLines', {}, adapter)) as unknown as Row[]
+    assert.deepEqual(
+      lines.map((line) => [line.id, line.categoryId, line.amount, line.accountingDate]),
+      [['buy-press:debit', 'fixed-assets', '2400.00', '2026-03-15']],
+    )
+
+    for (const moveLineId of [
+      'buy-draft:debit',
+      'buy-press:credit',
+      'buy-stock:debit',
+      'sell-old:credit',
+      'missing',
+    ])
+      assert.equal(
+        (
+          (await call('account.createAssetFromMoveLine', { id: 'never', moveLineId }, adapter))
+            .errors as Row[]
+        )[0]?.code,
+        'account.error.assetSourceLineInvalid',
+        moveLineId,
+      )
+
+    const created = await call(
+      'account.createAssetFromMoveLine',
+      { id: 'press', moveLineId: 'buy-press:debit', name: '  ' },
+      adapter,
+    )
+    assert.deepEqual(created, { ok: true, id: 'press', duplicate: false })
+    const [asset] = (await call(
+      'account_wave3_probe.rows',
+      { model: 'account.Asset', id: 'press' },
+      adapter,
+    )) as unknown as Row[]
+    assert.equal(asset?.name, 'buy-press debit')
+    assert.equal(asset?.sourceType, 'move')
+    assert.equal(asset?.sourceId, 'buy-press')
+    assert.equal(asset?.sourceLineId, 'buy-press:debit')
+    assert.equal(asset?.originalCost, '2400.00')
+    assert.equal(asset?.startDate, '2026-03-15')
+    assert.equal(asset?.state, 'draft')
+
+    assert.deepEqual(
+      await call(
+        'account.createAssetFromMoveLine',
+        { id: 'press-again', moveLineId: 'buy-press:debit' },
+        adapter,
+      ),
+      { ok: true, id: 'press', duplicate: true },
+    )
+    assert.deepEqual(await call('account.listAssetSourceLines', {}, adapter), [])
+  } finally {
+    await adapter.close()
+  }
+})

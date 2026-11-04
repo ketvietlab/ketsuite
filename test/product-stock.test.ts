@@ -2,10 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { callFn, compose, migrateOne, registerFunctions, sqliteAdapter } from '@ketvietlab/ketjs'
 import type { Adapter, Row } from '@ketvietlab/ketjs'
-import { company, partner, pricing, product, stock, uom } from '@ketvietlab/ketsuite'
+import { company, partner, pricing, product, stock, uom, user } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
 
-const modules = [address, partner, company, uom, product, pricing, stock]
+const modules = [address, partner, company, user, uom, product, pricing, stock]
 const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 
@@ -219,7 +219,8 @@ test('product-stock: company cost, UoM links and concurrent-safe variant generat
     )
     const first = await call('product.generateVariants', { templateId: 'tpl' }, adapter)
     const retry = await call('product.generateVariants', { templateId: 'tpl' }, adapter)
-    assert.equal((first.value as { created: number }).created, 2)
+    // P27: the product's one SKU (p1) takes the first combination; only the second is new.
+    assert.equal((first.value as { created: number }).created, 1)
     assert.equal((retry.value as { created: number }).created, 0)
   } finally {
     await adapter.close()
@@ -235,13 +236,13 @@ test('product-stock: default/no-variant behavior, archive/reactivate, barcode an
 
     assert.equal(
       (
-        (await call('product.saveVariant', { id: 'p1', templateId: 'tpl', barcode: '893000000001' }, adapter))
+        (await call('product.saveVariant', { id: 'p1', templateId: 'tpl', barcode: '893000000008' }, adapter))
           .value as Row
       ).ok,
       true,
     )
     const collision = (
-      await call('product.saveVariant', { id: 'p2', templateId: 'tpl', barcode: '893000000001' }, adapter)
+      await call('product.saveVariant', { id: 'p2', templateId: 'tpl', barcode: '893000000008' }, adapter)
     ).value as Row
     assert.equal(collision.ok, false)
 
@@ -261,7 +262,8 @@ test('product-stock: default/no-variant behavior, archive/reactivate, barcode an
       adapter,
     )
     const generated = (await call('product.generateVariants', { templateId: 'tpl' }, adapter)).value as Row
-    assert.deepEqual(generated.ids, ['tpl:blue', 'tpl:red'])
+    // P27: the product's one SKU (p1) takes the first combination, blue; red is new.
+    assert.deepEqual(generated.ids, ['p1', 'tpl:red'])
 
     await call(
       'product.saveAttributeLine',
@@ -269,10 +271,7 @@ test('product-stock: default/no-variant behavior, archive/reactivate, barcode an
       adapter,
     )
     await call('product.generateVariants', { templateId: 'tpl' }, adapter)
-    assert.equal(
-      (await adapter.all('SELECT active FROM product_product WHERE id = ?', ['tpl:blue']))[0]!.active,
-      0,
-    )
+    assert.equal((await adapter.all('SELECT active FROM product_product WHERE id = ?', ['p1']))[0]!.active, 0)
     await call(
       'product.saveAttributeLine',
       { id: 'tpl:color', templateId: 'tpl', attributeId: 'color', valueIds: ['red', 'blue'] },
@@ -280,10 +279,16 @@ test('product-stock: default/no-variant behavior, archive/reactivate, barcode an
     )
     const reactivated = (await call('product.generateVariants', { templateId: 'tpl' }, adapter)).value as Row
     assert.equal(reactivated.created, 0)
+    assert.equal((await adapter.all('SELECT active FROM product_product WHERE id = ?', ['p1']))[0]!.active, 1)
+    // One someone stopped selling while its combination stayed offered keeps its value links,
+    // and generating again leaves it stopped.
+    await adapter.run('UPDATE product_product SET active = 0 WHERE id = ?', ['tpl:red'])
+    await call('product.generateVariants', { templateId: 'tpl' }, adapter)
     assert.equal(
-      (await adapter.all('SELECT active FROM product_product WHERE id = ?', ['tpl:blue']))[0]!.active,
-      1,
+      (await adapter.all('SELECT active FROM product_product WHERE id = ?', ['tpl:red']))[0]!.active,
+      0,
     )
+    await adapter.run('UPDATE product_product SET active = 1 WHERE id = ?', ['tpl:red'])
 
     await call('product.setCost', { productId: 'p1', standardPrice: '60' }, adapter)
     await call('partner.savePartner', { id: 'beta-party', kind: 'company', name: 'Beta' }, adapter)
@@ -481,11 +486,8 @@ test('product-stock: ancestor scope, UoM quantity, date bounds, nesting, margins
 
     await call('pricing.savePricelist', { id: 'loop-a', name: 'Loop A' }, adapter)
     await call('pricing.savePricelist', { id: 'loop-b', name: 'Loop B' }, adapter)
-    for (const [id, pricelistId, basePricelistId] of [
-      ['loop-a-rule', 'loop-a', 'loop-b'],
-      ['loop-b-rule', 'loop-b', 'loop-a'],
-    ])
-      await call(
+    const rule = (id: string, pricelistId: string, basePricelistId: string) =>
+      call(
         'pricing.savePricelistItem',
         {
           id,
@@ -497,11 +499,13 @@ test('product-stock: ancestor scope, UoM quantity, date bounds, nesting, margins
         },
         adapter,
       )
+    // A rule that would close a loop is refused when saved (D30); the other list still prices.
+    assert.equal(((await rule('loop-a-rule', 'loop-a', 'loop-b')).value as Row).ok, true)
+    assert.equal(((await rule('loop-b-rule', 'loop-b', 'loop-a')).value as Row).ok, false)
     const loop = (
       await call('pricing.priceFor', { pricelistId: 'loop-a', productId: 'p1', quantity: '1' }, adapter)
     ).value as Row
-    assert.equal(loop.ok, false)
-    assert.match(String((loop.errors as Row[])[0]!.message), /recursive pricelist/)
+    assert.equal(loop.ok, true)
   } finally {
     await adapter.close()
   }

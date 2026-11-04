@@ -361,11 +361,12 @@ test('archive, restore and settings commands refuse those without the right and 
     }
 
     // A saved view is its owner's: nobody else archives it, not even the organization owner.
+    // A viewer keeps it private; sharing it with the project needs write access (F01).
     const view = ok(
       await viewer('flow.view.save', {
         projectId: project.id,
         title: 'Viewer view',
-        visibility: 'project',
+        visibility: 'private',
         expectedRevision: (await viewer('flow.workspace.bootstrap', { route: 'projects' }))
           .operationsRevision,
         idempotencyKey: 'view',
@@ -471,7 +472,7 @@ test('archive, restore and settings commands refuse those without the right and 
         await call('flow.form.save', {
           projectId: project.id,
           title: 'Requests ' + access,
-          fields: [{ label: 'Need', type: 'text', required: true }],
+          fields: [{ id: 'need', label: 'Need', type: 'text', required: true }],
           access,
           assigneeId: 'au-owner',
           publish: true,
@@ -486,7 +487,7 @@ test('archive, restore and settings commands refuse those without the right and 
       return {
         id: target.id,
         title: 'Request by ' + by,
-        answers: { 'field-0': 'Access to the audit' },
+        answers: { need: 'Access to the audit' },
         expectedVersion: (read.forms as Row[]).find((f) => f.id === target.id)?.version,
         expectedRevision: read.operationsRevision,
         idempotencyKey: `submit-${String(target.id)}-${by}`,

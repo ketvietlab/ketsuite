@@ -19,7 +19,7 @@ export const DISCOUNT_MODES = ['percent', 'per_point', 'per_order'] as const
 export const DISCOUNT_APPLICABILITY = ['order', 'cheapest', 'specific'] as const
 export const WALLET_UNITS = ['points', 'currency'] as const
 export const LEDGER_OPERATIONS = ['earn', 'issue', 'redeem', 'refund', 'adjust', 'expire', 'reverse'] as const
-export const APPLICATION_STATES = ['draft', 'reserved', 'finalized', 'reversed'] as const
+export const APPLICATION_STATES = ['draft', 'reserved', 'dismissed', 'finalized', 'reversed'] as const
 export const RESERVATION_STATES = ['reserved', 'finalized', 'released'] as const
 
 export type ProgramType = (typeof PROGRAM_TYPES)[number]
@@ -36,13 +36,17 @@ export type LedgerOperation = (typeof LEDGER_OPERATIONS)[number]
 
 export type OrderLineSnapshot = {
   id: string
-  productId: string
+  productId: string | null
   quantity: number
+  comboParent?: boolean
+  comboChild?: boolean
   /** Canonical decimal money text; never a binary JavaScript number. */
   untaxed: string
   /** Canonical decimal money text; never a binary JavaScript number. */
   total: string
-  lineKind?: 'product' | 'shipping' | 'reward'
+  lineKind?: 'product' | 'shipping' | 'reward' | 'discount'
+  loyaltyProgramId?: string
+  taxKey?: string
 }
 
 export type OrderSnapshot = {
@@ -55,6 +59,8 @@ export type OrderSnapshot = {
   date: string
   lines: OrderLineSnapshot[]
   codes?: string[]
+  /** Internal evaluation order, derived from persisted program configuration. */
+  saleProgramOrder?: string[]
 }
 
 export type RewardQuote = {

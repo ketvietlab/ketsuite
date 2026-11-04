@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { renderToString } from '@ketvietlab/ketjs-view'
-import { QrCode } from '@ketvietlab/design-system'
+import { QrCode, qrSvg } from '@ketvietlab/design-system'
 // The encoder stays internal to the package: the public contract is the drawn symbol.
 import {
   alignmentCentres,
@@ -331,6 +331,25 @@ test('qr code: a symbol is an SVG image with its quiet zone, named for what scan
   const strong = renderToString(<QrCode value={value} label="Pay" errorCorrection="H" />)
   assert.match(strong, new RegExp(`data-version="${encodeQr(value, { errorCorrection: 'H' }).version}"`))
   assert.ok(encodeQr(value, { errorCorrection: 'H' }).version > matrix.version)
+})
+
+test('qr code: the standalone file draws the same symbol on its own white plate', () => {
+  const value = 'https://example.com/pay?invoice=0001'
+  const symbol = renderToString(<QrCode value={value} label="Pay" />)
+  const file = qrSvg(value, { label: 'Pay <0001> & "more"' })
+  const side = encodeQr(value, { errorCorrection: 'M' }).size + 8
+  assert.match(
+    file,
+    new RegExp(`^<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${side} ${side}" role="img"`),
+  )
+  // Nothing styles a file, so the contrast scanners need is drawn into it.
+  assert.match(file, new RegExp(`<rect width="${side}" height="${side}" fill="#fff"/>`))
+  assert.equal(/<path fill="#000" d="([^"]+)"/.exec(file)?.[1], /<path d="([^"]+)"/.exec(symbol)?.[1])
+  assert.match(file, /<title>Pay &lt;0001&gt; &amp; &quot;more&quot;<\/title>/)
+  assert.match(
+    qrSvg(value, { label: 'Pay', errorCorrection: 'H' }),
+    new RegExp(`viewBox="0 0 ${encodeQr(value, { errorCorrection: 'H' }).size + 8} `),
+  )
 })
 
 test('qr code: the symbol stays black on white in both themes and prints that way', () => {

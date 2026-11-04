@@ -1,0 +1,55 @@
+/* SignatureBlock. Where one person signs a printed document: the role and how to sign, then room to sign
+   by hand, then the name, or a line to write it on. The room to sign is the component's own geometry, the
+   same on screen and on paper; a parent Grid owns the gap between blocks. */
+
+@layer ket.app {
+  :where([data-kv-design-system]) [data-ui="signature-block"] {
+    --kv-signature-block-room: var(--kv-space-16);
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    gap: var(--kv-space-0-5);
+    min-inline-size: 0;
+    text-align: center;
+  }
+
+  :where([data-kv-design-system]) [data-ui="signature-block-label"] {
+    margin: 0;
+    color: var(--kv-color-ink);
+    font-size: var(--kv-text-sm);
+    font-weight: var(--kv-weight-semibold);
+    line-height: var(--kv-line-sm);
+    overflow-wrap: break-word;
+  }
+
+  :where([data-kv-design-system]) [data-ui="signature-block-hint"] {
+    margin: 0;
+    color: var(--kv-color-ink-muted);
+    font-size: var(--kv-text-xs);
+    font-style: italic;
+    line-height: var(--kv-line-xs);
+  }
+
+  /* The room to sign sits above the name. */
+  :where([data-kv-design-system]) [data-ui="signature-block-name"] {
+    margin: var(--kv-signature-block-room) 0 0;
+    min-block-size: var(--kv-line-sm);
+    max-inline-size: 100%;
+    color: var(--kv-color-ink);
+    font-size: var(--kv-text-sm);
+    line-height: var(--kv-line-sm);
+    overflow-wrap: break-word;
+  }
+
+  /* A name not yet known is written by hand on a dotted line. */
+  :where([data-kv-design-system]) [data-ui="signature-block-name"][data-empty="true"] {
+    inline-size: min(10rem, 100%);
+    border-block-end: 1px dotted var(--kv-border-strong);
+  }
+
+  @media print {
+    :where([data-kv-design-system]) [data-ui="signature-block"] {
+      break-inside: avoid;
+    }
+  }
+}

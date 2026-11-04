@@ -7,19 +7,27 @@
 import { defineRowList } from '../backend/row-list.ts'
 
 const QUOTATION_STATES = ['draft', 'sent', 'cancel'] as const
-const INVOICE_STATUSES = ['no', 'upselling', 'invoiced'] as const
-const INVOICE_POLICIES = ['order', 'delivery'] as const
+const INVOICE_STATUSES = ['no', 'to invoice', 'upselling', 'invoiced'] as const
+// Who sold an order, in which team, to whom (D19). The screen names the choices; a team
+// filter "not set" is an order outside every team.
+const SALES_REFERENCES = [
+  { key: 'userId', label: 'sale_backend.field.salesperson', type: 'reference' },
+  { key: 'teamId', label: 'sale_backend.field.team', type: 'reference' },
+  { key: 'partnerId', label: 'sale_backend.field.customer', type: 'reference' },
+] as const
 
 export const quotationListSearch = defineRowList({
   key: 'sale.quotations',
-  searchable: [{ key: 'name' }, { key: 'partnerName' }],
+  // A tag's name finds the quotations that carry it (D15), a team's name those in it (D16).
+  searchable: [{ key: 'name' }, { key: 'partnerName' }, { key: 'tagNames' }, { key: 'teamName' }],
   filterable: [
     { key: 'name', label: 'sale_backend.field.name', type: 'text' },
-    { key: 'partnerName', label: 'sale_backend.field.customer', type: 'text' },
+    { key: 'partnerName', label: 'sale_backend.field.customerName', type: 'text' },
     { key: 'dateOrder', label: 'sale_backend.field.dateOrder', type: 'datetime' },
     { key: 'validityDate', label: 'sale_backend.field.validityDate', type: 'date' },
     { key: 'state', label: 'sale_backend.field.state', type: 'selection', choices: QUOTATION_STATES },
     { key: 'amountTotal', label: 'sale_backend.field.amountTotal', type: 'number' },
+    ...SALES_REFERENCES,
   ],
   groupable: [
     { key: 'state', label: 'sale_backend.field.state' },
@@ -46,7 +54,7 @@ export const saleOrderListSearch = defineRowList({
   searchable: [{ key: 'name' }, { key: 'partnerName' }],
   filterable: [
     { key: 'name', label: 'sale_backend.field.name', type: 'text' },
-    { key: 'partnerName', label: 'sale_backend.field.customer', type: 'text' },
+    { key: 'partnerName', label: 'sale_backend.field.customerName', type: 'text' },
     { key: 'dateOrder', label: 'sale_backend.field.dateOrder', type: 'datetime' },
     {
       key: 'invoiceStatus',
@@ -56,6 +64,14 @@ export const saleOrderListSearch = defineRowList({
     },
     { key: 'locked', label: 'sale_backend.field.locked', type: 'boolean' },
     { key: 'amountTotal', label: 'sale_backend.field.amountTotal', type: 'number' },
+    ...SALES_REFERENCES,
+    // Orders with a line for the product, any of its variants (D19).
+    {
+      key: 'templateId',
+      label: 'sale_backend.field.product',
+      type: 'reference',
+      operators: ['equals', 'anyOf'],
+    },
   ],
   groupable: [
     { key: 'invoiceStatus', label: 'sale_backend.field.invoiceStatus' },
@@ -88,33 +104,4 @@ export const saleOrderListSearch = defineRowList({
     },
   ],
   defaultSort: [{ key: 'dateOrder', dir: 'desc' }],
-})
-
-export const invoicingPolicyListSearch = defineRowList({
-  key: 'sale.invoicing-policies',
-  searchable: [{ key: 'name' }, { key: 'sku' }, { key: 'category' }],
-  filterable: [
-    { key: 'name', label: 'sale_backend.field.product', type: 'text' },
-    {
-      key: 'invoicePolicy',
-      label: 'sale_backend.field.invoicePolicy',
-      type: 'selection',
-      choices: INVOICE_POLICIES,
-    },
-  ],
-  groupable: [{ key: 'invoicePolicy', label: 'sale_backend.field.invoicePolicy' }],
-  sortable: [
-    { key: 'name', label: 'sale_backend.field.product' },
-    { key: 'sku', label: 'sale_backend.field.sku' },
-    { key: 'category', label: 'sale_backend.field.category' },
-    { key: 'uom', label: 'sale_backend.field.uom' },
-  ],
-  presets: INVOICE_POLICIES.map((policy) => ({
-    key: policy,
-    label: `sale_backend.invoicePolicy.${policy}`,
-    group: 'invoicePolicy',
-    // An unset policy bills on order, which is what the column shows too.
-    match: (row: Record<string, unknown>) => (row.invoicePolicy ?? 'order') === policy,
-  })),
-  defaultSort: [{ key: 'name', dir: 'asc' }],
 })

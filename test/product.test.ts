@@ -42,14 +42,16 @@ test('product: the type vocabulary is product-shaped, not stock-shaped', async (
 })
 
 test('product: stock extends the template rather than the type enum carrying its concern', () => {
+  // Stands in for stock under another name: product's reads of the real stock models are checked once a
+  // module named `stock` is installed.
   const stock = defineModule({
-    name: 'stock',
+    name: 'stock_tracking',
     depends: ['product'],
     extend: { 'product.Template': { tracked: 'bool?' } },
   })
   const withStock = compose([uom, product, stock], { headless: true, companies: true })
   const fields = withStock.models['product.Template']!.fields
-  assert.equal(fields.tracked!.by, 'stock')
+  assert.equal(fields.tracked!.by, 'stock_tracking')
   assert.equal(fields.type!.by, 'product')
 
   // And without stock installed the template still means something.
@@ -142,7 +144,7 @@ test('product: brand, origin and product-level identifiers belong to the default
       brandId: 'ket',
       origin: 'Việt Nam',
       defaultCode: 'JACKET-01',
-      barcode: '8938500000100',
+      barcode: '96385074',
     },
     db,
   )
@@ -162,7 +164,7 @@ test('product: brand, origin and product-level identifiers belong to the default
       {
         combinationKey: '',
         defaultCode: 'JACKET-01',
-        barcode: '8938500000100',
+        barcode: '96385074',
         active: true,
       },
     ],
@@ -173,7 +175,7 @@ test('product: brand, origin and product-level identifiers belong to the default
 test('product: archiving hides a template without deleting anything', async () => {
   const db = await boot()
   await call('product.saveTemplate', { id: 'tpl', name: 'Cũ', type: 'goods' }, db)
-  await call('product.archiveTemplate', { id: 'tpl', active: false }, db)
+  await call('product.archiveTemplate', { id: 'tpl', active: false, reason: 'Discontinued' }, db)
 
   assert.equal(((await call('product.listTemplates', {}, db)).value as Row[]).length, 0)
   assert.equal((await db.all('SELECT * FROM product_template', [])).length, 1, 'the row is still there')
@@ -485,20 +487,28 @@ test('product: a variant keeps its unit barcode when the unit itself changes', a
   const db = await boot()
   await seedVariant(db)
   await call('uom.saveUnit', { id: 'box', name: 'Box', relativeUomId: 'ea', relativeFactor: '12' }, db)
-  await call('product.setProductUom', { productId: 'var', uomId: 'ea', barcode: 'SKU-1' }, db)
+  await call('product.setProductUom', { productId: 'var', uomId: 'ea', barcode: '4006381333931' }, db)
 
   // The row holding SKU-1 is the one this call replaces, so it must not be read
   // as a collision with itself.
-  const moved = await call('product.setProductUom', { productId: 'var', uomId: 'box', barcode: 'SKU-1' }, db)
+  const moved = await call(
+    'product.setProductUom',
+    { productId: 'var', uomId: 'box', barcode: '4006381333931' },
+    db,
+  )
   assert.equal((moved.value as { ok: boolean; errors?: unknown }).ok, true, JSON.stringify(moved.value))
   const after = (await call('product.getVariant', { id: 'var' }, db)).value as { uoms: Row[] }
   assert.equal(after.uoms.length, 1)
   assert.equal(after.uoms[0]!.uomId, 'box')
-  assert.equal(after.uoms[0]!.barcode, 'SKU-1')
+  assert.equal(after.uoms[0]!.barcode, '4006381333931')
 
   // A barcode held by a different variant is still a genuine collision.
   await call('product.saveVariant', { id: 'var2', templateId: 'tpl' }, db)
-  const clash = await call('product.setProductUom', { productId: 'var2', uomId: 'ea', barcode: 'SKU-1' }, db)
+  const clash = await call(
+    'product.setProductUom',
+    { productId: 'var2', uomId: 'ea', barcode: '4006381333931' },
+    db,
+  )
   assert.equal((clash.value as { ok: boolean }).ok, false)
   await db.close()
 })

@@ -11,6 +11,7 @@ import { taskByKey, taskDetail } from './queries.ts'
 import { requiredTitle, timestamped } from './organization.ts'
 import { finalizeTaskUploads } from './attachments.ts'
 import { decodeCustomFieldValue, encodeCustomFieldValue } from './field-values.ts'
+import { requireDocumentTransport } from './rich-content.ts'
 
 const idsOf = (value: unknown, field: string, maximum = 30): string[] => {
   if (
@@ -211,8 +212,11 @@ export async function assignmentProjection(ctx: Ctx, task: Row) {
 }
 
 export async function linkTask(ctx: Ctx, input: Row, extensions: NativeServerExtension[], child = false) {
-  const parent = await taskByKey(ctx, input.id),
-    target = await taskByKey(ctx, input.target ?? input.targetId)
+  const parent = await taskByKey(ctx, input.id)
+  await requireCapability(ctx, 'project.write', { projectId: parent.projectId })
+  const target = await taskByKey(ctx, input.target ?? input.targetId)
+  if (parent.projectId !== target.projectId)
+    await requireCapability(ctx, 'project.read', { projectId: target.projectId })
   if (parent.projectId !== target.projectId || parent.id === target.id)
     return refuse('validation', { target: 'invalid' })
   return mutate(
@@ -386,6 +390,7 @@ export async function writeTask(tx: Ctx, input: Row, existing: Row | null, compl
   const project = await owned(tx, 'flow.ProjectRecord', projectId)
   if (project.archived) return refuse('archived')
   const current = existing ? await owned(tx, 'flow.Task', existing.id) : null
+  requireDocumentTransport(current, input)
   const changes: Row[] = []
   const changed = (field: string, before: unknown, after: unknown) => {
     if (JSON.stringify(before ?? null) !== JSON.stringify(after ?? null))
@@ -476,7 +481,10 @@ export async function writeTask(tx: Ctx, input: Row, existing: Row | null, compl
   }
   if (input.parentId !== undefined) {
     const parent = input.parentId ? await taskByKey(tx, input.parentId) : null
-    if (parent && parent.projectId !== projectId) return refuse('validation', { parentId: 'invalid' })
+    if (parent && parent.projectId !== projectId) {
+      await requireCapability(tx, 'project.read', { projectId: parent.projectId })
+      return refuse('validation', { parentId: 'invalid' })
+    }
     let ancestor = parent,
       depth = 0
     while (ancestor) {
@@ -552,6 +560,8 @@ export async function writeTask(tx: Ctx, input: Row, existing: Row | null, compl
     const blockers = [] as Row[]
     for (const key of requested) {
       const blocker = await taskByKey(tx, key)
+      if (blocker.projectId !== projectId)
+        await requireCapability(tx, 'project.read', { projectId: blocker.projectId })
       if (blocker.id === task.id || blocker.projectId !== projectId || blocker.archived)
         return refuse('validation', { blockerIds: 'scope' })
       blockers.push(blocker)

@@ -20,6 +20,9 @@ const workspaces = [
   {
     name: '@ketvietlab/design-system',
     dir: 'packages/design-system',
+    // Code is MIT; the bundled Lucide icons are ISC and Inter is OFL-1.1. KÉT Sans is
+    // not part of the package (see src/foundations/fonts/README.md).
+    license: 'MIT AND ISC AND OFL-1.1',
     // 0.1.41 packs 1,926,353 bytes: 139 catalogue components, the public runtime,
     // inventory and relocatable stylesheet with embedded Inter fonts. Raw font assets
     // remain for the separate token stylesheets. Audited archive contains only dist,
@@ -27,6 +30,7 @@ const workspaces = [
     // 0.1.42 packs 2,267,675 bytes / 618 files: KÉT Sans Optical fonts, QR code, column
     // chart, Markdown/Help runtime, dock, peek, settings directory and stage path. The
     // audited archive still contains only dist, notices, docs and metadata.
+    // Dropping KÉT Sans brings the 0.1.43 tree from 2,432,646 to 2,275,654 bytes / 663 files.
     maxPackedBytes: 2_350_000,
   },
   {
@@ -71,7 +75,9 @@ const workspaces = [
     // Measured import: 305 KB, including the bundled brand assets and three message catalogs.
     // 0.1.42 packs 1,049,905 bytes / 94 files: the browser workspace bundle (its map is
     // 1.7 MB unpacked), generated Help and the vendored LiveDoc and date picker.
-    maxPackedBytes: 1_100_000,
+    // 0.1.44 packs 1,122,866 bytes / 98 files: project lifecycle, saved views, record
+    // descriptions and task autosave. The browser bundle carries no locale catalog.
+    maxPackedBytes: 1_150_000,
     requiredPaths: [
       'LICENSE',
       'README.md',
@@ -97,7 +103,10 @@ const workspaces = [
   // 0.1.42 packs 16,684,322 bytes / 6,049 files: eleven Hospitality page bundles, the
   // flow_workspace module and larger backend, product and CRM client bundles; source maps
   // are 43 MB of the 69 MB unpacked. No tests, dependencies or orphaned module output.
-  { name: '@ketvietlab/ketsuite', dir: 'packages/ketsuite', maxPackedBytes: 17_200_000 },
+  // 0.1.44 packs 32,452,802 bytes / 8,649 files: the new stock and sale backends and a
+  // larger product backend; source maps are 95 MB of the 134 MB unpacked. No tests,
+  // dependencies or orphaned module output.
+  { name: '@ketvietlab/ketsuite', dir: 'packages/ketsuite', maxPackedBytes: 33_500_000 },
   {
     name: '@ketvietlab/website-client',
     dir: 'packages/website-client',
@@ -135,6 +144,8 @@ const run = (executable, args, options = {}) => {
     cwd: options.cwd ?? ROOT,
     encoding: 'utf8',
     env: { ...process.env, ...options.env },
+    // `npm pack --json` lists every file; the ketsuite package alone prints more than 1 MB.
+    maxBuffer: 64 * 1024 * 1024,
     stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   })
   if (result.error) throw result.error
@@ -165,7 +176,8 @@ const verifyMetadata = () => {
     if (manifest.version !== version)
       fail(`${workspace.name} is ${manifest.version}; all public packages must be ${version}`)
     if (manifest.private === true) fail(`${workspace.name} is private`)
-    if (manifest.license !== 'MIT') fail(`${workspace.name} does not declare the MIT license`)
+    const declared = workspace.license ?? 'MIT'
+    if (manifest.license !== declared) fail(`${workspace.name} must declare the license ${declared}`)
     if (manifest.engines?.node !== '>=24.0.0') fail(`${workspace.name} must retain the Node >=24 contract`)
     if (manifest.publishConfig?.access !== 'public') fail(`${workspace.name} is not configured public`)
     if (manifest.publishConfig?.provenance !== true) fail(`${workspace.name} does not require provenance`)

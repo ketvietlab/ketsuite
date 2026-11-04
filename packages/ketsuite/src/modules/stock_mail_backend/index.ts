@@ -27,7 +27,7 @@ export default defineModule({
   depends: ['stock_backend', 'mail_backend', 'mail_transport'],
   functions,
   fills: {
-    'stock_backend:picking.collaboration': `{% island "mail.chatter" %}`,
+    'stock_backend:picking.collaboration': `{% if may.stock_mail_backend.timeline %}{% island "mail.chatter" %}{% endif %}`,
   },
 })
 

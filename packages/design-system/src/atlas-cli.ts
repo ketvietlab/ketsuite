@@ -203,7 +203,7 @@ const renderRuntime = (): string => {
   )
   const interactions = moduleSource
     .replace(
-      /^import \{ (?:attachPrimitives|attachApplyOnInput|attachDatePickers|attachHelpDrawers|attachMermaidDiagrams|attachNavigationTools) \} from '[^']+';?\r?\n/gmu,
+      /^import \{ (?:attachPrimitives|attachApplyOnInput|attachDatePickers|attachHelpDrawers|attachMermaidDiagrams|attachNavigationTools|attachNumberEntry) \} from '[^']+';?\r?\n/gmu,
       '',
     )
     .replace(/^export \{[^}]*\} from '[^']+';?\r?\n/gmu, '')
@@ -229,7 +229,12 @@ const renderRuntime = (): string => {
     'const attachApplyOnInput',
   )
   const sharedApply = `const attachApplyOnInput = (() => {${applyRuntime}\nreturn attachApplyOnInput;})();`
-  const classicSource = `${sharedHelp}\n${sharedNavigation}\n${sharedApply}\n${primitiveRuntime}\nconst attachDatePickers = (() => {\n${dateMath}\n${dateRuntime}\nreturn attachDatePickers;\n})();\n${interactions}`
+  const numberRuntime = readFileSync(join(sourceDirectory, 'runtime/number-entry.js'), 'utf8').replaceAll(
+    'export const ',
+    'const ',
+  )
+  const sharedNumber = `const attachNumberEntry = (() => {${numberRuntime}\nreturn attachNumberEntry;})();`
+  const classicSource = `${sharedHelp}\n${sharedNavigation}\n${sharedApply}\n${sharedNumber}\n${primitiveRuntime}\nconst attachDatePickers = (() => {\n${dateMath}\n${dateRuntime}\nreturn attachDatePickers;\n})();\n${interactions}`
   if (/\bexport\s/u.test(classicSource) || /^import\s/mu.test(classicSource))
     throw new Error('Design-system runtime can no longer be converted to a classic KetAtlas script')
   // Built by tools/build-design-system-atlas-runtime.mjs: a self-contained bundle

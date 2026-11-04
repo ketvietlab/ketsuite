@@ -1,7 +1,7 @@
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import { Field } from '../../primitives/field/index.tsx'
 import type { FieldOption, FieldProps } from '../../primitives/field/index.tsx'
-import { describedBy, FieldFrame, issueFor } from '../shared.tsx'
+import { issueFor } from '../shared.tsx'
 import type { FieldIssue } from '../shared.tsx'
 
 export const HOOKS = ['switch-control', 'switch-track'] as const
@@ -25,6 +25,7 @@ export type ScalarFieldBase = Pick<
   | 'required'
   | 'disabled'
   | 'span'
+  | 'width'
 >
 export type TextFieldProps = ScalarFieldBase &
   Pick<
@@ -60,7 +61,13 @@ export type NumberFieldProps = ScalarFieldBase &
     | 'prefix'
     | 'suffix'
     | 'align'
-  >
+  > & {
+    /**
+     * Type and show the number as this language writes it: "28.600" is 28600 in `vi`. Submits the plain
+     * decimal through the design-system runtime; without a locale the native number input is kept.
+     */
+    locale?: string
+  }
 export type MoneyFieldProps = NumberFieldProps & { currency?: string; precision?: number }
 export type SearchFieldProps = Omit<TextFieldProps, 'type'> & { clearable?: boolean; clearLabel?: string }
 export type CheckboxProps = ScalarFieldBase & {
@@ -89,21 +96,24 @@ export const TextField = (props: TextFieldProps): TemplateResult => (
 export const TextArea = (props: TextAreaProps): TemplateResult => (
   <Field {...normalize(props)} type="textarea" />
 )
-export const NumberField = (props: NumberFieldProps): TemplateResult => (
-  <Field {...normalize(props)} type="number" inputMode="decimal" />
+export const NumberField = ({ locale, ...props }: NumberFieldProps): TemplateResult => (
+  <Field {...normalize(props)} type="number" inputMode="decimal" numberLocale={locale} />
 )
-export const MoneyField = (props: MoneyFieldProps): TemplateResult => {
-  const precision = Math.max(
-    0,
-    Math.min(6, Math.trunc(Number.isFinite(props.precision) ? (props.precision ?? 2) : 2)),
-  )
+export const MoneyField = ({
+  locale,
+  currency,
+  precision: places,
+  ...props
+}: MoneyFieldProps): TemplateResult => {
+  const precision = Math.max(0, Math.min(6, Math.trunc(Number.isFinite(places) ? (places ?? 2) : 2)))
   return (
     <Field
       {...normalize({ ...props, step: props.step ?? String(10 ** -precision) })}
       type="decimal"
       inputMode="decimal"
+      numberLocale={locale}
       align={props.align ?? 'end'}
-      suffix={props.suffix ?? props.currency}
+      suffix={props.suffix ?? currency}
     />
   )
 }
@@ -128,41 +138,14 @@ export const RadioGroup = (props: ChoiceGroupProps): TemplateResult => (
 )
 export const Select = (props: SelectProps): TemplateResult => <Field {...normalize(props)} type="select" />
 
-export const Switch = (props: SwitchProps): TemplateResult => {
-  const error = props.error ?? issueFor(props.issues, props.name)
-  const checked = props.checked ?? props.value === '1'
-  return (
-    <FieldFrame
-      id={props.id}
-      label={props.label}
-      help={props.help}
-      error={error}
-      required={props.required}
-      labelHidden={props.labelHidden}
-      span={props.span}
-      size={props.size}
-      kind="switch"
-      layout={props.inline ? 'inline' : undefined}
-      control={
-        <label data-ui="switch-control">
-          <input
-            id={props.id}
-            type="checkbox"
-            role="switch"
-            name={props.name}
-            value={props.value ?? '1'}
-            checked={checked}
-            aria-checked={String(checked)}
-            disabled={props.disabled === true}
-            required={props.required === true}
-            aria-invalid={error ? 'true' : null}
-            aria-describedby={describedBy(props.id, props.help, error)}
-          />
-          <span data-ui="switch-track" aria-hidden="true" />
-        </label>
-      }
-    />
-  )
-}
+export const Switch = (props: SwitchProps): TemplateResult => (
+  <Field
+    {...normalize(props)}
+    type="switch"
+    checked={props.checked ?? props.value === '1'}
+    value={props.value ?? '1'}
+    layout={props.inline ? 'inline' : undefined}
+  />
+)
 
 export type { CommonProps as ScalarFieldProps, FieldIssue, FieldOption }

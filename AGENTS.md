@@ -27,6 +27,8 @@ has priority over other repository design guidance. Do not duplicate its rules h
   its package AGENTS.md and EXTENSIONS.md integration boundaries.
 - Before handoff, run focused checks within the local verification scope below.
   Design-specific checks live in the skill.
+- Commit through the pre-commit hook (`tools/precommit.mjs`). Do not bypass it with
+  `--no-verify` or an overridden `core.hooksPath`; fix the reported failure instead.
 
 ## Local verification scope
 

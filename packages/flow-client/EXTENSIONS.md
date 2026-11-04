@@ -48,6 +48,11 @@ only: the server must independently deny unavailable reads and commands.
 `workspace-settings` (the Workspace record as `scope`); return one settings row
 (`FlowSection({ inset: 'none', title, description, actions })`) or `null`. The host lays the rows
 out in a divided stack, so a row brings no outer padding or border of its own.
+The production workspace's optional `dependencies.loadScreenHelp` returns the same
+route-to-guide Map as `loadScreenHelp` from `screen-help.mjs`. A private host can
+clone that map and append its own localized Markdown/tokens to an existing guide.
+Do not mutate Core's cached guides. The loader stays lazy; the shared Help drawer
+retains opening, Escape, focus return and mobile behavior.
 `transition` may refuse or redirect client actions, but never replaces server checks.
 `mutationError` can claim a failed operation; `ownsFeedback` suppresses the outer toast
 while a feature dialog renders the same feedback. Failing writes must show one toast.
@@ -58,6 +63,11 @@ confirmation, or immediately when the form is unchanged; it does not run on Canc
 Task-creation drafts that already persist in the session and immediate appearance
 preferences keep their existing behavior. The core owns draft baselines and the
 centred `FlowConfirmDialog`; extensions do not rebuild that UI.
+
+`ctx.selectCompany(id)` follows the Core context switch: flush pending edits,
+resolve the discard guard, call the same-origin session CAS endpoint, then load
+fresh authorized SSR chrome. It grants no membership or role. Extensions must not
+change Company by reflecting a query parameter or copying an existing read model.
 
 `ctx.confirmAction({ title, message, label, action })` asks before a consequential
 write using that same core-owned dialog. `action` runs only after confirmation and
@@ -89,6 +99,14 @@ context-specific state on organization/workspace switches, including browser his
 `dispose` releases viewers and requests. Product source must never import Atlas.
 
 ## Server boundary
+
+The public `flow/server` integration boundary exports `authority`, `visibleScope`
+and the bounded `listTasks` query. A separately declared read-only cross-company
+report may reuse them for each requested Company after checking live membership
+and organization authority for that Company. A source Company's role never grants
+authority in a target Company. Never add a cross-company write path to a report,
+infer totals from the loaded task window, or copy a target read model into the
+current Company's client state.
 
 An extension may expose `modalTitle(key)` to identify the authorized record in
 the shared dialog header. Return nothing to retain the registered route title;
@@ -161,3 +179,11 @@ extension's records for the task must leave them in its detail. An
 extension form opened with an `id` waits for that record before `modalRecord` or
 `modal` composes it, and `taskSection` is not called over a summary. Never
 use an Atlas session or generic fixture writer as a production command handler.
+
+
+Personal preferences also compose `settingsSection('personal-settings')`. An
+instance may declare a finite `readOnlyCommands` array for its own preference
+commands. The presenter must additionally pass `allowReadOnly:true` on that
+mutation. This opt-in only bypasses the shared UI write gate: every native
+function must independently authenticate, check its platform permission and
+apply current business authorization. It grants no Core Task write permission.

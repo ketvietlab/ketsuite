@@ -3,6 +3,18 @@ import assert from 'node:assert/strict'
 import { documentTitle, noteInput } from '../dist/document-notes.mjs'
 import { createDocuments } from '@ketvietlab/flow-client/documents.mjs'
 import { createFixtureSession } from '../atlas/store.mjs'
+import { nativeTitlePatch } from '../client/document-notes.mjs'
+
+test('native title CAS rebases body changes while retaining a conflict with another title edit', () => {
+  const draft = { title: 'My title', titleBase: 'Original', titleBaseVersion: 1 }
+  assert.deepEqual(
+    nativeTitlePatch(draft, { id: 'page', title: 'Original', version: 2, snapshot: 'remote body' }),
+    { id: 'page', title: 'My title', titleSource: 'explicit', expectedVersion: 2 },
+  )
+  const remote = { id: 'page', title: 'Another title', version: 3 }
+  assert.equal(nativeTitlePatch(draft, remote).expectedVersion, 1)
+  assert.equal(nativeTitlePatch(draft, remote, true).expectedVersion, 3)
+})
 
 test('notes derive the title from the first nonempty text line without changing rich content', () => {
   const blocks = [

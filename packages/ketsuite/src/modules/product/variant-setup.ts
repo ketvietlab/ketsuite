@@ -1,3 +1,21 @@
+import { comboRefusal } from './combo-policy.ts'
+import { VARIANT_LIMIT, variantLimitRefusal, VariantPolicyRefused } from './variant-policy.ts'
+import { lockAttributes } from './attribute-policy.ts'
+import {
+  assertVariantCanRetire,
+  deleteUnusedVariant,
+  lockVariantTemplate,
+  nextVariantCode,
+  variantRetirementEffects,
+} from './variant-lifecycle.ts'
+import {
+  BARCODE_EFFECTS,
+  barcodeFailure,
+  barcodeOwnerKey,
+  barcodeKey,
+  claimBarcode,
+  releaseBarcodeClaims,
+} from './barcodes.ts'
 // A template's attributes and variants, read and saved as one editable setup.
 //
 // The record modal's "Attributes & variants" tab edits both halves together — the
@@ -14,6 +32,16 @@
 import { defineFn, deleteFrom, eq } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { type RecordImage, variantImagesOf } from './record-images.ts'
+import { AUTHORIZATION_READ_EFFECTS } from '../user/authorization.ts'
+import { barcodeOf, requireFieldGroup } from './functions/shared.ts'
+import { hsCodeDigits, hsCodeValid } from './hs-code.ts'
+import {
+  claimProductCodeRevision,
+  productCodeFailure,
+  productCodeOf,
+  productCodePatch,
+  ProductCodeRefused,
+} from './codes.ts'
 
 export type VariantSetupValue = { valueId: string; name: string; priceExtra: string }
 
@@ -29,7 +57,7 @@ export type VariantSetupAttribute = {
   attributeId: string
   name: string
   createVariant: string
-  values: Array<{ valueId: string; name: string }>
+  values: Array<{ valueId: string; name: string; defaultPriceExtra?: string }>
 }
 
 export type VariantSetupVariant = {
@@ -40,6 +68,10 @@ export type VariantSetupVariant = {
   barcode: string | null
   weight: string
   volume: string
+  /** The variant's own sale price; null sells at the template price plus extras. */
+  listPrice: string | null
+  /** The variant's own HS code; null uses the template's. */
+  hsCode: string | null
   active: boolean
   /** Primary first; empty without product_media or before the first upload. */
   images: RecordImage[]
@@ -120,7 +152,11 @@ export const variantSetupOf = async (ctx: Ctx, templateId: string): Promise<Vari
       values: valueRows
         .filter((value) => String(value.attributeId) === String(attribute.id))
         .sort(bySequence)
-        .map((value) => ({ valueId: String(value.id), name: String(value.name) })),
+        .map((value) => ({
+          valueId: String(value.id),
+          name: String(value.name),
+          defaultPriceExtra: decimalText(value.defaultPriceExtra),
+        })),
     }))
 
   const chosen = new Map<string, Record<string, string>>()
@@ -135,6 +171,16 @@ export const variantSetupOf = async (ctx: Ctx, templateId: string): Promise<Vari
   }
 
   const combinationRows = productRows.filter((row) => String(row.combinationKey ?? '') !== '')
+  for (const row of combinationRows) {
+    const id = String(row.id)
+    if (chosen.has(id) || /^(manual|archived|pending):/.test(String(row.combinationKey))) continue
+    const historical: Record<string, string> = {}
+    for (const valueId of String(row.combinationKey).split(',')) {
+      const value = values.get(valueId)
+      if (value) historical[String(value.attributeId)] = valueId
+    }
+    chosen.set(id, historical)
+  }
   const images = await variantImagesOf(
     ctx,
     combinationRows.map((row) => String(row.id)),
@@ -153,6 +199,8 @@ export const variantSetupOf = async (ctx: Ctx, templateId: string): Promise<Vari
       barcode: row.barcode == null ? null : String(row.barcode),
       weight: decimalText(row.weight),
       volume: decimalText(row.volume),
+      listPrice: row.listPriceOverride == null ? null : String(row.listPriceOverride),
+      hsCode: row.hsCode == null ? null : String(row.hsCode),
       active: row.active !== false,
       images: images.get(String(row.id)) ?? [],
     }))
@@ -160,14 +208,25 @@ export const variantSetupOf = async (ctx: Ctx, templateId: string): Promise<Vari
   return { templateId, listPrice: decimalText(template.listPrice), lines, catalogue, variants }
 }
 
-type LineInput = { attributeId: string; values: Array<{ valueId: string; priceExtra: string }> }
+type LineInput = {
+  attributeId: string
+  values: Array<{ valueId: string; priceExtra: string; priceSpecified: boolean }>
+}
 type VariantInput = {
   id: string | null
   valueIds: Record<string, string>
   defaultCode: string | null
+  codeSpecified: boolean
   barcode: string | null
+  barcodeSpecified: boolean
   weight: string
+  weightSpecified: boolean
   volume: string
+  volumeSpecified: boolean
+  listPrice: string | null
+  listPriceSpecified: boolean
+  hsCode: string | null
+  hsCodeSpecified: boolean
   active: boolean
 }
 
@@ -183,7 +242,11 @@ const readLines = (raw: unknown): LineInput[] =>
       attributeId: String(line.attributeId ?? ''),
       values: (Array.isArray(line.values) ? line.values : []).map((item) => {
         const value = (item ?? {}) as Record<string, unknown>
-        return { valueId: String(value.valueId ?? ''), priceExtra: decimalText(value.priceExtra) }
+        return {
+          valueId: String(value.valueId ?? ''),
+          priceExtra: decimalText(value.priceExtra),
+          priceSpecified: Object.hasOwn(value, 'priceExtra'),
+        }
       }),
     }
   })
@@ -198,9 +261,17 @@ const readVariants = (raw: unknown): VariantInput[] =>
         Object.entries(valueIds).map(([key, value]) => [key, String(value ?? '')]),
       ),
       defaultCode: text(variant.defaultCode),
+      codeSpecified: Object.hasOwn(variant, 'defaultCode'),
       barcode: text(variant.barcode),
+      barcodeSpecified: Object.hasOwn(variant, 'barcode'),
       weight: decimalText(variant.weight),
+      weightSpecified: Object.hasOwn(variant, 'weight'),
       volume: decimalText(variant.volume),
+      volumeSpecified: Object.hasOwn(variant, 'volume'),
+      listPrice: text(variant.listPrice),
+      listPriceSpecified: Object.hasOwn(variant, 'listPrice'),
+      hsCode: hsCodeDigits(variant.hsCode),
+      hsCodeSpecified: Object.hasOwn(variant, 'hsCode'),
       active: variant.active !== false,
     }
   })
@@ -215,20 +286,38 @@ export const applyVariantSetup = async (
   templateId: string,
   rawLines: unknown,
   rawVariants: unknown,
-): Promise<{ ok: false; errors: Issue[] } | { ok: true; created: number; archived: number }> => {
-  if (!(await ctx.db.select('product.Template', { id: templateId }))[0])
+  options: { lockedTemplate?: Row; preserveManual?: boolean } = {},
+): Promise<
+  { ok: false; errors: Issue[] } | { ok: true; created: number; archived: number; deleted: number }
+> => {
+  const template = options.lockedTemplate ?? (await lockVariantTemplate(ctx, templateId))
+  if (!template)
     return {
       ok: false,
       errors: [{ field: 'templateId', code: 'not_found', message: 'template không tồn tại' }],
     }
+  if (template.type === 'combo') return comboRefusal('templateId', 'noVariants')
   const lines = readLines(rawLines)
   const variants = readVariants(rawVariants)
+  const activeCount = variants.filter((variant) => variant.active).length
+  if (activeCount > VARIANT_LIMIT) return variantLimitRefusal(activeCount)
+  const previousLines = await ctx.db.select('product.TemplateAttributeLine', { templateId })
+  await lockAttributes(ctx, [
+    ...lines.map((line) => line.attributeId),
+    ...previousLines.map((line) => line.attributeId),
+  ])
   const [attributeRows, valueRows, productRows, lineRows] = await Promise.all([
     ctx.db.select('product.Attribute'),
     ctx.db.select('product.AttributeValue'),
     ctx.db.select('product.Product', { templateId }),
     ctx.db.select('product.TemplateAttributeLine', { templateId }),
   ])
+  const manualCount = options.preserveManual
+    ? productRows.filter(
+        (row) => row.active !== false && /^(manual|archived|pending):/.test(String(row.combinationKey)),
+      ).length
+    : 0
+  if (activeCount + manualCount > VARIANT_LIMIT) return variantLimitRefusal(activeCount + manualCount)
   // A line this function did not create keeps whatever id it has, and
   // `generateVariants` breaks ties on that stored id — so the order below has to
   // read it rather than assume the id this function would have minted.
@@ -238,6 +327,34 @@ export const applyVariantSetup = async (
   const attributes = new Map(attributeRows.map((row) => [String(row.id), row]))
   const values = new Map(valueRows.map((row) => [String(row.id), row]))
   const errors: Issue[] = []
+  const original = productRows.find((row) => String(row.combinationKey ?? '') === '')
+  const baseOwner =
+    original ?? productRows.find((row) => productCodeOf(row.defaultCode) === template.variantCodeBase)
+  const editedBase = variants.find((variant) => variant.id === baseOwner?.id && variant.codeSpecified)
+  const baseCode = productCodeOf(editedBase?.defaultCode ?? original?.defaultCode ?? template.variantCodeBase)
+  // The initial SKU already owns its stock, lots, codes and history. Give it the
+  // first combination rather than creating a new identity for the same product.
+  if (
+    original?.active !== false &&
+    original &&
+    variants[0]?.id == null &&
+    variants[0]?.active &&
+    productRows.filter((row) => row.active !== false).length === 1
+  ) {
+    variants[0] = {
+      ...variants[0],
+      id: String(original.id),
+    }
+  }
+  const heldValues = await ctx.db.select('product.TemplateAttributeValue')
+  for (const line of lines)
+    for (const entry of line.values)
+      if (!entry.priceSpecified) {
+        const held = heldValues.find(
+          (row) => row.lineId === heldLineIds.get(line.attributeId) && row.valueId === entry.valueId,
+        )
+        entry.priceExtra = decimalText(held?.priceExtra ?? values.get(entry.valueId)?.defaultPriceExtra)
+      }
 
   // ── Attribute lines ──
   const seenAttributes = new Set<string>()
@@ -251,6 +368,8 @@ export const applyVariantSetup = async (
       })
       return
     }
+    if (attribute.active === false && !heldLineIds.has(line.attributeId))
+      errors.push({ field: `lines.${index}.attributeId`, code: 'product.error.attribute.inactive' })
     if (seenAttributes.has(line.attributeId))
       errors.push({
         field: `lines.${index}.attributeId`,
@@ -300,11 +419,56 @@ export const applyVariantSetup = async (
       )
     })
 
+  // Removing all creating attributes keeps one existing SKU as the plain product.
+  if (!variantLines.length && !variants.length) {
+    const plain =
+      original ??
+      productRows.find((row) => row.id === `${templateId}:default`) ??
+      productRows.find((row) => row.active !== false)
+    if (plain)
+      variants.push({
+        id: String(plain.id),
+        valueIds: {},
+        codeSpecified: false,
+        barcodeSpecified: false,
+        weightSpecified: false,
+        volumeSpecified: false,
+        listPriceSpecified: false,
+        hsCodeSpecified: false,
+        defaultCode: productCodeOf(plain.defaultCode),
+        barcode: text(plain.barcode),
+        weight: decimalText(plain.weight),
+        volume: decimalText(plain.volume),
+        listPrice: text(plain.listPriceOverride),
+        hsCode: text(plain.hsCode),
+        active: true,
+      })
+  }
+  const takenCodes = new Set(
+    (await ctx.db.select('product.Product')).flatMap((row) => {
+      const code = productCodeOf(row.defaultCode)
+      return code ? [code.toUpperCase()] : []
+    }),
+  )
+  for (const variant of variants) {
+    if (variant.defaultCode) takenCodes.add(variant.defaultCode.toUpperCase())
+  }
+  for (const variant of variants)
+    if (!variant.id && !variant.defaultCode) variant.defaultCode = nextVariantCode(baseCode, takenCodes)
+
   // ── Variants ──
   const existing = new Map(productRows.map((row) => [String(row.id), row]))
   const keys = new Map<string, number>()
   const barcodes = new Map<string, number>()
   const resolved = variants.map((variant, index) => {
+    if (variant.id && !variant.codeSpecified)
+      variant.defaultCode = text(existing.get(variant.id)?.defaultCode)
+    if (variant.id && !variant.barcodeSpecified) variant.barcode = text(existing.get(variant.id)?.barcode)
+    if (variant.id && !variant.weightSpecified) variant.weight = decimalText(existing.get(variant.id)?.weight)
+    if (variant.id && !variant.volumeSpecified) variant.volume = decimalText(existing.get(variant.id)?.volume)
+    if (variant.id && !variant.listPriceSpecified)
+      variant.listPrice = text(existing.get(variant.id)?.listPriceOverride)
+    if (variant.id && !variant.hsCodeSpecified) variant.hsCode = text(existing.get(variant.id)?.hsCode)
     if (variant.id && !existing.has(variant.id))
       errors.push({
         field: `variants.${index}.id`,
@@ -326,7 +490,11 @@ export const applyVariantSetup = async (
       combination.push(chosen)
     }
     const key = combination.length === variantLines.length ? combination.join(',') : ''
-    if (variant.active && variantLines.length === 0)
+    if (
+      variant.active &&
+      variantLines.length === 0 &&
+      !(variants.length === 1 && variant.id && existing.has(variant.id))
+    )
       errors.push({
         field: `variants.${index}`,
         code: 'no_attributes',
@@ -353,11 +521,15 @@ export const applyVariantSetup = async (
       errors.push({ field: `variants.${index}.weight`, code: 'product.error.template.measure' })
     if (!isDecimal(variant.volume))
       errors.push({ field: `variants.${index}.volume`, code: 'product.error.template.measure' })
+    if (variant.listPrice !== null && (!isDecimal(variant.listPrice) || variant.listPrice.startsWith('-')))
+      errors.push({ field: `variants.${index}.listPrice`, code: 'product.error.variant.listPrice' })
+    if (variant.hsCode !== null && !hsCodeValid(variant.hsCode))
+      errors.push({ field: `variants.${index}.hsCode`, code: 'product.error.variant.hsCode' })
     if (variant.barcode) {
-      const other = barcodes.get(variant.barcode)
+      const other = barcodes.get(barcodeKey(variant.barcode)!)
       if (other !== undefined)
         errors.push({ field: `variants.${index}.barcode`, code: 'product.error.variant.barcodeRepeated' })
-      else barcodes.set(variant.barcode, index)
+      else barcodes.set(barcodeKey(variant.barcode)!, index)
     }
     return { ...variant, key }
   })
@@ -370,20 +542,99 @@ export const applyVariantSetup = async (
       resolved[index] = { ...variant, key: key && !keys.has(key) ? key : `archived:${variant.id}` }
     }
 
-  for (const [barcode, index] of barcodes) {
-    const owner = (await ctx.db.select('product.Product', { barcode }))[0]
-    if (owner && String(owner.templateId) !== templateId)
-      errors.push({ field: `variants.${index}.barcode`, code: 'product.error.variant.barcodeTaken' })
-  }
+  // Barcodes and HS codes are stock fields (P17/P28): changing any of them needs stock setup.
+  const stockFields = [
+    ...(resolved.some(
+      (variant) =>
+        barcodeOf(variant.barcode) !== barcodeOf(variant.id ? existing.get(variant.id)?.barcode : null),
+    )
+      ? ['barcode']
+      : []),
+    ...(resolved.some(
+      (variant) => variant.hsCode !== text(variant.id ? existing.get(variant.id)?.hsCode : null),
+    )
+      ? ['hsCode']
+      : []),
+  ]
+  if (stockFields.length) await requireFieldGroup(ctx, 'stock', stockFields)
   if (errors.length) return { ok: false, errors }
 
+  const submittedActive = new Set(
+    resolved.filter((variant) => variant.active && variant.id).map((variant) => variant.id),
+  )
+  const submittedIds = new Set(resolved.flatMap((variant) => (variant.id ? [variant.id] : [])))
+  const preserve = (row: Row) =>
+    options.preserveManual && /^(manual|archived|pending):/.test(String(row.combinationKey))
+  if (
+    !resolved.some((variant) => variant.active) &&
+    !productRows.some((row) => preserve(row) && row.active !== false)
+  )
+    throw new VariantPolicyRefused({
+      ok: false,
+      errors: [
+        {
+          field: 'variants',
+          code: 'product.error.variant.lastActive',
+          params: { product: String(template.name) },
+        },
+      ],
+    })
+  const retiring = productRows.filter(
+    (row) =>
+      !preserve(row) &&
+      !submittedActive.has(String(row.id)) &&
+      (row.active !== false || !submittedIds.has(String(row.id))) &&
+      (String(row.combinationKey ?? '') !== '' ||
+        submittedIds.has(String(row.id)) ||
+        resolved.some((variant) => variant.active)),
+  )
+  for (const row of retiring) await assertVariantCanRetire(ctx, template, row)
+
+  const codeChanged = (variant: (typeof resolved)[number]) =>
+    !variant.id || productCodeOf(variant.defaultCode) !== productCodeOf(existing.get(variant.id)?.defaultCode)
+  const replacing = resolved.filter(codeChanged).flatMap((variant) => (variant.id ? [variant.id] : []))
+  const codePatches: Row[] = []
+  for (const [index, variant] of resolved.entries()) {
+    const field = `variants.${index}.defaultCode`
+    const key = productCodeOf(variant.defaultCode)?.toUpperCase()
+    if (
+      key &&
+      codeChanged(variant) &&
+      resolved.some((other, i) => i !== index && productCodeOf(other.defaultCode)?.toUpperCase() === key)
+    )
+      throw new ProductCodeRefused(field, 'codeTaken')
+    codePatches.push(
+      codeChanged(variant)
+        ? await productCodePatch(ctx, variant.id ? existing.get(variant.id) : null, variant.defaultCode, {
+            field,
+            replacing,
+          })
+        : {},
+    )
+  }
+
+  const barcodeChanged = (variant: (typeof resolved)[number]) =>
+    !variant.id || barcodeOf(variant.barcode) !== barcodeOf(existing.get(variant.id)?.barcode)
+  const barcodeOwners = resolved
+    .filter(barcodeChanged)
+    .flatMap((variant) => (variant.id ? [{ kind: 'variant' as const, id: variant.id }] : []))
+  const barcodeReplacing = new Set(barcodeOwners.map(barcodeOwnerKey))
   let created = 0
   let archived = 0
+  let deleted = 0
   {
     const tx = ctx
     const Line = tx.table('product.TemplateAttributeLine')
     const TemplateValue = tx.table('product.TemplateAttributeValue')
     const ProductValue = tx.table('product.ProductValue')
+    await claimProductCodeRevision(tx, template)
+    if (template.variantCodeBase !== baseCode && baseCode && variantLines.length)
+      await tx.db.update('product.Template', { id: templateId }, { variantCodeBase: baseCode })
+    await releaseBarcodeClaims(tx, barcodeOwners)
+    for (const owner of barcodeOwners)
+      await tx.db.update('product.Product', { id: owner.id }, { barcode: null })
+    // Release changing keys together so an atomic SKU-code swap can succeed.
+    for (const id of [...replacing].sort()) await tx.db.update('product.Product', { id }, { codeKey: null })
 
     // Lines and their values: drop what left, add what came, keep price extras current.
     const currentLines = await tx.db.select('product.TemplateAttributeLine', { templateId })
@@ -391,13 +642,14 @@ export const applyVariantSetup = async (
     for (const line of currentLines) {
       const templateValueRows = await tx.db.select('product.TemplateAttributeValue', { lineId: line.id })
       const leaving = !wantedAttributes.has(String(line.attributeId))
+      // Matched by value: a company copy of the catalogue gives value rows opaque ids.
       const wanted = new Set(
-        (lines.find((entry) => entry.attributeId === String(line.attributeId))?.values ?? []).map((value) =>
-          templateValueIdFor(String(line.id), value.valueId),
+        (lines.find((entry) => entry.attributeId === String(line.attributeId))?.values ?? []).map(
+          (value) => value.valueId,
         ),
       )
       for (const row of templateValueRows)
-        if (leaving || !wanted.has(String(row.id))) {
+        if (leaving || !wanted.has(String(row.valueId))) {
           await tx.db.del(deleteFrom(ProductValue).where(eq(ProductValue.templateAttributeValueId, row.id)))
           await tx.db.del(deleteFrom(TemplateValue).where(eq(TemplateValue.id, row.id)))
         }
@@ -414,9 +666,11 @@ export const applyVariantSetup = async (
           attributeId: line.attributeId,
         })
       for (const value of line.values) {
-        const id = templateValueIdFor(lineId, value.valueId)
+        const row = (
+          await tx.db.select('product.TemplateAttributeValue', { lineId, valueId: value.valueId })
+        )[0]
+        const id = row ? String(row.id) : templateValueIdFor(lineId, value.valueId)
         templateValueIds.set(value.valueId, id)
-        const row = (await tx.db.select('product.TemplateAttributeValue', { id }))[0]
         if (row)
           await tx.db.update('product.TemplateAttributeValue', { id }, { priceExtra: value.priceExtra })
         else
@@ -436,7 +690,11 @@ export const applyVariantSetup = async (
     const claimed = new Set(resolved.map((variant) => variant.key))
     for (const row of productRows) {
       const id = String(row.id)
-      if (String(row.combinationKey ?? '') === '' || submitted.has(id)) continue
+      if (String(row.combinationKey ?? '') === '' || submitted.has(id) || preserve(row)) continue
+      if (await deleteUnusedVariant(tx, id)) {
+        deleted++
+        continue
+      }
       // Left the setup: archived, and moved off any key a submitted row now needs.
       const patch: Row = {}
       if (row.active !== false) {
@@ -450,12 +708,22 @@ export const applyVariantSetup = async (
       if (variant.id && String(existing.get(variant.id)?.combinationKey) !== variant.key)
         await tx.db.update('product.Product', { id: variant.id }, { combinationKey: `pending:${variant.id}` })
 
-    for (const variant of resolved) {
+    for (const [index, variant] of resolved.entries()) {
       const fields = {
-        defaultCode: variant.defaultCode,
-        barcode: variant.barcode,
+        ...codePatches[index],
+        ...(barcodeChanged(variant) && variant.id
+          ? await claimBarcode(
+              tx,
+              { kind: 'variant', id: variant.id },
+              existing.get(variant.id),
+              variant.barcode,
+              { field: `variants.${index}.barcode`, replacing: barcodeReplacing },
+            )
+          : {}),
         weight: variant.weight,
         volume: variant.volume,
+        listPriceOverride: variant.listPrice,
+        hsCode: variant.hsCode,
         combinationKey: variant.key,
         active: variant.active,
       }
@@ -467,7 +735,11 @@ export const applyVariantSetup = async (
         const base = `${templateId}:${variant.key}`
         id = base
         for (let n = 2; (await tx.db.select('product.Product', { id }))[0]; n++) id = `${base}:${n}`
-        await tx.db.insert('product.Product', { id, templateId, ...fields })
+        const barcodePatch = await claimBarcode(tx, { kind: 'variant', id }, null, variant.barcode, {
+          field: `variants.${index}.barcode`,
+          replacing: barcodeReplacing,
+        })
+        await tx.db.insert('product.Product', { id, templateId, ...fields, ...barcodePatch })
         created++
       }
       await tx.db.del(deleteFrom(ProductValue).where(eq(ProductValue.productId, id)))
@@ -490,7 +762,8 @@ export const applyVariantSetup = async (
     // The no-combination variant sells only while nothing else does.
     const selling = resolved.some((variant) => variant.active)
     const defaultVariant = productRows.find((row) => String(row.combinationKey ?? '') === '')
-    if (defaultVariant) await tx.db.update('product.Product', { id: defaultVariant.id }, { active: !selling })
+    if (defaultVariant && !submitted.has(String(defaultVariant.id)))
+      await tx.db.update('product.Product', { id: defaultVariant.id }, { active: !selling })
     else if (!selling)
       await tx.db.insert('product.Product', {
         id: `${templateId}:default`,
@@ -504,7 +777,22 @@ export const applyVariantSetup = async (
       })
   }
 
-  return { ok: true, created, archived }
+  return { ok: true, created, archived, deleted }
+}
+
+export async function saveVariantSetupHandler(ctx: Ctx, args: Row) {
+  const templateId = String(args.templateId)
+  let result: Row
+  try {
+    result = await ctx.tx((tx) => applyVariantSetup(tx, templateId, args.lines, args.variants))
+  } catch (error) {
+    if (error instanceof VariantPolicyRefused) return error.result
+    const refused = productCodeFailure(error, 'variants') ?? barcodeFailure(error, 'variants')
+    if (refused) return refused
+    throw error
+  }
+  if (!result.ok) return result
+  return { ...result, setup: await variantSetupOf(ctx, templateId) }
 }
 
 export const variantSetupFunctions: Record<string, FnSpec> = {
@@ -518,10 +806,20 @@ export const variantSetupFunctions: Record<string, FnSpec> = {
    */
   saveVariantSetup: defineFn({
     input: { templateId: 'id', lines: 'json', variants: 'json' },
-    output: { ok: 'bool', created: 'int?', archived: 'int?', setup: 'json?', errors: 'json?' },
+    output: {
+      ok: 'bool',
+      created: 'int?',
+      archived: 'int?',
+      deleted: 'int?',
+      setup: 'json?',
+      errors: 'json?',
+    },
     effects: [
+      ...BARCODE_EFFECTS,
+      ...variantRetirementEffects,
       'read:product.Template',
       'read:product.Attribute',
+      'write:product.Attribute',
       'read:product.AttributeValue',
       'read:product.TemplateAttributeLine',
       'read:product.TemplateAttributeValue',
@@ -531,16 +829,13 @@ export const variantSetupFunctions: Record<string, FnSpec> = {
       'write:product.TemplateAttributeLine',
       'write:product.TemplateAttributeValue',
       'write:product.Product',
+      'write:product.Template',
       'write:product.ProductValue',
+      ...AUTHORIZATION_READ_EFFECTS,
     ],
     // The product page edits one variant through this call; a retried submit replays.
     idempotent: true,
     agent: true,
-    handler: async (ctx, args) => {
-      const templateId = String(args.templateId)
-      const result = await ctx.tx((tx) => applyVariantSetup(tx, templateId, args.lines, args.variants))
-      if (!result.ok) return result
-      return { ...result, setup: await variantSetupOf(ctx, templateId) }
-    },
+    handler: saveVariantSetupHandler,
   }),
 }

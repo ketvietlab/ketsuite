@@ -8,6 +8,7 @@ export default defineModule({
   name: 'stock_staff_channel',
   version: '0.1.0',
   depends: ['channel_api', 'stock', 'company', 'product', 'uom', 'user'],
+  optional: ['account', 'sale'],
   compatible: { channel_api: '^1' },
   title: 'Warehouse Staff Channel',
   summary: 'Audience-scoped warehouse execution, scanning, and inventory counts for staff clients.',

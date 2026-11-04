@@ -1,22 +1,19 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { buildDesignSystemStyles } from '../tools/build-design-system-styles.mjs'
 
-// KÉT Sans first (Medium registered for 500 and 600), then the Inter faces that fill
-// in the characters it does not draw. esbuild writes É as the CSS escape \c9.
+const FONTS = 'packages/design-system/src/foundations/fonts'
+// Inter is the only bundled family. KÉT Sans stays first in --kv-font-sans for Két Việt
+// products that register it themselves; esbuild writes É as the CSS escape \c9.
 const FACES = [
-  { file: 'KETSansOptical-Light.woff2', family: 'K\\c9T Sans', weight: '300', style: 'normal' },
-  { file: 'KETSansOptical-Regular.woff2', family: 'K\\c9T Sans', weight: '400', style: 'normal' },
-  { file: 'KETSansOptical-Medium.woff2', family: 'K\\c9T Sans', weight: '500 600', style: 'normal' },
-  { file: 'KETSansOptical-Bold.woff2', family: 'K\\c9T Sans', weight: '700', style: 'normal' },
   { file: 'InterVariable.woff2', family: 'Inter', weight: '100 900', style: 'normal' },
   { file: 'InterVariable-Italic.woff2', family: 'Inter', weight: '100 900', style: 'italic' },
 ]
 
-test('public stylesheet embeds every KÉT Sans and Inter face when served at a relocated CSS URL', async () => {
+test('public stylesheet embeds every Inter face when served at a relocated CSS URL', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ket-font-styles-'))
   try {
     const output = join(dir, 'content-hash', 'styles.css')
@@ -33,7 +30,7 @@ test('public stylesheet embeds every KÉT Sans and Inter face when served at a r
       assert.doesNotMatch(face, /local\(/u)
       const embedded: RegExpMatchArray | null = face.match(/url\(data:font\/woff2;base64,([A-Za-z\d+/=]+)\)/u)
       assert.ok(embedded, 'font must not resolve relative to the runtime stylesheet URL')
-      const source = await readFile(`packages/design-system/src/foundations/fonts/${file}`)
+      const source = await readFile(`${FONTS}/${file}`)
       assert.equal(source.subarray(0, 4).toString(), 'wOF2')
       assert.deepEqual(Buffer.from(embedded[1], 'base64'), source)
     }
@@ -45,4 +42,24 @@ test('public stylesheet embeds every KÉT Sans and Inter face when served at a r
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// KÉT Sans may not be redistributed, so the public package must not carry it in any form.
+test('design system ships Inter under OFL-1.1 and no KÉT Sans', async () => {
+  assert.deepEqual((await readdir(FONTS)).sort(), [
+    'InterVariable-Italic.woff2',
+    'InterVariable.woff2',
+    'LICENSE.txt',
+    'README.md',
+  ])
+  const tokens = await readFile('packages/design-system/src/foundations/tokens.css', 'utf8')
+  const families = [...tokens.matchAll(/@font-face\s*\{[^}]*font-family:\s*"([^"]+)"/gu)].map(
+    (face) => face[1],
+  )
+  assert.deepEqual([...new Set(families)], ['Inter'])
+  const manifest = JSON.parse(await readFile('packages/design-system/package.json', 'utf8'))
+  assert.equal(manifest.license, 'MIT AND ISC AND OFL-1.1')
+  const notice = await readFile('packages/design-system/LICENSE', 'utf8')
+  assert.match(notice, /SIL Open Font License, Version 1\.1/u)
+  assert.doesNotMatch(notice, /KÉT Sans/u)
 })

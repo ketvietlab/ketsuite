@@ -15,7 +15,7 @@ import { templateModalDefinition } from '../packages/ketsuite/src/modules/produc
 import { routes as productRoutes } from '../packages/ketsuite/src/modules/product_backend/routes.ts'
 import { saleOrderModalDefinition } from '../packages/ketsuite/src/modules/sale_backend/modal/order-modal-view.tsx'
 import { vendorPricelistDefinition } from '../packages/ketsuite/src/modules/purchase_backend/modal/pricelist-view.tsx'
-import { invoicingPolicyDefinition } from '../packages/ketsuite/src/modules/sale_backend/modal/policy-view.tsx'
+import { salePolicyModalDefinition } from '../packages/ketsuite/src/modules/sale_backend/policies/modal-view.tsx'
 import { inventoryCountDefinition } from '../packages/ketsuite/src/modules/stock_backend/modal/inventory-view.tsx'
 import { transferModalDefinition } from '../packages/ketsuite/src/modules/stock_backend/modal/transfer-view.tsx'
 import { stockConfigurationDefinition } from '../packages/ketsuite/src/modules/stock_backend/modal/configuration-view.tsx'
@@ -85,45 +85,49 @@ test('Commerce favorite redirect retains the list query and its explicit or inhe
 })
 
 test('Commerce modal width depends on record purpose, not active tab', () => {
-  for (const definition of [purchaseOrderModalDefinition, saleOrderModalDefinition]) {
-    assert.equal(size(definition as RecordModalDefinition<unknown>, true), 'default')
-    assert.equal(size(definition as RecordModalDefinition<unknown>, false), 'large')
-  }
+  assert.equal(size(purchaseOrderModalDefinition as RecordModalDefinition<unknown>, true), 'default')
+  assert.equal(size(purchaseOrderModalDefinition as RecordModalDefinition<unknown>, false), 'large')
+  // A new quotation is as wide as a saved one, so its terms sit in the form's two columns.
+  assert.equal(size(saleOrderModalDefinition as RecordModalDefinition<unknown>, true), 'large')
+  assert.equal(size(saleOrderModalDefinition as RecordModalDefinition<unknown>, false), 'large')
   // A product opens on its own page: wide (`size: 'large'`) whether new or saved, its
   // cards and rail side by side.
   assert.equal(size(templateModalDefinition as RecordModalDefinition<unknown>, true), 'large')
   assert.equal(size(templateModalDefinition as RecordModalDefinition<unknown>, false), 'large')
   assert.equal(size(vendorPricelistDefinition, true), 'default')
   assert.equal(size(vendorPricelistDefinition, false), 'small')
-  assert.equal(size(invoicingPolicyDefinition, false), 'small')
+  assert.equal(size(salePolicyModalDefinition, false), 'small')
   assert.equal(size(inventoryCountDefinition, false), 'small')
   assert.equal(size(transferModalDefinition, true), 'small')
   assert.equal(size(transferModalDefinition, false), 'default')
   for (const key of ['location', 'lot', 'route', 'warehouse', 'picking-type', 'replenishment'] as const) {
     const definition = stockConfigurationDefinition(key)
-    assert.equal(size(definition, true), ['location', 'lot', 'route'].includes(key) ? 'small' : 'default')
+    // A lot and a replenishment open as pages, wide new or saved.
+    const page = key === 'lot' || key === 'replenishment'
+    assert.equal(
+      size(definition, true),
+      page ? 'large' : ['location', 'route'].includes(key) ? 'small' : 'default',
+    )
     assert.equal(
       size(definition, false),
-      key === 'location' ? 'small' : key === 'route' ? 'large' : 'default',
+      key === 'location' ? 'small' : key === 'route' || page ? 'large' : 'default',
     )
   }
 })
 
-test('Purchase record keeps product, quantity and unit price inline, permission-gated and busy-safe', () => {
-  const c = context(purchaseOrderModalDefinition)
+test('Purchase record edits its lines in one KetGrid, never through fields in the table', () => {
+  const base = context(purchaseOrderModalDefinition)
+  const c = { ...base, data: { ...base.data, permissions: { addLine: true, saveLines: true } } }
   const tab = purchaseOrderModalDefinition.tabs?.[0]
   assert.ok(tab)
   const markup = renderToString(<>{tab.view(c)}</>)
-  assert.match(markup, /data-columns="3"/)
-  const product = markup.indexOf('name="productId"')
-  const quantity = markup.indexOf('name="productQty"')
-  const price = markup.indexOf('name="priceUnit"')
-  assert.ok(product > 0 && product < quantity && quantity < price)
-  assert.match(markup, /name="productUomId"/)
-  assert.match(markup, /name="taxId"/)
-  assert.match(renderToString(<>{tab.view({ ...c, busy: true })}</>), /disabled/)
-  const denied = { ...c, data: { ...c.data, permissions: { ...c.data.permissions, addLine: false } } }
-  assert.doesNotMatch(renderToString(<>{tab.view(denied)}</>), /name="productId"/)
+  assert.match(markup, /<form[^>]*id="purchase-order-lines-form"/)
+  assert.match(markup, /data-island="backend\.ket-grid"/)
+  assert.doesNotMatch(markup, /name="(productId|productQty|priceUnit|productUomId|taxId)"/)
+  // Without the grid's save the lines are read only, still without a field.
+  const denied = { ...c, data: { ...c.data, permissions: { addLine: true } } }
+  const readOnly = renderToString(<>{tab.view(denied)}</>)
+  assert.doesNotMatch(readOnly, /backend\.ket-grid|purchase-order-lines-form|name="productId"/)
 })
 
 test('Commerce shell expands inactive groups too, with independent disclosures', () => {
@@ -230,6 +234,10 @@ test('Commerce vendor prices and stock queue render collection data without requ
             state: 'assigned',
           },
         ],
+        tiles: [],
+        warehouses: [],
+        warehouseChoices: [],
+        showValue: false,
         at: (path) => path,
         rowHref: (row) => `/admin/stock/transfers?record=stock.transfer:${row.id}`,
         createHref: null,

@@ -11,6 +11,8 @@ export const models: Record<string, ModelDef> = {
       sourceChecksum: 'text',
       accountingTimezone: 'text?',
       moneyPolicyVersion: 'text?',
+      /** The form each accounting book follows under this standard, by book: `{ cash: 'S07-DN' }`. */
+      bookForms: 'json?',
       installedAt: 'datetime',
     },
     indexes: { company: { fields: ['companyId'], unique: true } },
@@ -28,10 +30,31 @@ export const models: Record<string, ModelDef> = {
       id: 'id',
       incomeAccountId: 'ref:account.Account?',
       expenseAccountId: 'ref:account.Account?',
+      goodsPurchaseAccountId: 'ref:account.Account?',
+      servicePurchaseAccountId: 'ref:account.Account?',
       receivableAccountId: 'ref:account.Account?',
       payableAccountId: 'ref:account.Account?',
+      // The branches of the chart a tax of each use may post to, as account-code
+      // prefixes: a branch may hold no account of its own (3331 has only 33311
+      // and 33312 beneath it). Unset or empty leaves the choice open.
+      saleTaxAccountRoots: 'json?',
+      purchaseTaxAccountRoots: 'json?',
+      // Defaults the accounting standard fixes, by field: the account each must hold.
+      // A pinned default reads but does not change (Vietnam keeps 131 and 331).
+      pinned: 'json?',
     },
     indexes: { company: { fields: ['companyId'], unique: true } },
+  },
+  /** Optional per-company account overrides for all variants of one product template. */
+  ProductAccount: {
+    scope: 'company',
+    fields: {
+      id: 'id',
+      templateId: 'ref:product.Template',
+      incomeAccountId: 'ref:account.Account?',
+      expenseAccountId: 'ref:account.Account?',
+    },
+    indexes: { company_template: { fields: ['companyId', 'templateId'], unique: true } },
   },
   /**
    * What a product category posts to, per company.
@@ -98,6 +121,14 @@ export const models: Record<string, ModelDef> = {
       accountId: 'ref:account.Account?',
       sequence: 'int',
       active: 'bool',
+      /**
+       * The first and last document dates the rate applies to, both inclusive; empty is
+       * open-ended. A temporary rate (the 8% of NQ 204/2025 until 31/12/2026) ends here
+       * rather than being archived, because refunds and reversals of its period still
+       * carry it after the end date.
+       */
+      validFrom: 'date?',
+      validTo: 'date?',
     },
   },
   /**
@@ -165,6 +196,13 @@ export const models: Record<string, ModelDef> = {
       reversedById: 'ref:account.Move?',
       /** Durable reversal progress: creating, posted, reconciling or completed. */
       reversalStatus: 'text?',
+      /** The module that owns this entry (stock valuation); its corrections go through that module. */
+      sourceModule: 'text?',
+      /**
+       * A period-end entry carrying income and costs into retained earnings. Statements of
+       * income read past it; the trial balance and the books show it like any entry.
+       */
+      closingEntry: 'bool?',
       /** Optimistic token for commands that must claim an invoice before writing. */
       revision: 'int?',
     },
@@ -175,6 +213,7 @@ export const models: Record<string, ModelDef> = {
     fields: {
       id: 'id',
       moveId: 'ref:account.Move',
+      lineKind: 'text?',
       name: 'text',
       accountId: 'ref:account.Account',
       partnerId: 'ref:partner.Partner?',
@@ -715,6 +754,12 @@ export const models: Record<string, ModelDef> = {
       taxThrough: 'date?',
       allThrough: 'date?',
       hardThrough: 'date?',
+      /**
+       * What each close period sets on its own dates: the kinds of document locked ahead of the
+       * rest, and who may still post once it is soft closed. Kept on the policy so every post
+       * reads it with the lock dates it already claims.
+       */
+      periodControls: 'json?',
       revision: 'int',
       updatedAt: 'datetime',
       updatedBy: 'text?',
@@ -795,6 +840,10 @@ export const models: Record<string, ModelDef> = {
       reopenedAt: 'datetime?',
       reopenedBy: 'text?',
       reopenReason: 'text?',
+      /** Kinds of document (invoices, bills, payments, entries) locked while the period is open. */
+      lockedKinds: 'json?',
+      /** Users who may still post into the period once it is soft closed. */
+      softPosters: 'json?',
     },
     indexes: { period: { fields: ['companyId', 'periodKey'], unique: true } },
   },

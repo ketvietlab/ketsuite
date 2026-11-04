@@ -12,7 +12,7 @@
 // So it lives here, once, and a module says only which title and which body.
 
 import { isNavigationRequest, isTimezone } from '@ketvietlab/ketjs'
-import type { Route, ServeContext, Translator } from '@ketvietlab/ketjs'
+import type { MenuNode, Route, ServeContext, Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import { actionGroup, backendPage, linkButton, suiteApplications, suiteMainMenu } from '../../ui/index.ts'
 import type { Extras, Frame, FormField, Viewer } from '../../ui/index.ts'
@@ -116,6 +116,20 @@ export const jointFor = async (
   return ctx.joint(url, req, joint, { ...props, may })
 }
 
+/** The apps whose screens search their own records first: K55 Stock, Products. Each app's screens sit beside its search. */
+const APP_SEARCHES = [
+  {
+    path: '/admin/product/search',
+    fn: 'product_backend.searchCatalogue',
+    label: 'product_backend.search.title',
+  },
+  {
+    path: '/admin/stock/search',
+    fn: 'stock_backend.searchStock',
+    label: 'stock_backend.search.title',
+  },
+] as const
+
 /**
  * The shell's half of a screen.
  *
@@ -123,6 +137,40 @@ export const jointFor = async (
  * Include it in navigation fragments so indicators and extension tools survive navigation.
  * The island runtime is not part of a frame: `backendPage` places it with the document.
  */
+/**
+ * The menu with an entry that names a filtered list lit when that list is showing.
+ *
+ * KetJS lights an entry by its path alone, so an entry such as
+ * `/admin/sales/orders?preset=to%20invoice` never lit and the plain orders entry did instead.
+ * When the address carries every parameter such an entry names, it is the entry showing, and the
+ * headings above it stay open.
+ */
+export function queryEntryActive(tree: MenuNode[], url: URL): MenuNode[] {
+  const shows = (path: string) => {
+    const target = new URL(path, url)
+    return (
+      target.pathname === url.pathname &&
+      [...target.searchParams].every(([key, value]) => url.searchParams.getAll(key).includes(value))
+    )
+  }
+  const find = (nodes: MenuNode[]): string | null => {
+    for (const node of nodes) {
+      if (node.path?.includes('?') && shows(node.path)) return node.id
+      const below = find(node.children)
+      if (below) return below
+    }
+    return null
+  }
+  const lit = find(tree)
+  if (!lit) return tree
+  const mark = (nodes: MenuNode[]): MenuNode[] =>
+    nodes.map((node) => {
+      const children = mark(node.children)
+      return { ...node, children, active: node.id === lit || children.some((child) => child.active) }
+    })
+  return mark(tree)
+}
+
 export const frameOf = async (
   ctx: ServeContext,
   url: URL,
@@ -133,12 +181,33 @@ export const frameOf = async (
   const menuUrl = active === url.pathname ? url : Object.assign(new URL(url), { pathname: active })
   const navigation = isNavigationRequest(req)
   const lang = ctx.localeOf(url, req)
-  const menu = await ctx.menu(menuUrl, req)
+  const menu = queryEntryActive(await ctx.menu(menuUrl, req), menuUrl)
   const app = options.app ?? 'sales'
+  // An app with a search of its own points the topbar there while its screens are open.
+  const appSearch = APP_SEARCHES.find((search) =>
+    url.pathname.startsWith(search.path.slice(0, search.path.lastIndexOf('/') + 1)),
+  )
+  const ownSearch = appSearch && (await ctx.allows(appSearch.fn, url, req)) ? appSearch : undefined
+  const searchUrl = new URL(ownSearch?.path ?? '/admin/search', url)
+  for (const key of ['company', 'branch']) {
+    const value = url.searchParams.get(key)
+    if (value) searchUrl.searchParams.set(key, value)
+  }
+
   return {
     navigation,
     locale: lang,
-    globalSearchQuery: url.pathname === '/admin/search' ? (url.searchParams.get('q') ?? '') : '',
+    globalSearchQuery: ['/admin/search', ...APP_SEARCHES.map((search) => search.path)].includes(url.pathname)
+      ? (url.searchParams.get('q') ?? '')
+      : '',
+    ...(ownSearch
+      ? {
+          globalSearch: {
+            action: searchUrl.pathname + searchUrl.search,
+            label: ctx.translate(lang)(ownSearch.label),
+          },
+        }
+      : {}),
     collectionUrl: url.pathname + url.search,
     viewer: await viewerOf(ctx, url, req),
     ...(options.app ? { app } : {}),

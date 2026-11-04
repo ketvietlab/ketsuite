@@ -1,3 +1,4 @@
+import { listSavedViews } from './saved-views.ts'
 import { and, asc, eq, from, ilike, inArray, isNull, likeLiteral, or } from '@ketvietlab/ketjs'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
 import { refuse, string } from './policy.ts'
@@ -8,7 +9,7 @@ import type { NativeServerExtension } from './command.ts'
 export async function search(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
   const query = string(input.query)
   if (
-    query.length > 240 ||
+    query.length > 200 ||
     (input.recent !== undefined &&
       (!Array.isArray(input.recent) ||
         input.recent.length > 30 ||
@@ -159,25 +160,9 @@ export async function search(ctx: Ctx, input: Row, extensions: NativeServerExten
       ),
     )
   }
-  const V = ctx.table('flow.SavedView'),
-    I = ctx.table('flow.Inbox')
+  const I = ctx.table('flow.Inbox')
   const [views, inbox] = await Promise.all([
-    // The views one may open: of a project one reads, one's own or shared with it; one's own of none.
-    ctx.db.all(
-      from(V)
-        .where(
-          eq(V.companyId, a.companyId),
-          eq(V.archived, false),
-          or(
-            and(isNull(V.projectId), eq(V.ownerId, a.actorId)),
-            ...(projectIds.length ? [inArray(V.projectId, projectIds)] : []),
-          ),
-          ilike(V.title, pattern),
-        )
-        .select(V.id, V.title, V.projectId, V.ownerId, V.query, V.status)
-        .orderBy(asc(V.title), asc(V.id))
-        .limit(30),
-    ),
+    listSavedViews(ctx, { query, limit: 6 }, projectIds),
     ctx.db.all(
       from(I)
         .where(
@@ -194,17 +179,17 @@ export async function search(ctx: Ctx, input: Row, extensions: NativeServerExten
   // Opened as the saved views screen opens them: the project list with the view's filter.
   add(
     'views',
-    views
-      .filter((v) => v.ownerId === a.actorId || (v.query as Row | null)?.visibility === 'project')
-      .slice(0, 6)
-      .map((v) =>
-        item('view', v, 'project-issues', 'list', {
-          project: v.projectId ?? '',
-          view: v.id,
-          q: string((v.query as Row | null)?.text),
-          status: string(v.status) || 'all',
-        }),
-      ),
+    views.items.map((v) =>
+      item('view', v, string(v.sourceRoute), 'list', {
+        project: v.projectId ?? '',
+        view: v.id,
+        workspace: v.workspaceId ?? '',
+        q: string(v.query),
+        sort: v.sort ?? 'due',
+        group: v.group ?? 'status',
+        status: string(v.status) || 'all',
+      }),
+    ),
   )
   add(
     'inbox',
@@ -276,5 +261,21 @@ export async function search(ctx: Ctx, input: Row, extensions: NativeServerExten
         params: {},
       })),
   )
-  return { groups }
+  const seen = new Set<string>()
+  let remaining = 60
+  const ordered = [...groups.filter((g) => g.id === 'recent'), ...groups.filter((g) => g.id !== 'recent')]
+  return {
+    groups: ordered
+      .map((g) => ({
+        ...g,
+        items: (g.items as Row[]).filter((item) => {
+          const id = string(item.id)
+          if (!remaining || seen.has(id)) return false
+          seen.add(id)
+          remaining--
+          return true
+        }),
+      }))
+      .filter((g) => g.items.length),
+  }
 }

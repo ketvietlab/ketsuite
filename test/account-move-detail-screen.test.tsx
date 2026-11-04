@@ -150,4 +150,6 @@ test('posted invoice FormPage keeps payment lifecycle, stable reversal and hides
   assert.match(html, /name="reversalId" value="reversal-retry-1"/)
   assert.doesNotMatch(html, /id="account-move-line-form"|name="action" value="post"/)
   assert.doesNotMatch(html, /data-ui="record-workspace"/)
+  // The vendor bills guide is for vendor bills only.
+  assert.doesNotMatch(html, /account-vendor-bill-help/)
 })

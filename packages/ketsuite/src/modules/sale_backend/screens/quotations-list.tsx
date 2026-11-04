@@ -1,3 +1,4 @@
+import { SaleOrderHelp } from './order-help.tsx'
 import type { Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import {
@@ -20,6 +21,7 @@ import { labelOf } from './shared.tsx'
 export type QuotationListRow = Record<string, unknown>
 
 export type QuotationsListScreenOptions = {
+  lang?: 'vi' | 'en'
   rows: QuotationListRow[]
   /** Localized `/admin/sales/quotations/new` URL, including retained list state. */
   createHref: string | null
@@ -127,26 +129,29 @@ export const quotationsListScreen = (
   return shell(
     _,
     _('sale_backend.quotations.title'),
-    <ListPage
-      variant="operational"
-      frame={collection.frame}
-      title={_('sale_backend.quotation.title')}
-      headerActions={
-        options.createHref ? (
-          <LinkButton label={_('sale_backend.action.create')} href={options.createHref} variant="primary" />
-        ) : null
-      }
-      actions={collectionActions(_, collection.frame, undefined, selection)}
-      controls={collectionControls(_, _('sale_backend.quotation.title'), collection.frame)}
-      footer={summary}
-      body={
-        options.rows.length || options.table?.groups?.length
-          ? collectionTable(_, collection.table)
-          : emptyState(_('sale_backend.quotation.empty'), _('sale_backend.quotation.emptyHint'), {
-              icon: icon('shopping-bag'),
-            })
-      }
-    />,
+    <>
+      <ListPage
+        variant="operational"
+        frame={collection.frame}
+        title={_('sale_backend.quotation.title')}
+        headerActions={
+          options.createHref ? (
+            <LinkButton label={_('sale_backend.action.create')} href={options.createHref} variant="primary" />
+          ) : null
+        }
+        actions={collectionActions(_, collection.frame, undefined, selection)}
+        controls={collectionControls(_, _('sale_backend.quotation.title'), collection.frame)}
+        footer={summary}
+        body={
+          options.rows.length || options.table?.groups?.length
+            ? collectionTable(_, collection.table)
+            : emptyState(_('sale_backend.quotation.empty'), _('sale_backend.quotation.emptyHint'), {
+                icon: icon('shopping-bag'),
+              })
+        }
+      />
+      <SaleOrderHelp lang={options.lang ?? 'vi'} />
+    </>,
     { ...collection.frame, chrome: null, topbar: false },
   )
 }

@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": ["test/flow-native-invitation-delivery.test.ts", "test/flow-native-invitation-list.test.ts"]
+}

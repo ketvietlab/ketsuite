@@ -51,6 +51,8 @@ packages/ketsuite/src/modules/product_backend/client/product-list.mjs
 packages/ketsuite/src/modules/product_backend/client/product-list.mjs.map
 packages/ketsuite/src/modules/product_backend/client/uom-list.mjs
 packages/ketsuite/src/modules/product_backend/client/uom-list.mjs.map
+packages/ketsuite/src/modules/product_backend/client/variant-list.mjs
+packages/ketsuite/src/modules/product_backend/client/variant-list.mjs.map
 packages/ketsuite/src/modules/product_backend/client/uom-modal.mjs
 packages/ketsuite/src/modules/product_backend/client/uom-modal.mjs.map
 packages/ketsuite/src/modules/backend/design/client/relation-select.mjs
@@ -63,6 +65,8 @@ packages/ketsuite/src/modules/backend/design/client/table-selection.mjs
 packages/ketsuite/src/modules/backend/design/client/table-selection.mjs.map
 packages/ketsuite/src/modules/backend/design/client/backend-shell.mjs
 packages/ketsuite/src/modules/backend/design/client/backend-shell.mjs.map
+packages/ketsuite/src/modules/backend/design/client/ket-grid.mjs
+packages/ketsuite/src/modules/backend/design/client/ket-grid.mjs.map
 packages/ketsuite/src/modules/backend/design/client/ket-table.mjs
 packages/ketsuite/src/modules/backend/design/client/ket-table.mjs.map
 packages/ketsuite/src/modules/backend/design/client/search-filter.mjs
@@ -113,14 +117,31 @@ npm-debug.log*
 
 # Commerce record modal bundles, rebuilt from typed sources.
 packages/ketsuite/src/modules/purchase_backend/client/purchase-order-modal.mjs*
+packages/ketsuite/src/modules/purchase_backend/client/purchase-configuration-page.mjs*
 packages/ketsuite/src/modules/sale_backend/client/sale-order-modal.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sales-configuration-page.mjs*
+packages/ketsuite/src/modules/sale_backend/client/invoicing-policy-modal.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-warning-preview.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-customer-warning.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-customer-list.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-customer-page.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-tag-list.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-tag-modal.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-team-list.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-team-modal.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-policy-list.mjs*
+packages/ketsuite/src/modules/sale_backend/client/sale-policy-modal.mjs*
 packages/ketsuite/src/modules/stock_backend/client/stock-configuration-modal.mjs*
 packages/ketsuite/src/modules/stock_backend/client/inventory-count-modal.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-scrap-modal.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-landed-cost.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-shipment.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-delivery-statement.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-count-session-modal.mjs*
 
 packages/ketsuite/src/modules/stock_backend/client/stock-transfer-modal.mjs*
 
 packages/ketsuite/src/modules/purchase_backend/client/vendor-pricelist-modal.mjs*
-packages/ketsuite/src/modules/sale_backend/client/invoicing-policy-modal.mjs*
 
 packages/flow-client/atlas/vendor/
 
@@ -132,3 +153,53 @@ packages/flow-client/atlas/vendor/
 # Generated Hospitality island bundles.
 packages/ketsuite/src/modules/hospitality_*/client/*.mjs
 packages/ketsuite/src/modules/hospitality_*/client/*.mjs.map
+
+# Generated Pricing record client
+packages/ketsuite/src/modules/pricing_backend/client/pricelist-page.mjs
+packages/ketsuite/src/modules/manufacturing_backend/client/bom-page.mjs
+packages/ketsuite/src/modules/manufacturing_backend/client/bom-page.mjs.map
+packages/ketsuite/src/modules/pricing_backend/client/pricelist-page.mjs.map
+
+
+packages/ketsuite/src/modules/pricing_backend/client/pricelist-list.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/category-list.mjs*
+packages/ketsuite/src/modules/product_backend/client/category-modal.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/tag-list.mjs*
+packages/ketsuite/src/modules/product_backend/client/tag-modal.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/combo-list.mjs*
+packages/ketsuite/src/modules/product_backend/client/combo-modal.mjs*
+
+packages/ketsuite/src/modules/stock_backend/client/replenishment-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/forecast-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/valuation-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-report-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/scrap-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/landed-cost-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/delivery-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/count-list.mjs*
+packages/ketsuite/src/modules/stock_backend/client/stock-search.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/import-list.mjs*
+packages/ketsuite/src/modules/product_backend/client/import-modal.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/bulk-modal.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/filter-modal.mjs*
+
+packages/ketsuite/src/modules/product_backend/client/catalogue-search.mjs
+
+packages/ketsuite/src/modules/product_backend/client/catalogue-search.mjs.map
+
+# Built sales catalogue island and its local debugging map.
+packages/ketsuite/src/modules/sale_backend/client/sale-catalogue.mjs*
+
+packages/ketsuite/src/modules/sale_backend/client/sale-variant-matrix.mjs*
+
+# Sales template islands emitted by build-backend-client.mjs
+packages/ketsuite/src/modules/sale_template_backend/client/template-page.mjs*
+packages/ketsuite/src/modules/sale_template_backend/client/template-list.mjs*
+packages/ketsuite/src/modules/sale_promotion_backend/client/promotion-page.mjs*
+packages/ketsuite/src/modules/sale_promotion_backend/client/promotion-list.mjs*

@@ -125,8 +125,25 @@ export function getOrCreateLive(ref: DocRef): { doc: Y.Doc; isNew: boolean } {
 }
 
 export function applySnapshot(ref: DocRef, bytes: Uint8Array): void {
+  applySnapshotChanged(ref, bytes)
+}
+
+/** Whether a merge introduced any new structs or deletions. A duplicate update
+ * must not create a new durable version merely because another actor sent it. */
+export function applySnapshotChanged(ref: DocRef, bytes: Uint8Array): boolean {
   const entry = live.get(keyFor(ref))
-  if (entry) Y.applyUpdate(entry.doc, bytes)
+  if (!entry) return false
+  let changed = false
+  const updated = () => {
+    changed = true
+  }
+  entry.doc.on('update', updated)
+  try {
+    Y.applyUpdate(entry.doc, bytes)
+  } finally {
+    entry.doc.off('update', updated)
+  }
+  return changed
 }
 
 /** True once the durable snapshot has been read into this process's document. */
@@ -180,6 +197,18 @@ type Delta = Array<{ insert: string }>
 function plainTextOf(node: Y.XmlFragment | Y.XmlElement | Y.XmlText | Y.XmlHook): string {
   if (node instanceof Y.XmlText) return (node.toDelta() as Delta).map((op) => op.insert).join('')
   if (node instanceof Y.XmlHook) return ''
+  if (node instanceof Y.XmlElement && node.getAttribute('type') === 'table') {
+    try {
+      const rows: unknown = JSON.parse(node.getAttribute('rows') ?? '[]')
+      if (
+        Array.isArray(rows) &&
+        rows.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string'))
+      )
+        return rows.map((row) => row.join(' | ')).join('\n')
+    } catch {
+      /* Legacy malformed rows retain the existing text projection. */
+    }
+  }
   return node
     .toArray()
     .map((child) => plainTextOf(child))

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { defineFn } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
-import { accountingDateText } from './date.ts'
+import { accountingDateText, civilDateAt, moveAccountingDate } from './date.ts'
 import { functions as coreFunctions, ledgerOf } from './functions.ts'
 import { canonicalDecimalText, minorText, moneyMinor } from './money.ts'
 
@@ -134,10 +134,83 @@ async function activeOpenLines(ctx: Ctx): Promise<Array<Row & { move: Row }>> {
     .map((line) => ({ ...line, move: posted.get(String(line.moveId))! }))
 }
 
+/**
+ * The receivable and payable lines still open on a civil date, with what was left of each then.
+ *
+ * A line's residual now says nothing about a past date: a payment posted after the cutoff must not
+ * have settled it yet. So the open amount is rebuilt from the matches — a match counts once the entry
+ * on its other side is posted on or before the cutoff, unless it was undone on or before it.
+ */
+async function openLinesAt(ctx: Ctx, cutoff: string, accountIds: Set<string>) {
+  const { scale, timezone } = await ledgerOf(ctx)
+  const posted = new Map(
+    (await ctx.db.select('account.Move', { state: 'posted' })).map((move) => [
+      String(move.id),
+      { ...move, accountingDate: moveAccountingDate(move, timezone) },
+    ]),
+  )
+  const lines = (await ctx.db.select('account.MoveLine')).filter((line) => posted.has(String(line.moveId)))
+  const moveOfLine = new Map(lines.map((line) => [String(line.id), posted.get(String(line.moveId))!]))
+  const matched = new Map<string, bigint>()
+  // An undone match stops counting on the day its correcting entry is booked, which is the
+  // accounting date the person chose, not the moment they pressed undo.
+  const undoneOn = (match: Row, sides: Row[]): string | null => {
+    if (match.state !== 'reversed' && !match.reversedAt) return null
+    const reversal = sides.map((move) => posted.get(String(move.reversedById ?? ''))).find(Boolean)
+    if (reversal) return String(reversal.accountingDate)
+    return match.reversedAt ? civilDateAt(match.reversedAt, timezone) : cutoff
+  }
+  for (const match of await ctx.db.select('account.PartialReconcile')) {
+    const debitMove = moveOfLine.get(String(match.debitMoveId))
+    const creditMove = moveOfLine.get(String(match.creditMoveId))
+    if (!debitMove || !creditMove) continue
+    const undone = undoneOn(match, [debitMove, creditMove])
+    if (undone && undone <= cutoff) continue
+    const amount = moneyMinor(match.amount, scale)
+    // Each side is settled by the other, and only once that other entry is in the books.
+    if (String(creditMove.accountingDate) <= cutoff)
+      matched.set(String(match.debitMoveId), (matched.get(String(match.debitMoveId)) ?? 0n) + amount)
+    if (String(debitMove.accountingDate) <= cutoff)
+      matched.set(String(match.creditMoveId), (matched.get(String(match.creditMoveId)) ?? 0n) + amount)
+  }
+  const open: Array<Row & { move: Row; openAmount: bigint }> = []
+  for (const line of lines) {
+    if (!accountIds.has(String(line.accountId))) continue
+    const move = moveOfLine.get(String(line.id))!
+    if (String(move.accountingDate) > cutoff) continue
+    const balance = moneyMinor(line.balance, scale)
+    const size = balance < 0n ? -balance : balance
+    const left = size - (matched.get(String(line.id)) ?? 0n)
+    if (left <= 0n) continue
+    open.push({ ...line, move, openAmount: balance < 0n ? -left : left })
+  }
+  return open
+}
+
 const callCore = async (name: keyof typeof coreFunctions, ctx: Ctx, args: Record<string, unknown>) => {
   const fn = coreFunctions[name]
   if (!fn) throw new Error(`account.${String(name)} is unavailable`)
   return fn.handler(ctx, args) as Promise<Record<string, unknown>>
+}
+
+/** Letters and digits only: banks drop the slashes, dashes and spaces a document number has. */
+const compactReference = (value: unknown): string =>
+  String(value ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+
+/**
+ * Whether a bank line's reference names a document. Either may hold the other: a payer types
+ * the bare number, or a transfer memo wraps it ("CT DEN:123 TT INV/2026/0001 thanh toan").
+ * The memo side only counts a document number long enough not to turn up by chance.
+ */
+export const referenceMatches = (reference: unknown, held: readonly unknown[]): boolean => {
+  const memo = compactReference(reference)
+  if (!memo) return false
+  return held.some((value) => {
+    const number = compactReference(value)
+    return number.length > 0 && (number.includes(memo) || (number.length >= 4 && memo.includes(number)))
+  })
 }
 
 export const cashReceivableFunctions: Record<string, FnSpec> = {
@@ -484,17 +557,7 @@ export const cashReceivableFunctions: Record<string, FnSpec> = {
           score += Number(weights.amount ?? 60)
           reasons.push('exact_amount')
         }
-        const reference = String(tx.reference ?? '')
-          .trim()
-          .toLowerCase()
-        if (
-          reference &&
-          [line.move.name, line.move.ref].some((held) =>
-            String(held ?? '')
-              .toLowerCase()
-              .includes(reference),
-          )
-        ) {
+        if (referenceMatches(tx.reference, [line.move.name, line.move.ref])) {
           score += Number(weights.reference ?? 20)
           reasons.push('reference')
         }
@@ -831,7 +894,13 @@ export const cashReceivableFunctions: Record<string, FnSpec> = {
   }),
   receivableAging: defineFn({
     input: { cutoff: 'date', basis: 'text?', partnerId: 'id?', accountType: 'text?', buckets: 'json?' },
-    effects: ['read:account.Move', 'read:account.MoveLine', 'read:account.Account', 'read:company.Company'],
+    effects: [
+      'read:account.Move',
+      'read:account.MoveLine',
+      'read:account.Account',
+      'read:account.PartialReconcile',
+      'read:company.Company',
+    ],
     agent: true,
     handler: async (ctx, args) => {
       const basis = String(args.basis ?? 'due')
@@ -847,21 +916,26 @@ export const cashReceivableFunctions: Record<string, FnSpec> = {
         (await ctx.db.select('account.Account')).map((row) => [String(row.id), row]),
       )
       const rows: Row[] = []
-      for (const line of await activeOpenLines(ctx)) {
-        if (!accountTypes.includes(String(accountById.get(String(line.accountId))?.accountType))) continue
+      const { scale } = await ledgerOf(ctx)
+      const cutoff = String(args.cutoff).slice(0, 10)
+      const wanted = new Set(
+        [...accountById.values()]
+          .filter((row) => accountTypes.includes(String(row.accountType)))
+          .map((row) => String(row.id)),
+      )
+      for (const line of await openLinesAt(ctx, cutoff, wanted)) {
         if (args.partnerId && line.partnerId !== args.partnerId) continue
         const sourceDate =
           basis === 'due'
             ? String(line.dateMaturity ?? line.move.invoiceDateDue ?? line.move.accountingDate)
             : String(line.move.documentDate ?? line.move.accountingDate)
         const date = sourceDate.slice(0, 10)
-        if (String(line.move.accountingDate) > String(args.cutoff)) continue
-        const days = dayDistance(date, String(args.cutoff))
+        const days = dayDistance(date, cutoff)
         const bucket = days < limits[0]! ? 'not_due' : `${limits.filter((limit) => days >= limit).at(-1)}+`
-        const sign = moneyMinor(line.balance, (await ledgerOf(ctx)).scale) < 0n ? '-' : ''
         rows.push({
           moveLineId: line.id,
           moveId: line.moveId,
+          moveName: line.move.name,
           partnerId: line.partnerId,
           accountId: line.accountId,
           documentDate: line.move.documentDate,
@@ -870,11 +944,10 @@ export const cashReceivableFunctions: Record<string, FnSpec> = {
           currency: line.move.currency,
           daysOverdue: days,
           bucket,
-          amount: `${sign}${String(line.amountResidual)}`,
+          amount: minorText(line.openAmount, scale),
         })
       }
       const totals: Record<string, string> = {}
-      const { scale } = await ledgerOf(ctx)
       for (const row of rows)
         totals[String(row.bucket)] = minorText(
           moneyMinor(totals[String(row.bucket)] ?? '0', scale) + moneyMinor(row.amount, scale),

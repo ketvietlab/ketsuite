@@ -3,11 +3,14 @@ import { test } from 'node:test'
 import { defineDeployment, sqliteStore } from '@ketvietlab/ketjs'
 import { postgresAdapter } from '@ketvietlab/ketjs-postgres'
 import type { Row } from '@ketvietlab/ketjs'
+import type { TestClient } from '@ketvietlab/ketjs/testing'
 import { createTestDeployment } from '@ketvietlab/ketjs/testing'
 import { address, company, livedoc, mail, partner, user, userBackend } from '@ketvietlab/ketsuite'
 import backend from '../packages/ketsuite/src/modules/backend/index.ts'
 import { createFlowModule } from '../packages/ketsuite/src/modules/flow/native/index.ts'
 import { createFlowStorageModule } from '../packages/ketsuite/src/modules/flow/native/attachments.ts'
+import { createFlowWorkspaceModule } from '../packages/ketsuite/src/modules/flow_workspace/index.ts'
+import { reviewFlow } from './helpers/flow-review.ts'
 import { everyFunction } from './helpers/permissions.ts'
 
 // Every read a screen issues, called by people outside a private project: none of them reads
@@ -29,6 +32,7 @@ test('reads refuse people outside a private project and search offers only what 
         livedoc,
         createFlowStorageModule(),
         native,
+        createFlowWorkspaceModule(),
       ],
       serve: {
         permissions: everyFunction,
@@ -234,9 +238,11 @@ test('reads refuse people outside a private project and search offers only what 
       }),
     )
 
+    const clients = new Map<string, TestClient>()
     const session = async (login: string) => {
       const client = app.client.anonymous()
       await client.login({ login, password: 'local-test-password' })
+      clients.set(login, client)
       return async (name: string, args: Row) => (await client.call<Row>(name, args)).value
     }
     const outsider = await session('ra-outsider'),
@@ -382,10 +388,14 @@ test('reads refuse people outside a private project and search offers only what 
       group(owned, 'views').map((i) => i.title),
       ['Quartz own view', 'Quartz shared view'],
     )
+    // The view keeps its Workspace, sort and grouping too (F01, flow-client API-CONTRACT).
     assert.deepEqual(group(owned, 'views')[1]?.params, {
       project: open.id,
+      workspace: workspace.id,
       view: shared.id,
       q: 'Quartz',
+      sort: 'due',
+      group: 'status',
       status: 'progress',
     })
 
@@ -415,6 +425,186 @@ test('reads refuse people outside a private project and search offers only what 
         .filter((id) => ['workspaces', 'forms', 'people', 'teams'].includes(String(id))),
       [],
     )
+
+    const ownerCompany = (await boot('organization-settings')).company as Row
+    for (const key of ['version', 'acceptanceEnabled'])
+      assert.equal(Object.hasOwn(ownerCompany, key), true, 'internal members retain configuration: ' + key)
+    const guestBoot = read(await guest('flow.workspace.bootstrap', { route: 'my-work' }))
+    for (const key of ['version', 'acceptanceEnabled'])
+      assert.equal(
+        Object.hasOwn(guestBoot.company as Row, key),
+        false,
+        'guest payload omits organization configuration: ' + key,
+      )
+    assert.equal(
+      (await guest('flow.workspace.bootstrap', { route: 'organization-settings' })).ok,
+      false,
+      'guest cannot open organization settings',
+    )
+    assert.equal(
+      (await guest('flow.workspace.bootstrap', { route: 'organization-settings', projectId: open.id })).ok,
+      false,
+      'project context must not bypass the guest settings gate',
+    )
+    for (const key of ['license', 'performance', 'performanceRules', 'workHours', 'acceptances'])
+      assert.equal(Object.hasOwn(guestBoot, key), false, 'Core guest payload has no private profile: ' + key)
+    // C06: the HTTP file and LiveDoc paths enforce the same project authority.
+    const uploadForm = new FormData()
+    uploadForm.set('file', new Blob(['Zircon private bytes'], { type: 'text/plain' }), 'private.txt')
+    const uploaded = await app.client.post('/flow/uploads?task=' + hidden.task.id, uploadForm)
+    assert.equal(uploaded.status, 201)
+    const uploadId = String(((await uploaded.json()) as Row).uploadId)
+    const detail = (await call('flow.issue.detail', { id: hidden.task.id })).task as Row
+    ok(
+      await call('flow.issue.save', {
+        id: hidden.task.id,
+        expectedVersion: detail.version,
+        attachments: [{ uploadId }],
+        idempotencyKey: 'c06-file',
+      }),
+    )
+    const liveBase = '/flow/live/pages/' + hidden.page.id
+    const content = await app.client.get(liveBase + '/content')
+    assert.equal(content.status, 200)
+    const snapshot = (await content.json()) as Row
+    const liveURL = liveBase + '/live?topic=' + encodeURIComponent(String(snapshot.topic))
+    for (const login of ['ra-outsider', 'ra-guest']) {
+      const client = clients.get(login)!
+      assert.equal((await client.get('/flow/files/' + uploadId)).status, 403, login + ' private file')
+      assert.equal((await client.get(liveBase + '/content')).status, 403, login + ' LiveDoc content')
+      assert.equal((await client.get(liveURL)).status, 403, login + ' LiveDoc subscription')
+      assert.equal(
+        (
+          await client.post(
+            liveBase + '/push',
+            new Blob([JSON.stringify({ update: snapshot.snapshot })], { type: 'application/json' }),
+          )
+        ).status,
+        403,
+        login + ' LiveDoc commit',
+      )
+    }
+    const viewerClient = clients.get('ra-viewer')!
+    assert.equal((await viewerClient.get('/flow/files/' + uploadId)).status, 200)
+    assert.equal(
+      (
+        await viewerClient.post(
+          liveBase + '/push',
+          new Blob([JSON.stringify({ update: snapshot.snapshot })], { type: 'application/json' }),
+        )
+      ).status,
+      403,
+      'a viewer cannot commit',
+    )
+    const liveResponse = await viewerClient.get(liveURL)
+    assert.equal(liveResponse.status, 200)
+    const stream = liveResponse.body!.getReader()
+    try {
+      const firstFrame = await stream.read()
+      assert.match(new TextDecoder().decode(firstFrame.value), /"update":/)
+      ok(
+        await call('flow.access.revoke', {
+          id: grants.get('ra-viewer')!.id,
+          expectedVersion: 1,
+          expectedRevision: await orgRevision(),
+          idempotencyKey: 'c06-revoke-viewer',
+        }),
+      )
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const next = await Promise.race([
+          stream.read(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('revoked LiveDoc stream stayed open')), 3000)
+          }),
+        ])
+        assert.ok(
+          next.done || new TextDecoder().decode(next.value).includes('event: done'),
+          'an open live stream ends after revocation',
+        )
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+    } finally {
+      await stream.cancel()
+    }
+    assert.equal((await viewerClient.get('/flow/files/' + uploadId)).status, 403)
+    assert.equal((await viewerClient.get(liveBase + '/content')).status, 403)
+    assert.equal((await viewerClient.get(liveURL)).status, 403)
+    assert.equal((await viewer('flow.issue.detail', { id: hidden.task.id })).ok, false)
+    await assert.rejects(viewer('flow.page.document.read', { id: hidden.page.id }))
+
+    // Actual foreign Company rows, not only a forged companyId input.
+    await app.fixture.call('partner.savePartner', {
+      id: 'foreign-party',
+      kind: 'company',
+      name: 'Foreign synthetic',
+    })
+    await app.fixture.call('company.saveCompany', {
+      id: 'foreign-flow',
+      partnerId: 'foreign-party',
+      currency: 'VND',
+    })
+    const foreignTask = 'SAP-1'
+    await app.fixture.withTenant('', async ({ adapter }) => {
+      for (const [table, sourceId, id, extra] of [
+        ['flow_workspace', workspace.id, 'c06-foreign-workspace', { title: 'Sapphire Workspace' }],
+        [
+          'flow_project_record',
+          secret.id,
+          'c06-foreign-project',
+          { workspaceId: 'c06-foreign-workspace', title: 'Sapphire project', code: 'SAP' },
+        ],
+        [
+          'flow_task',
+          hidden.task.id,
+          foreignTask,
+          {
+            projectId: 'c06-foreign-project',
+            workspaceId: 'c06-foreign-workspace',
+            title: 'Sapphire task',
+            key: 'SAP-1',
+          },
+        ],
+      ] as const) {
+        const [original] = await adapter.all(
+          'SELECT * FROM ' + table + (table === 'flow_task' ? ' WHERE key=' : ' WHERE id=') + bind(1),
+          [sourceId],
+        )
+        assert.ok(original)
+        const row: Row = { ...original, ...extra, id, companyId: 'foreign-flow' }
+        // Only columns declared on this model are inserted.
+        const columns = Object.keys(original).filter((column) => column in row)
+        await adapter.run(
+          'INSERT INTO ' +
+            table +
+            ' (' +
+            columns.map((column) => '"' + column + '"').join(',') +
+            ') VALUES (' +
+            columns.map((_, n) => bind(n + 1)).join(',') +
+            ')',
+          columns.map((column) => row[column]),
+        )
+      }
+    })
+    for (const [name, input] of [
+      ['flow.issue.detail', { id: foreignTask }],
+      ['flow.issue.list', { projectId: 'c06-foreign-project' }],
+      ['flow.issue.export', { projectId: 'c06-foreign-project' }],
+      ['flow.issue.detail', { id: hidden.task.id, companyId: 'foreign-flow' }],
+    ] as const) {
+      const value = await call(name, input)
+      assert.equal(value.ok, false, name + ' rejects another Company')
+      assert.ok(!JSON.stringify(value).includes('Sapphire'))
+    }
+    assert.ok(!JSON.stringify(await call('flow.search', { query: 'Sapphire' })).includes('Sapphire task'))
+    if (process.env.FLOW_C06_REVIEW === '1')
+      await reviewFlow(
+        app,
+        clients.get('ra-guest')!,
+        '/flow/board?company=read-flow&workspace=' + workspace.id + '&project=' + secret.id + '&lang=vi',
+        3698,
+      )
 
     // A guest's own view is found while they read its project, and not once they no longer do.
     ok(

@@ -1,54 +1,69 @@
+import { saleRecordBack } from './record/routes.ts'
+import {
+  warningPreviewIsland,
+  warningPreviewRoute,
+  customerWarningIsland,
+  customerWarningRoute,
+} from './record/warning-routes.tsx'
+import { copyMessages } from './copy-messages.ts'
+import { customerMessages } from './customers/messages.ts'
+import { tagMessages } from './tags/messages.ts'
+import { saleTagIslands } from './tags/islands.ts'
+import { tagRoutes } from './tags/routes.ts'
+import { teamMessages } from './teams/messages.ts'
+import { saleTeamIslands } from './teams/islands.ts'
+import { teamRoutes } from './teams/routes.ts'
+import { policyMessages } from './policies/messages.ts'
+import { reportingMessages } from './reporting/messages.ts'
+import { analysisPage, overviewPart } from './reporting/routes.ts'
+import { salePolicyIslands } from './policies/islands.ts'
+import { policyRoutes } from './policies/routes.ts'
+import { customerIslands } from './customers/islands.ts'
+import { customerPageIsland } from './customers/record-island.ts'
+import { customerRoutes } from './customers/routes.ts'
+import { benefitMessages } from './benefit-messages.ts'
+import { matrixMessages } from './matrix-messages.ts'
+import { variantMatrixContext } from './modal/matrix-context.ts'
+import { saleCatalogueRoute, saleCatalogueIsland } from './record/catalogue-route.tsx'
+import { catalogueMessages } from './catalogue-messages.ts'
+import {
+  salesConfigurationIsland,
+  salesConfigurationContext,
+  salesConfigurationRoute,
+} from './record/configuration-routes.tsx'
+import { saleOrderCommand } from './record/workflow.ts'
 import { listSearchChrome } from '../backend/search-filter.ts'
 import { loadListGroups } from '../backend/list-search.ts'
 import { pager } from '../backend/paging.ts'
-import { invoicingPolicyContext } from './modal/policy-context.ts'
-import { defineRecordModalIsland, recordModalCreateHref, recordModalHref } from '../../ui/record-modal.tsx'
+import { defineRecordModalIsland } from '../../ui/record-modal.tsx'
 import { saleOrderContext } from './modal/context.ts'
 import { optionalRead } from '../backend/optional-read.ts'
 import { loadSaleOrderCollection, loadSalePartnerNames } from './order-collection.ts'
 import { rowListSearch } from '../backend/row-list.ts'
-import { invoicingPolicyListSearch, quotationListSearch, saleOrderListSearch } from './search.ts'
+import { quotationListSearch, saleOrderListSearch } from './search.ts'
 import { searchFilterFunctions } from './search-functions.ts'
 import { randomUUID } from 'node:crypto'
-import { NAVIGATION_TYPE, defineModule, fragment, json, text, withHeaders } from '@ketvietlab/ketjs'
+import { defineModule, text } from '@ketvietlab/ketjs'
 import type { Route, ServeContext } from '@ketvietlab/ketjs'
-import type { FormField } from '../../ui/index.ts'
-import { backendPage, modalWorkspace } from '../../ui/index.ts'
-import { errorsOf, readForm, seeOther } from '../backend/forms.ts'
-import { partnerRelationControl } from '../partner_backend/relation-control.ts'
-import { templateRelationControl, variantRelationControl } from '../product_backend/relation-control.ts'
-import { INVOICE_POLICIES } from '../sale/functions.ts'
+import { backendPage } from '../../ui/index.ts'
+import { readForm, seeOther } from '../backend/forms.ts'
 import { islands } from './islands.ts'
 import {
-  invoicingPoliciesListScreen,
-  invoicingPolicyCreateModal,
-  labelOf,
-  orderDetailScreen,
+  orderPageScreen,
   overviewScreen,
-  quotationCreateScreen,
   quotationsListScreen,
   salesOrdersListScreen,
 } from './screens/index.ts'
 import type { SaleCounts } from './screens/index.ts'
-import {
-  accountOptions,
-  accountRelationControl,
-  taxRelationControl,
-} from '../account_backend/relation-control.ts'
-import {
-  adminPage,
-  choices,
-  frameOf,
-  localeQuery,
-  needs,
-  optional,
-  printGroup,
-  timezoneOf,
-} from '../backend/screen.ts'
+import { adminPage, frameOf, inLocale, localeQuery, optional, timezoneOf } from '../backend/screen.ts'
 import type { AnyRow } from '../backend/screen.ts'
+import { productPageLink } from '../backend/product-page.ts'
+import { salesAnalysisScreen } from './screens/sales-analysis.tsx'
 
 /** How many sales orders the overview shows before handing over to the list. */
 const RECENT_ORDERS = 5
+/** The analysis window, the same as the product page's Sold card. */
+const ANALYSIS_DAYS = 30
 
 const crossSite = (req: Parameters<Route>[1]): boolean => {
   const origin = req.headers.origin as string | undefined
@@ -78,39 +93,35 @@ const quotationListQuery = (url: URL): string => {
 }
 const quotationListPath = (url: URL): string => `/admin/sales/quotations${quotationListQuery(url)}`
 const quotationCreatePath = (url: URL): string => `/admin/sales/quotations/new${quotationListQuery(url)}`
-const invoicingPoliciesPath = (url: URL): string => `/admin/sales/invoicing-policies${localeQuery(url)}`
-const invoicingPolicyModalPath = (url: URL, invalid = false): string => {
-  const target = new URL(invoicingPoliciesPath(url), 'http://ket.local')
-  target.searchParams.set('create', '1')
-  if (invalid) target.searchParams.set('invalid', '1')
-  return `${target.pathname}${target.search}`
-}
-const safeInvoicingPoliciesReturnTo = (url: URL): string => {
-  const fallback = invoicingPoliciesPath(url)
-  const raw = url.searchParams.get('returnTo')
-  if (!raw) return fallback
-  const candidate = new URL(raw, 'http://ket.local')
-  return candidate.origin === 'http://ket.local' && candidate.pathname === '/admin/sales/invoicing-policies'
-    ? `${candidate.pathname}${candidate.search}`
-    : fallback
-}
-const invoicingPolicyCreatePath = (url: URL, returnTo: string): string => {
-  const target = new URL(`/admin/sales/invoicing-policies/new${localeQuery(url)}`, 'http://ket.local')
-  target.searchParams.set('returnTo', returnTo)
-  return `${target.pathname}${target.search}`
-}
-const setInvoicingPolicy = async (
+/** The choices the list's filter bar names (D19): salespeople, teams, customers and products. */
+const orderFilterChoices = async (
   ctx: ServeContext,
   url: URL,
   req: Parameters<Route>[1],
-): Promise<unknown> => {
-  const form = await readForm(req)
-  return ctx.call(
-    'sale.setInvoicePolicy',
-    { templateId: form.templateId ?? '', invoicePolicy: form.invoicePolicy ?? '' },
+  _: Translator,
+  quotations: boolean,
+) => {
+  const choices = await optionalRead<AnyRow | null>(
+    ctx,
+    'sale.getOrderFilterChoices',
+    { quotations },
     url,
     req,
+    null,
   )
+  if (!choices) return undefined
+  const pick = (rows: unknown) =>
+    ((rows as AnyRow[] | undefined) ?? []).map((row) => ({ value: String(row.id), label: String(row.name) }))
+  return {
+    userId: pick(choices.salespeople),
+    teamId: ((choices.teams as AnyRow[] | undefined) ?? []).map((row) => ({
+      value: String(row.id),
+      label:
+        row.active === false ? `${String(row.name)} (${_('sale_backend.team.archived')})` : String(row.name),
+    })),
+    partnerId: pick(choices.customers),
+    ...(quotations ? {} : { templateId: pick(choices.products) }),
+  }
 }
 const createQuotation = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]): Promise<unknown> => {
   const form = await readForm(req)
@@ -140,54 +151,6 @@ const callIfInstalled = async (
 ) => ctx.call((await ctx.live(req)).functions[preferred] ? preferred : fallback, input, url, req)
 const orderPath = (order: AnyRow, url: URL) =>
   `${['draft', 'sent', 'cancel'].includes(String(order.state)) ? '/admin/sales/quotations' : '/admin/sales/orders'}/${String(order.id)}${localeQuery(url)}`
-const common = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) => {
-  const [partners, companies, templates, units, warehouses, pricelists, taxes, journals, accounts, terms] =
-    await Promise.all([
-      // Capped: these render the <select> fallbacks and seed the pickers, and
-      // the pickers search server-side past the cap. Uncapped, a customer base
-      // imported from a chat channel put every partner in the tenant into
-      // memory on every sale page.
-      optionalRead<AnyRow[]>(ctx, 'partner.listPartners', { limit: 200 }, url, req, []) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(ctx, 'company.listCompanies', {}, url, req, []) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(
-        ctx,
-        'product.listTemplates',
-        { withVariants: true, limit: 200 },
-        url,
-        req,
-        [],
-      ) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(ctx, 'uom.listUnits', {}, url, req, []) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(ctx, 'stock.listWarehouses', {}, url, req, []) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(ctx, 'pricing.listPricelists', {}, url, req, []) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(ctx, 'account.listTaxes', { typeTaxUse: 'sale' }, url, req, []) as Promise<
-        AnyRow[]
-      >,
-      optionalRead<AnyRow[]>(ctx, 'account.listJournals', { type: 'sale' }, url, req, []) as Promise<
-        AnyRow[]
-      >,
-      optionalRead<AnyRow[]>(ctx, 'account.listAccounts', {}, url, req, []) as Promise<AnyRow[]>,
-      optionalRead<AnyRow[]>(ctx, 'account.listPaymentTerms', {}, url, req, []) as Promise<AnyRow[]>,
-    ])
-  const own = new Set(companies.map((r) => r.partnerId)),
-    sellable = templates.filter((r) => r.saleOk),
-    variants: AnyRow[] = sellable.flatMap((t) =>
-      ((t.variants as AnyRow[] | undefined) ?? []).map((v): AnyRow => ({ ...v, templateName: t.name })),
-    )
-  return {
-    partners: partners.filter((r) => !own.has(r.id)),
-    excludedPartnerIds: [...own].map(String),
-    templates: sellable,
-    variants,
-    units,
-    warehouses,
-    pricelists,
-    taxes,
-    journals,
-    accounts,
-    terms,
-  }
-}
 const partnerNames = async (
   ctx: ServeContext,
   url: URL,
@@ -204,318 +167,171 @@ const partnerNames = async (
       ctx.call('partner.listPartners', { ids: batch, includeArchived: true }, url, req) as Promise<AnyRow[]>,
   )
 }
-const orderFields = async (
-  ctx: ServeContext,
-  url: URL,
-  req: Parameters<Route>[1],
-  _: Translator,
-  d: Awaited<ReturnType<typeof common>>,
-): Promise<FormField[]> => [
-  {
-    name: 'partnerId',
-    label: _('sale_backend.field.customer'),
-    type: 'select',
-    control: await partnerRelationControl(ctx, url, req, _, {
-      id: 'sale-customer',
-      partners: d.partners as Array<{ id: string; name: string; ref?: string | null }>,
-      fieldLabel: _('sale_backend.field.customer'),
-      title: _('sale_backend.relation.customers'),
-      required: true,
-      excludeIds: d.excludedPartnerIds,
-    }),
-    options: choices(d.partners, true),
-    required: true,
-  },
-  { name: 'clientOrderRef', label: _('sale_backend.field.clientOrderRef') },
-  needs(
-    {
-      name: 'warehouseId',
-      label: _('sale_backend.field.warehouse'),
-      type: 'select',
-      options: choices(d.warehouses, true),
-      required: true,
-    },
-    _('sale_backend.setup.warehouse'),
-  ),
-  {
-    name: 'pricelistId',
-    label: _('sale_backend.field.pricelist'),
-    type: 'select',
-    options: choices(d.pricelists, true),
-  },
-  {
-    name: 'paymentTermId',
-    label: _('sale_backend.field.paymentTerm'),
-    type: 'select',
-    options: choices(d.terms, true),
-  },
-  { name: 'validityDate', label: _('sale_backend.field.validityDate'), type: 'date' },
-  { name: 'notes', label: _('sale_backend.field.notes'), type: 'textarea', span: 'full' },
-]
-const detail =
+/** Where a list returns to from an order: the list it opened from, filters and all. */
+/** An order's page, opened from a list that its Back returns to. */
+const orderPageHref = (url: URL, order: AnyRow | null): string => {
+  const target = new URL(
+    order ? orderPath(order, url) : `/admin/sales/quotations/new${localeQuery(url)}`,
+    url,
+  )
+  target.searchParams.set('returnTo', `${url.pathname}${url.search}`)
+  return `${target.pathname}${target.search}`
+}
+/**
+ * A quotation or order is a page (`/admin/sales/quotations/{id}`, `/admin/sales/orders/{id}`,
+ * `new` to create). The server renders the RecordPage loading; the record runtime reads
+ * `/admin/sales/record/{id}/context` and renders the order (modal/order-modal-view.tsx).
+ */
+const orderPage =
   (ctx: ServeContext): Route =>
   async (url, req, params) => {
-    const partial = req.headers['x-ket-partial'] === 'sale-order'
-    let savedPartial = false
-    if (req.method === 'POST') {
-      if (crossSite(req)) return text('Forbidden', { status: 403 })
-      const form = await readForm(req)
-      let result: unknown
-      if (form.action === 'add-line')
-        result = await ctx.call(
-          'sale.addLine',
-          {
-            id: randomUUID(),
-            orderId: params.id,
-            productId: form.productId ?? '',
-            productUomQty: form.productUomQty || '1',
-            productUomId: form.productUomId ?? '',
-            ...optional(form, 'priceUnit'),
-            ...optional(form, 'discount'),
-            ...optional(form, 'taxId'),
-          },
-          url,
-          req,
-        )
-      else if (form.action === 'remove-line')
-        result = await ctx.call('sale.removeLine', { id: form.lineId ?? '' }, url, req)
-      else if (form.action === 'reset')
-        result = await ctx.call('sale.resetOrder', { id: params.id }, url, req)
-      else if (form.action === 'send')
-        result = await ctx.call('sale.sendQuotation', { id: params.id }, url, req)
-      else if (form.action === 'confirm')
-        result = await callIfInstalled(ctx, url, req, 'loyalty_sale.confirmOrder', 'sale.confirmOrder', {
-          id: params.id,
-        })
-      else if (form.action === 'sync')
-        result = await ctx.call('sale.syncDeliveries', { id: params.id }, url, req)
-      else if (form.action === 'lock' || form.action === 'unlock')
-        result = await ctx.call('sale.lockOrder', { id: params.id, locked: form.action === 'lock' }, url, req)
-      else if (form.action === 'cancel')
-        result = await callIfInstalled(ctx, url, req, 'loyalty_sale.cancelOrder', 'sale.cancelOrder', {
-          id: params.id,
-        })
-      else if (form.action === 'invoice')
-        result = await ctx.call(
-          'sale.createInvoice',
-          {
-            id: randomUUID(),
-            orderId: params.id,
-            journalId: form.journalId ?? '',
-            revenueAccountId: form.revenueAccountId ?? '',
-            receivableAccountId: form.receivableAccountId ?? '',
-            ...optional(form, 'taxAccountId'),
-            ...optional(form, 'invoiceDate'),
-          },
-          url,
-          req,
-        )
-      else return text('unknown action', { status: 400 })
-      if (!(result as AnyRow).ok) {
-        if (partial)
-          return json(
-            {
-              ok: false,
-              message: ctx.translate(ctx.localeOf(url, req))('sale_backend.error.invalid'),
-              errors: errorsOf(result),
-            },
-            { status: 422 },
-          )
-        return redirect(result, `${url.pathname}${url.search}`)
-      }
-      if (!partial) {
-        const current = (await ctx.call('sale.getOrder', { id: params.id }, url, req)) as AnyRow | null
-        return current ? seeOther(orderPath(current, url)) : text('not found', { status: 404 })
-      }
-      savedPartial = true
-    }
-    if (req.method !== 'GET' && !savedPartial) return text('GET or POST', { status: 405 })
-    const lang = ctx.localeOf(url, req),
-      _ = ctx.translate(lang),
-      [order, d] = await Promise.all([
-        ctx.call('sale.getOrder', { id: params.id }, url, req) as Promise<AnyRow | null>,
-        common(ctx, url, req),
-      ])
-    if (!order) return text('not found', { status: 404 })
-    const customer = d.partners.find((r) => r.id === order.partnerId),
-      warehouse = d.warehouses.find((r) => r.id === order.warehouseId),
-      pricelist = d.pricelists.find((r) => r.id === order.pricelistId),
-      paymentTerm = d.terms.find((r) => r.id === order.paymentTermId),
-      variants = d.variants.map((r) => ({
-        value: String(r.id),
-        label: `${String(r.templateName)}${r.defaultCode ? ` · ${String(r.defaultCode)}` : ''}`,
-      }))
-    const lineFields: FormField[] = [
-      {
-        name: 'productId',
-        label: _('sale_backend.field.product'),
-        type: 'select',
-        options: variants,
-        required: true,
-        control: await variantRelationControl(ctx, url, req, _, {
-          id: 'sale-line-product',
-          name: 'productId',
-          label: _('sale_backend.field.product'),
-          variants,
-          required: true,
-        }),
-      },
-      {
-        name: 'productUomQty',
-        label: _('sale_backend.field.quantity'),
-        type: 'decimal',
-        value: 1,
-        required: true,
-      },
-      needs(
-        {
-          name: 'productUomId',
-          label: _('sale_backend.field.uom'),
-          type: 'select',
-          options: choices(d.units),
-          required: true,
-        },
-        _('sale_backend.setup.uom'),
+    const lang = ctx.localeOf(url, req)
+    const _ = ctx.translate(lang)
+    const creating = params.id === 'new'
+    const order = creating
+      ? null
+      : ((await ctx.call('sale.getOrder', { id: params.id }, url, req)) as AnyRow | null)
+    if (!creating && !order) return text('not found', { status: 404 })
+    const title = order ? String(order.name) : _('sale_backend.action.create')
+    const island = await ctx.joint(url, req, 'sale_backend:order.page', {
+      id: params.id,
+      title,
+      loading: _('backend.relation.loading'),
+      back: saleRecordBack(
+        url,
+        url.pathname.startsWith('/admin/sales/orders/') ? '/admin/sales/orders' : '/admin/sales/quotations',
       ),
-      {
-        name: 'priceUnit',
-        label: _('sale_backend.field.priceUnit'),
-        type: 'decimal',
-        help: _('sale_backend.help.pricelist'),
-      },
-      { name: 'discount', label: _('sale_backend.field.discount'), type: 'decimal' },
-      {
-        name: 'taxId',
-        label: _('sale_backend.field.tax'),
-        type: 'select',
-        options: choices(d.taxes, true),
-        control: await taxRelationControl(ctx, url, req, _, {
-          id: 'sale-line-tax',
-          name: 'taxId',
-          label: _('sale_backend.field.tax'),
-          taxes: choices(d.taxes),
-          allowEmpty: true,
-          typeTaxUse: 'sale',
-        }),
-      },
-    ]
-    const invoiceFields: FormField[] = [
-      needs(
-        {
-          name: 'journalId',
-          label: _('sale_backend.field.journal'),
-          type: 'select',
-          options: choices(d.journals),
-          required: true,
-        },
-        _('sale_backend.setup.journal'),
-      ),
-      {
-        name: 'revenueAccountId',
-        label: _('sale_backend.field.revenueAccount'),
-        type: 'select',
-        options: choices(d.accounts.filter((r) => String(r.accountType).startsWith('income'))),
-        required: true,
-        control: await accountRelationControl(ctx, url, req, _, {
-          id: 'sale-revenue-account',
-          name: 'revenueAccountId',
-          label: _('sale_backend.field.revenueAccount'),
-          accounts: accountOptions(d.accounts.filter((r) => String(r.accountType).startsWith('income'))),
-          accountTypes: ['income*'],
-          required: true,
-        }),
-      },
-      {
-        name: 'receivableAccountId',
-        label: _('sale_backend.field.receivableAccount'),
-        type: 'select',
-        options: choices(d.accounts.filter((r) => r.accountType === 'asset_receivable')),
-        required: true,
-        control: await accountRelationControl(ctx, url, req, _, {
-          id: 'sale-receivable-account',
-          name: 'receivableAccountId',
-          label: _('sale_backend.field.receivableAccount'),
-          accounts: accountOptions(d.accounts.filter((r) => r.accountType === 'asset_receivable')),
-          accountTypes: ['asset_receivable'],
-          required: true,
-        }),
-      },
-      {
-        name: 'taxAccountId',
-        label: _('sale_backend.field.taxAccount'),
-        type: 'select',
-        options: choices(d.accounts, true),
-        control: await accountRelationControl(ctx, url, req, _, {
-          id: 'sale-tax-account',
-          name: 'taxAccountId',
-          label: _('sale_backend.field.taxAccount'),
-          accounts: accountOptions(d.accounts),
-          allowEmpty: true,
-        }),
-      },
-      { name: 'invoiceDate', label: _('sale_backend.field.invoiceDate'), type: 'date' },
-    ]
-    const integration = await ctx.joint(url, req, 'sale_backend:order.loyalty', {
-      orderId: params.id,
-      locale: localeQuery(url),
+      // Saved orders are wide for their lines table, so loading does not shift the page.
+      width: creating ? 'default' : 'wide',
     })
-    // A cancelled order used to print nothing at all. It is listed with the
-    // quotations and returns to draft, so that is the document it prints as.
-    const reportIds =
-      {
-        draft: ['sale.quotation'],
-        sent: ['sale.quotation', 'sale.proforma'],
-        sale: ['sale.salesOrder', 'sale.proforma'],
-        cancel: ['sale.quotation'],
-      }[String(order.state)] ?? []
-    const printable = (await ctx.reportsOf(url, req, 'sale.Order')).filter((report) =>
-      reportIds.includes(report.id),
-    )
-    const printActions = printGroup(_, printable, String(order.id), url.search)
-    const canonical = orderPath(order, url)
-    const body = orderDetailScreen(
-      _,
-      {
-        order: {
-          ...order,
-          partnerName: customer?.name,
-          warehouseName: warehouse?.name,
-          pricelistName: pricelist?.name,
-          paymentTermName: paymentTerm?.name,
-        },
-        action: canonical,
-        lineFields,
-        invoiceFields,
-        integration,
-        printActions,
-        locale: localeQuery(url),
-        collaboration: savedPartial
-          ? ''
-          : await ctx.joint(url, req, 'sale_backend:order.collaboration', {
-              resModel: 'sale.Order',
-              resId: String(order.id),
-              lang,
-            }),
-        editor: savedPartial
-          ? ''
-          : await ctx.joint(url, req, 'sale_backend:order.editor', {
-              identity: `order:${String(order.id)}`,
-              orderId: String(order.id),
-              lang,
-            }),
-        errors: url.searchParams.get('invalid') === '1' ? [_('sale_backend.error.invalid')] : undefined,
-      },
-      savedPartial ? {} : await frameOf(ctx, url, req),
-      savedPartial,
-    )
-    if (savedPartial)
-      return withHeaders(fragment(body, { type: NAVIGATION_TYPE }), {
-        vary: 'X-Ket-Partial',
-        'x-ket-location': canonical,
-      })
-    return backendPage(ctx, req, { lang, title: String(order.name), body })
+    return backendPage(ctx, req, {
+      lang,
+      title,
+      body: orderPageScreen(_, title, island, await frameOf(ctx, url, req), lang === 'en' ? 'en' : 'vi'),
+    })
   }
+/** GET is the page; POST keeps the form actions of an order for clients without the page's script. */
+const detail = (ctx: ServeContext): Route => {
+  const page = orderPage(ctx)
+  return async (url, req, params) => {
+    if (req.method === 'GET') return page(url, req, params)
+    if (req.method !== 'POST') return text('GET or POST', { status: 405 })
+    if (crossSite(req)) return text('Forbidden', { status: 403 })
+    const form = await readForm(req)
+    let result: unknown
+    if (form.action === 'add-line')
+      result = await ctx.call(
+        'sale.addLine',
+        {
+          id: randomUUID(),
+          orderId: params.id,
+          productId: form.productId ?? '',
+          productUomQty: form.productUomQty || '1',
+          productUomId: form.productUomId ?? '',
+          ...optional(form, 'priceUnit'),
+          ...optional(form, 'discount'),
+          ...optional(form, 'taxId'),
+        },
+        url,
+        req,
+      )
+    else if (form.action === 'remove-line')
+      result = await ctx.call('sale.removeLine', { id: form.lineId ?? '' }, url, req)
+    else if (form.action === 'reset') result = await ctx.call('sale.resetOrder', { id: params.id }, url, req)
+    else if (form.action === 'send')
+      result = await ctx.call('sale.sendQuotation', { id: params.id }, url, req)
+    else if (form.action === 'confirm')
+      result = await callIfInstalled(ctx, url, req, 'loyalty_sale.confirmOrder', 'sale.confirmOrder', {
+        id: params.id,
+      })
+    else if (form.action === 'sync')
+      result = await ctx.call('sale.syncDeliveries', { id: params.id }, url, req)
+    else if (form.action === 'lock' || form.action === 'unlock')
+      result = await ctx.call('sale.lockOrder', { id: params.id, locked: form.action === 'lock' }, url, req)
+    else if (form.action === 'cancel')
+      result = await callIfInstalled(ctx, url, req, 'loyalty_sale.cancelOrder', 'sale.cancelOrder', {
+        id: params.id,
+      })
+    else if (form.action === 'invoice')
+      result = await ctx.call(
+        'sale.createInvoice',
+        {
+          id: randomUUID(),
+          orderId: params.id,
+          journalId: form.journalId ?? '',
+          revenueAccountId: form.revenueAccountId ?? '',
+          receivableAccountId: form.receivableAccountId ?? '',
+          ...optional(form, 'taxAccountId'),
+          ...optional(form, 'invoiceDate'),
+        },
+        url,
+        req,
+      )
+    else return text('unknown action', { status: 400 })
+    if (!(result as AnyRow).ok) return redirect(result, `${url.pathname}${url.search}`)
+    const current = (await ctx.call('sale.getOrder', { id: params.id }, url, req)) as AnyRow | null
+    return current ? seeOther(orderPath(current, url)) : text('not found', { status: 404 })
+  }
+}
 const vi = {
+  ...benefitMessages.vi,
+  ...copyMessages.vi,
+  ...customerMessages.vi,
+  ...tagMessages.vi,
+  ...teamMessages.vi,
+  ...policyMessages.vi,
+  ...reportingMessages.vi,
+  'discount.title': 'Giảm giá',
+  'discount.manual': 'Giảm tay',
+  'discount.mode': 'Cách giảm',
+  'discount.value': 'Giá trị',
+  'discount.order_percent': 'Phần trăm trên đơn',
+  'discount.amount': 'Số tiền trước thuế',
+  'discount.line_percent': 'Phần trăm cho từng dòng',
+  'discount.saveFirst': 'Lưu các thay đổi của báo giá trước khi giảm giá.',
+  'discount.beforeTax': 'Giảm trên tiền hàng trước thuế',
+  'discount.replace':
+    'Giảm trên đơn thay khoản giảm trước đó và chia theo nhóm thuế. Dòng giảm chỉ được xóa, không sửa tay.',
+  'discount.apply': 'Áp dụng',
+  'discount.line': 'Chiết khấu đơn hàng',
+  'prices.action': 'Cập nhật giá',
+  'prices.title': 'Áp lại bảng giá',
+  'prices.apply': 'Cập nhật giá',
+  'prices.message':
+    'Mọi dòng chưa giao, chưa xuất hoá đơn lấy lại đơn giá và chiết khấu theo bảng giá đã chọn; giá sửa tay trên các dòng đó được thay. Dòng combo, ưu đãi và dòng đã giao giữ nguyên.',
+
+  ...matrixMessages.vi,
+  ...Object.fromEntries(
+    Object.entries(catalogueMessages.vi).map(([key, value]) => [`catalogue.${key}`, value]),
+  ),
+  'grid.description': 'Diễn giải',
+  'grid.freeDescription': 'Nhập diễn giải nếu không chọn sản phẩm',
+  'grid.noTax': 'Không thuế',
+  'customerWarning.hint': 'Tối đa 300 ký tự; áp dụng riêng trong công ty đang chọn. Không chặn giao dịch.',
+  'customerWarning.save': 'Lưu',
+  'customerWarning.edit': 'Sửa cảnh báo',
+  'customerWarning.empty': 'Chưa có cảnh báo cho khách này.',
+  'warning.title': 'Lưu ý về {name}',
+  'configuration.warnings': 'Cảnh báo khi bán',
+  'configuration.warningsHint': 'Hiện lưu ý của khách hàng và sản phẩm trên đơn bán. Không chặn giao dịch.',
+  'configuration.title': 'Cấu hình bán hàng',
+  'configuration.requireProduct': 'Bắt buộc sản phẩm',
+  'configuration.hint':
+    'Khi bật, mọi dòng phải gắn sản phẩm trước khi xác nhận. Báo giá vẫn lưu được dòng tự do.',
+  'configuration.quotations': 'Báo giá mới',
+  'configuration.orders': 'Đơn đã xác nhận',
+  'configuration.validity': 'Hiệu lực báo giá (ngày)',
+  'configuration.validityHint': 'Từ 1 đến 365 ngày, tính từ ngày đặt. Để trống: báo giá không có hạn.',
+  'configuration.signature': 'Yêu cầu ký trực tuyến',
+  'configuration.payment': 'Yêu cầu thanh toán trực tuyến',
+  'configuration.prepayment': 'Trả trước (%)',
+  'configuration.prepaymentHint': 'Phần trăm tổng tiền khách trả trước khi bật thanh toán trực tuyến.',
+  'configuration.newOnly': 'Chỉ áp cho báo giá tạo sau khi lưu; mẫu báo giá giữ giá trị riêng.',
+  'configuration.lock': 'Khoá đơn khi xác nhận',
+  'configuration.lockHint': 'Đơn đã xác nhận bị khoá ngay; trưởng bán hàng mở khoá khi cần sửa.',
+  'configuration.invoicePolicy': 'Xuất hoá đơn hàng hoá theo',
+  'configuration.invoicePolicyHint':
+    'Mặc định cho hàng hoá chưa đặt riêng; dịch vụ luôn theo số lượng đặt. Báo giá lấy chính sách lúc xác nhận; đơn đã xác nhận giữ chính sách của từng dòng.',
   'dashboard.awaiting': 'Báo giá đang chờ phản hồi',
   'dashboard.queueEmpty': 'Không có báo giá đang chờ phản hồi.',
   'app.title': 'Bán hàng trong quản trị',
@@ -526,8 +342,8 @@ const vi = {
   'menu.ordersGroup': 'Đơn hàng',
   'menu.quotations': 'Báo giá',
   'menu.orders': 'Đơn bán hàng',
+  'menu.toInvoice': 'Cần xuất hoá đơn',
   'menu.products': 'Sản phẩm',
-  'menu.policies': 'Chính sách lập hoá đơn',
   'dashboard.title': 'Tổng quan bán hàng',
   'dashboard.draft': 'Báo giá',
   'dashboard.sent': 'Báo giá đã gửi',
@@ -574,6 +390,22 @@ const vi = {
   'orderList.records.hint': 'Mở một đơn để đồng bộ giao hàng, khoá đơn hoặc tạo hoá đơn.',
   'orderList.empty': 'Chưa có đơn bán hàng',
   'orderList.emptyHint': 'Xác nhận một báo giá để tạo đơn bán hàng đầu tiên.',
+  'orderList.byVariant.title': 'Đơn có {variant}',
+  'orderList.byVariant.message': 'Chỉ hiện các đơn bán có dòng của biến thể này.',
+  'orderList.byVariant.clear': 'Xem mọi đơn',
+  'analysis.title': 'Phân tích bán hàng',
+  'analysis.context': '{product} · {days} ngày gần đây',
+  'analysis.col.variant': 'Biến thể',
+  'analysis.col.code': 'Mã',
+  'analysis.col.quantity': 'Đã bán',
+  'analysis.col.revenue': 'Doanh thu chưa thuế',
+  'analysis.col.orders': 'Số đơn',
+  'analysis.col.lastAt': 'Bán gần nhất',
+  'analysis.empty': 'Chưa bán được trong kỳ này',
+  'analysis.emptyHint': 'Đơn bán đã xác nhận trong kỳ sẽ hiện ở đây, mỗi biến thể một dòng.',
+  'analysis.missing': 'Chọn một sản phẩm',
+  'analysis.missingHint': 'Mở phân tích từ thẻ Đã bán 30 ngày trên trang sản phẩm.',
+  'analysis.back': 'Về trang sản phẩm',
   'detail.title': 'Chi tiết đơn bán',
   'order.kicker': 'Đơn bán hàng',
   'order.locked': 'Đã khoá',
@@ -582,19 +414,7 @@ const vi = {
   'order.information.title': 'Thông tin đơn hàng',
   'order.information.hint': 'Khách hàng, thời hạn và điều kiện thương mại của đơn.',
   'order.collaboration.label': 'Trao đổi và hoạt động của đơn bán',
-  'policies.title': 'Chính sách lập hoá đơn',
-  'policy.kicker': 'Cấu hình bán hàng',
-  'policy.subtitle': 'Chọn thời điểm số lượng sản phẩm đủ điều kiện để lập hoá đơn.',
-  'policy.summary.total': 'Sản phẩm có thể bán',
-  'policy.summary.order': 'Theo số lượng đặt',
-  'policy.summary.delivery': 'Theo số lượng giao',
-  'policy.edit.title': 'Cập nhật chính sách',
-  'policy.edit.hint': 'Chính sách được lưu trên từng mẫu sản phẩm.',
-  'policy.products.title': 'Chính sách theo sản phẩm',
-  'policy.products.hint':
-    'Số lượng đặt cho phép lập hoá đơn ngay; số lượng giao chỉ cho phép sau khi giao hàng.',
-  'policy.empty': 'Chưa có sản phẩm có thể bán',
-  'policy.emptyHint': 'Bật Có thể bán trên một sản phẩm để cấu hình chính sách lập hoá đơn.',
+  'order.aside.label': 'Kế hoạch giao hàng, trao đổi và hoạt động của đơn bán',
   'lines.title': 'Dòng sản phẩm',
   'lines.hint': 'Số lượng, giao hàng, lập hoá đơn và thành tiền theo từng sản phẩm.',
   'lines.add': 'Thêm sản phẩm',
@@ -607,18 +427,101 @@ const vi = {
   'invoices.title': 'Hoá đơn khách hàng',
   empty: 'Chưa có dữ liệu.',
   emptyHint: 'Tạo bản ghi đầu tiên để bắt đầu.',
-  'modal.info': 'Thông tin',
   'modal.lines': 'Sản phẩm',
+  'cost.margin': 'Lợi nhuận dòng',
+  'cost.saved': 'Giá vốn của các dòng đã lưu',
+  'cost.perUnit': 'Giá vốn / đơn vị',
+  'cost.currency': 'Tiền tệ',
+  'cost.unknown': 'Chưa có giá vốn',
+  'cost.noSnapshot': 'Chưa có snapshot giá vốn cho các dòng đã lưu.',
+  'grid.save': 'Lưu các dòng',
+  'grid.addSection': 'Thêm nhóm hàng',
+  'grid.addNote': 'Thêm ghi chú',
+  'grid.optional': 'Tùy chọn',
+  'grid.margin': 'Lợi nhuận',
+  'grid.orderMargin': 'Lợi nhuận đã lưu',
+  'grid.marginPercent': 'Lợi nhuận %',
+  'grid.optionalSections': 'Nhóm hàng tùy chọn',
+  'grid.saveBeforeSections': 'Đóng hộp thoại và lưu các dòng đang sửa trước khi chọn nhóm hàng tùy chọn.',
+  'grid.automaticPrice': 'Theo bảng giá',
   'modal.deliveries': 'Giao hàng',
   'modal.invoices': 'Hoá đơn',
-  'modal.more': 'Thao tác khác',
-  'modal.edit': 'Sửa dòng',
-  'modal.confirmRemove': 'Xoá dòng sản phẩm này?',
+  'modal.deposits': 'Tiền đặt cọc',
+  'action.collectDeposit': 'Thu đặt cọc',
+  'action.applyDeposit': 'Trừ vào hoá đơn',
+  'deposit.empty': 'Chưa thu đặt cọc',
+  'deposit.emptyHint':
+    'Tiền đặt cọc ghi thành phiếu thu của khách, không lập hoá đơn; khi hoá đơn đã ghi sổ thì trừ tiền cọc vào đó.',
+  'deposit.mode': 'Tính theo',
+  'deposit.mode.percent': 'Phần trăm tổng đơn',
+  'deposit.mode.amount': 'Số tiền',
+  'deposit.value': 'Giá trị',
+  'deposit.notInvoice': 'Không lập hoá đơn cho tiền đặt cọc',
+  'deposit.notInvoiceHint':
+    'Phiếu thu ghi vào tài khoản phải thu của khách. Hoá đơn lập khi giao hàng, rồi trừ tiền cọc vào hoá đơn.',
+  'field.depositJournal': 'Sổ thu tiền',
+  'field.depositDate': 'Ngày thu',
+  'field.memo': 'Ghi chú',
+  'field.deposit': 'Khoản đặt cọc',
+  'field.invoice': 'Hoá đơn',
+  'field.unapplied': 'Chưa trừ',
+  'field.receipt': 'Số phiếu',
+  'delivery.empty': 'Chưa có phiếu giao hàng',
+  'delivery.emptyHint': 'Phiếu giao hàng có khi đơn có hàng cần giao.',
+  'delivery.state.draft': 'Nháp',
+  'delivery.state.waiting': 'Đang chờ',
+  'delivery.state.confirmed': 'Đã xác nhận',
+  'delivery.state.partially_available': 'Có hàng một phần',
+  'delivery.state.assigned': 'Đã giữ hàng',
+  'delivery.state.done': 'Hoàn tất',
+  'delivery.state.cancel': 'Đã hủy',
+  'invoice.empty': 'Chưa có hoá đơn',
+  'invoice.emptyHint': 'Hoá đơn của đơn này hiện ở đây sau khi tạo.',
+  'modal.history': 'Lịch sử thay đổi',
+  'history.when': 'Thời điểm',
+  'history.actor': 'Người thực hiện',
+  'history.action': 'Thao tác',
+  'history.detail': 'Chi tiết',
+  'history.empty': 'Chưa có thay đổi nào được ghi',
+  'history.emptyHint': 'Mỗi thao tác trên đơn được ghi ở đây cùng tên người thực hiện.',
+  'history.system': 'Hệ thống',
+  'history.action.create': 'Tạo báo giá',
+  'history.action.createFromTemplate': 'Tạo từ báo giá mẫu',
+  'history.action.copy': 'Nhân bản báo giá',
+  'history.action.save': 'Lưu báo giá',
+  'history.action.reset': 'Đưa về nháp',
+  'history.action.send': 'Gửi báo giá',
+  'history.action.confirm': 'Xác nhận đơn',
+  'history.action.cancel': 'Huỷ',
+  'history.action.lock': 'Khoá đơn',
+  'history.action.unlock': 'Mở khoá đơn',
+  'history.action.addLine': 'Thêm dòng',
+  'history.action.updateLine': 'Sửa dòng',
+  'history.action.removeLine': 'Xoá dòng',
+  'history.action.editLines': 'Lưu các dòng',
+  'history.action.variantMatrix': 'Chọn biến thể',
+  'history.action.catalogue': 'Thêm hàng từ danh mục',
+  'history.action.updatePrices': 'Cập nhật giá',
+  'history.action.discount': 'Giảm giá',
+  'history.action.optionalSections': 'Chọn nhóm hàng tùy chọn',
+  'history.action.deliveryPromise': 'Đổi ngày giao',
+  'history.action.salesperson': 'Đổi người bán',
+  'history.action.tags': 'Đổi thẻ',
+  'history.action.syncDeliveries': 'Đồng bộ giao hàng',
+  'history.action.invoice': 'Tạo hoá đơn',
+  'history.action.deposit': 'Thu đặt cọc',
+  'history.action.applyDeposit': 'Cấn trừ đặt cọc',
+  'history.action.applyCode': 'Nhập mã ưu đãi',
+  'history.action.applyReward': 'Áp khuyến mãi',
+  'history.action.removeReward': 'Bỏ khuyến mãi',
+  'history.action.addSection': 'Thêm nhóm hàng mẫu',
+  'history.action.applyTemplate': 'Dùng báo giá mẫu',
+  'invoice.state.draft': 'Nháp',
+  'invoice.state.posted': 'Đã ghi sổ',
+  'invoice.state.cancel': 'Đã hủy',
   'modal.confirmCancel': 'Huỷ đơn bán hàng này?',
-  'action.updateLine': 'Lưu dòng',
   'action.create': 'Tạo báo giá',
   'action.addLine': 'Thêm dòng',
-  'action.removeLine': 'Xoá',
   'action.reset': 'Đưa về nháp',
   'action.send': 'Đánh dấu đã gửi',
   'action.confirm': 'Xác nhận',
@@ -627,9 +530,20 @@ const vi = {
   'action.unlock': 'Mở khoá',
   'action.cancel': 'Huỷ',
   'action.createInvoice': 'Tạo hoá đơn',
+  'field.shippingPolicy': 'Chính sách giao hàng',
+  'field.commitmentDate': 'Ngày cam kết giao',
+  'field.expectedDate': 'Ngày dự kiến giao',
+  'shippingPolicy.direct': 'Giao ngay phần có sẵn',
+  'shippingPolicy.one': 'Giao một lần',
+  'delivery.plan': 'Kế hoạch giao hàng',
+  'delivery.dates': 'Ngày giao',
+  'action.saveDeliveryPromise': 'Lưu kế hoạch giao',
   'action.savePolicy': 'Lưu chính sách',
+  'action.back': 'Về danh sách',
+  'order.print': 'In',
   'field.name': 'Số đơn',
   'field.customer': 'Khách hàng',
+  'field.customerName': 'Tên khách hàng',
   'relation.customers': 'Quản lý khách hàng',
   'field.clientOrderRef': 'Tham chiếu khách hàng',
   'field.state': 'Trạng thái',
@@ -646,7 +560,7 @@ const vi = {
   'field.notes': 'Điều khoản và ghi chú',
   'field.product': 'Sản phẩm',
   'field.sku': 'Mã SKU',
-  'field.category': 'Danh mục',
+  'field.category': 'Nhóm sản phẩm',
   'field.quantity': 'Số lượng đặt',
   'field.delivered': 'Đã giao',
   'field.invoiced': 'Đã lập hoá đơn',
@@ -668,6 +582,16 @@ const vi = {
   'state.sale': 'Đơn bán hàng',
   'state.cancel': 'Đã huỷ',
   'invoiceStatus.upselling': 'Cơ hội bán thêm',
+  'invoicePreview.title': 'Số lượng lập hoá đơn',
+  'invoicePreview.quantity': 'Lập hoá đơn lần này',
+  'invoicePreview.extraTitle': 'Có hàng giao vượt số đặt',
+  'invoicePreview.extraHint':
+    'Hàng xuất hoá đơn theo số giao tính cả phần giao vượt. Kiểm tra trước khi tạo hoá đơn nháp.',
+  'invoicePreview.extra': 'Gồm {quantity} giao vượt (đặt {ordered})',
+  'invoicePreview.noInvoices': 'Chưa có hoá đơn',
+  'invoicePreview.noInvoicesHint': 'Tạo hoá đơn nháp từ số lượng đủ điều kiện của đơn bán.',
+  'invoicePreview.empty': 'Chưa có số lượng để lập hoá đơn',
+  'invoicePreview.emptyHint': 'Kiểm tra số đã giao, số đã xuất hoá đơn và chính sách của sản phẩm.',
   'invoiceStatus.invoiced': 'Đã lập đủ',
   'invoiceStatus.to invoice': 'Chờ lập hoá đơn',
   'invoiceStatus.no': 'Chưa cần lập hoá đơn',
@@ -675,6 +599,67 @@ const vi = {
   'invoicePolicy.delivery': 'Theo số lượng giao',
 }
 const en = {
+  ...benefitMessages.en,
+  ...copyMessages.en,
+  ...customerMessages.en,
+  ...tagMessages.en,
+  ...teamMessages.en,
+  ...policyMessages.en,
+  ...reportingMessages.en,
+  'discount.title': 'Discount',
+  'discount.manual': 'Manual discount',
+  'discount.mode': 'Method',
+  'discount.value': 'Value',
+  'discount.order_percent': 'Percentage on order',
+  'discount.amount': 'Untaxed fixed amount',
+  'discount.line_percent': 'Percentage on each line',
+  'discount.saveFirst': 'Save quotation changes before applying a discount.',
+  'discount.beforeTax': 'Discount on untaxed merchandise',
+  'discount.replace':
+    'Order discounts replace the previous adjustment and split by tax group. Discount rows can be removed but cannot be edited.',
+  'discount.apply': 'Apply',
+  'discount.line': 'Order discount',
+  'prices.action': 'Update prices',
+  'prices.title': 'Apply the pricelist again',
+  'prices.apply': 'Update prices',
+  'prices.message':
+    'Every line not yet delivered or invoiced takes its unit price and discount from the chosen pricelist again; prices typed by hand on those lines give way. Combo items, rewards and delivered lines stay as they are.',
+
+  ...matrixMessages.en,
+  ...Object.fromEntries(
+    Object.entries(catalogueMessages.en).map(([key, value]) => [`catalogue.${key}`, value]),
+  ),
+  'grid.description': 'Description',
+  'grid.freeDescription': 'Describe a line without a product',
+  'grid.noTax': 'No tax',
+  'customerWarning.hint': 'Up to 300 characters, for the active company only. Does not block transactions.',
+  'customerWarning.save': 'Save',
+  'customerWarning.edit': 'Edit warning',
+  'customerWarning.empty': 'No warning for this customer yet.',
+  'warning.title': 'Note about {name}',
+  'configuration.warnings': 'Sales warnings',
+  'configuration.warningsHint':
+    'Show customer and product notes on sales orders without blocking transactions.',
+  'configuration.title': 'Sales configuration',
+  'configuration.requireProduct': 'Require a product',
+  'configuration.hint':
+    'When enabled, every line needs a product before confirmation. Quotations may still keep free lines.',
+  'configuration.quotations': 'New quotations',
+  'configuration.orders': 'Confirmed orders',
+  'configuration.validity': 'Quotation validity (days)',
+  'configuration.validityHint': 'From 1 to 365 days after the order date. Empty: quotations do not expire.',
+  'configuration.signature': 'Ask for an online signature',
+  'configuration.payment': 'Ask for an online payment',
+  'configuration.prepayment': 'Prepayment (%)',
+  'configuration.prepaymentHint':
+    'The share of the total the customer pays up front when online payment is on.',
+  'configuration.newOnly':
+    'Applies to quotations created after saving; quotation templates keep their own values.',
+  'configuration.lock': 'Lock orders when confirmed',
+  'configuration.lockHint': 'A confirmed order is locked at once; a sales manager unlocks it to edit.',
+  'configuration.invoicePolicy': 'Invoice goods by',
+  'configuration.invoicePolicyHint':
+    "The default for goods without their own policy; services are always invoiced by ordered quantities. A quotation takes the policy in force when confirmed; a confirmed order keeps each line's policy.",
   'dashboard.awaiting': 'Quotations awaiting a response',
   'dashboard.queueEmpty': 'No quotations are awaiting a response.',
   'app.title': 'Sales administration',
@@ -685,8 +670,8 @@ const en = {
   'menu.ordersGroup': 'Orders',
   'menu.quotations': 'Quotations',
   'menu.orders': 'Sales Orders',
+  'menu.toInvoice': 'To invoice',
   'menu.products': 'Products',
-  'menu.policies': 'Invoicing Policies',
   'dashboard.title': 'Sales Overview',
   'dashboard.draft': 'Quotations',
   'dashboard.sent': 'Quotation Sent',
@@ -733,6 +718,22 @@ const en = {
   'orderList.records.hint': 'Open an order to sync deliveries, lock it or create an invoice.',
   'orderList.empty': 'No sales orders yet',
   'orderList.emptyHint': 'Confirm a quotation to create the first sales order.',
+  'orderList.byVariant.title': 'Orders with {variant}',
+  'orderList.byVariant.message': 'Only sales orders with a line for this variant are shown.',
+  'orderList.byVariant.clear': 'Show every order',
+  'analysis.title': 'Sales analysis',
+  'analysis.context': '{product} · last {days} days',
+  'analysis.col.variant': 'Variant',
+  'analysis.col.code': 'Code',
+  'analysis.col.quantity': 'Sold',
+  'analysis.col.revenue': 'Untaxed revenue',
+  'analysis.col.orders': 'Orders',
+  'analysis.col.lastAt': 'Last sold',
+  'analysis.empty': 'Nothing sold in this period',
+  'analysis.emptyHint': 'Confirmed sales orders in the period appear here, one row per variant.',
+  'analysis.missing': 'Choose a product',
+  'analysis.missingHint': "Open the analysis from the Sold in 30 days card on a product's page.",
+  'analysis.back': 'Back to the product',
   'detail.title': 'Sales Order Detail',
   'order.kicker': 'Sales order',
   'order.locked': 'Locked',
@@ -741,19 +742,7 @@ const en = {
   'order.information.title': 'Order information',
   'order.information.hint': 'Customer, deadline and commercial terms for this order.',
   'order.collaboration.label': 'Sales order conversation and activities',
-  'policies.title': 'Invoicing Policies',
-  'policy.kicker': 'Sales configuration',
-  'policy.subtitle': 'Choose when product quantities become eligible for invoicing.',
-  'policy.summary.total': 'Sellable products',
-  'policy.summary.order': 'Ordered quantities',
-  'policy.summary.delivery': 'Delivered quantities',
-  'policy.edit.title': 'Update a policy',
-  'policy.edit.hint': 'The policy is stored on each product template.',
-  'policy.products.title': 'Policies by product',
-  'policy.products.hint':
-    'Ordered quantities invoice immediately; delivered quantities invoice only after delivery.',
-  'policy.empty': 'No sellable products yet',
-  'policy.emptyHint': 'Enable Can be sold on a product before configuring its invoicing policy.',
+  'order.aside.label': 'Sales order delivery plan, conversation and activities',
   'lines.title': 'Order Lines',
   'lines.hint': 'Ordered, delivered and invoiced quantities with each product subtotal.',
   'lines.add': 'Add a product',
@@ -766,18 +755,101 @@ const en = {
   'invoices.title': 'Customer Invoices',
   empty: 'No data yet.',
   emptyHint: 'Create the first record to get started.',
-  'modal.info': 'Information',
   'modal.lines': 'Products',
+  'cost.margin': 'Line margin',
+  'cost.saved': 'Saved line costs',
+  'cost.perUnit': 'Cost / unit',
+  'cost.currency': 'Currency',
+  'cost.unknown': 'Cost unavailable',
+  'cost.noSnapshot': 'No cost snapshots for the saved lines yet.',
+  'grid.save': 'Save lines',
+  'grid.addSection': 'Add section',
+  'grid.addNote': 'Add note',
+  'grid.optional': 'Optional',
+  'grid.margin': 'Margin',
+  'grid.orderMargin': 'Saved order margin',
+  'grid.marginPercent': 'Margin %',
+  'grid.optionalSections': 'Optional sections',
+  'grid.saveBeforeSections': 'Close this dialog and save edited lines before choosing optional sections.',
+  'grid.automaticPrice': 'Pricelist price',
   'modal.deliveries': 'Deliveries',
   'modal.invoices': 'Invoices',
-  'modal.more': 'Other actions',
-  'modal.edit': 'Edit line',
-  'modal.confirmRemove': 'Remove this product line?',
+  'modal.deposits': 'Deposits',
+  'action.collectDeposit': 'Collect deposit',
+  'action.applyDeposit': 'Set off against invoice',
+  'deposit.empty': 'No deposit yet',
+  'deposit.emptyHint':
+    "A deposit is recorded as the customer's receipt, not invoiced; once the invoice is posted, set the deposit off against it.",
+  'deposit.mode': 'Based on',
+  'deposit.mode.percent': "Percent of the order's total",
+  'deposit.mode.amount': 'Amount',
+  'deposit.value': 'Value',
+  'deposit.notInvoice': 'No invoice for a deposit',
+  'deposit.notInvoiceHint':
+    "The receipt goes to the customer's receivable account. The invoice is made on delivery; then the deposit is set off against it.",
+  'field.depositJournal': 'Received into',
+  'field.depositDate': 'Received on',
+  'field.memo': 'Note',
+  'field.deposit': 'Deposit',
+  'field.invoice': 'Invoice',
+  'field.unapplied': 'Not set off',
+  'field.receipt': 'Receipt',
+  'delivery.empty': 'No deliveries yet',
+  'delivery.emptyHint': 'A delivery appears once the order has goods to ship.',
+  'delivery.state.draft': 'Draft',
+  'delivery.state.waiting': 'Waiting',
+  'delivery.state.confirmed': 'Confirmed',
+  'delivery.state.partially_available': 'Partially available',
+  'delivery.state.assigned': 'Reserved',
+  'delivery.state.done': 'Done',
+  'delivery.state.cancel': 'Cancelled',
+  'invoice.empty': 'No invoices yet',
+  'invoice.emptyHint': 'This order’s invoices appear here once created.',
+  'modal.history': 'Change history',
+  'history.when': 'Time',
+  'history.actor': 'By',
+  'history.action': 'Action',
+  'history.detail': 'Details',
+  'history.empty': 'No changes recorded yet',
+  'history.emptyHint': 'Every action on the order is recorded here with the person who took it.',
+  'history.system': 'System',
+  'history.action.create': 'Created quotation',
+  'history.action.createFromTemplate': 'Created from quotation template',
+  'history.action.copy': 'Duplicated quotation',
+  'history.action.save': 'Saved quotation',
+  'history.action.reset': 'Set to draft',
+  'history.action.send': 'Sent quotation',
+  'history.action.confirm': 'Confirmed order',
+  'history.action.cancel': 'Cancelled',
+  'history.action.lock': 'Locked order',
+  'history.action.unlock': 'Unlocked order',
+  'history.action.addLine': 'Added line',
+  'history.action.updateLine': 'Edited line',
+  'history.action.removeLine': 'Removed line',
+  'history.action.editLines': 'Saved lines',
+  'history.action.variantMatrix': 'Chose variants',
+  'history.action.catalogue': 'Added from catalogue',
+  'history.action.updatePrices': 'Updated prices',
+  'history.action.discount': 'Discount',
+  'history.action.optionalSections': 'Chose optional sections',
+  'history.action.deliveryPromise': 'Changed delivery date',
+  'history.action.salesperson': 'Changed salesperson',
+  'history.action.tags': 'Changed tags',
+  'history.action.syncDeliveries': 'Synced deliveries',
+  'history.action.invoice': 'Created invoice',
+  'history.action.deposit': 'Collected deposit',
+  'history.action.applyDeposit': 'Applied deposit',
+  'history.action.applyCode': 'Entered benefit code',
+  'history.action.applyReward': 'Applied promotion',
+  'history.action.removeReward': 'Removed promotion',
+  'history.action.addSection': 'Added section template',
+  'history.action.applyTemplate': 'Used quotation template',
+  'invoice.state.draft': 'Draft',
+  'invoice.state.posted': 'Posted',
+  'invoice.state.cancel': 'Cancelled',
   'modal.confirmCancel': 'Cancel this sales order?',
-  'action.updateLine': 'Save line',
   'action.create': 'Create Quotation',
   'action.addLine': 'Add line',
-  'action.removeLine': 'Remove',
   'action.reset': 'Set to draft',
   'action.send': 'Mark as Sent',
   'action.confirm': 'Confirm',
@@ -786,9 +858,20 @@ const en = {
   'action.unlock': 'Unlock',
   'action.cancel': 'Cancel',
   'action.createInvoice': 'Create Invoice',
+  'field.shippingPolicy': 'Delivery policy',
+  'field.commitmentDate': 'Committed delivery date',
+  'field.expectedDate': 'Expected delivery date',
+  'shippingPolicy.direct': 'Deliver available items',
+  'shippingPolicy.one': 'Deliver once',
+  'delivery.plan': 'Delivery plan',
+  'delivery.dates': 'Delivery dates',
+  'action.saveDeliveryPromise': 'Save delivery plan',
   'action.savePolicy': 'Save Policy',
+  'action.back': 'Back to list',
+  'order.print': 'Print',
   'field.name': 'Order Reference',
   'field.customer': 'Customer',
+  'field.customerName': 'Customer name',
   'relation.customers': 'Manage customers',
   'field.clientOrderRef': 'Customer Reference',
   'field.state': 'Status',
@@ -827,6 +910,16 @@ const en = {
   'state.sale': 'Sales Order',
   'state.cancel': 'Cancelled',
   'invoiceStatus.upselling': 'Upselling Opportunity',
+  'invoicePreview.title': 'Invoice quantities',
+  'invoicePreview.quantity': 'Invoice now',
+  'invoicePreview.extraTitle': 'Some items exceed the ordered quantity',
+  'invoicePreview.extraHint':
+    'Delivery-based invoicing includes overdelivered quantities. Review before creating the draft invoice.',
+  'invoicePreview.extra': 'Includes {quantity} overdelivered (ordered {ordered})',
+  'invoicePreview.noInvoices': 'No invoices yet',
+  'invoicePreview.noInvoicesHint': 'Create a draft invoice from the eligible sales order quantities.',
+  'invoicePreview.empty': 'No quantity to invoice yet',
+  'invoicePreview.emptyHint': 'Check delivered and invoiced quantities and the product invoicing policy.',
   'invoiceStatus.invoiced': 'Fully Invoiced',
   'invoiceStatus.to invoice': 'To Invoice',
   'invoiceStatus.no': 'Nothing to Invoice',
@@ -855,32 +948,46 @@ export default defineModule({
   depends: ['sale', 'backend', 'partner_backend'],
   assets: new URL('./client/', import.meta.url),
   islands: {
+    'sale.customer-warning': customerWarningIsland,
+    'sale.warning-preview': warningPreviewIsland,
+    'sale.catalogue': saleCatalogueIsland,
+    'sale.variant-matrix-modal': defineRecordModalIsland({
+      kind: 'sale.variantMatrix',
+      client: 'sale-variant-matrix.mjs',
+      export: 'variantMatrixModal',
+    }),
+    'sale.configuration-page': salesConfigurationIsland,
+    ...salePolicyIslands,
     'sale.invoice-policy-modal': defineRecordModalIsland({
       kind: 'sale.invoicePolicy',
-      client: 'invoicing-policy-modal.mjs',
-      export: 'invoicingPolicyModal',
+      client: 'sale-policy-modal.mjs',
+      export: 'salePolicyModal',
+    }),
+    ...customerIslands,
+    'sale.customer-page': customerPageIsland,
+    ...saleTagIslands,
+    'sale.tag-modal': defineRecordModalIsland({
+      kind: 'sale.tag',
+      client: 'sale-tag-modal.mjs',
+      export: 'saleTagModal',
+    }),
+    ...saleTeamIslands,
+    'sale.team-modal': defineRecordModalIsland({
+      kind: 'sale.team',
+      client: 'sale-team-modal.mjs',
+      export: 'saleTeamModal',
     }),
     ...islands,
-    'sale.order-modal': defineRecordModalIsland({
-      kind: 'sale.order',
-      client: 'sale-order-modal.mjs',
-      export: 'saleOrderModal',
-    }),
-  },
-  behaviors: {
-    'sale.editor': {
-      client: 'sale.mjs',
-      export: 'editorBehavior',
-      when: 'form[data-scope="sale-order"]',
-    },
   },
   joints: {
     'order.loyalty': { props: { orderId: 'id', locale: 'text?' } },
     'order.collaboration': {
-      props: { resModel: 'text', resId: 'id', lang: 'text' },
+      props: { resModel: 'text', resId: 'id', lang: 'text', may: 'json?' },
       multiple: true,
     },
-    'order.editor': { props: { identity: 'text', orderId: 'id', lang: 'text?' } },
+    'order.page': {
+      props: { id: 'text', title: 'text', loading: 'text', back: 'text', width: 'text?' },
+    },
   },
   functions: searchFilterFunctions,
   title: 'Bán hàng trong quản trị',
@@ -909,17 +1016,81 @@ export default defineModule({
       needs: 'sale.listOrders',
       sequence: 1020,
     },
-    'sale.policies': {
+    // The orders waiting for an invoice: daily work, so on the sidebar (D6).
+    'sale.toInvoice': {
       parent: 'sale',
-      label: 'menu.policies',
+      label: 'menu.toInvoice',
+      path: '/admin/sales/orders?preset=to%20invoice',
+      needs: 'sale.listOrders',
+      sequence: 1025,
+    },
+    // Sales by period, salesperson, team, customer or product (D19).
+    'sale.analysis': {
+      parent: 'sale',
+      label: 'menu.analysis',
+      path: '/admin/sales/analysis',
+      needs: 'sale.analyzeSales',
+      sequence: 1040,
+    },
+    // Customers as Sales keeps them: contact, salesperson, pricelist and credit (D11, D12).
+    'sale.customers': {
+      parent: 'sale',
+      label: 'menu.customers',
+      path: '/admin/sales/customers',
+      needs: 'sale.listCustomers',
+      sequence: 1030,
+    },
+    // Configuration is behind the gear (D6): the module's own block on the settings page, beside
+    // Product and Stock, rather than among the organisation's system settings.
+    'admin.sale': { parent: 'admin', label: 'menu.app', icon: 'shopping-bag', sequence: 22 },
+    'sale.configuration': {
+      parent: 'admin.sale',
+      label: 'configuration.title',
+      path: '/admin/sales/configuration',
+      needs: 'sale.getConfiguration',
+      for: ['sale.saveConfiguration'],
+      sequence: 2000,
+    },
+    // Tags are configuration: behind the gear, beside quotation templates (D15).
+    'sale.tags': {
+      parent: 'admin.sale',
+      label: 'tag.title',
+      path: '/admin/sales/tags',
+      needs: 'sale.listTags',
+      for: ['sale.saveTag'],
+      sequence: 2003,
+    },
+    // ...and so are sales teams (D16).
+    'sale.teams': {
+      parent: 'admin.sale',
+      label: 'team.title',
+      path: '/admin/sales/teams',
+      needs: 'sale.listTeams',
+      for: ['sale.saveTeam'],
+      sequence: 2004,
+    },
+    // Product invoicing policies are configuration: behind the gear, after sales teams (D21).
+    'sale.policies': {
+      parent: 'admin.sale',
+      label: 'policy.title',
       path: '/admin/sales/invoicing-policies',
       needs: 'sale.listInvoicePolicies',
       for: ['sale.setInvoicePolicy'],
-      sequence: 2010,
+      sequence: 2005,
     },
   },
   routes: {
-    '/admin/sales/invoice-policy/{id}/context': invoicingPolicyContext,
+    '/admin/sales/catalogue/{id}': saleCatalogueRoute,
+    '/admin/sales/variant-matrix/{id}/context': variantMatrixContext,
+    '/admin/sales/customers/{id}/warning': customerWarningRoute,
+    ...customerRoutes,
+    ...tagRoutes,
+    ...teamRoutes,
+    '/admin/sales/warnings/preview': warningPreviewRoute,
+    '/admin/sales/configuration': salesConfigurationRoute,
+    '/admin/sales/configuration/context': salesConfigurationContext,
+    '/admin/sales/order-command': saleOrderCommand,
+    ...policyRoutes,
     '/admin/sales/record/{id}/context': saleOrderContext,
     '/admin/sales':
       (ctx): Route =>
@@ -941,19 +1112,22 @@ export default defineModule({
           ctx.call('sale.listOrders', { state: 'sent', limit: 10 }, url, req) as Promise<AnyRow[]>,
         ])
         const names = await partnerNames(ctx, url, req, [...recent, ...awaiting])
+        // The month's figures (D18); a quotation about to expire opens like any other.
+        const report = await overviewPart(ctx, url, req, (id) => orderPageHref(url, { id, state: 'sent' }))
+        const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
         return adminPage(ctx, url, req, {
           title: 'sale_backend.dashboard.title',
           body: async (_, shell) =>
             overviewScreen(_, {
               frame: shell,
               counts,
-              createHref: (await ctx.allows('sale.createOrder', url, req))
-                ? recordModalCreateHref(new URL(quotationListPath(url), url), { kind: 'sale.order' })
-                : null,
-              rowHref: (row) => recordModalHref(url, { kind: 'sale.order', id: String(row.id) }),
+              createHref: (await ctx.allows('sale.createOrder', url, req)) ? orderPageHref(url, null) : null,
+              rowHref: (row) => orderPageHref(url, row),
               awaiting: awaiting.map((row) => ({ ...row, partnerName: names.get(String(row.partnerId)) })),
               recent: recent.map((row) => ({ ...row, partnerName: names.get(String(row.partnerId)) })),
               localeQuery: localeQuery(url),
+              report: report?.(_) ?? null,
+              lang,
             }),
         })
       },
@@ -995,13 +1169,14 @@ export default defineModule({
               bodyId: 'sale-quotation-list',
               functions: saleSearchFunctions,
               labels: { searchPlaceholder: _('sale_backend.quotations.title') },
+              fieldChoices: await orderFilterChoices(ctx, url, req, _, true),
               groupLabel: (key, value) => saleGroupLabel(_, key, value),
             })
             return quotationsListScreen(
               _,
               {
                 createHref: (await ctx.allows('sale.createOrder', url, req))
-                  ? recordModalCreateHref(url, { kind: 'sale.order' })
+                  ? orderPageHref(url, null)
                   : null,
                 printReport: (await ctx.reportsOf(url, req, 'sale.Order')).find(
                   (report) => report.id === 'sale.quotation',
@@ -1009,9 +1184,10 @@ export default defineModule({
                 rows: search.rows,
                 table: {
                   ...(search.groups ? { groups: search.groups } : {}),
-                  rowHref: (row) => recordModalHref(url, { kind: 'sale.order', id: String(row.id) }),
+                  rowHref: (row) => orderPageHref(url, row),
                 },
                 detailSuffix,
+                lang: ctx.localeOf(url, req) === 'en' ? 'en' : 'vi',
               },
               search.frame,
             )
@@ -1031,22 +1207,7 @@ export default defineModule({
             : seeOther(`${createPath}${createPath.includes('?') ? '&' : '?'}invalid=1`)
         }
         if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-        const data = await common(ctx, url, req)
-        return adminPage(ctx, url, req, {
-          title: 'sale_backend.quotation.create.title',
-          body: async (_, shell) =>
-            quotationCreateScreen(
-              _,
-              {
-                fields: await orderFields(ctx, url, req, _, data),
-                action: createPath,
-                cancelHref: listPath,
-                errors:
-                  url.searchParams.get('invalid') === '1' ? [_('sale_backend.error.invalid')] : undefined,
-              },
-              shell,
-            ),
-        })
+        return orderPage(ctx)(url, req, { id: 'new' })
       },
     '/admin/sales/orders':
       (ctx): Route =>
@@ -1063,14 +1224,19 @@ export default defineModule({
               bodyId: 'sale-order-list',
               functions: saleSearchFunctions,
               labels: { searchPlaceholder: _('sale_backend.orders.title') },
+              fieldChoices: await orderFilterChoices(ctx, url, req, _, false),
             })
             const grouped = search.state.groupBy.length > 0
+            // The analysis on a product page opens the orders that sold one variant (P32).
+            const productId = url.searchParams.get('productId') || null
+            const narrowed = productId ? { productId } : {}
             const result = (await ctx.call(
               'sale.listOrders',
               {
                 state: 'sale',
                 listState: search.state,
                 listMode: grouped ? 'count' : 'rows',
+                ...narrowed,
               },
               url,
               req,
@@ -1079,11 +1245,25 @@ export default defineModule({
               ? await loadListGroups(ctx, url, req, search.state, 'Asia/Ho_Chi_Minh', {
                   groupFunction: 'sale.listOrders',
                   listFunction: 'sale.listOrders',
-                  listArgs: { state: 'sale' },
+                  listArgs: { state: 'sale', ...narrowed },
                   groupArgs: { listMode: 'groups' },
                   label: (key, value) => saleGroupLabel(_, key, value),
                 })
               : undefined
+            const variant = productId
+              ? (
+                  (await optionalRead<AnyRow[]>(
+                    ctx,
+                    'product.listVariants',
+                    { ids: [productId], includeArchived: true },
+                    url,
+                    req,
+                    [],
+                  )) as AnyRow[]
+                )[0]
+              : undefined
+            const without = new URL(url)
+            without.searchParams.delete('productId')
             // Group keys stay stable partner IDs; labels remain customer names.
             if (groups) {
               const flatten = (items: ReadonlyArray<(typeof groups)[number]>): typeof groups =>
@@ -1109,8 +1289,17 @@ export default defineModule({
                 total: result.total,
                 table: {
                   ...(groups ? { groups } : {}),
-                  rowHref: (row) => recordModalHref(url, { kind: 'sale.order', id: String(row.id) }),
+                  rowHref: (row) => orderPageHref(url, row),
                 },
+                lang: ctx.localeOf(url, req) === 'en' ? 'en' : 'vi',
+                ...(productId
+                  ? {
+                      narrowedTo: {
+                        label: String(variant?.displayName ?? variant?.defaultCode ?? productId),
+                        clearHref: `${without.pathname}${without.search}`,
+                      },
+                    }
+                  : {}),
                 detailSuffix,
               },
               {
@@ -1124,119 +1313,89 @@ export default defineModule({
           },
         })
       },
-    '/admin/sales/quotations/{id}': detail,
-    '/admin/sales/orders/{id}': detail,
-    '/admin/sales/invoicing-policies':
+    // What one product sold, a row per variant (P32), opened from the product page; without one, D19.
+    '/admin/sales/analysis':
       (ctx): Route =>
       async (url, req) => {
-        const returnTo = invoicingPoliciesPath(url)
-        const createPath = invoicingPolicyCreatePath(url, returnTo)
-        if (req.method === 'POST') {
-          if (crossSite(req)) return text('Forbidden', { status: 403 })
-          const result = await setInvoicingPolicy(ctx, url, req)
-          return (result as AnyRow).ok ? seeOther(returnTo) : seeOther(invoicingPolicyModalPath(url, true))
-        }
-        if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-        const [policies, variants, categories, units] = await Promise.all([
-          ctx.call('sale.listInvoicePolicies', {}, url, req) as Promise<AnyRow[]>,
-          optionalRead<AnyRow[]>(ctx, 'product.listVariants', { saleOk: true }, url, req, []),
-          optionalRead<AnyRow[]>(ctx, 'product.listCategories', {}, url, req, []),
-          optionalRead<AnyRow[]>(ctx, 'uom.listUnits', {}, url, req, []),
-        ])
-        const categoryNames = new Map(categories.map((row) => [row.id, String(row.name)]))
-        const unitNames = new Map(units.map((row) => [row.id, String(row.name)]))
-        const rows = policies.map((row) => ({
-          ...row,
-          sku: variants
-            .filter((variant) => variant.templateId === row.id)
-            .map((variant) => String(variant.defaultCode ?? ''))
-            .filter(Boolean)
-            .join(' · '),
-          category: categoryNames.get(row.categoryId) ?? '',
-          uom: unitNames.get(row.uomId) ?? '',
-        }))
+        if (req.method !== 'GET') return text('GET', { status: 405 })
+        const templateId = url.searchParams.get('templateId') || null
+        // Without a product it is the analysis of the company's sales (D19).
+        if (!templateId) return analysisPage(ctx, url, req)
+        if (!(await ctx.allows('sale.productSales', url, req))) return text('Forbidden', { status: 403 })
+        const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
+        const sales = templateId
+          ? ((await ctx.call('sale.productSales', { templateId, days: ANALYSIS_DAYS }, url, req)) as {
+              days: number
+              variants: Array<{
+                productId: string
+                quantity: number
+                revenue: number
+                orders: number
+                lastAt: string | null
+              }>
+            } | null)
+          : null
+        const variants = sales
+          ? ((await optionalRead<AnyRow[]>(
+              ctx,
+              'product.listVariants',
+              { templateId, includeArchived: true },
+              url,
+              req,
+              [],
+            )) as AnyRow[])
+          : []
+        const named = new Map(variants.map((row) => [String(row.id), row]))
+        const live = await ctx.live(req)
+        // Revenue follows the product's money rule (P16): who may read costs may read it.
+        const money =
+          Boolean(live.functions?.['product.listVariantCosts']) &&
+          (await ctx.allows('product.listVariantCosts', url, req))
+        const productHref = await productPageLink(ctx, url, req)
+        const product = sales
+          ? {
+              name: String(variants[0]?.templateName ?? templateId),
+              href: productHref(templateId),
+            }
+          : null
         return adminPage(ctx, url, req, {
-          title: 'sale_backend.policies.title',
-          body: async (_, shell) => {
-            const search = await rowListSearch(ctx, url, req, {
-              spec: invoicingPolicyListSearch,
-              rows,
-              frame: shell,
-              name: 'sale-invoicing-policy-filter',
-              bodyId: 'sale-invoicing-policy-list',
-              functions: saleSearchFunctions,
-              labels: { searchPlaceholder: _('sale_backend.policies.title') },
-              groupLabel: (key, value) => saleGroupLabel(_, key, value),
-            })
-            const workspace = invoicingPoliciesListScreen(
+          title: 'sale_backend.analysis.title',
+          active: '/admin/sales/orders',
+          body: (_, frame) =>
+            salesAnalysisScreen(
               _,
               {
-                createHref: (await ctx.allows('sale.setInvoicePolicy', url, req))
-                  ? recordModalCreateHref(url, { kind: 'sale.invoicePolicy' })
-                  : null,
-                rows: search.rows,
-                table: {
-                  ...(search.groups ? { groups: search.groups } : {}),
-                  rowHref: (row) => recordModalHref(url, { kind: 'sale.invoicePolicy', id: String(row.id) }),
-                },
+                product,
+                days: sales?.days ?? ANALYSIS_DAYS,
+                money,
+                lang,
+                rows: (sales?.variants ?? []).map((row) => {
+                  const variant = named.get(row.productId)
+                  return {
+                    id: row.productId,
+                    variant: String(variant?.displayName ?? row.productId),
+                    code: String(variant?.defaultCode ?? ''),
+                    quantity: row.quantity,
+                    revenue: money ? row.revenue : null,
+                    orders: row.orders,
+                    lastAt: row.lastAt,
+                    href: inLocale(url, `/admin/sales/orders?productId=${encodeURIComponent(row.productId)}`),
+                  }
+                }),
               },
-              search.frame,
-            )
-            if (url.searchParams.get('create') !== '1') return workspace
-            return modalWorkspace(
-              workspace,
-              invoicingPolicyCreateModal(_, {
-                action: createPath,
-                cancelHref: returnTo,
-                errors:
-                  url.searchParams.get('invalid') === '1' ? [_('sale_backend.error.invalid')] : undefined,
-                fields: [
-                  {
-                    name: 'templateId',
-                    label: _('sale_backend.field.product'),
-                    type: 'select',
-                    options: choices(rows),
-                    required: true,
-                    control: await templateRelationControl(ctx, url, req, _, {
-                      id: 'sale-invoicing-template',
-                      name: 'templateId',
-                      label: _('sale_backend.field.product'),
-                      templates: choices(rows),
-                      required: true,
-                    }),
-                  },
-                  {
-                    name: 'invoicePolicy',
-                    label: _('sale_backend.field.invoicePolicy'),
-                    type: 'radio',
-                    options: INVOICE_POLICIES.map((v) => ({
-                      value: v,
-                      label: labelOf(_, 'invoicePolicy', v),
-                    })),
-                    required: true,
-                  },
-                ],
-              }),
-            )
-          },
+              frame,
+            ),
         })
       },
-    '/admin/sales/invoicing-policies/new':
-      (ctx): Route =>
-      async (url, req) => {
-        const returnTo = safeInvoicingPoliciesReturnTo(url)
-        if (req.method === 'POST') {
-          if (crossSite(req)) return text('Forbidden', { status: 403 })
-          const result = await setInvoicingPolicy(ctx, url, req)
-          return (result as AnyRow).ok ? seeOther(returnTo) : seeOther(invoicingPolicyModalPath(url, true))
-        }
-        if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-        return seeOther(invoicingPolicyModalPath(url, url.searchParams.get('invalid') === '1'))
-      },
+    '/admin/sales/quotations/{id}': detail,
+    '/admin/sales/orders/{id}': detail,
   },
   messages: { vi, en },
   fills: {
-    'backend:runtime': `{% island "sale.order-modal" %}{% island "sale.invoice-policy-modal" %}`,
-    'sale_backend:order.editor': `{% island "sale.editor" %}`,
+    'partner_backend:record.salesProfile': `{% if may.sale.getPartnerWarning %}{% island "sale.customer-warning" %}{% endif %}`,
+    'backend:runtime': `{% island "sale.invoice-policy-modal" %}{% island "sale.variant-matrix-modal" %}{% island "sale.tag-modal" %}{% island "sale.team-modal" %}`,
+    // A quotation or order opens on its own page, rendered client side by the KetSuite
+    // record runtime in its page presentation.
+    'sale_backend:order.page': `{% island "sale.order-page" %}`,
   },
 })

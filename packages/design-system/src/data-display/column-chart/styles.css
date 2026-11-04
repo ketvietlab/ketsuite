@@ -78,11 +78,14 @@
     border-block-start: 1px solid var(--kv-chart-track);
   }
 
+  /* A column is at most 4rem wide: a few periods spread evenly instead of one bar filling the plot.
+     Many periods share the width as before. Labels use the same tracks so they stay under their bars. */
   :where([data-kv-design-system]) [data-ui="column-chart-columns"],
   :where([data-kv-design-system]) [data-ui="column-chart-labels"] {
     display: grid;
-    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-columns: minmax(0, 4rem);
     grid-auto-flow: column;
+    justify-content: space-evenly;
     column-gap: var(--kv-space-1);
     margin: 0;
     padding: 0;

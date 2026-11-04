@@ -1,13 +1,183 @@
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import type { Row } from '@ketvietlab/ketjs'
-import { createTestDeployment } from '@ketvietlab/ketjs/testing'
-import { ketsuite } from '../apps/ketsuite/deployment.ts'
+import { sqliteStore } from '@ketvietlab/ketjs'
+import { postgresAdapter } from '@ketvietlab/ketjs-postgres'
+import { createCommerceDeployment } from '../packages/ketsuite/src/deployment.ts'
+import { createCommerceTestDeployment } from './commerce-test-deployment.ts'
 
 type Envelope<T> = { data: T; error: { code: string } | null }
 
-const boot = async (t: TestContext) => {
-  const e2e = await createTestDeployment(ketsuite, { worker: false })
+test('Commerce inventory lifecycle shares reasons, history, revisions and atomicity with the web', async (t) => {
+  const app = await boot(t)
+  const fixture = async (fn: string, input: Row = {}, company = 'acme') =>
+    (await app.fixture.call<Row>(fn, input, { scope: { company, branches: null } })).value
+  for (const fnKey of ['product.templateModalContext', 'product.getTemplate'])
+    await fixture('user.grantFunction', { id: `lifecycle:${fnKey}`, roleId: 'inventory-reader', fnKey })
+  await app.client.login({ login: 'inventory-user', password: 'correct horse battery' })
+  const bootstrap = await app.client.json<Envelope<{ csrfToken: string }>>('/api/staff/v1/bootstrap')
+  const detail = async (id = 'bag') =>
+    (await app.client.json<Envelope<Row>>(`/api/staff/v1/inventory/products/${id}`)).data
+  let sequence = 0
+  const command = (action: 'archive' | 'restore', version: unknown, reason?: string, id = 'bag') =>
+    app.client.request(`/api/staff/v1/inventory/products/${id}/${action}`, {
+      method: 'POST',
+      headers: mutationHeaders(bootstrap.data.csrfToken, `lifecycle-${++sequence}`, String(version)),
+      body: JSON.stringify({ expectedVersion: version, ...(reason === undefined ? {} : { reason }) }),
+    })
+  const record = () => fixture('product.getTemplate', { id: 'bag-template' })
+  const history = async () => {
+    const context = (await app.client.call<Row>('product.templateModalContext', { id: 'bag-template' })).value
+    return (context.data as Row).lifecycle as Row[]
+  }
+  const initial = await detail()
+  for (const reason of [undefined, '', '   ', 'x'.repeat(501)]) {
+    const response = await command('archive', initial.version, reason)
+    assert.equal(response.status, 422, await response.text())
+  }
+  assert.equal((await detail()).version, initial.version)
+  assert.deepEqual(await history(), [])
+
+  // This inactive SKU is not part of the template's archive cascade.
+  assert.equal(
+    (
+      await fixture('product.saveVariant', {
+        id: 'bag-retired',
+        templateId: 'bag-template',
+        combinationKey: 'manual:retired',
+      })
+    ).ok,
+    true,
+  )
+  await app.adapter!.exec(
+    "UPDATE product_product SET active = false WHERE id = 'bag-retired' AND \"companyId\" = 'acme'",
+  )
+  const before = await record()
+  const afterVariant = await detail()
+  assert.notEqual(afterVariant.version, initial.version, 'a catalogue SKU change invalidates native detail')
+  assert.equal((await command('archive', initial.version, 'Stale before SKU change')).status, 409)
+  const archived = await command('archive', afterVariant.version, '  End of season  ')
+  assert.equal(archived.status, 200, await archived.clone().text())
+  const archiveData = ((await archived.json()) as Envelope<Row>).data
+  const events = await history()
+  assert.equal(events.length, 1)
+  assert.equal(events[0]?.reason, 'End of season')
+  assert.equal(events[0]?.actor, 'inventory-user')
+  assert.equal(events[0]?.active, false)
+  assert.notEqual((await record()).revisionId, before.revisionId)
+  const staleWeb = await fixture('product.saveTemplate', {
+    id: 'bag-template',
+    name: 'Stale web edit',
+    type: 'goods',
+    expectedRevisionId: before.revisionId,
+  })
+  assert.equal(staleWeb.ok, false, 'a native lifecycle change invalidates a web draft')
+  assert.equal((await command('restore', initial.version)).status, 409)
+  const restored = await command('restore', archiveData.version)
+  assert.equal(restored.status, 200, await restored.text())
+  const variants = (await record()).variants as Row[]
+  assert.equal(variants.find((row) => row.id === 'bag')?.active, true)
+  assert.equal(variants.find((row) => row.id === 'bag-retired')?.active, false)
+  assert.equal((await history()).length, 2)
+  assert.deepEqual(
+    (await detail('bag-retired')).availableActions,
+    ['update'],
+    'template restore cannot revive a separately retired SKU',
+  )
+
+  // Even a web-only change outside the inventory projection must invalidate its version.
+  const beforeWeb = await detail()
+  const current = await record()
+  assert.equal(
+    (
+      await fixture('product.saveTemplate', {
+        id: 'bag-template',
+        name: current.name,
+        type: 'goods',
+        description: 'Changed on the web',
+        expectedRevisionId: current.revisionId,
+      })
+    ).ok,
+    true,
+  )
+  assert.notEqual((await detail()).version, beforeWeb.version)
+  assert.equal((await command('archive', beforeWeb.version, 'Stale native edit')).status, 409)
+
+  // Storage failure after the state write rolls back both revisions and every SKU.
+  const beforeFailure = await detail()
+  const pg = Boolean(process.env.KET_COMMERCE_PG)
+  if (pg) {
+    await app.adapter!.exec(
+      "CREATE FUNCTION reject_inventory_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected event failure'; END $$",
+    )
+    await app.adapter!.exec(
+      'CREATE TRIGGER reject_inventory_event BEFORE INSERT ON product_template_state_event FOR EACH ROW EXECUTE FUNCTION reject_inventory_event()',
+    )
+  } else {
+    await app.adapter!.exec(
+      "CREATE TRIGGER reject_inventory_event BEFORE INSERT ON product_template_state_event BEGIN SELECT RAISE(ABORT, 'injected event failure'); END",
+    )
+  }
+  const failed = await command('archive', beforeFailure.version, 'Will roll back')
+  assert.equal(failed.status, 500)
+  assert.equal((await detail()).version, beforeFailure.version)
+  assert.equal((await record()).active, true)
+  assert.equal((await history()).length, 2)
+  await app.adapter!.exec(
+    pg
+      ? 'DROP TRIGGER reject_inventory_event ON product_template_state_event'
+      : 'DROP TRIGGER reject_inventory_event',
+  )
+  if (pg) await app.adapter!.exec('DROP FUNCTION reject_inventory_event()')
+
+  await fixture('stock.createPicking', {
+    id: 'pending-bag',
+    name: 'Open transfer',
+    pickingTypeId: 'wh:outgoing',
+  })
+  await fixture('stock.addMove', {
+    id: 'pending-bag-line',
+    name: 'Bag',
+    pickingId: 'pending-bag',
+    productId: 'bag',
+    productUomId: 'unit',
+    productUomQty: '1',
+  })
+  const inUse = await command('archive', (await detail()).version, 'Still in a document')
+  assert.equal(inUse.status, 409, await inUse.text())
+  assert.equal((await record()).active, true)
+  assert.equal((await history()).length, 2)
+
+  await fixture('partner.savePartner', { id: 'other-party', name: 'Other Company', kind: 'company' })
+  await fixture('company.saveCompany', { id: 'other', partnerId: 'other-party', currency: 'VND' })
+  await fixture('uom.saveUnit', { id: 'other-unit', name: 'Each', relativeFactor: '1' }, 'other')
+  await fixture(
+    'product.saveTemplate',
+    { id: 'foreign', name: 'Foreign', type: 'goods', uomId: 'other-unit' },
+    'other',
+  )
+  assert.equal(
+    (await command('archive', beforeFailure.version, 'Wrong company', 'foreign:default')).status,
+    404,
+  )
+  const denied = await app.client.call<Row>('stock.setInventoryProductActive', {
+    id: 'foreign:default',
+    active: false,
+    reason: 'Wrong company',
+    expectedRevision: 0,
+  })
+  assert.equal(denied.value.ok, false)
+  assert.equal((await fixture('product.getTemplate', { id: 'foreign' }, 'other')).active, true)
+})
+
+const boot = async (t: TestContext, openingCost?: string) => {
+  const deployment = createCommerceDeployment(async (config) => {
+    if (!config.databaseUrl) return sqliteStore(config)
+    const adapter = postgresAdapter(config.databaseUrl)
+    await adapter.open()
+    return adapter
+  })
+  const e2e = await createCommerceTestDeployment(deployment, { worker: false })
   t.after(() => e2e.close())
   const scope = { company: 'acme', branches: null }
   const fixture = (name: string, input: Record<string, unknown>) =>
@@ -45,7 +215,7 @@ const boot = async (t: TestContext) => {
     'stock.saveInventoryProduct',
     'stock.setInventoryProductActive',
     'stock.deleteInventoryProduct',
-    'stock.adjustInventory',
+    'stock.requestInventoryCount',
     'uom.listUnits',
     'product.listCategories',
     'product.listVariantCosts',
@@ -104,9 +274,13 @@ const boot = async (t: TestContext) => {
       id: template.id.replace('-template', ''),
       templateId: template.id,
       combinationKey: '',
-      ...(template.id === 'mango-template' ? { defaultCode: 'XCAT-01', barcode: '893000000001' } : {}),
+      ...(template.id === 'mango-template' ? { defaultCode: 'XCAT-01', barcode: '893000000008' } : {}),
     })
     assert.equal(savedVariant.value.ok, true, JSON.stringify(savedVariant.value))
+  }
+  if (openingCost) {
+    const savedCost = await fixture('product.setCost', { productId: 'mango', standardPrice: openingCost })
+    assert.equal(savedCost.value.ok, true)
   }
   await fixture('stock.configureProduct', {
     templateId: 'mango-template',
@@ -124,6 +298,7 @@ const boot = async (t: TestContext) => {
   await fixture('product.archiveTemplate', {
     id: 'old-template',
     active: false,
+    reason: 'Discontinued',
     expectedRevisionId: (oldTemplate.value as { revisionId: string }).revisionId,
     confirmed: true,
   })
@@ -289,7 +464,12 @@ const inventoryDraft = (name: string) => ({
   cost: '80000',
   channels: { sales: true, purchase: true, pointOfSale: true },
   tracking: 'none',
-  sku: `${name}-SKU`,
+  sku: name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .slice(0, 20),
   barcode: null,
 })
 
@@ -390,15 +570,19 @@ test('staff inventory channel completes the eight-operation module with one vers
   })
   assert.equal(adjust.status, 200)
   const adjusted = (await adjust.json()) as Envelope<Row>
-  assert.equal(adjusted.data.previousQuantity, '0')
-  assert.equal(adjusted.data.currentQuantity, '5')
-  assert.notEqual(adjusted.data.version, zero.version)
+  assert.equal(adjusted.data.outcome, 'counting')
+  assert.ok(adjusted.data.sessionId)
+  assert.match(String(adjusted.data.href), /stock.countSession/)
 
   const canonical = await e2e.client.json<Envelope<Row>>(`/api/staff/v1/inventory/products/${id}`)
+  assert.equal(
+    (canonical.data.stockPositions as Row[]).find((position) => position.locationId === 'wh:stock')?.quantity,
+    '0',
+  )
   const archive = await e2e.client.request(`/api/staff/v1/inventory/products/${id}/archive`, {
     method: 'POST',
     headers: mutationHeaders(csrf, 'inventory-archive-1', String(canonical.data.version)),
-    body: JSON.stringify({ expectedVersion: canonical.data.version }),
+    body: JSON.stringify({ expectedVersion: canonical.data.version, reason: 'End of season' }),
   })
   assert.equal(archive.status, 200)
   const archived = (await archive.json()) as Envelope<Row>
@@ -440,9 +624,8 @@ test('staff inventory channel completes the eight-operation module with one vers
 })
 
 test('staff inventory channel hides the cost from a viewer who may not read it, and keeps it on save', async (t) => {
-  const e2e = await boot(t)
+  const e2e = await boot(t, '45000')
   const scope = { company: 'acme', branches: null }
-  await e2e.fixture.call('product.setCost', { productId: 'mango', standardPrice: '45000' }, { scope })
   await e2e.fixture.call(
     'user.revokeFunction',
     { roleId: 'inventory-reader', fnKey: 'product.listVariantCosts' },

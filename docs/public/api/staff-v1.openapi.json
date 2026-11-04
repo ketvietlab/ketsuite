@@ -11359,7 +11359,7 @@
     "/inventory/products/{id}/archive": {
       "post": {
         "operationId": "staff.inventory.products.archive",
-        "summary": "Archive one product aggregate under a strong version.",
+        "summary": "Archive with a reason one product aggregate under a strong version.",
         "security": [
           {
             "staffBearer": []
@@ -11392,9 +11392,14 @@
                   "expectedVersion": {
                     "type": "string",
                     "pattern": "^ipv_[0-9a-f]{64}$"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
                   }
                 },
-                "required": ["expectedVersion"]
+                "required": ["expectedVersion", "reason"]
               }
             }
           }
@@ -11602,6 +11607,25 @@
             }
           },
           "409": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "null"
+                    },
+                    "error": {},
+                    "meta": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
             "description": "Error",
             "content": {
               "application/json": {
@@ -11892,6 +11916,25 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "null"
+                    },
+                    "error": {},
+                    "meta": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "x-ket-capability": {
@@ -11905,7 +11948,7 @@
     "/inventory/products/{id}/stock-adjustments": {
       "post": {
         "operationId": "staff.inventory.products.adjustStock",
-        "summary": "Apply one inventory count against fresh stock-position evidence.",
+        "summary": "Open a single-product count for independent approval; stock is unchanged.",
         "security": [
           {
             "staffBearer": []
@@ -11953,6 +11996,10 @@
                     "type": "string",
                     "minLength": 3,
                     "maxLength": 200
+                  },
+                  "reasonCode": {
+                    "type": "string",
+                    "enum": ["previousCount", "naturalLoss", "damaged", "lost", "missingDocuments", "other"]
                   }
                 },
                 "required": ["locationId", "lotId", "countedQuantity", "expectedVersion", "reason"]
@@ -11974,22 +12021,16 @@
                       "properties": {
                         "outcome": {
                           "type": "string",
-                          "const": "adjusted"
+                          "const": "counting"
                         },
-                        "previousQuantity": {
-                          "type": "string",
-                          "pattern": "^(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                        "sessionId": {
+                          "type": "string"
                         },
-                        "currentQuantity": {
-                          "type": "string",
-                          "pattern": "^(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
-                        },
-                        "version": {
-                          "type": "string",
-                          "pattern": "^sav_[0-9a-f]{64}$"
+                        "href": {
+                          "type": "string"
                         }
                       },
-                      "required": ["outcome", "previousQuantity", "currentQuantity", "version"]
+                      "required": ["outcome", "sessionId", "href"]
                     },
                     "error": {},
                     "meta": {

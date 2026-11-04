@@ -8,6 +8,7 @@ import { closeFunctions } from './close.ts'
 import { functions } from './functions.ts'
 import { models } from './models.ts'
 import { openingFunctions } from './opening.ts'
+import { nettingFunctions } from './netting.ts'
 import { openItemFunctions } from './open-items.ts'
 import { periodFunctions } from './period.ts'
 import { relations } from './relations.ts'
@@ -21,8 +22,9 @@ export default defineModule({
   // openItemSummary and cashFlow, the aggregates an overview screen is made of.
   // 0.7.0 adds a company-scoped product-to-sales-tax mapping. Products remain
   // shared catalogue data while the tax belongs to one legal entity's chart.
-  version: '0.12.0',
+  version: '0.12.3',
   depends: ['company', 'partner', 'product', 'uom'],
+  optional: ['sale'],
   title: 'Kế toán',
   summary: 'Sổ cái kép, hoá đơn, thanh toán và kiểm soát kỳ kế toán.',
   category: 'Tài chính',
@@ -38,6 +40,7 @@ export default defineModule({
     ...closeFunctions,
     ...bookFunctions,
     ...openItemFunctions,
+    ...nettingFunctions,
     ...cashReceivableFunctions,
     ...assetCostingFunctions,
   },
@@ -77,6 +80,7 @@ export default defineModule({
       'error.reversalNoLines': 'Bút toán không có dòng nào để đảo.',
       'error.reversalIdReused': 'Mã này đã thuộc về một bút toán đảo khác.',
       'error.moveAlreadyReversed': 'Bút toán này đã có một bút toán đảo khác.',
+      'error.moveSourceOwned': 'Bút toán này do phân hệ khác tạo; hãy điều chỉnh từ chứng từ gốc.',
       'error.lineDraftOnly': 'Chỉ thêm được dòng vào bút toán còn ở trạng thái nháp.',
       'error.lineIdTaken': 'Mã này đã thuộc về một dòng bút toán khác.',
       'error.moneyExactString':
@@ -85,6 +89,10 @@ export default defineModule({
       'error.moveCurrencyMismatch': 'Tiền tệ bút toán phải khớp với sổ cái của công ty đang chọn.',
       'error.periodLocked': 'Sổ {scope} đã khóa đến hết ngày {through}.',
       'error.periodConcurrent': 'Chính sách khóa kỳ vừa thay đổi; hãy kiểm tra rồi thử lại.',
+      'error.periodKindLocked': 'Loại chứng từ này đã khóa trước trong kỳ {dateFrom} – {dateTo}.',
+      'error.periodControlKind':
+        'Chọn loại chứng từ trong danh sách: hóa đơn bán, hóa đơn mua, thu chi, bút toán.',
+      'error.periodControlPoster': 'Danh sách người còn được ghi sổ không hợp lệ.',
       'error.periodScopeUnsupported': 'Phạm vi khóa kỳ không được hỗ trợ.',
       'error.periodReasonRequired': 'Mỗi thay đổi khóa kỳ phải có lý do.',
       'error.periodCommandIdReused': 'Mã lệnh này đã thuộc về một thay đổi khóa kỳ khác.',
@@ -112,8 +120,8 @@ export default defineModule({
       'error.closeLaterPeriod': 'Phải mở lại kỳ đóng sau trước kỳ này.',
       'error.accountBookUnsupported': 'Loại sổ kế toán không được hỗ trợ.',
       'error.accountBookPeriod': 'Ngày kết thúc sổ không được trước ngày bắt đầu.',
-      'error.accountBookAccountRequired': 'Sổ này cần chọn tài khoản.',
-      'error.accountBookPartnerRequired': 'Sổ đối tác cần chọn đối tác.',
+      'error.accountBookAccountOutside':
+        'Sổ này không mở cho tài khoản đã chọn. Hãy chọn một tài khoản trong danh sách của sổ.',
       'error.openItemInputInvalid': 'Dữ liệu chứng từ/công nợ nguồn không hợp lệ.',
       'error.openItemControlMismatch': 'Control total công nợ không khớp residual có dấu.',
       'error.openItemCounterpart': 'Tài khoản đối ứng công nợ không hợp lệ.',
@@ -187,6 +195,7 @@ export default defineModule({
       'error.journalMustBeSale': 'Chứng từ khách hàng phải ghi vào sổ bán hàng.',
       'error.journalMustBePurchase': 'Chứng từ nhà cung cấp phải ghi vào sổ mua hàng.',
       'error.journalLiquidityMissing': 'Sổ nhật ký thanh toán cần một tài khoản tiền mặc định.',
+      'error.journalLiquidityAccount': 'Sổ tiền mặt và sổ ngân hàng cần tài khoản mặc định loại tiền.',
       'error.journalNotLiquidity': 'Thanh toán phải dùng sổ ngân hàng hoặc tiền mặt.',
       'error.journalNotStoredValue': 'Thanh toán giá trị trả trước phải dùng sổ nhật ký chung.',
       'error.journalStoredValueAccount': 'Thanh toán giá trị trả trước cần tài khoản nợ phải trả mặc định.',
@@ -196,7 +205,11 @@ export default defineModule({
       'error.taxComputationUnsupported': 'Cách tính thuế không được hỗ trợ.',
       'error.taxScopeUnsupported': 'Phạm vi hàng hoá phải là dịch vụ hoặc hàng hoá.',
       'error.taxAccountMissing': 'Tài khoản thuế không tồn tại.',
+      'error.taxAccountRoot': 'Thuế này phải ghi vào tài khoản thuộc nhánh {roots}.',
+      'error.taxAccountRootFormat': 'Nhánh tài khoản thuế là danh sách mã tài khoản.',
       'error.taxDirectionMismatch': 'Thuế “{name}” không khớp chiều của chứng từ.',
+      'error.taxOutOfEffect': 'Thuế “{name}” không còn hoặc chưa có hiệu lực vào ngày {date}.',
+      'error.taxEffectRange': 'Ngày hết hiệu lực của thuế phải từ ngày bắt đầu hiệu lực trở đi.',
       'error.taxPostingAccountMissing': 'Thuế “{name}” cần một tài khoản hạch toán hợp lệ.',
       'error.taxMixedPriceInclude':
         'Một dòng không thể vừa có thuế đã gồm trong giá vừa có thuế chưa gồm trong giá.',
@@ -220,6 +233,8 @@ export default defineModule({
         'Chưa chọn tài khoản phải thu/phải trả, mà đối tác lẫn công ty đều chưa đặt mặc định.',
       'error.categoryMissing': 'Nhóm sản phẩm không tồn tại.',
       'error.defaultAccountType': 'Loại tài khoản này không dùng làm mặc định cho mục đích đó được.',
+      'error.defaultPinned': 'Chuẩn kế toán cố định tài khoản này; không đổi sang tài khoản khác được.',
+      'error.dueBeforeInvoice': 'Hạn thanh toán không được trước ngày chứng từ.',
       'error.counterpartMustBeReceivable': 'Tài khoản đối ứng phải là tài khoản phải thu.',
       'error.counterpartMustBePayable': 'Tài khoản đối ứng phải là tài khoản phải trả.',
 
@@ -245,6 +260,12 @@ export default defineModule({
       'error.reconcilePostedOnly': 'Chỉ đối soát được các dòng đã ghi sổ.',
       'error.reconcileNotAllowed': 'Tài khoản này không cho phép đối soát.',
       'error.reconcileAmountExceeds': 'Số tiền vượt quá số dư còn lại.',
+      'error.nothingToNet': 'Đối tác này không còn công nợ mở ở cả phải thu và phải trả.',
+      'error.nettingExceeds': 'Số tiền bù trừ vượt quá bên nhỏ hơn ({amount}).',
+      'error.nettingJournal': 'Bù trừ cần một sổ nhật ký tổng hợp.',
+      'error.nettingAmountPositive': 'Số tiền bù trừ phải lớn hơn 0.',
+      'error.nettingDocumentClosed': 'Một chứng từ được bù trừ đã không còn mở.',
+      'error.nettingRefused': 'Không tạo được bút toán bù trừ.',
       'error.reconcileConcurrent': 'Số dư còn lại vừa thay đổi; hãy đối soát lại.',
     },
     en: {
@@ -281,6 +302,7 @@ export default defineModule({
       'error.reversalNoLines': 'The entry has no journal items to reverse.',
       'error.reversalIdReused': 'A different reversal already uses this id.',
       'error.moveAlreadyReversed': 'This entry already has a different reversal.',
+      'error.moveSourceOwned': 'Another module created this entry; correct it from the source document.',
       'error.lineDraftOnly': 'Lines can only be added to an entry that is still a draft.',
       'error.lineIdTaken': 'A different journal item already uses this id.',
       'error.moneyExactString':
@@ -289,6 +311,10 @@ export default defineModule({
       'error.moveCurrencyMismatch': 'The journal entry currency must match the active company ledger.',
       'error.periodLocked': 'The {scope} books are locked through {through}.',
       'error.periodConcurrent': 'The period policy changed; review it and try again.',
+      'error.periodKindLocked': 'This kind of document is locked ahead in the period {dateFrom} – {dateTo}.',
+      'error.periodControlKind':
+        'Pick kinds from the list: customer invoices, vendor bills, payments, entries.',
+      'error.periodControlPoster': 'The list of people who may still post is not valid.',
       'error.periodScopeUnsupported': 'That period-lock scope is not supported.',
       'error.periodReasonRequired': 'Every period-lock change requires a reason.',
       'error.periodCommandIdReused': 'That command id belongs to another period-lock change.',
@@ -316,8 +342,8 @@ export default defineModule({
       'error.closeLaterPeriod': 'A later closed period must be reopened first.',
       'error.accountBookUnsupported': 'That accounting book is not supported.',
       'error.accountBookPeriod': 'The book period cannot end before it starts.',
-      'error.accountBookAccountRequired': 'This book requires an account.',
-      'error.accountBookPartnerRequired': 'The partner book requires a partner.',
+      'error.accountBookAccountOutside':
+        'This book is not kept for the chosen account. Pick one of the accounts the book lists.',
       'error.openItemInputInvalid': 'The source open-item rows are invalid.',
       'error.openItemControlMismatch': 'Open-item controls do not match signed residuals.',
       'error.openItemCounterpart': 'The open-item counterpart account is invalid.',
@@ -391,6 +417,7 @@ export default defineModule({
       'error.journalMustBeSale': 'A customer document belongs in a sale journal.',
       'error.journalMustBePurchase': 'A vendor document belongs in a purchase journal.',
       'error.journalLiquidityMissing': 'A payment journal needs a default liquidity account.',
+      'error.journalLiquidityAccount': 'A cash or bank journal needs a default account of the cash type.',
       'error.journalNotLiquidity': 'Payments require a bank or cash journal.',
       'error.journalNotStoredValue': 'Stored value settlements require a general journal.',
       'error.journalStoredValueAccount': 'Stored value settlements require a default liability account.',
@@ -400,7 +427,11 @@ export default defineModule({
       'error.taxComputationUnsupported': 'That tax computation is not supported.',
       'error.taxScopeUnsupported': 'A tax scope must be service or goods.',
       'error.taxAccountMissing': 'The tax account does not exist.',
+      'error.taxAccountRoot': 'This tax posts to an account under {roots}.',
+      'error.taxAccountRootFormat': 'Tax account branches are a list of account codes.',
       'error.taxDirectionMismatch': 'Tax “{name}” does not match the direction of this document.',
+      'error.taxOutOfEffect': 'Tax “{name}” is not in effect on {date}.',
+      'error.taxEffectRange': 'A tax cannot stop applying before it starts.',
       'error.taxPostingAccountMissing': 'Tax “{name}” needs a valid posting account.',
       'error.taxMixedPriceInclude': 'A line cannot mix price-included and price-excluded taxes.',
       'error.taxManyPriceInclude': 'A line carries at most one price-included tax.',
@@ -422,6 +453,8 @@ export default defineModule({
         'No receivable or payable account was given, and neither the partner nor the company has a default.',
       'error.categoryMissing': 'The product category does not exist.',
       'error.defaultAccountType': 'That account type cannot serve as this default.',
+      'error.defaultPinned': 'The accounting standard fixes this account; it cannot be changed to another.',
+      'error.dueBeforeInvoice': 'The due date cannot be before the invoice date.',
       'error.counterpartMustBeReceivable': 'The counterpart account must be a receivable account.',
       'error.counterpartMustBePayable': 'The counterpart account must be a payable account.',
 
@@ -446,6 +479,12 @@ export default defineModule({
       'error.reconcilePostedOnly': 'Only posted journal items can be reconciled.',
       'error.reconcileNotAllowed': 'This account does not allow reconciliation.',
       'error.reconcileAmountExceeds': 'The amount exceeds a residual balance.',
+      'error.nothingToNet': 'This partner has nothing open on both the receivable and the payable side.',
+      'error.nettingExceeds': 'The netting amount exceeds the smaller side ({amount}).',
+      'error.nettingJournal': 'Netting needs a general journal.',
+      'error.nettingAmountPositive': 'The netting amount must be greater than zero.',
+      'error.nettingDocumentClosed': 'A netted document is no longer open.',
+      'error.nettingRefused': 'The netting entry could not be created.',
       'error.reconcileConcurrent': 'The residual balance changed just now; reconcile again.',
     },
   },

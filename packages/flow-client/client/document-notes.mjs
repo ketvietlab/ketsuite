@@ -1,5 +1,16 @@
 export const untitledDocument = 'Untitle'
 
+// A body-only version advance may be rebased; another title edit requires an
+// explicit retry. This command never contains rich content or snapshot bytes.
+export function nativeTitlePatch(draft, page, retry = false) {
+  return {
+    id: page.id,
+    title: draft.title,
+    titleSource: 'explicit',
+    expectedVersion: retry || page.title === draft.titleBase ? page.version : draft.titleBaseVersion,
+  }
+}
+
 // A note's first nonempty text line owns its title. Rich marks, block IDs and
 // subsequent lines remain content; extracting the title never rewrites them.
 export function documentTitle(blocks) {

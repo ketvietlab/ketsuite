@@ -90,13 +90,55 @@ test('trial balance HTTP includes the full end day, sorts accounts and preserves
   assert.equal(ledger.status, 200)
   assert.match(await ledger.text(), /125[.,]000/)
 
-  const empty = await app.client.get(
+  // A day with no movement still carries what was posted before it, as both
+  // the opening and the closing balance of each account.
+  const quiet = await app.client.get(
     '/admin/accounting/trial-balance?lang=en&dateFrom=2026-07-01&dateTo=2026-07-01',
+  )
+  const quietHtml = await quiet.text()
+  assert.equal(quiet.status, 200)
+  assert.doesNotMatch(quietHtml, /No figures for this period/)
+  assert.match(quietHtml, />BANK</)
+  assert.equal(
+    (quietHtml.match(/125[.,]000/g) ?? []).length >= 4,
+    true,
+    'opening and closing of both accounts',
+  )
+  assert.match(quietHtml, /Equal in all three pairs/)
+  assert.match(quietHtml, /type="hidden" name="lang" value="en"/)
+
+  const empty = await app.client.get(
+    '/admin/accounting/trial-balance?lang=en&dateFrom=2026-06-01&dateTo=2026-06-01',
   )
   const emptyHtml = await empty.text()
   assert.equal(empty.status, 200)
   assert.match(emptyHtml, /No figures for this period/)
-  assert.match(emptyHtml, /type="hidden" name="lang" value="en"/)
+})
+
+test('trial balance HTTP hides accounts with nothing to report until asked to show them', async (t) => {
+  const { app } = await bootTrial(t)
+  const path = '/admin/accounting/trial-balance?lang=vi&dateFrom=2026-06-30&dateTo=2026-06-30'
+  const html = await (await app.client.get(path)).text()
+  assert.match(
+    html,
+    /Nợ đầu kỳ[\s\S]*Có đầu kỳ[\s\S]*Phát sinh Nợ[\s\S]*Phát sinh Có[\s\S]*Nợ cuối kỳ[\s\S]*Có cuối kỳ/,
+  )
+  assert.match(html, /Bảng cân đối phát sinh/)
+  const hidden = /Hiện cả (\d+) tài khoản đang ẩn/.exec(html)
+  assert.ok(hidden && Number(hidden[1]) > 0, 'the button says how many accounts it would show')
+  assert.match(
+    html,
+    /href="\/admin\/accounting\/trial-balance\?lang=vi&amp;dateFrom=2026-06-30&amp;dateTo=2026-06-30&amp;all=1"/,
+  )
+  const rows = (body: string) => (body.match(/data-ui="table-row"|<tr[ >]/g) ?? []).length
+
+  const every = await (await app.client.get(`${path}&all=1`)).text()
+  assert.match(every, /Ẩn tài khoản không có số liệu/)
+  assert.ok(rows(every) >= rows(html) + Number(hidden![1]), 'every hidden account is shown')
+  assert.match(
+    every,
+    /href="\/admin\/accounting\/trial-balance\?lang=vi&amp;dateFrom=2026-06-30&amp;dateTo=2026-06-30"/,
+  )
 })
 
 test('trial balance HTTP explains an inverted range and remains GET-only', async (t) => {

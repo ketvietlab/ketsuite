@@ -119,20 +119,20 @@ test('company-branch-e2e: context switch is atomic, actor-bound and same-origin'
   }>('/whoami')
   assert.equal(who.company, 'globex')
   assert.equal(who.branch, 'root:globex')
-  assert.deepEqual(who.companies.sort(), ['acme', 'globex'])
+  // A session works in one company; ticking another one reads nothing from it.
+  assert.deepEqual(who.companies, ['globex'])
+  assert.deepEqual(who.branches, ['root:globex'])
 })
 
 test('company-branch-e2e: membership revoke and archive affect an existing session next request', async (t) => {
   const { e2e, fixture } = await bootCompany(t)
   await e2e.client.form<string>('/admin/context', {
-    companyId: 'globex',
-    branchId: 'root:globex',
-    'company.acme': '1',
-    'company.globex': '1',
+    companyId: 'acme',
+    branchId: 'root:acme',
     'branch.root:acme': '1',
     'branch.acme:north': '1',
-    'branch.root:globex': '1',
   })
+  assert.deepEqual((await e2e.client.json<{ companies: string[] }>('/whoami')).companies, ['acme'])
   await fixture(
     'user.setDefaultContext',
     { userId: 'admin', companyId: 'globex', branchId: 'root:globex' },

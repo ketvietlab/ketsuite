@@ -196,7 +196,18 @@ test('product list: the bar follows the applied query: chips, choices, saved sea
   const config = productSearchConfig(
     { ...search, favoriteHref: '/admin/product/templates?modal=favorite' },
     state,
-    [{ id: 'fav-1', name: 'Hàng đắt', isDefault: true }],
+    [
+      {
+        id: 'fav-1',
+        name: 'Hàng đắt',
+        isDefault: true,
+        owned: true,
+        shared: false,
+        revisionId: 'r1',
+        href: '/admin/product/templates',
+        active: true,
+      },
+    ],
     '/admin/product/templates?q=serum',
   )
   assert.equal(config.query, 'serum', 'typed text stays in the field')
@@ -243,6 +254,8 @@ const row = (id: string, name: string): ProductListRow => ({
   uomId: null,
   unit: null,
   listPrice: '100',
+  fromPrice: '100',
+  priceVaries: false,
   saleOk: true,
   purchaseOk: true,
   active: true,
@@ -319,9 +332,9 @@ class AnchorFixture extends ElementFixture {
 }
 
 type Reply = (href: string) => Promise<Response>
-const harness = (t: TestContext, start = '/admin/product/templates') => {
+const harness = (t: TestContext, start = '/admin/product/templates', previousPage = start) => {
   const origin = 'http://ket.local'
-  let current = new URL(start, origin)
+  let current = new URL(previousPage, origin)
   const entries = [current.href]
   let position = 0
   const writes: Array<['push' | 'replace', string]> = []
@@ -433,6 +446,14 @@ const harness = (t: TestContext, start = '/admin/product/templates') => {
 const settled = () => new Promise<void>((resolve) => setImmediate(resolve))
 const shownRows = (markup: string) =>
   [...markup.matchAll(/data-ui="kt-row" data-row="([^"]+)"/g)].map((match) => match[1])
+
+test('product list: a fragment keeps the requested list URL while the previous record is still in location', async (t) => {
+  const href = '/admin/product/templates?lang=en'
+  const list = harness(t, href, '/admin/product/templates/old?dialog=restore')
+  await settled()
+  assert.deepEqual(list.reads, [href])
+  assert.match(list.html(), /name="returnTo" value="\/admin\/product\/templates\?lang=en"/)
+})
 
 test('product list island: links push, a clamped page replaces, Back reads the URL and writes nothing', async (t) => {
   const list = harness(t)
@@ -651,4 +672,32 @@ test('product list: the stock figure is not named like the flag that lets a prod
     Object.entries(listMessages.vi).filter(([, label]) => /có thể bán/iu.test(label)),
     [],
   )
+})
+
+test('product list island: a product priced by variant shows where it starts (P12)', async (t) => {
+  const list = harness(t)
+  await settled()
+  list.reply(async (href) =>
+    Response.json({
+      ok: true,
+      value: {
+        ...answerFor(href),
+        rows: [
+          row('a', 'Alpha'),
+          { ...row('b', 'Beta'), listPrice: '200', fromPrice: '150', priceVaries: true },
+        ],
+      },
+    }),
+  )
+  list.click('/admin/product/templates?page=2')
+  await settled()
+  const markup = list.html().replace(/<!--[\s\S]*?-->/g, '')
+  const priceOf = (id: string) =>
+    markup
+      .slice(markup.indexOf(`data-row="${id}"`))
+      .split('data-ui="kt-row"')[0]!
+      .match(/data-numeric[^>]*>([^<]*₫[^<]*)</)?.[1]
+      ?.replace(/\s/g, ' ')
+  assert.equal(priceOf('a'), '100 ₫', 'one price shows as it is')
+  assert.equal(priceOf('b'), 'Từ 150 ₫', 'variants priced apart show the lowest, not the list price')
 })

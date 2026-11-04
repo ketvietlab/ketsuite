@@ -1,3 +1,4 @@
+import { saleRewardBases } from './sale-policy.ts'
 import { functions as stockFunctions } from '../stock/functions.ts'
 import { civilDateAt, DEFAULT_ACCOUNTING_TIMEZONE } from '../account/date.ts'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
@@ -65,7 +66,7 @@ export const snapshotOf = (value: unknown): OrderSnapshot | null => {
   const lines: OrderLineSnapshot[] = []
   for (const raw of held.lines) {
     const line = record(raw)
-    if (!line || !String(line.id ?? '') || !String(line.productId ?? '')) return null
+    if (!line || !String(line.id ?? '')) return null
     const quantity = n(line.quantity),
       lineKind = String(line.lineKind ?? 'product')
     let untaxed: string
@@ -77,14 +78,18 @@ export const snapshotOf = (value: unknown): OrderSnapshot | null => {
       return null
     }
     if (!Number.isFinite(quantity)) return null
-    if (!['product', 'shipping', 'reward'].includes(lineKind)) return null
+    if (!['product', 'shipping', 'reward', 'discount'].includes(lineKind)) return null
     lines.push({
       id: String(line.id),
-      productId: String(line.productId),
+      productId: line.productId ? String(line.productId) : null,
       quantity,
+      comboParent: line.comboParent === true,
+      comboChild: line.comboChild === true,
       untaxed,
       total,
       lineKind: lineKind as OrderLineSnapshot['lineKind'],
+      ...(typeof line.loyaltyProgramId === 'string' ? { loyaltyProgramId: line.loyaltyProgramId } : {}),
+      ...(typeof line.taxKey === 'string' ? { taxKey: line.taxKey } : {}),
     })
   }
   return {
@@ -100,13 +105,20 @@ export const snapshotOf = (value: unknown): OrderSnapshot | null => {
   }
 }
 
-type ProductContext = { product: Row; template: Row; categoryIds: Set<string>; tagIds: Set<string> }
+type ProductContext = {
+  product: Row
+  template: Row
+  categoryIds: Set<string>
+  tagIds: Set<string>
+  saleTagIds: Set<string>
+}
 
 const productContext = async (
   ctx: Ctx,
-  productId: string,
+  productId: string | null,
   cache: Map<string, ProductContext | null>,
 ): Promise<ProductContext | null> => {
+  if (!productId) return null
   if (cache.has(productId)) return cache.get(productId) ?? null
   const product = (await ctx.db.select('product.Product', { id: productId }))[0]
   const template = product && (await ctx.db.select('product.Template', { id: product.templateId }))[0]
@@ -124,7 +136,10 @@ const productContext = async (
   const tagIds = new Set(
     (await ctx.db.select('loyalty.ProductTag', { productId })).map((link) => String(link.tagId)),
   )
-  const result = { product, template, categoryIds, tagIds }
+  const saleTagIds = new Set(
+    (await ctx.db.select('product.TemplateTag', { templateId: template.id })).map((row) => String(row.tagId)),
+  )
+  const result = { product, template, categoryIds, tagIds, saleTagIds }
   cache.set(productId, result)
   return result
 }
@@ -135,13 +150,28 @@ const ruleMatches = async (
   line: OrderLineSnapshot,
   cache: Map<string, ProductContext | null>,
   linkedProductIds: ReadonlySet<string>,
+  categoryIds: ReadonlySet<string> = new Set(),
+  tagIds: ReadonlySet<string> = new Set(),
 ): Promise<boolean> => {
-  const hasFilter = Boolean(rule.productId || rule.categoryId || rule.tagId || linkedProductIds.size)
+  const hasFilter = Boolean(
+    rule.productId ||
+      rule.categoryId ||
+      rule.tagId ||
+      linkedProductIds.size ||
+      categoryIds.size ||
+      tagIds.size,
+  )
   if (!hasFilter) return true
-  if (rule.productId === line.productId || linkedProductIds.has(line.productId)) return true
-  if (!rule.categoryId && !rule.tagId) return false
+  if (rule.productId === line.productId || (line.productId != null && linkedProductIds.has(line.productId)))
+    return true
+  if (!rule.categoryId && !rule.tagId && !categoryIds.size && !tagIds.size) return false
   const product = await productContext(ctx, line.productId, cache)
   if (!product) return false
+  if (
+    [...categoryIds].some((id) => product.categoryIds.has(id)) ||
+    [...tagIds].some((id) => product.saleTagIds.has(id))
+  )
+    return true
   if (rule.categoryId && product.categoryIds.has(String(rule.categoryId))) return true
   return Boolean(rule.tagId && product.tagIds.has(String(rule.tagId)))
 }
@@ -173,7 +203,11 @@ const rewardMatches = async (
     reward.discountProductId || reward.discountCategoryId || reward.discountTagId || linkedProductIds.size,
   )
   if (!hasFilter) return true
-  if (reward.discountProductId === line.productId || linkedProductIds.has(line.productId)) return true
+  if (
+    reward.discountProductId === line.productId ||
+    (line.productId != null && linkedProductIds.has(line.productId))
+  )
+    return true
   if (!reward.discountCategoryId && !reward.discountTagId) return false
   const product = await productContext(ctx, line.productId, cache)
   if (!product) return false
@@ -215,7 +249,8 @@ const rewardQuote = async (
     if (program.designVersion === 1) {
       const product = await productContext(ctx, String(reward.rewardProductId), cache)
       if (!product?.product.active || !product.template.active) return null
-      if (product.template.isStorable) {
+      if (program.salePolicyVersion === 1 && product.template.type === 'combo') return null
+      if (program.salePolicyVersion !== 1 && product.template.isStorable) {
         const availability = (await stockFunctions.listProductAvailability!.handler(ctx, {
           productIds: [reward.rewardProductId],
           ...(snapshot.warehouseId ? { warehouseId: snapshot.warehouseId } : {}),
@@ -247,7 +282,9 @@ const rewardQuote = async (
   if (rewardType === 'shipping')
     for (const line of candidates.filter((line) => line.lineKind === 'shipping'))
       base += moneyMinor(line.total, scale)
-  else {
+  else if (program.salePolicyVersion === 1) {
+    base = saleRewardBases(snapshot, reward, linkedProductIds).reduce((sum, row) => sum + row.base, 0n)
+  } else {
     const products = candidates.filter((line) => line.lineKind === 'product')
     const applicability = String(reward.discountApplicability)
     if (applicability === 'cheapest') {
@@ -337,6 +374,7 @@ export const evaluate = async (
   const day = civilDateAt(snapshot.date, company?.accountingTimezone ?? DEFAULT_ACCOUNTING_TIMEZONE)
   const trace = (code: string, details: Row = {}) => options.trace?.push({ code, ...details })
   const programs = allPrograms
+    .filter((program) => program.salePolicyVersion !== 1 || program.companyId === ctx.scope.company)
     .filter((program) => !options.onlyProgramId || program.id === options.onlyProgramId)
     .sort((a, b) => n(a.sequence) - n(b.sequence) || String(a.id).localeCompare(String(b.id)))
   const programIds = new Set(programs.map((program) => String(program.id)))
@@ -351,6 +389,8 @@ export const evaluate = async (
       ctx.db.select('loyalty.MembershipConfig', programWhere),
       ctx.db.select('loyalty.EarnGroup', { ...programWhere, active: true }),
     ])
+  const allRuleCategories = await ctx.db.select('loyalty.RuleCategory')
+  const allRuleTags = await ctx.db.select('loyalty.RuleTag')
   const walletRows = snapshot.partnerId
     ? await ctx.db.select('loyalty.Wallet', { partnerId: snapshot.partnerId })
     : []
@@ -365,6 +405,13 @@ export const evaluate = async (
   const usage = new Map<string, number>()
   if (programs.some((program) => program.limitUsage && n(program.maxUsage) > 0))
     for (const application of await ctx.db.select('loyalty.Application')) {
+      const owner = programs.find((program) => program.id === application.programId)
+      if (
+        owner?.salePolicyVersion === 1 &&
+        (application.state !== 'finalized' ||
+          (application.orderType === snapshot.orderType && application.orderId === snapshot.orderId))
+      )
+        continue
       if (!['finalized', 'reversed'].includes(String(application.state)) || !application.rewardId) continue
       const programId = String(application.programId)
       if (programIds.has(programId)) usage.set(programId, (usage.get(programId) ?? 0) + 1)
@@ -420,7 +467,7 @@ export const evaluate = async (
       continue
     }
     if (
-      !issuedVoucher &&
+      (!issuedVoucher || program.salePolicyVersion === 1) &&
       (program.designVersion === 1
         ? (program.startDate && String(program.startDate) > day) ||
           (program.endDate && String(program.endDate) < day)
@@ -455,6 +502,8 @@ export const evaluate = async (
     if (
       wallet &&
       (!wallet.active ||
+        (program.salePolicyVersion === 1 && wallet.saleExpiresOn && String(wallet.saleExpiresOn) < day) ||
+        (program.salePolicyVersion === 1 && wallet.partnerId && wallet.partnerId !== snapshot.partnerId) ||
         (wallet.expiresAt &&
           new Date(String(wallet.expiresAt)).getTime() < new Date(snapshot.date).getTime()))
     ) {
@@ -464,6 +513,8 @@ export const evaluate = async (
     trace('scope')
     const rules = rulesByProgram.get(String(program.id)) ?? []
     let earned = 0
+    let giftMultiplier = 1
+    let saleRulePassed = false
     const splitPoints: number[] = []
     let codeMatched = program.trigger !== 'with_code'
     for (const rule of rules) {
@@ -480,10 +531,36 @@ export const evaluate = async (
         codeMatched = true
       }
       const matched: OrderLineSnapshot[] = []
-      for (const line of snapshot.lines.filter((candidate) => candidate.lineKind === 'product'))
-        if (await ruleMatches(ctx, rule, line, cache, ruleProducts.get(String(rule.id)) ?? new Set()))
+      for (const line of snapshot.lines.filter(
+        (candidate) =>
+          candidate.lineKind === 'product' && (program.salePolicyVersion === 1 || !candidate.comboParent),
+      ))
+        if (
+          await ruleMatches(
+            ctx,
+            rule,
+            line,
+            cache,
+            ruleProducts.get(String(rule.id)) ?? new Set(),
+            new Set(
+              program.salePolicyVersion === 1
+                ? allRuleCategories
+                    .filter((row) => row.ruleId === rule.id)
+                    .map((row) => String(row.categoryId))
+                : [],
+            ),
+            new Set(
+              program.salePolicyVersion === 1
+                ? allRuleTags.filter((row) => row.ruleId === rule.id).map((row) => String(row.tagId))
+                : [],
+            ),
+          )
+        )
           matched.push(line)
-      const quantity = matched.reduce((sum, line) => sum + line.quantity, 0)
+      const quantity = matched.reduce(
+        (sum, line) => sum + (program.salePolicyVersion === 1 && line.comboChild ? 0 : line.quantity),
+        0,
+      )
       let amount = 0n
       for (const line of matched)
         amount += moneyMinor(rule.taxMode === 'incl' ? line.total : line.untaxed, scale)
@@ -500,9 +577,23 @@ export const evaluate = async (
         minimumAmount: rule.minimumAmount,
       })
       if (!passed) continue
+      saleRulePassed = true
+      if (program.salePolicyVersion === 1 && program.programType === 'buy_x_get_y')
+        giftMultiplier = Math.floor(quantity / n(rule.minimumQuantity))
       const pointAmount = n(rule.pointAmount)
       if (!(pointAmount > 0)) continue
-      if (program.appliesOn === 'future' && rule.pointSplit && rule.pointMode !== 'order') {
+      if (program.salePolicyVersion === 1 && program.programType === 'loyalty') {
+        const total = snapshot.lines.reduce((sum, line) => sum + moneyMinor(line.total, scale), 0n)
+        const step = moneyMinor(String(rule.salePointStep ?? '0'), scale)
+        earned +=
+          rule.pointMode === 'money'
+            ? step > 0n
+              ? Number((total > 0n ? total : 0n) / step) * pointAmount
+              : 0
+            : rule.pointMode === 'unit'
+              ? pointAmount * quantity
+              : pointAmount
+      } else if (program.appliesOn === 'future' && rule.pointSplit && rule.pointMode !== 'order') {
         if (rule.pointMode === 'unit') {
           for (let index = 0; index < Math.floor(quantity); index += 1)
             splitPoints.push(round(pointAmount, 2))
@@ -549,6 +640,7 @@ export const evaluate = async (
       earned = program.programType === 'coupons' || issuedVoucher ? 0 : earned > 0 ? 1 : 0
       splitPoints.length = 0
     }
+    if (program.salePolicyVersion === 1 && !saleRulePassed) continue
     if (!codeMatched && !wallet) {
       trace('code')
       continue
@@ -563,7 +655,10 @@ export const evaluate = async (
         ? options.availablePoints
         : n(wallet?.balance) - n(wallet?.reserved)) +
       ownReservation +
-      (program.appliesOn === 'future' ? 0 : earned)
+      (program.appliesOn === 'future' ||
+      (program.salePolicyVersion === 1 && program.programType === 'loyalty')
+        ? 0
+        : earned)
     trace(program.programType === 'next_order_coupons' && !wallet ? 'issuance' : 'points', {
       earned: round(earned, 2),
       available: round(available, 6),
@@ -573,8 +668,16 @@ export const evaluate = async (
       let quote = await rewardQuote(
         ctx,
         program,
-        reward,
-        snapshot,
+        program.salePolicyVersion === 1 && program.programType === 'buy_x_get_y'
+          ? { ...reward, rewardProductQuantity: decimal(n(reward.rewardProductQuantity) * giftMultiplier) }
+          : reward,
+        {
+          ...snapshot,
+          saleProgramOrder: allPrograms
+            .filter((row) => row.salePolicyVersion === 1)
+            .sort((a, b) => n(a.sequence) - n(b.sequence) || String(a.id).localeCompare(String(b.id)))
+            .map((row) => String(row.id)),
+        },
         available,
         cache,
         rewardProducts.get(String(reward.id)) ?? new Set(),

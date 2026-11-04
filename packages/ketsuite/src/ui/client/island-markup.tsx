@@ -20,10 +20,17 @@ export const PoliteStatus = (props: { children?: JSXChild }) => (
 )
 
 /** A form controls elsewhere on the page submit through `form={id}`; it posts its hidden fields. */
-export const HiddenPostForm = (props: { id: string; action: string; fields: Record<string, string> }) => (
+export const HiddenPostForm = (props: {
+  id: string
+  action: string
+  fields: Record<string, string>
+  /** Visible controls posted with the hidden fields, such as a confirmation's reason. */
+  children?: JSXChild
+}) => (
   <form id={props.id} method="post" action={props.action}>
     {Object.entries(props.fields).map(([name, value]) => (
       <input type="hidden" name={name} value={value} autocomplete="off" />
     ))}
+    {props.children}
   </form>
 )

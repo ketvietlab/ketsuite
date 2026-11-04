@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": ["test/livedoc-native-replay.test.ts", "test/flow-native-document-schema.test.ts"]
+}

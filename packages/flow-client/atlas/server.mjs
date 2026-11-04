@@ -474,7 +474,9 @@ export async function startAtlasServer({
         file = resolve(base, path.slice(prefix.length))
         if (!file.startsWith(resolve(base) + sep)) throw new Error('404')
         if (allowed && !allowed.some((p) => path.slice(prefix.length).startsWith(p))) throw new Error('404')
-        if (prefix === '/atlas/' && path !== '/atlas/entry.mjs') throw new Error('404')
+        // Only browser code leaves /atlas/; fixtures and stores stay on the server.
+        if (prefix === '/atlas/' && !['/atlas/entry.mjs', '/atlas/fixture-auth.mjs'].includes(path))
+          throw new Error('404')
       }
       const locale = url.searchParams.get('locale')
       if (path.endsWith('/messages.mjs') && ['en', 'ja', 'vi'].includes(locale ?? ''))

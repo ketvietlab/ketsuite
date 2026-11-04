@@ -8,7 +8,9 @@
 import { each, effect, signal } from '@ketvietlab/ketjs-view'
 import type { IslandController, IslandProps, TemplateResult } from '@ketvietlab/ketjs-view'
 import { relationMenuPlacement } from './placement.ts'
+import { searchText } from '../ket-grid/values.ts'
 import { restoreRelationSelectionFocus } from './focus.ts'
+import { Field } from '../../primitives/field/index.tsx'
 
 export const HOOKS = [
   'relation-select',
@@ -19,6 +21,9 @@ export const HOOKS = [
   'relation-chips',
   'relation-chip',
   'relation-chip-clear',
+  'relation-control',
+  'relation-input',
+  'relation-clear-all',
   'relation-menu',
   'relation-search',
   'relation-options',
@@ -90,6 +95,10 @@ export type RelationSelectLabels = {
   retry: string
   clear: string
   chosen: string
+  /** The create dialog's title when it opens straight from a typed name (tags presentation); defaults to `create`. */
+  createTitle?: string
+  /** The footer action naming what was typed, `{query}` standing for it: "Create “{query}”". */
+  createNamed?: string
 }
 
 export type RelationSelectConfig = {
@@ -109,6 +118,14 @@ export type RelationSelectConfig = {
    * take value lists already parse.
    */
   multiple?: boolean
+  /**
+   * How a multiple picker shows what it holds. `list` (the default) keeps a fixed
+   * "add another" trigger with the chips beneath it. `tags` is a combobox: the
+   * chips sit inside the control before a text input that searches as it is
+   * typed, chosen records leave the list, and a manager with a `saveFunction`
+   * creates the typed name in its dialog. Ignored unless `multiple`.
+   */
+  presentation?: 'list' | 'tags'
   values?: string[]
   options: RelationOption[]
   required?: boolean
@@ -198,6 +215,8 @@ export function createRelationSelectView(
   // the array of length 0 or 1, so downstream code only branches where the UI
   // genuinely differs — the trigger and the chips.
   const multiple = config.multiple === true
+  const tags = multiple && config.presentation === 'tags'
+  const inputId = config.triggerId || `${islandId}-relation-input`
   const chosen = signal(
     multiple
       ? array<unknown>(config.values).map(string).filter(Boolean)
@@ -205,7 +224,11 @@ export function createRelationSelectView(
   )
   const selected = (): string => chosen()[0] ?? ''
   const isChosen = (value: unknown): boolean => chosen().includes(string(value))
-  const learnedKey = manager?.listFunction ?? ''
+  // Pickers of one list function over different inputs (the values of one attribute and of
+  // another) are different lists: a record created in one must not join the other.
+  const learnedKey = manager?.listFunction
+    ? `${manager.listFunction}${manager.listInput ? JSON.stringify(manager.listInput) : ''}`
+    : ''
   const primed = array<RelationOption>(config.options)
   const learned = learnedOptions.get(learnedKey) ?? []
   const learnedAs = (value: unknown) => learned.find((entry) => string(entry.value) === string(value))
@@ -232,6 +255,11 @@ export function createRelationSelectView(
   const error = signal('')
   const editor = signal<RelationEditor | null>(null)
   const pendingRemove = signal('')
+  // The tags presentation: the option the arrow keys stand on, and whether the dialog
+  // opened only to create the typed name.
+  const active = signal(0)
+  const quick = signal(false)
+  let host: HTMLElement | null = null
   let activeRequest: AbortController | null = null
   let resolveRequest: AbortController | null = null
   let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -248,10 +276,11 @@ export function createRelationSelectView(
     if (manager?.searchInDropdown && dropdownRows()?.query === query().trim())
       return dropdownRows()!.options.slice(0, 7)
     if (manager?.searchInDropdown && query().trim()) return []
-    const needle = query().trim().toLocaleLowerCase()
+    // Typed as people type, often without accents: "bong" finds "Bông", as the grid does.
+    const needle = searchText(query())
     const held = needle
       ? availableOptions().filter((entry) =>
-          `${string(entry.label)} ${string(entry.description)}`.toLocaleLowerCase().includes(needle),
+          searchText(`${string(entry.label)} ${string(entry.description)}`).includes(needle),
         )
       : availableOptions()
     // Only a manager can browse past the dropdown; a local picker lists every match.
@@ -268,6 +297,12 @@ export function createRelationSelectView(
     }
     if (multiple) {
       chosen.set(isChosen(id) ? chosen().filter((held) => held !== id) : [...chosen(), id])
+      // A tag picker closes on a choice and keeps focus in its input for the next one.
+      if (tags) {
+        open.set(false)
+        query.set('')
+        active.set(0)
+      }
       callbacks.onSelect?.({ value: id, label: string(label), description: string(description) })
       return
     }
@@ -334,10 +369,43 @@ export function createRelationSelectView(
     // A manager dialog may sit inside a record modal. Closing this layer must
     // not reach the record modal's document-level close handler.
     event?.stopPropagation()
+    const returning = quick()
     dialog.set(false)
     editor.set(null)
     pendingRemove.set('')
     error.set('')
+    quick.set(false)
+    if (returning) focusInput()
+  }
+
+  // The input again, after a choice the host may have answered by mounting this picker anew.
+  const focusInput = (): void => {
+    if (typeof document === 'undefined') return
+    const find = () => document.getElementById(inputId)
+    queueMicrotask(() => find()?.focus())
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => find()?.focus())
+  }
+  // A tag picker creates what was typed: in the manager's dialog, its name filled in,
+  // else through the host's own `onCreate`.
+  const canCreate = (): boolean =>
+    Boolean(manager?.saveFunction && manager.fields?.length) || !!callbacks.onCreate
+  const createTyped = (): void => {
+    if (disabled()) return
+    const name = query().trim()
+    open.set(false)
+    query.set('')
+    if (manager?.saveFunction && manager.fields?.length) {
+      quick.set(true)
+      dialog.set(true)
+      pendingRemove.set('')
+      error.set('')
+      editor.set({ id: '', row: { ...(manager.saveDefaults ?? {}), [manager.labelField ?? 'name']: name } })
+      queueMicrotask(() =>
+        host?.querySelector<HTMLElement>('[data-ui="relation-editor"] [data-ui="form-control"]')?.focus(),
+      )
+      return
+    }
+    callbacks.onCreate?.(name)
   }
 
   const searchManager = (event: Event): void => {
@@ -360,12 +428,25 @@ export function createRelationSelectView(
     for (const [name, value] of new FormData(event.currentTarget).entries()) payload[name] = string(value)
     loading.set(true)
     error.set('')
+    const form = event.currentTarget
     try {
-      await callApi(manager.saveFunction, payload, undefined, manager.requestQuery)
+      const saved = await callApi(manager.saveFunction, payload, undefined, manager.requestQuery)
       const label = string(payload[manager.labelField ?? 'name'])
       if (!editing?.id) {
-        choose(id, label)
-        if (multiple) {
+        // A server that names its records answers with the id it gave; the picker keeps that one.
+        const given = saved && typeof saved === 'object' ? rowId(saved as RelationRow) : ''
+        const created = given || id
+        // The host learns a record now exists (a record form reads its context again, so its
+        // own data names it) before the choice reaches its form.
+        form.dispatchEvent(
+          new CustomEvent('ket:relation-created', {
+            bubbles: true,
+            detail: { name: config.name, option: { value: created, label } },
+          }),
+        )
+        choose(created, label)
+        if (quick()) closeDialog()
+        else if (multiple) {
           editor.set(null)
           await loadRows()
         }
@@ -415,63 +496,49 @@ export function createRelationSelectView(
     }
   }
 
+  // The editor's fields are the design system's own Field, so they read as every other form does.
   const editorField = (field: RelationEditorField): TemplateResult => {
     const held = editor()?.row ?? manager?.saveDefaults ?? {}
-    const value = string(held[field.name])
-    const fieldId = `${islandId}-relation-editor-${field.name}`
-    return (
-      <label data-ui="form-field" data-span="full" htmlFor={fieldId}>
-        <span data-ui="form-label">
-          {field.label}
-          {field.required ? (
-            <span data-ui="form-required" aria-hidden="true">
-              {' '}
-              *
-            </span>
-          ) : null}
-        </span>
-        {field.type === 'select' ? (
-          <select data-ui="form-control" id={fieldId} name={field.name} required={field.required === true}>
-            {each(
-              array<RelationOption>(field.options),
-              (entry) => entry.value,
-              (entry) => (
-                <option value={entry.value} selected={string(entry.value) === value}>
-                  {entry.label}
-                </option>
-              ),
-            )}
-          </select>
-        ) : (
-          <input
-            data-ui="form-control"
-            id={fieldId}
-            type={field.type ?? 'text'}
-            name={field.name}
-            value={value}
-            autocomplete="off"
-            required={field.required === true}
-          />
-        )}
-      </label>
-    )
+    return Field({
+      id: `${islandId}-relation-editor-${field.name}`,
+      name: field.name,
+      label: field.label,
+      type: field.type ?? 'text',
+      value: string(held[field.name]),
+      required: field.required === true,
+      ...(field.type === 'select' ? { options: array<RelationOption>(field.options) } : {}),
+    })
   }
 
+  const editorFormId = `${islandId}-relation-editor`
+  const editorActions = (): TemplateResult => (
+    <div data-ui="action-group">
+      <button
+        data-ui="action"
+        data-variant="tertiary"
+        type="button"
+        onClick={() => (quick() ? closeDialog() : editor.set(null))}
+      >
+        {labels.cancel}
+      </button>
+      <button data-ui="action" data-variant="primary" type="submit" form={editorFormId} disabled={loading()}>
+        {labels.save}
+      </button>
+    </div>
+  )
+  // Creating straight from a typed name, the form is the dialog's whole body and its
+  // actions sit in the dialog's footer; inside the browse dialog it is a framed block.
   const editorForm = (): TemplateResult => (
-    <form data-ui="relation-editor" onSubmit={save}>
-      <div data-ui="form-grid">
+    <form
+      data-ui="relation-editor"
+      data-presentation={quick() ? 'plain' : undefined}
+      id={editorFormId}
+      onSubmit={save}
+    >
+      <div data-ui="form-grid" data-columns="1">
         {each(array<RelationEditorField>(manager?.fields), (field) => field.name, editorField)}
       </div>
-      <div data-ui="form-actions">
-        <div data-ui="action-group">
-          <button data-ui="action" data-variant="primary" type="submit" disabled={loading()}>
-            {labels.save}
-          </button>
-          <button data-ui="action" data-variant="tertiary" type="button" onClick={() => editor.set(null)}>
-            {labels.cancel}
-          </button>
-        </div>
-      </div>
+      {quick() ? null : <div data-ui="form-actions">{editorActions()}</div>}
     </form>
   )
 
@@ -533,13 +600,14 @@ export function createRelationSelectView(
       </button>
       <section
         data-ui="modal-sheet"
+        data-size={quick() ? 'small' : undefined}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${islandId}-relation-title`}
       >
         <header data-ui="modal-head">
           <h2 data-ui="modal-title" id={`${islandId}-relation-title`}>
-            {labels.dialogTitle}
+            {quick() ? (labels.createTitle ?? labels.create) : labels.dialogTitle}
           </h2>
           <button
             data-ui="modal-close"
@@ -552,44 +620,46 @@ export function createRelationSelectView(
           </button>
         </header>
         <div data-ui="modal-body">
-          <div data-ui="relation-dialog-toolbar">
-            <div data-ui="relation-search-field">
-              <span data-ui="relation-search-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
+          {quick() ? null : (
+            <div data-ui="relation-dialog-toolbar">
+              <div data-ui="relation-search-field">
+                <span data-ui="relation-search-icon" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="m21 21-4.3-4.3" />
+                  </svg>
+                </span>
+                <input
+                  data-ui="field-control"
+                  type="search"
+                  value={query()}
+                  autocomplete="off"
+                  placeholder={labels.search}
+                  aria-label={labels.search}
+                  onInput={searchManager}
+                />
+              </div>
+              {manager?.saveFunction ? (
+                <button
+                  data-ui="action"
+                  data-variant="primary"
+                  type="button"
+                  onClick={() => editor.set({ id: '', row: manager.saveDefaults ?? {} })}
                 >
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.3-4.3" />
-                </svg>
-              </span>
-              <input
-                data-ui="field-control"
-                type="search"
-                value={query()}
-                autocomplete="off"
-                placeholder={labels.search}
-                aria-label={labels.search}
-                onInput={searchManager}
-              />
+                  {labels.create}
+                </button>
+              ) : null}
             </div>
-            {manager?.saveFunction ? (
-              <button
-                data-ui="action"
-                data-variant="primary"
-                type="button"
-                onClick={() => editor.set({ id: '', row: manager.saveDefaults ?? {} })}
-              >
-                {labels.create}
-              </button>
-            ) : null}
-          </div>
+          )}
           {error() ? (
             <aside data-ui="notice" data-tone="danger" role="alert">
               <div data-ui="notice-copy">
@@ -615,6 +685,7 @@ export function createRelationSelectView(
             )
           ) : null}
         </div>
+        {quick() && editor() ? <footer data-ui="modal-actions">{editorActions()}</footer> : null}
       </section>
     </div>
   )
@@ -625,7 +696,7 @@ export function createRelationSelectView(
     event.preventDefault()
     event.stopPropagation()
     const trigger = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(
-      '[data-ui="relation-trigger"]',
+      '[data-ui="relation-trigger"], [data-ui="relation-input"]',
     )
     open.set(false)
     closeDialog()
@@ -639,66 +710,95 @@ export function createRelationSelectView(
       (event.currentTarget.nextElementSibling as HTMLElement | null)?.focus()
   }
 
-  return {
-    getSelectedValues: () => [...chosen()],
-    view: () => (
-      <div data-ui="relation-select" role="group" aria-label={config.ariaLabel} onKeydown={handleKeydown}>
-        {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: the off-tab native control preserves form submission and constraint validation while the adjacent trigger is the accessible interactive control. */}
-        <select
-          data-ui="relation-native"
-          name={config.name}
-          required={config.required === true}
-          disabled={disabled()}
-          tabindex="-1"
-          aria-hidden="true"
-          onInvalid={handleInvalid}
-        >
-          <option value="" selected={!chosen().length} />
-          {multiple ? (
-            chosen().length ? (
-              <option value={chosen().join(',')} selected>
-                {chosen().map(labelOf).join(', ')}
-              </option>
-            ) : null
-          ) : (
-            each(
-              options().filter((entry) => string(entry.value)),
-              (entry) => entry.value,
-              (entry) => (
-                <option value={entry.value} selected={string(entry.value) === selected()}>
-                  {entry.label}
-                </option>
-              ),
-            )
-          )}
-        </select>
-        <button
-          data-ui="relation-trigger"
-          id={config.triggerId}
-          aria-invalid={config.invalid === true ? 'true' : undefined}
-          aria-describedby={config.describedBy || undefined}
-          data-empty={String(!chosen().length)}
-          type="button"
-          aria-haspopup="listbox"
-          aria-label={config.ariaLabel}
-          aria-expanded={String(open())}
-          aria-controls={`${islandId}-relation-menu`}
-          disabled={disabled()}
-          onClick={(event) => {
-            open.set(!open())
-            if (open() && manager?.searchInDropdown) void loadRows()
-            // Opening is the start of a search: typing goes straight to the filter.
-            const group = (event.currentTarget as HTMLElement | null)?.parentElement
-            if (open() && typeof group?.querySelector === 'function')
-              queueMicrotask(() => group.querySelector<HTMLElement>('[data-ui="relation-search"]')?.focus())
-          }}
-        >
-          <span data-ui="relation-value">{multiple ? labels.choose : selectedLabel()}</span>
-          <span data-ui="relation-caret" aria-hidden="true">
-            ▾
-          </span>
-        </button>
-        {multiple && chosen().length ? (
+  // ── The tags presentation ──────────────────────────────────────────────────
+  // What may still be added: the matches of what is typed, without those already chosen.
+  const tagOptions = (): RelationOption[] => filteredOptions().filter((entry) => !isChosen(entry.value))
+  const optionId = (index: number): string => `${islandId}-relation-option-${index}`
+  const openTags = (): void => {
+    if (disabled() || open()) return
+    active.set(0)
+    open.set(true)
+    if (manager?.searchInDropdown) void loadRows()
+  }
+  const tagInput = (event: Event): void => {
+    if (!(event.currentTarget instanceof HTMLInputElement)) return
+    if (manager?.searchInDropdown) searchManager(event)
+    else query.set(event.currentTarget.value)
+    active.set(0)
+    if (!open() && !disabled()) open.set(true)
+  }
+  const tagKeydown = (event: Event): void => {
+    if (!(event instanceof KeyboardEvent)) return
+    const list = tagOptions()
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (!open()) {
+        openTags()
+        return
+      }
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      active.set(Math.min(Math.max(active() + step, 0), Math.max(list.length - 1, 0)))
+      return
+    }
+    // Enter picks the option it stands on, or creates what was typed; it never submits the form.
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      const entry = open() ? list[active()] : undefined
+      if (entry) choose(entry.value, entry.label, entry.description)
+      else if (open() && query().trim() && canCreate()) createTyped()
+      else openTags()
+      return
+    }
+    if (event.key === 'Backspace' && !query() && chosen().length && !disabled()) {
+      event.preventDefault()
+      unchoose(chosen().at(-1))
+      return
+    }
+    if (event.key === 'Tab') open.set(false)
+  }
+  const tagsView = (): TemplateResult => (
+    <div
+      data-ui="relation-select"
+      data-presentation="tags"
+      role="group"
+      aria-label={config.ariaLabel}
+      onKeydown={handleKeydown}
+    >
+      {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: the off-tab native control preserves form submission and constraint validation while the adjacent input is the accessible interactive control. */}
+      <select
+        data-ui="relation-native"
+        name={config.name}
+        required={config.required === true}
+        disabled={disabled()}
+        tabindex="-1"
+        aria-hidden="true"
+        onInvalid={handleInvalid}
+      >
+        <option value="" selected={!chosen().length} />
+        {chosen().length ? (
+          <option value={chosen().join(',')} selected>
+            {chosen().map(labelOf).join(', ')}
+          </option>
+        ) : null}
+      </select>
+      {/* The control box is the pointer target for the whole field; the input inside it is the keyboard one. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the box only forwards a pointer to the input inside it, which owns the keyboard path (arrows, Enter, Backspace, Escape) and the combobox role. */}
+      <div
+        data-ui="relation-control"
+        data-disabled={disabled() ? 'true' : undefined}
+        data-invalid={config.invalid === true ? 'true' : undefined}
+        data-open={String(open())}
+        onClick={(event: Event) => {
+          if (disabled()) return
+          const target = event.target as HTMLElement | null
+          if (target?.closest?.('[data-ui="relation-chip-clear"], [data-ui="relation-clear-all"]')) return
+          const box = event.currentTarget as HTMLElement | null
+          box?.querySelector<HTMLElement>('[data-ui="relation-input"]')?.focus()
+          if (open() && target?.getAttribute?.('data-ui') !== 'relation-input') open.set(false)
+          else openTags()
+        }}
+      >
+        {chosen().length ? (
           <ul data-ui="relation-chips" aria-label={labels.chosen}>
             {each(
               chosen(),
@@ -709,6 +809,7 @@ export function createRelationSelectView(
                   <button
                     data-ui="relation-chip-clear"
                     type="button"
+                    tabindex="-1"
                     aria-label={`${labels.clear}: ${labelOf(value)}`}
                     title={labels.clear}
                     disabled={disabled()}
@@ -721,97 +822,302 @@ export function createRelationSelectView(
             )}
           </ul>
         ) : null}
-        {open() ? (
-          <div
-            data-ui="relation-menu"
-            id={`${islandId}-relation-menu`}
-            role="group"
-            aria-label={config.ariaLabel}
+        <input
+          data-ui="relation-input"
+          id={inputId}
+          type="text"
+          role="combobox"
+          value={query()}
+          autocomplete="off"
+          placeholder={chosen().length ? '' : labels.choose}
+          aria-label={config.ariaLabel}
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={String(open())}
+          aria-controls={`${islandId}-relation-options`}
+          aria-activedescendant={open() && tagOptions().length ? optionId(active()) : undefined}
+          aria-invalid={config.invalid === true ? 'true' : undefined}
+          aria-describedby={config.describedBy || undefined}
+          disabled={disabled()}
+          onInput={tagInput}
+          onKeydown={tagKeydown}
+        />
+        {chosen().length && !disabled() ? (
+          <button
+            data-ui="relation-clear-all"
+            type="button"
+            tabindex="-1"
+            aria-label={labels.clear}
+            title={labels.clear}
+            onClick={() => {
+              chosen.set([])
+              focusInput()
+            }}
           >
-            <input
-              data-ui="relation-search"
-              type="search"
-              value={query()}
-              autocomplete="off"
-              placeholder={labels.search}
-              aria-label={labels.search}
-              onInput={(event) => {
-                if (manager?.searchInDropdown) searchManager(event)
-                else if (event.currentTarget instanceof HTMLInputElement) query.set(event.currentTarget.value)
-              }}
-            />
-            <div data-ui="relation-options" role="listbox" aria-busy={loading() ? 'true' : undefined}>
-              {manager?.searchInDropdown && loading() ? (
-                <p data-ui="relation-empty" role="status">
-                  {labels.loading}
-                </p>
-              ) : manager?.searchInDropdown && error() ? (
-                <div>
-                  <p data-ui="relation-empty" role="alert">
-                    {error()}
-                  </p>
-                  <button
-                    data-ui="action"
-                    data-variant="tertiary"
-                    type="button"
-                    onClick={() => void loadRows()}
-                  >
-                    {labels.retry}
-                  </button>
-                </div>
-              ) : filteredOptions().length ? (
-                each(
-                  filteredOptions(),
-                  (entry) => entry.value,
-                  (entry) => (
-                    <button
-                      data-ui="relation-option"
-                      type="button"
-                      role="option"
-                      data-selected={String(isChosen(entry.value))}
-                      aria-selected={String(isChosen(entry.value))}
-                      onClick={() => choose(entry.value, entry.label, entry.description)}
-                    >
-                      <span>{entry.label}</span>
-                      {entry.description ? <small>{entry.description}</small> : null}
-                    </button>
-                  ),
-                )
-              ) : (
-                <p data-ui="relation-empty">{labels.noRecords}</p>
-              )}
-            </div>
-            {manager || callbacks.onCreate ? (
-              <footer data-ui="relation-footer">
-                {manager ? (
-                  <button data-ui="action" data-variant="tertiary" type="button" onClick={openDialog}>
-                    {labels.more}
-                  </button>
-                ) : null}
-                {callbacks.onCreate ? (
-                  <button
-                    data-ui="action"
-                    data-variant="tertiary"
-                    type="button"
-                    disabled={disabled()}
-                    onClick={() => {
-                      if (disabled()) return
-                      const name = query().trim()
-                      open.set(false)
-                      query.set('')
-                      callbacks.onCreate?.(name)
-                    }}
-                  >
-                    {labels.create}
-                  </button>
-                ) : null}
-              </footer>
-            ) : null}
-          </div>
+            ×
+          </button>
         ) : null}
-        {dialog() ? dialogView() : null}
+        <span data-ui="relation-caret" aria-hidden="true">
+          ▾
+        </span>
       </div>
-    ),
+      {open() ? (
+        <div data-ui="relation-menu" id={`${islandId}-relation-menu`}>
+          <div
+            data-ui="relation-options"
+            id={`${islandId}-relation-options`}
+            role="listbox"
+            aria-label={config.ariaLabel}
+            aria-multiselectable="true"
+            aria-busy={loading() ? 'true' : undefined}
+          >
+            {manager?.searchInDropdown && loading() ? (
+              <p data-ui="relation-empty" role="status">
+                {labels.loading}
+              </p>
+            ) : manager?.searchInDropdown && error() ? (
+              <p data-ui="relation-empty" role="alert">
+                {error()}
+              </p>
+            ) : tagOptions().length ? (
+              each(
+                tagOptions().map((entry, index) => ({ entry, index })),
+                ({ entry }) => entry.value,
+                ({ entry, index }) => (
+                  <button
+                    data-ui="relation-option"
+                    id={optionId(index)}
+                    type="button"
+                    role="option"
+                    tabindex="-1"
+                    data-active={String(index === active())}
+                    aria-selected="false"
+                    onMousedown={(event: Event) => event.preventDefault()}
+                    onClick={() => choose(entry.value, entry.label, entry.description)}
+                  >
+                    <span>{entry.label}</span>
+                    {entry.description ? <small>{entry.description}</small> : null}
+                  </button>
+                ),
+              )
+            ) : (
+              <p data-ui="relation-empty">{labels.noRecords}</p>
+            )}
+          </div>
+          {canCreate() || manager ? (
+            <footer data-ui="relation-footer">
+              {canCreate() ? (
+                <button
+                  data-ui="action"
+                  data-variant="tertiary"
+                  type="button"
+                  tabindex="-1"
+                  disabled={disabled()}
+                  onMousedown={(event: Event) => event.preventDefault()}
+                  onClick={createTyped}
+                >
+                  {query().trim() && labels.createNamed
+                    ? labels.createNamed.replace('{query}', query().trim())
+                    : labels.create}
+                </button>
+              ) : null}
+              {manager?.listFunction ? (
+                <button
+                  data-ui="action"
+                  data-variant="tertiary"
+                  type="button"
+                  tabindex="-1"
+                  onMousedown={(event: Event) => event.preventDefault()}
+                  onClick={openDialog}
+                >
+                  {labels.more}
+                </button>
+              ) : null}
+            </footer>
+          ) : null}
+        </div>
+      ) : null}
+      {dialog() ? dialogView() : null}
+    </div>
+  )
+
+  return {
+    getSelectedValues: () => [...chosen()],
+    view: () =>
+      tags ? (
+        tagsView()
+      ) : (
+        <div data-ui="relation-select" role="group" aria-label={config.ariaLabel} onKeydown={handleKeydown}>
+          {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: the off-tab native control preserves form submission and constraint validation while the adjacent trigger is the accessible interactive control. */}
+          <select
+            data-ui="relation-native"
+            name={config.name}
+            required={config.required === true}
+            disabled={disabled()}
+            tabindex="-1"
+            aria-hidden="true"
+            onInvalid={handleInvalid}
+          >
+            <option value="" selected={!chosen().length} />
+            {multiple ? (
+              chosen().length ? (
+                <option value={chosen().join(',')} selected>
+                  {chosen().map(labelOf).join(', ')}
+                </option>
+              ) : null
+            ) : (
+              each(
+                options().filter((entry) => string(entry.value)),
+                (entry) => entry.value,
+                (entry) => (
+                  <option value={entry.value} selected={string(entry.value) === selected()}>
+                    {entry.label}
+                  </option>
+                ),
+              )
+            )}
+          </select>
+          <button
+            data-ui="relation-trigger"
+            id={config.triggerId}
+            aria-invalid={config.invalid === true ? 'true' : undefined}
+            aria-describedby={config.describedBy || undefined}
+            data-empty={String(!chosen().length)}
+            type="button"
+            aria-haspopup="listbox"
+            aria-label={config.ariaLabel}
+            aria-expanded={String(open())}
+            aria-controls={`${islandId}-relation-menu`}
+            disabled={disabled()}
+            onClick={(event) => {
+              open.set(!open())
+              if (open() && manager?.searchInDropdown) void loadRows()
+              // Opening is the start of a search: typing goes straight to the filter.
+              const group = (event.currentTarget as HTMLElement | null)?.parentElement
+              if (open() && typeof group?.querySelector === 'function')
+                queueMicrotask(() => group.querySelector<HTMLElement>('[data-ui="relation-search"]')?.focus())
+            }}
+          >
+            <span data-ui="relation-value">{multiple ? labels.choose : selectedLabel()}</span>
+            <span data-ui="relation-caret" aria-hidden="true">
+              ▾
+            </span>
+          </button>
+          {multiple && chosen().length ? (
+            <ul data-ui="relation-chips" aria-label={labels.chosen}>
+              {each(
+                chosen(),
+                (value) => value,
+                (value) => (
+                  <li data-ui="relation-chip">
+                    <span>{labelOf(value)}</span>
+                    <button
+                      data-ui="relation-chip-clear"
+                      type="button"
+                      aria-label={`${labels.clear}: ${labelOf(value)}`}
+                      title={labels.clear}
+                      disabled={disabled()}
+                      onClick={() => unchoose(value)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ),
+              )}
+            </ul>
+          ) : null}
+          {open() ? (
+            <div
+              data-ui="relation-menu"
+              id={`${islandId}-relation-menu`}
+              role="group"
+              aria-label={config.ariaLabel}
+            >
+              <input
+                data-ui="relation-search"
+                type="search"
+                value={query()}
+                autocomplete="off"
+                placeholder={labels.search}
+                aria-label={labels.search}
+                onInput={(event) => {
+                  if (manager?.searchInDropdown) searchManager(event)
+                  else if (event.currentTarget instanceof HTMLInputElement)
+                    query.set(event.currentTarget.value)
+                }}
+              />
+              <div data-ui="relation-options" role="listbox" aria-busy={loading() ? 'true' : undefined}>
+                {manager?.searchInDropdown && loading() ? (
+                  <p data-ui="relation-empty" role="status">
+                    {labels.loading}
+                  </p>
+                ) : manager?.searchInDropdown && error() ? (
+                  <div>
+                    <p data-ui="relation-empty" role="alert">
+                      {error()}
+                    </p>
+                    <button
+                      data-ui="action"
+                      data-variant="tertiary"
+                      type="button"
+                      onClick={() => void loadRows()}
+                    >
+                      {labels.retry}
+                    </button>
+                  </div>
+                ) : filteredOptions().length ? (
+                  each(
+                    filteredOptions(),
+                    (entry) => entry.value,
+                    (entry) => (
+                      <button
+                        data-ui="relation-option"
+                        type="button"
+                        role="option"
+                        data-selected={String(isChosen(entry.value))}
+                        aria-selected={String(isChosen(entry.value))}
+                        onClick={() => choose(entry.value, entry.label, entry.description)}
+                      >
+                        <span>{entry.label}</span>
+                        {entry.description ? <small>{entry.description}</small> : null}
+                      </button>
+                    ),
+                  )
+                ) : (
+                  <p data-ui="relation-empty">{labels.noRecords}</p>
+                )}
+              </div>
+              {manager || callbacks.onCreate ? (
+                <footer data-ui="relation-footer">
+                  {manager ? (
+                    <button data-ui="action" data-variant="tertiary" type="button" onClick={openDialog}>
+                      {labels.more}
+                    </button>
+                  ) : null}
+                  {callbacks.onCreate ? (
+                    <button
+                      data-ui="action"
+                      data-variant="tertiary"
+                      type="button"
+                      disabled={disabled()}
+                      onClick={() => {
+                        if (disabled()) return
+                        const name = query().trim()
+                        open.set(false)
+                        query.set('')
+                        callbacks.onCreate?.(name)
+                      }}
+                    >
+                      {labels.create}
+                    </button>
+                  ) : null}
+                </footer>
+              ) : null}
+            </div>
+          ) : null}
+          {dialog() ? dialogView() : null}
+        </div>
+      ),
     // The hidden native select stands in for a real one — including firing
     // `change` for whatever the host page already listens for there (a state
     // recomputed off another field's selection, say). Skip the effect's own
@@ -822,6 +1128,7 @@ export function createRelationSelectView(
     // island) re-enter this instance's own `choose()` while it was still on the
     // stack — deferring runs it only once the choice has fully settled.
     mount: ({ root, lifetime }) => {
+      host = typeof HTMLElement !== 'undefined' && root instanceof HTMLElement ? root : null
       if (typeof Element !== 'undefined' && root instanceof Element) {
         const form = root.closest('form')
         ;(form ?? root).addEventListener(
@@ -934,12 +1241,29 @@ export function createRelationSelectView(
         queueMicrotask(() => {
           if (disposed || lifetime.aborted) return
           const native = [...root.querySelectorAll('[data-ui="relation-native"]')][0]
+          // HTMLElement, not Element: the island root is always one, and every DOM the picker runs in has it.
+          const triggerHook = tags ? '[data-ui="relation-input"]' : '[data-ui="relation-trigger"]'
+          const trigger = root instanceof HTMLElement ? root.querySelector<HTMLElement>(triggerHook) : null
+          const field = root instanceof HTMLElement ? root.parentElement : null
           if (native instanceof HTMLSelectElement)
             native.dispatchEvent(new Event('change', { bubbles: true }))
-          if (!multiple && !open() && !dialog()) {
-            const trigger = [...root.querySelectorAll('[data-ui="relation-trigger"]')][0]
-            if (trigger instanceof HTMLElement && !disabled())
-              restoreRelationSelectionFocus<Element>(trigger, document.activeElement, document.body, popup)
+          // A tag picker keeps its input focused for the next choice, as a single picker keeps its trigger.
+          if ((!multiple || tags) && !open() && !dialog() && !disabled()) {
+            const restore = () => {
+              // A native record may replace this island while reconciling its selected
+              // value. Resolve only inside the same connected field, never a new page.
+              const current = trigger?.isConnected
+                ? trigger
+                : field?.isConnected && trigger?.id
+                  ? [...field.querySelectorAll<HTMLElement>(triggerHook)].find(
+                      (node) => node.id === trigger.id,
+                    )
+                  : null
+              if (current && !current.hasAttribute('disabled'))
+                restoreRelationSelectionFocus<Element>(current, document.activeElement, document.body, popup)
+            }
+            restore()
+            if (trigger && !trigger.isConnected) requestAnimationFrame(restore)
           }
         })
       })
@@ -950,7 +1274,10 @@ export function createRelationSelectView(
       let frame = 0
       const position = () => {
         if (disposed || lifetime.aborted || !open() || !popup?.isConnected) return
-        const trigger = [...root.querySelectorAll('[data-ui="relation-trigger"]')][0]
+        // A tag picker's menu hangs from its whole control box, chips included.
+        const trigger = [
+          ...root.querySelectorAll('[data-ui="relation-trigger"], [data-ui="relation-control"]'),
+        ][0]
         if (!(trigger instanceof HTMLElement)) return
         const style = getComputedStyle(popup)
         const viewport = window.visualViewport

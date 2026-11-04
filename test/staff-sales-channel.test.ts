@@ -352,7 +352,7 @@ test('staff sales channel projects the canonical order delivery and invoice life
   assert.deepEqual(body.data.deliveries, [
     {
       id: 'so-a:delivery',
-      reference: 'Delivery S00001',
+      reference: 'WH/XK/0001',
       state: 'draft',
     },
   ])
@@ -375,13 +375,14 @@ test('staff sales channel exposes only bounded sellable product projections', as
       '/api/staff/v1/sales/products?limit=1',
     )
   ).data
+  // Products come in name order, as the product picker reads them; the cursor walks that order.
   assert.deepEqual(first.items, [
     {
-      id: 'a-stock',
-      name: 'Xoài Cát',
-      kind: 'stockable',
-      sku: 'XCAT-01',
-      category: 'Trái cây',
+      id: 'c-service',
+      name: 'Gói quà',
+      kind: 'service',
+      sku: 'GOI-01',
+      category: null,
       uom: { id: 'kg', name: 'kg' },
     },
   ])
@@ -396,9 +397,17 @@ test('staff sales channel exposes only bounded sellable product projections', as
     rest.items.map((item) => [item.id, item.kind]),
     [
       ['b-consumable', 'consumable'],
-      ['c-service', 'service'],
+      ['a-stock', 'stockable'],
     ],
   )
+  assert.deepEqual(rest.items[1], {
+    id: 'a-stock',
+    name: 'Xoài Cát',
+    kind: 'stockable',
+    sku: 'XCAT-01',
+    category: 'Trái cây',
+    uom: { id: 'kg', name: 'kg' },
+  })
   assert.equal(rest.nextCursor, null)
 
   const searched = (
@@ -527,8 +536,9 @@ test('staff product directory reads only the units and categories a page names',
   await e2e.client.login({ login: 'salesperson', password: 'correct horse battery' })
   const page = (await e2e.client.json<Envelope<{ items: Row[] }>>('/api/staff/v1/sales/products?limit=50'))
     .data
-  assert.deepEqual(page.items[0]?.uom, { id: 'kg', name: 'kg' })
-  assert.equal(page.items[0]?.category, 'Trái cây')
+  const mango = page.items.find((item) => item.id === 'a-stock')
+  assert.deepEqual(mango?.uom, { id: 'kg', name: 'kg' })
+  assert.equal(mango?.category, 'Trái cây')
 })
 
 test('staff product routes tolerate undeclared query parameters like their siblings', async (t) => {

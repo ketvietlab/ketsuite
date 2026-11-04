@@ -1,7 +1,9 @@
+import { contextRoutes } from './context-routes.ts'
 import { managedRoleRoutes } from './managed-role-routes.ts'
 import { accessPolicyRoutes } from './access-policy-routes.ts'
 import { rowListAnswer, rowListBar, rowListMenu, rowListTarget } from '../backend/row-list-read.ts'
 import { rowListIslands, rowListReadRoute } from '../backend/row-list-islands.ts'
+import { optionalRead } from '../backend/optional-read.ts'
 import { userListSearch } from './search.ts'
 import { randomUUID } from 'node:crypto'
 import { text } from '@ketvietlab/ketjs'
@@ -218,6 +220,7 @@ const sessionRows = async (ctx: ServeContext, url: URL, req: Req, userId: string
 export const routes: Record<string, RouteEntry> = {
   ...accessPolicyRoutes,
   ...managedRoleRoutes,
+  ...contextRoutes,
   '/admin/users':
     (ctx: ServeContext): Route =>
     async (url, req) => {
@@ -289,8 +292,9 @@ export const routes: Record<string, RouteEntry> = {
     const target = rowListTarget(url, href, USERS_PATH)
     if (!target) return undefined
     const _ = ctx.translate(ctx.localeOf(url, req))
+    // The company list only fills the filter; a role without it filters by role alone.
     const [companies, roles, people] = (await Promise.all([
-      ctx.call('company.listCompanies', {}, url, req),
+      optionalRead<AnyRow[]>(ctx, 'company.listCompanies', {}, url, req, []),
       ctx.call('user.listRoles', {}, url, req),
       ctx.call(
         'user.listUsers',
@@ -315,7 +319,9 @@ export const routes: Record<string, RouteEntry> = {
     return {
       ...answer,
       menus: [
-        rowListMenu(target, 'company', _('user_backend.field.company'), companies),
+        ...(companies.length
+          ? [rowListMenu(target, 'company', _('user_backend.field.company'), companies)]
+          : []),
         rowListMenu(target, 'role', _('user_backend.field.role'), roles),
       ],
     }

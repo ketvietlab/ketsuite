@@ -10,6 +10,12 @@ import type { Message } from '@ketvietlab/ketjs'
  */
 export const messages: Record<string, Record<string, Message>> = {
   vi: {
+    'error.savedSearch.owner': 'Bạn chỉ được sửa hoặc xóa bộ lọc của mình trong công ty hiện tại.',
+    'error.savedSearch.name': 'Nhập tên bộ lọc, tối đa 60 ký tự.',
+    'error.savedSearch.state': 'Bộ lọc không hợp lệ. Mở lại danh sách và thử lại.',
+    'error.savedSearch.duplicate': 'Bạn đã có bộ lọc cùng tên trong danh sách này.',
+    'error.savedSearch.conflict': 'Bộ lọc đã thay đổi. Đóng và mở lại trước khi sửa.',
+
     'apps.help': 'Hướng dẫn màn hình',
     'globalSearch.label': 'Tìm kiếm toàn hệ thống',
     'globalSearch.trigger': 'Tìm toàn hệ thống',
@@ -250,6 +256,12 @@ export const messages: Record<string, Record<string, Message>> = {
     'pages.count': { one: '{count} trang', other: '{count} trang' },
   },
   en: {
+    'error.savedSearch.owner': 'You may only edit or delete your own filters in the current company.',
+    'error.savedSearch.name': 'Enter a filter name, up to 60 characters.',
+    'error.savedSearch.state': 'Invalid filter. Open the list and try again.',
+    'error.savedSearch.duplicate': 'You already have a filter with this name in this list.',
+    'error.savedSearch.conflict': 'This filter changed. Close and reopen it before editing.',
+
     'apps.help': 'Screen help',
     'globalSearch.label': 'Global search',
     'globalSearch.trigger': 'Search everywhere',

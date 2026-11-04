@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import type { Translator } from '@ketvietlab/ketjs'
 import { renderToString } from '@ketvietlab/ketjs-view'
 import { transfersListScreen } from '../packages/ketsuite/src/modules/stock_backend/screens/transfers-list.tsx'
+import { transferStatus } from '../packages/ketsuite/src/modules/stock_backend/transfer-status.ts'
 
 const messages: Record<string, string> = {
   'stock_backend.transfers': 'Dịch chuyển',
@@ -106,4 +107,18 @@ test('stock transfers list: keeps the empty state and create action on the list 
   assert.match(html, /Chưa có phiếu chuyển kho/)
   assert.match(html, /Phiếu chuyển kho: 0/)
   assert.match(html, /href="\/admin\/stock\/transfers\/new\?lang=vi"/)
+})
+
+test('K18 a transfer reads as one of five statuses; a confirmed receipt is ready to receive', () => {
+  // A transfer that takes goods from stock waits for them until they are held.
+  assert.equal(transferStatus('confirmed', true), 'waiting')
+  assert.equal(transferStatus('waiting', true), 'waiting')
+  assert.equal(transferStatus('assigned', true), 'assigned')
+  // A receipt (or a return) holds nothing: once confirmed it only waits for the goods to arrive.
+  assert.equal(transferStatus('confirmed', false), 'assigned')
+  for (const reserves of [true, false]) {
+    assert.equal(transferStatus('draft', reserves), 'draft')
+    assert.equal(transferStatus('done', reserves), 'done')
+    assert.equal(transferStatus('cancel', reserves), 'cancel')
+  }
 })

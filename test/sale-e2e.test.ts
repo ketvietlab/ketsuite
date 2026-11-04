@@ -80,6 +80,24 @@ async function bootSale(t: TestContext) {
 
 /** A `sale_backend.*` key where the reader would see it, rather than in props. */
 const VISIBLE_KEY = /(?:>|placeholder="|aria-label="|title=")[^<"]*sale_backend\.[A-Za-z]/u
+type SaleContext = {
+  record: Row & { lines: Row[] }
+  permissions: Record<string, boolean>
+  collaboration: Row[]
+  reports: Row[]
+}
+/** What the order's page reads and renders: its record context. */
+const contextOf = async (
+  e2e: Awaited<ReturnType<typeof bootSale>>['e2e'],
+  id: string,
+  lang = 'vi',
+): Promise<SaleContext> => {
+  const response = await e2e.client.get(`/admin/sales/record/${id}/context?lang=${lang}`, {
+    headers: { accept: 'application/json' },
+  })
+  assert.equal(response.status, 200, id)
+  return ((await response.json()) as { data: SaleContext }).data
+}
 
 test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) => {
   const { e2e, call } = await bootSale(t)
@@ -156,8 +174,8 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
     ['/admin/sales', /Tổng quan bán hàng/],
     ['/admin/sales/quotations', /Báo giá/],
     ['/admin/sales/orders', /S00001/],
-    ['/admin/sales/orders/so-1', /Khách hàng Minh Anh/],
-    ['/admin/sales/invoicing-policies', /Chính sách lập hoá đơn/],
+    ['/admin/sales/orders/so-1', /S00001/],
+    ['/admin/sales/invoicing-policies', /Chính sách xuất hoá đơn/],
   ]
   for (const [path, expected] of pages) {
     const response = await e2e.client.get(path, { headers: { accept: 'text/html' } })
@@ -177,24 +195,28 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
       assert.doesNotMatch(html, /data-island="mail\.chatter"/)
     }
     if (path === '/admin/sales/invoicing-policies') {
+      // The list is an island that reads its rows after load (D21); there is nothing to create.
       assert.match(html, /data-ui="list-page"/)
-      assert.match(html, /data-ui="kt-grid"/)
-      assert.match(html, /Theo số lượng giao/)
-      assert.match(html, /record=sale.invoicePolicy%3Anew/)
-      assert.doesNotMatch(html, /id="invoicing-policy-form"|data-ui="record-workspace"/)
+      assert.match(html, /data-island="sale\.policy-results"/)
+      assert.doesNotMatch(html, /record=sale\.invoicePolicy%3Anew|data-ui="record-workspace"/)
       assert.doesNotMatch(html, /data-island="mail\.chatter"/)
     }
     if (path === '/admin/sales/orders/so-1') {
-      assert.match(html, /data-ui="record-page" data-scope="sale-order-form-page" data-has-aside="true"/)
-      assert.match(html, /data-ui="record-page-aside"/)
-      assert.match(html, /data-island="mail\.chatter"/)
-      assert.match(html, /data-island="activity\.record"/)
-      assert.match(html, /data-island="sale\.editor"/)
-      assert.match(html, /data-scope="sale-order"/)
-      assert.match(html, /Thông tin đơn hàng/)
-      assert.doesNotMatch(html, /data-ui="record-workspace"|data-ui="record-aside"/)
+      // The order is a page: the server renders it loading, the record runtime renders the
+      // order from its context, and the guide sits beside it.
+      assert.match(html, /data-island="sale\.order-page"/)
+      assert.match(html, /data-ui="record-page"/)
+      assert.match(html, /id="sale-order-help"/)
+      assert.doesNotMatch(html, /data-island="sale\.order-modal"/)
     }
   }
+  // Its conversation and activities are the page's aside, placed from the context.
+  const order = await contextOf(e2e, 'so-1')
+  assert.equal(order.record.partnerName, 'Khách hàng Minh Anh')
+  assert.deepEqual(
+    order.collaboration.map((entry) => entry.island),
+    ['mail.chatter', 'activity.record'],
+  )
   const quotationsPage = await e2e.client.get('/admin/sales/quotations?lang=vi', {
     headers: { accept: 'text/html' },
   })
@@ -207,18 +229,21 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
     headers: { accept: 'text/html' },
   })
   const quotationCreateHtml = await quotationCreatePage.text()
-  assert.match(quotationCreateHtml, /data-ui="form-page"/)
-  assert.match(quotationCreateHtml, /id="quotation-create-form"/)
-  assert.match(quotationCreateHtml, /data-scope="sale-quotation-create"/)
-  assert.match(quotationCreateHtml, /<option value=""/)
+  assert.match(quotationCreateHtml, /data-island="sale\.order-page"/)
+  assert.match(quotationCreateHtml, /Tạo báo giá/)
   assert.doesNotMatch(quotationCreateHtml, /data-island="mail\.chatter"/)
+  assert.deepEqual((await contextOf(e2e, 'new')).collaboration, [])
 
   const salesDashboard = await e2e.client.get('/admin/sales?lang=vi', {
     headers: { accept: 'text/html' },
   })
   const salesDashboardHtml = await salesDashboard.text()
   assert.match(salesDashboardHtml, /Tạo báo giá/)
-  assert.match(salesDashboardHtml, /record=sale.order%3Anew/)
+  assert.match(
+    salesDashboardHtml,
+    /href="\/admin\/sales\/quotations\/new\?lang=vi&amp;returnTo=%2Fadmin%2Fsales%3Flang%3Dvi"/,
+  )
+  assert.doesNotMatch(salesDashboardHtml, /record=sale\.order/)
   assert.match(salesDashboardHtml, /href="\/admin\/sales\/quotations\?lang=vi&amp;preset=draft"/)
   assert.match(salesDashboardHtml, /href="\/admin\/sales\/orders\?lang=vi"/)
 
@@ -232,11 +257,12 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
   )
   assert.equal(legacyInvalidRedirect.status, 303)
   assert.equal(legacyInvalidRedirect.headers.get('location'), '/admin/sales/quotations/new?lang=vi&invalid=1')
-  const invalidQuotation = await e2e.client.form<string>('/admin/sales/quotations/new?lang=vi', {
-    partnerId: '',
-    warehouseId: '',
-  })
-  assert.match(invalidQuotation, /Dữ liệu chưa hợp lệ/)
+  const invalidQuotation = await e2e.client.post(
+    '/admin/sales/quotations/new?lang=vi',
+    new URLSearchParams({ partnerId: '', warehouseId: '' }),
+    { headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual' },
+  )
+  assert.equal(invalidQuotation.headers.get('location'), '/admin/sales/quotations/new?lang=vi&invalid=1')
   const createdQuotation = await e2e.client.form<string>('/admin/sales/quotations/new?lang=vi', {
     partnerId: 'customer',
     warehouseId: 'wh',
@@ -252,21 +278,23 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
   })
   assert.match(
     await englishQuotations.text(),
-    /href="\/admin\/sales\/quotations\?lang=en&amp;record=sale\.order%3A[^"?]+"/,
+    /href="\/admin\/sales\/quotations\/[^"?]+\?lang=en&amp;returnTo=%2Fadmin%2Fsales%2Fquotations%3Flang%3Den"/,
   )
   const englishDashboard = await e2e.client.get('/admin/sales?lang=en', {
     headers: { accept: 'text/html' },
   })
   const englishDashboardHtml = await englishDashboard.text()
   assert.match(englishDashboardHtml, /Create Quotation/)
-  assert.match(englishDashboardHtml, /record=sale.order%3Anew/)
+  assert.match(englishDashboardHtml, /href="\/admin\/sales\/quotations\/new\?lang=en&amp;returnTo=/)
   const english = await e2e.client.get('/admin/sales/orders/so-1?lang=en', {
     headers: { accept: 'text/html' },
   })
   assert.equal(english.status, 200)
   const englishDetailHtml = await english.text()
-  assert.match(englishDetailHtml, /data-ui="record-page" data-scope="sale-order-form-page"/)
-  assert.match(englishDetailHtml, /Sales order · Khách hàng Minh Anh/)
+  assert.match(englishDetailHtml, /data-island="sale\.order-page"/)
+  assert.match(englishDetailHtml, /Quotations and sales orders/)
+  // Close returns to the list in the reader's language.
+  assert.match(englishDetailHtml, /&quot;back&quot;:&quot;\/admin\/sales\/orders\?lang=en&quot;/)
   const englishOrders = await e2e.client.get('/admin/sales/orders?lang=en', {
     headers: { accept: 'text/html' },
   })
@@ -280,64 +308,21 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
   })
   const englishPoliciesHtml = await englishPolicies.text()
   assert.match(englishPoliciesHtml, /data-ui="list-page"/)
-  assert.match(englishPoliciesHtml, /Delivered quantities/)
-  assert.match(englishPoliciesHtml, /record=sale.invoicePolicy%3Anew/)
-  assert.doesNotMatch(englishPoliciesHtml, /id="invoicing-policy-form"/)
+  assert.match(englishPoliciesHtml, /Invoicing policies/)
   assert.doesNotMatch(englishPoliciesHtml, /data-island="mail\.chatter"/)
-  const englishPolicyForm = await e2e.client.get(
-    '/admin/sales/invoicing-policies/new?lang=en&returnTo=%2Fadmin%2Fsales%2Finvoicing-policies%3Flang%3Den',
-    { headers: { accept: 'text/html' } },
+  const ownPolicies = await e2e.client.post(
+    '/admin/sales/invoicing-policies/read?lang=en',
+    new URLSearchParams({ href: '/admin/sales/invoicing-policies?lang=en&setting=own' }),
+    { headers: { 'content-type': 'application/x-www-form-urlencoded' } },
   )
-  const englishPolicyFormHtml = await englishPolicyForm.text()
-  assert.match(englishPolicyFormHtml, /data-ui="modal-layer" data-route-modal="true"/)
-  assert.match(englishPolicyFormHtml, /id="invoicing-policy-form"/)
-  assert.match(englishPolicyFormHtml, /type="radio" name="invoicePolicy" autocomplete="off" value="delivery"/)
-  assert.match(englishPolicyFormHtml, /Delivered quantities/)
-  assert.match(
-    englishPolicyFormHtml,
-    /action="\/admin\/sales\/invoicing-policies\/new\?lang=en&amp;returnTo=%2Fadmin%2Fsales%2Finvoicing-policies%3Flang%3Den"/,
+  const own = ((await ownPolicies.json()) as { value: { rows: Row[] } }).value.rows
+  assert.deepEqual(
+    own.map((row) => [row.id, row.policy, row.setting]),
+    [['goods', 'delivery', 'own']],
   )
-  assert.match(englishPolicyFormHtml, /href="\/admin\/sales\/invoicing-policies\?lang=en"/)
-  assert.doesNotMatch(englishPolicyFormHtml, /data-island="mail\.chatter"/)
-  const rejectedPolicy = await e2e.client.post(
-    '/admin/sales/invoicing-policies/new?lang=en&returnTo=https%3A%2F%2Fevil.example%2Fsteal',
-    new URLSearchParams({ templateId: '', invoicePolicy: '' }),
-    {
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      redirect: 'manual',
-    },
-  )
-  assert.equal(rejectedPolicy.status, 303)
-  assert.equal(
-    rejectedPolicy.headers.get('location'),
-    '/admin/sales/invoicing-policies?lang=en&create=1&invalid=1',
-  )
-  const rejectedPolicyForm = await e2e.client.get(rejectedPolicy.headers.get('location') ?? '', {
-    headers: { accept: 'text/html' },
-  })
-  assert.match(
-    await rejectedPolicyForm.text(),
-    /The form is invalid\. Check the required fields and try again\./,
-  )
-  const crossSitePolicy = await e2e.client.post(
-    '/admin/sales/invoicing-policies/new?lang=en',
-    new URLSearchParams({ templateId: 'goods', invoicePolicy: 'order' }),
-    {
-      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example' },
-      redirect: 'manual',
-    },
-  )
-  assert.equal(crossSitePolicy.status, 403)
-  const updatePolicy = await e2e.client.post(
-    '/admin/sales/invoicing-policies?lang=en',
-    new URLSearchParams({ templateId: 'goods', invoicePolicy: 'order' }),
-    {
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      redirect: 'manual',
-    },
-  )
-  assert.equal(updatePolicy.status, 303)
-  assert.equal(updatePolicy.headers.get('location'), '/admin/sales/invoicing-policies?lang=en')
+  // The old form routes are gone: a product is set from its row.
+  assert.equal((await e2e.client.get('/admin/sales/invoicing-policies/new?lang=en')).status, 404)
+  await call('sale.setInvoicePolicy', { templateId: 'goods', invoicePolicy: 'order' })
   const templates = (await call<Row[]>('sale.listInvoicePolicies', {})).value
   assert.equal(templates.find((row) => row.id === 'goods')?.invoicePolicy, 'order')
 
@@ -347,67 +332,37 @@ test('sale-e2e: quotation to delivery and invoice crosses real HTTP', async (t) 
     warehouseId: 'wh',
     pricelistId: 'retail',
   })
-  const invalidPartial = await e2e.client.post(
-    '/admin/sales/quotations/so-ui?lang=vi',
-    new URLSearchParams({
-      action: 'add-line',
-      productId: '',
-      productUomQty: '1',
-      productUomId: 'unit',
-    }),
-    {
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'x-ket-partial': 'sale-order',
-      },
-    },
-  )
-  assert.equal(invalidPartial.status, 422)
-  assert.match(await invalidPartial.text(), /Dữ liệu chưa hợp lệ/)
-  const partial = await e2e.client.post(
-    '/admin/sales/quotations/so-ui?lang=vi',
-    new URLSearchParams({
-      action: 'add-line',
-      productId: 'chair',
-      productUomQty: '1',
-      productUomId: 'unit',
-      taxId: 'vat10',
-    }),
-    {
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'x-ket-partial': 'sale-order',
-      },
-    },
-  )
-  assert.equal(partial.status, 200)
-  assert.match(partial.headers.get('content-type') ?? '', /^text\/vnd\.ket\.fragments\+html/)
-  assert.equal(partial.headers.get('x-ket-location'), '/admin/sales/quotations/so-ui?lang=vi')
-  const partialHtml = await partial.text()
-  assert.match(partialHtml, /data-ket-slot="sale\.order-header"/)
-  assert.match(partialHtml, /data-ket-slot="sale\.order-body"/)
-  assert.match(partialHtml, /Ghế công thái học/)
-  assert.doesNotMatch(partialHtml, /data-island="mail\.chatter"/)
-  const confirmedPartial = await e2e.client.post(
-    '/admin/sales/quotations/so-ui?lang=vi',
-    new URLSearchParams({ action: 'confirm' }),
-    {
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'x-ket-partial': 'sale-order',
-      },
-    },
-  )
-  assert.equal(confirmedPartial.status, 200)
-  assert.equal(confirmedPartial.headers.get('x-ket-location'), '/admin/sales/orders/so-ui?lang=vi')
-  assert.match(await confirmedPartial.text(), /Đơn bán hàng/)
+  // Without the page's script, the order's form actions still answer, with redirects.
+  const form = (body: Record<string, string>) =>
+    e2e.client.post('/admin/sales/quotations/so-ui?lang=vi', new URLSearchParams(body), {
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+    })
+  const invalidLine = await form({
+    action: 'add-line',
+    productId: '',
+    productUomQty: '1',
+    productUomId: 'unit',
+  })
+  assert.equal(invalidLine.headers.get('location'), '/admin/sales/quotations/so-ui?lang=vi&invalid=1')
+  const added = await form({
+    action: 'add-line',
+    productId: 'chair',
+    productUomQty: '1',
+    productUomId: 'unit',
+    taxId: 'vat10',
+  })
+  assert.equal(added.headers.get('location'), '/admin/sales/quotations/so-ui?lang=vi')
+  assert.equal(((await call<Row>('sale.getOrder', { id: 'so-ui' })).value.lines as Row[]).length, 1)
+  const confirmed = await form({ action: 'confirm' })
+  assert.equal(confirmed.headers.get('location'), '/admin/sales/orders/so-ui?lang=vi')
 })
 
 test('sale-e2e: a quotation can lose a line and come back from cancelled', async (t) => {
   const { e2e, call } = await bootSale(t)
   const post = (path: string, body: Record<string, string>) =>
     e2e.client.post(path, new URLSearchParams(body), {
-      headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-ket-partial': 'sale-order' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
     })
   await call('sale.createOrder', { id: 'so-ux', partnerId: 'customer', warehouseId: 'wh' })
   for (const id of ['so-ux:a', 'so-ux:b'])
@@ -419,14 +374,13 @@ test('sale-e2e: a quotation can lose a line and come back from cancelled', async
       productUomId: 'unit',
     })
 
-  // The line table offers a way back out, not just a way in.
-  const detail = await e2e.client.get('/admin/sales/quotations/so-ux?lang=vi', {
-    headers: { accept: 'text/html' },
-  })
-  const detailHtml = await detail.text()
-  assert.match(detailHtml, /name="lineId" value="so-ux:a"/)
-  assert.match(detailHtml, /Thao tác/)
-  assert.doesNotMatch(detailHtml, VISIBLE_KEY)
+  // The line table offers a way back out, not just a way in: Edit line removes it.
+  const detail = await contextOf(e2e, 'so-ux')
+  assert.deepEqual(
+    detail.record.lines.map((line) => line.id),
+    ['so-ux:a', 'so-ux:b'],
+  )
+  assert.equal(detail.permissions.removeLine, true)
 
   const removed = await post('/admin/sales/quotations/so-ux?lang=vi', {
     action: 'remove-line',
@@ -449,20 +403,13 @@ test('sale-e2e: a quotation can lose a line and come back from cancelled', async
   assert.match(listedHtml, /Đã huỷ/)
   assert.doesNotMatch(listedHtml, VISIBLE_KEY)
 
-  const cancelledDetail = await e2e.client.get('/admin/sales/quotations/so-ux?lang=vi', {
-    headers: { accept: 'text/html' },
-  })
-  assert.match(await cancelledDetail.text(), /Đưa về nháp/)
+  const cancelledDetail = await contextOf(e2e, 'so-ux')
+  assert.equal(cancelledDetail.record.state, 'cancel')
+  assert.equal(cancelledDetail.permissions.resetOrder, true)
 
   const reset = await post('/admin/sales/quotations/so-ux?lang=vi', { action: 'reset' })
   assert.equal(reset.status, 200)
-  const back = await e2e.client.get('/admin/sales/quotations/so-ux?lang=en', {
-    headers: { accept: 'text/html' },
-  })
-  const backHtml = await back.text()
-  assert.match(backHtml, /Add line/)
-  assert.doesNotMatch(backHtml, /Set to draft/)
-  assert.doesNotMatch(backHtml, VISIBLE_KEY)
+  assert.equal((await contextOf(e2e, 'so-ux', 'en')).record.state, 'draft')
 })
 
 test('sale-e2e: the print group is translated and reaches the lists', async (t) => {
@@ -478,13 +425,9 @@ test('sale-e2e: the print group is translated and reaches the lists', async (t) 
 
   // The print group's label was the English literal 'Print', written in by hand
   // in four backends while the document names beside it were translated.
-  const detail = await e2e.client.get('/admin/sales/quotations/so-print?lang=vi', {
-    headers: { accept: 'text/html' },
-  })
-  const detailHtml = await detail.text()
-  assert.match(detailHtml, /href="\/reports\/sale\.quotation\/so-print/)
-  assert.doesNotMatch(detailHtml, />Print</)
-  assert.doesNotMatch(detailHtml, /backend\.print/)
+  const detail = await contextOf(e2e, 'so-print')
+  // Named the way the document heads itself, translated, never a message key.
+  assert.deepEqual(detail.reports, [{ label: 'BÁO GIÁ', href: '/reports/sale.quotation/so-print?lang=vi' }])
 
   // Printing meant opening each record first.
   const quotations = await e2e.client.get('/admin/sales/quotations?lang=vi', {
@@ -495,13 +438,12 @@ test('sale-e2e: the print group is translated and reaches the lists', async (t) 
   // A confirmed order offers the pro-forma beside its own document, and the
   // orders list prints too.
   await call('sale.confirmOrder', { id: 'so-print' })
-  const order = await e2e.client.get('/admin/sales/orders/so-print?lang=en', {
-    headers: { accept: 'text/html' },
-  })
-  const orderHtml = await order.text()
-  assert.match(orderHtml, /href="\/reports\/sale\.salesOrder\/so-print/)
-  assert.match(orderHtml, /href="\/reports\/sale\.proforma\/so-print/)
-  assert.match(orderHtml, /PRO-FORMA INVOICE/)
+  const order = await contextOf(e2e, 'so-print', 'en')
+  assert.deepEqual(
+    order.reports.map((report) => report.href),
+    ['/reports/sale.salesOrder/so-print?lang=en', '/reports/sale.proforma/so-print?lang=en'],
+  )
+  assert.ok(order.reports.every((report) => !String(report.label).includes('.')))
   const orders = await e2e.client.get('/admin/sales/orders?lang=en', { headers: { accept: 'text/html' } })
   assert.match(await orders.text(), /href="\/reports\/sale\.salesOrder\/so-print/)
 

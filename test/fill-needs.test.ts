@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Ctx } from '@ketvietlab/ketjs'
 import { functionsNamedBy, mayFor } from '../packages/ketsuite/src/ui/fill-needs.ts'
-import { recordIslandsFor } from '../packages/ketsuite/src/modules/product/product-record-tabs.ts'
+import {
+  recordIslandsFor,
+  recordTabsFor,
+} from '../packages/ketsuite/src/modules/product/product-record-tabs.ts'
 
 const chatter = '{% if may.product_mail_backend.timeline %}{% island "mail.chatter" %}{% endif %}'
 const activities =
@@ -62,5 +65,36 @@ test('fill needs: a client page leaves out an island whose named function the vi
   assert.deepEqual(
     recordIslandsFor(ctx, joint, (fn) => fn !== 'activity.listTypes').map((entry) => entry.island),
     ['mail.chatter', 'x.panel'],
+  )
+})
+
+test('fill needs: a product tab whose fill names a function the viewer may not call is left out', () => {
+  const ctx = {
+    manifest: {
+      messages: { vi: { 'count_tab.productTemplateTab': 'Quy đổi đếm cái' } },
+      fills: [
+        {
+          joint: 'product_backend:template.recordTabs',
+          by: 'count_tab',
+          template: '{% if may.manufacturing.countContext %}{% island "count.panel" %}{% endif %}',
+        },
+        {
+          joint: 'product_backend:template.recordTabs',
+          by: 'open_tab',
+          template: '{% island "open.panel" %}',
+        },
+      ],
+    },
+  } as unknown as Pick<Ctx, 'manifest'>
+  assert.deepEqual(
+    recordTabsFor(ctx, 'vi').map((tab) => [tab.island, tab.label]),
+    [
+      ['count.panel', 'Quy đổi đếm cái'],
+      ['open.panel', 'open_tab'],
+    ],
+  )
+  assert.deepEqual(
+    recordTabsFor(ctx, 'vi', (fn) => fn !== 'manufacturing.countContext').map((tab) => tab.island),
+    ['open.panel'],
   )
 })

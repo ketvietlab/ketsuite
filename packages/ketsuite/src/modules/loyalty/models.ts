@@ -9,6 +9,7 @@ export const models: Record<string, ModelDef> = {
       programType: 'text',
       active: 'bool',
       designVersion: 'int?',
+      salePolicyVersion: 'int?',
       configVersion: 'int?',
       usageCount: 'int?',
       phase: 'text?',
@@ -31,6 +32,10 @@ export const models: Record<string, ModelDef> = {
       updatedAt: 'datetime',
     },
     indexes: { active_sequence: { fields: ['companyId', 'active', 'sequence'] } },
+  },
+  ProgramNamespace: {
+    scope: 'company',
+    fields: { id: 'id', revision: 'int' },
   },
   ProgramPricelist: {
     scope: 'company',
@@ -60,6 +65,7 @@ export const models: Record<string, ModelDef> = {
       pointAmount: 'decimal',
       pointMode: 'text',
       pointSplit: 'bool',
+      salePointStep: 'decimal?',
       minimumQuantity: 'decimal',
       minimumAmount: 'decimal',
       taxMode: 'text',
@@ -77,6 +83,16 @@ export const models: Record<string, ModelDef> = {
     fields: { id: 'id', ruleId: 'ref:loyalty.Rule', productId: 'ref:product.Product' },
     indexes: { rule_product: { fields: ['companyId', 'ruleId', 'productId'], unique: true } },
   },
+  RuleCategory: {
+    scope: 'company',
+    fields: { id: 'id', ruleId: 'ref:loyalty.Rule', categoryId: 'ref:product.Category' },
+    indexes: { rule_category: { fields: ['companyId', 'ruleId', 'categoryId'], unique: true } },
+  },
+  RuleTag: {
+    scope: 'company',
+    fields: { id: 'id', ruleId: 'ref:loyalty.Rule', tagId: 'ref:product.Tag' },
+    indexes: { rule_tag: { fields: ['companyId', 'ruleId', 'tagId'], unique: true } },
+  },
   Reward: {
     scope: 'company',
     fields: {
@@ -93,7 +109,7 @@ export const models: Record<string, ModelDef> = {
       discountCategoryId: 'ref:product.Category?',
       discountTagId: 'ref:loyalty.Tag?',
       rewardProductId: 'ref:product.Product?',
-      lineProductId: 'ref:product.Product',
+      lineProductId: 'ref:product.Product?',
       rewardProductQuantity: 'decimal',
       requiredPoints: 'decimal',
       clearWallet: 'bool',
@@ -117,6 +133,7 @@ export const models: Record<string, ModelDef> = {
       balance: 'decimal',
       reserved: 'decimal',
       expiresAt: 'datetime?',
+      saleExpiresOn: 'text?',
       active: 'bool',
       version: 'int',
       createdAt: 'datetime',

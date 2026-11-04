@@ -5,6 +5,7 @@ import { attachApplyOnInput } from './apply-on-input.js'
 import { attachHelpDrawers } from './help.js'
 import { attachMermaidDiagrams } from './mermaid.js'
 import { attachNavigationTools } from './navigation-tools.js'
+import { attachNumberEntry } from './number-entry.js'
 export { configureMermaidLoader } from './mermaid.js'
 export { createMermaidTheme, readMermaidPalette } from './mermaid-theme.js'
 
@@ -202,6 +203,7 @@ export const attachDesignSystemInteractions = (root = document) => {
   const cleanupDatePickers = attachDatePickers(root)
   const cleanupGlobalSearch = attachGlobalSearch(root)
   const cleanupApplyOnInput = attachApplyOnInput(document)
+  const cleanupNumberEntry = attachNumberEntry(document)
   const activeBeforeOpen = document.activeElement instanceof HTMLElement ? document.activeElement : null
   const modal = root.querySelector('[data-ui="modal-layer"][data-route-modal="true"] [role="dialog"]')
   const appShell = root.querySelector('[data-ui="app-shell"], [data-ui="shell"]')
@@ -838,6 +840,7 @@ export const attachDesignSystemInteractions = (root = document) => {
     restoreAppRails()
     cleanupGlobalSearch()
     cleanupApplyOnInput()
+    cleanupNumberEntry()
     cleanupPrimitives()
     cleanupDatePickers()
     document.removeEventListener('keydown', onKeydown)

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { renderToString } from '@ketvietlab/ketjs-view'
@@ -72,4 +73,28 @@ test('a matching value, or a placeholder, keeps the choice it had', () => {
     [''],
     'a value no longer offered shows the placeholder',
   )
+})
+
+test('inline native selects keep their chevron in the control cell after narrow layout rules', () => {
+  const html = renderToString(
+    <Field
+      id="inline-unit"
+      name="unit"
+      label="Unit"
+      type="select"
+      layout="inline"
+      options={units}
+      help="Inherited unit"
+    />,
+  )
+  assert.match(html, /data-layout="inline"/)
+  const css = readFileSync(
+    new URL('../../packages/design-system/src/primitives/field/styles.css', import.meta.url),
+    'utf8',
+  )
+  const rule = css.slice(css.lastIndexOf('/* Inline native selects'))
+  assert.match(rule, /\[data-layout="inline"\]\[data-kind="select"\]:has\(> select\)::after/)
+  assert.match(rule, /grid-column: 2;/)
+  assert.match(rule, /grid-row: 1;/)
+  assert.match(rule, /align-self: center;/)
 })

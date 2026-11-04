@@ -59,11 +59,42 @@ export const SearchBar = (props: SearchBarProps): TemplateResult => (
   </form>
 )
 
-export const FilterBar = (props: { label?: string; filters: readonly JSXChild[] }): TemplateResult => (
-  <section data-ui="filter-bar" aria-label={props.label ?? 'Filters'}>
-    {props.filters}
-  </section>
-)
+export type FilterBarProps = {
+  label?: string
+  filters: readonly JSXChild[]
+  /** Makes the bar a GET form to this address with no submit step: the runtime applies a choice at once,
+   * as `RecordForm({ applyOnInput: true })` does. Without it the bar only groups controls. */
+  action?: string
+  /** Query values the form carries along, such as the company scope. */
+  hidden?: Record<string, string>
+  /** The accessible name of the hidden default button, which still applies on Enter. */
+  submitLabel?: string
+}
+
+export const FilterBar = (props: FilterBarProps): TemplateResult =>
+  props.action === undefined ? (
+    <section data-ui="filter-bar" aria-label={props.label ?? 'Filters'}>
+      {props.filters}
+    </section>
+  ) : (
+    <form
+      data-ui="filter-bar"
+      aria-label={props.label ?? 'Filters'}
+      action={props.action}
+      method="get"
+      data-apply="input"
+    >
+      {each(
+        Object.entries(props.hidden ?? {}),
+        ([name]) => name,
+        ([name, value]) => (
+          <input type="hidden" name={name} value={value} />
+        ),
+      )}
+      {props.filters}
+      <button type="submit" hidden aria-label={props.submitLabel ?? 'Apply'} />
+    </form>
+  )
 
 export type AppliedFilter = { id: string; label: string; value: string; removeHref: string }
 export const AppliedFilters = (props: {

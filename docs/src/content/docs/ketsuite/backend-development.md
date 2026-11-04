@@ -135,8 +135,9 @@ that package. Existing screens may import compatibility components from `@ketvie
 backend framing and helpers from `@ketvietlab/ketsuite/backend`, while they migrate. The compatibility
 entry also exposes the public package as `designSystem`; it must not redefine raw visual values.
 
-Screens should compose components rather than authoring raw tags or new `data-ui` hooks.
-`tools/ui-audit.ts` protects that contract so markup and styles do not drift across dozens of screens.
+Screens should compose components rather than authoring raw tags or new `data-ui` hooks. The Biome
+rules in `lint/rules` protect that contract in the editor, the pre-commit hook and `npm run lint`, so
+markup and styles do not drift across dozens of screens; see `lint/README.md`.
 Run `npm run design:system` to inspect every public specimen at `http://127.0.0.1:4100/`.
 
 The public kit includes list chrome, tables, cards, record workspaces, forms, actions, tabs,

@@ -30,13 +30,32 @@ export type TrialBalanceScreenOptions = {
   currency: unknown
   /** The ledger behind a balance. A total nobody can open is a number to trust blindly. */
   ledgerHref?: (row: TrialBalanceRow) => string
+  /** How many accounts with no balance and no movement the table leaves out. */
+  hidden?: number
+  /** Shows the hidden accounts, or hides them again when every account is shown. */
+  toggleHref?: string
+  showingAll?: boolean
   errors?: readonly string[]
 }
 
+const AMOUNTS = ['openingDebit', 'openingCredit', 'debit', 'credit', 'closingDebit', 'closingCredit'] as const
+type Amount = (typeof AMOUNTS)[number]
+
 /** A specialized financial report: filter, control totals, and drillable account rows. */
 export const trialBalanceScreen = (_: Translator, options: TrialBalanceScreenOptions): TemplateResult => {
-  const total = (field: 'debit' | 'credit' | 'balance') =>
-    options.rows.reduce((sum, row) => addDecimals(sum, row[field] ?? '0'), '0')
+  const total = (field: Amount) => options.rows.reduce((sum, row) => addDecimals(sum, row[field] ?? '0'), '0')
+  // A ledger where every entry balances keeps each pair of columns equal.
+  const balanced =
+    total('openingDebit') === total('openingCredit') &&
+    total('debit') === total('credit') &&
+    total('closingDebit') === total('closingCredit')
+  const amountColumn = (key: Amount) => ({
+    key,
+    label: _(`account_backend.trial.column.${key}`),
+    cell: (row: TrialBalanceRow) => formatMoney(_, row[key] ?? '0', options.currency),
+    align: 'end' as const,
+    kind: 'currency' as const,
+  })
   const table = options.rows.length ? (
     dataTable(_, {
       rows: options.rows,
@@ -60,27 +79,7 @@ export const trialBalanceScreen = (_: Translator, options: TrialBalanceScreenOpt
           label: _('account_backend.field.name'),
           cell: (row) => String((_.locale.startsWith('en') && row.nameEn) || row.name),
         },
-        {
-          key: 'debit',
-          label: _('account_backend.field.debit'),
-          cell: (row) => formatMoney(_, row.debit, options.currency),
-          align: 'end',
-          kind: 'currency',
-        },
-        {
-          key: 'credit',
-          label: _('account_backend.field.credit'),
-          cell: (row) => formatMoney(_, row.credit, options.currency),
-          align: 'end',
-          kind: 'currency',
-        },
-        {
-          key: 'balance',
-          label: _('account_backend.field.balance'),
-          cell: (row) => formatMoney(_, row.balance, options.currency),
-          align: 'end',
-          kind: 'currency',
-        },
+        ...AMOUNTS.map(amountColumn),
       ],
     })
   ) : (
@@ -101,23 +100,24 @@ export const trialBalanceScreen = (_: Translator, options: TrialBalanceScreenOpt
         <RecordWorkspace
           kicker={_('account_backend.trial.kicker')}
           title={_('account_backend.trialBalance.title')}
-          subtitle={_('account_backend.trial.subtitle')}
           imageFallback={icon('notebook-tabs')}
           summary={[
             {
               id: 'debit',
-              label: _('account_backend.trial.summary.debit'),
+              label: _('account_backend.trial.column.debit'),
               value: formatMoney(_, total('debit'), options.currency),
             },
             {
               id: 'credit',
-              label: _('account_backend.trial.summary.credit'),
+              label: _('account_backend.trial.column.credit'),
               value: formatMoney(_, total('credit'), options.currency),
             },
             {
-              id: 'balance',
-              label: _('account_backend.trial.summary.balance'),
-              value: formatMoney(_, total('balance'), options.currency),
+              id: 'balanced',
+              label: _('account_backend.trial.summary.check'),
+              value: balanced
+                ? _('account_backend.trial.summary.balanced')
+                : _('account_backend.trial.summary.unbalanced'),
             },
           ]}
           body={stack(
@@ -149,7 +149,24 @@ export const trialBalanceScreen = (_: Translator, options: TrialBalanceScreenOpt
               />,
               <Section
                 title={_('account_backend.trial.result.title')}
-                description={_('account_backend.trial.result.hint')}
+                description={
+                  options.showingAll
+                    ? _('account_backend.trial.result.all')
+                    : options.hidden
+                      ? _('account_backend.trial.result.hidden', { count: String(options.hidden) })
+                      : _('account_backend.trial.result.hint')
+                }
+                actions={
+                  options.toggleHref && (options.showingAll || options.hidden)
+                    ? linkButton({
+                        label: options.showingAll
+                          ? _('account_backend.trial.hideEmpty')
+                          : _('account_backend.trial.showAll', { count: String(options.hidden) }),
+                        href: options.toggleHref,
+                        variant: 'secondary',
+                      })
+                    : undefined
+                }
                 body={table}
               />,
             ],

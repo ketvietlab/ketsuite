@@ -109,6 +109,14 @@ compare-and-set inside one transaction; a concurrent change fails the call rathe
 producing a residual that does not match its reconciles. The documents on both sides
 then have their payment state recomputed.
 
+`account.receivableAging` ages receivable or payable lines as they stood on `cutoff`,
+not as they stand today. A line's open amount is its balance less the partial
+reconciles whose entry on the other side is posted on or before the cutoff; a match
+that was undone stops counting from the accounting date of the reversing entry (the
+undo time only when there is none). A payment posted after the cutoff therefore leaves
+the item open on the report. Rows carry `moveName` beside `moveId` so a screen names
+the document rather than its id.
+
 ## Reports
 
 `trialBalance`, `generalLedger` and `partnerStatement` read posted entries only. The
@@ -122,11 +130,50 @@ export or a report asks for everything and gets it, rather than a silently trunc
 list that reads as complete. `countMoves` answers the totals a dashboard needs without
 fetching the rows.
 
+`trialBalance` with `balances: true` is the trial balance a period is closed with: per
+account the opening balance (everything posted before `dateFrom`), the period's debits
+and credits, and the closing balance, the two balances split into a debit or a credit
+column by their sign. Accounts with no balance and no movement are left out unless
+`includeEmpty: true`; a window without movement still lists the accounts that hold a
+balance. Without `balances` it keeps returning the period's movement only. The
+Trial balance screen reads it this way, checks that all three pairs of columns are
+equal and toggles the hidden accounts with `?all=1`.
+
+`generalLedger` rows and `accountingBook` rows carry `contraAccountCodes`: the codes
+of the accounts on the other side of the same entry (a debit line names the accounts
+credited), as a printed ledger shows them. The book screens show it as a column and
+lead with the entry number, because a row opens its entry from the first column.
+
+`accountingBook` keeps every book but the general journal for one account. The cash and
+bank books are kept for the accounts a cash or bank journal pays through
+(`defaultAccountId`), whichever journal an entry was written in; the partner book for
+accounts with `reconcile`; the general ledger and account detail for any account. The
+answer lists the book's `accounts`, and without `accountId` the book opens the first of
+them, by code, that moved in the period (`accountId` in the answer says which). An
+account the book is not kept for is refused with `accountBookAccountOutside`; the
+screen re-reads the book on its own account instead, because switching books carries
+the previous account along in the form. `partnerId` is optional on the partner book:
+without it the rows carry `partnerName` and `partners` lists who has entries on the
+account. A book kept for one account carries `runningBalance` on each row from the
+opening balance; the general journal has no `opening`, `closing` or running balance.
+
+`account.Setup.bookForms` names the form each book follows under the company's
+standard, by book (`{ cash: 'S07-DN' }`); `accountingBook` returns it as `form`, and the
+book, general ledger and partner statement screens print it under their title. The core
+leaves it empty; a localisation fills it when it installs its chart. `?format=csv` on
+the books screen downloads the book on screen in the form's column order — accounting
+date, document number and date, description, contra account (the account itself in the
+general journal), debit, credit, balance — opening on the opening balance and ending on
+the period totals and the closing balance. Computed amounts stay plain decimals; typed
+text is defused against spreadsheet formulas.
+
 ## Analytics
 
 `performance`, `position`, `revenueTimeline`, `openItemSummary` and `cashFlow` are the
 aggregates behind the accounting overview. They read the same posted moves the reports
 do, so a headline figure and a trial balance run over the same window agree.
+Each headline card on the overview links to that trial balance, so the reader can see
+the accounts that add up to the figure.
 
 Each amount is reported in the direction its account is kept: revenue and liabilities as
 credit minus debit, expenses and assets as debit minus credit. Every figure is therefore
@@ -170,8 +217,9 @@ when they are absent the ledger resolves them from configuration, narrowest firs
 | | Revenue / expense | Receivable / payable |
 | --- | --- | --- |
 | 1 | what the caller passed | what the caller passed |
-| 2 | the product's category | the partner |
-| 3 | the company defaults | the company defaults |
+| 2 | the product template override | the partner |
+| 3 | the nearest category override, walking ancestors | the company defaults |
+| 4 | the company defaults for the product type | — |
 
 Nothing at any level is a refusal, not a guess: `lineAccountUndecided` and
 `counterpartAccountUndecided` say which one was undecided and where it could have come
@@ -187,10 +235,20 @@ still say otherwise; they are simply no longer required.
 - **Company** — `account.Defaults`, one row per company, on **Accounting → Default
   accounts**. A localization or operator may seed unset values; a company that chose
   differently keeps its choice.
-- **Product category** — `account.CategoryAccount`, on the same screen. The catalogue
-  is shared across every company in the tenant while a chart of accounts belongs to
-  one, so the mapping cannot live on the category itself: two companies file the same
-  category against different accounts.
+- **Product** — `account.ProductAccount`, unique per company and template. Revenue and purchase
+  overrides resolve independently. `account.getProductAccounts` returns the direct override, resolved
+  account and source, plus allowed options; `account.setProductAccounts` sets or clears it. Editing
+  requires the `account.product-accounting` bundle. Product record saves include these fields in the
+  same transaction as the product draft, so invalid accounts roll back all edits. Standalone edits
+  advance the product revision and inventory revision when Stock is composed.
+- **Product category** — `account.CategoryAccount`, one mapping per company and category. Missing
+  fields continue through the nearest ancestor, independently for revenue and purchases. Cycles
+  refuse resolution. A shared catalogue can use different mappings in each company.
+- **Purchase defaults** — `goodsPurchaseAccountId` and `servicePurchaseAccountId` optionally distinguish
+  goods from services. Missing typed defaults fall back to the legacy `expenseAccountId`; an older
+  `saveDefaults` payload preserves typed fields it omits. Migration adds nullable fields and an empty
+  product mapping table without rewriting old category mappings or ledger entries. Localization
+  owns its starter policy; actual account classification depends on the purchase's business purpose.
 - **Partner** — `partner.CompanyTerms`, on the partner's own accounting screen, added
   by the optional `account_partner` module. The resolver reads those fields rather
   than depending on the module: without it they are simply absent and resolution falls
@@ -256,6 +314,48 @@ counting them without showing them left the screen unable to say what "30 days" 
 The `save*` functions take the same shape for a correction as for a creation: an id
 that already exists updates, an id that does not creates.
 
+A localization may pin defaults. `account.Defaults.pinned` maps a default field to the
+account it must hold; `saveDefaults` keeps a pinned field when it is left out and refuses
+another account with `account.error.defaultPinned`, and the defaults screen shows it
+read only under **Fixed by the accounting standard** instead of offering it. The
+Vietnamese standard pins `receivableAccountId` and `payableAccountId` to 1311 and 3311,
+only where the company still holds those accounts (or none): a company that had already
+chosen another keeps that choice, editable.
+
+An invoice without a payment term may carry its own `invoiceDateDue` (`createInvoice`),
+refused with `account.error.dueBeforeInvoice` when it falls before the invoice date. A
+term always sets the due date; a typed date beside a term is ignored. With neither, the
+invoice is due on the day it is issued.
+
+Accounts, journals, taxes and payment terms open as a small centred dialog
+(`presentation: 'dialog'`, `size: 'small'`) over their own list (`?create=1` or
+`?edit=<id>`): each is a short single-column form. None of them opens as a panel docked
+to the side of the page.
+The old `/admin/accounting/<collection>/new` links redirect to that modal.
+
+Two rules keep a chart from posting money or tax to the wrong place:
+
+- a cash or bank journal must default to an `asset_cash` account, because receipts and
+  payments post their money line there (`journalLiquidityAccount`); other journals may
+  leave the default empty;
+- `account.Defaults.saleTaxAccountRoots` and `purchaseTaxAccountRoots` are lists of
+  account-code prefixes. When a company sets them, a sale or purchase tax must post to
+  an account whose code starts with one of them (`taxAccountRoot`, with the allowed
+  branches in `params.roots`); a tax of use `none` is not pinned. `saveDefaults` sets
+  them, and leaves them as held when the input omits them. A localisation fills them
+  when it installs its chart — the Vietnamese TT99 chart pins sales to 3331, 3332, 3333
+  and 3338 and purchases to 1331, 1332 and 3333 (import duty).
+
+A correction is audited. `saveAccount`, `saveJournal`, `saveTax`, `savePaymentTerm` and
+`saveDefaults` append an `account.AuditEvent` with `action: 'updated'`, the
+`subjectType` (`account`, `journal`, `tax`, `paymentTerm`, `defaults`) and
+`details: { before, after }` holding only the plain fields whose value changed, at most
+30 (`changedFields` in `account/audit.ts`). Row bookkeeping (`id`, `companyId`,
+`revision`, timestamps) and list or object fields are not recorded. A creation, or a
+save that changes nothing, appends no event, so installing a chart of accounts leaves
+the log empty. The audit log's event dialog shows the changes as a **Changed fields**
+table, accounts named by code and name, and links to the record's edit modal.
+
 ## What the screens promise
 
 A few things the backend guarantees, because getting them wrong makes a screen unusable
@@ -284,7 +384,14 @@ rather than merely untidy:
   needs lines or posting;
 - a figure on a report opens the rows that produced it — a trial balance line into
   the general ledger for that account, carrying the same date window; a payment and
-  a partner-ledger line into the journal entry behind them.
+  a partner-ledger line into the journal entry behind them;
+- a close check says where to act. The `draft_moves` step's evidence counts the drafts
+  dated in the period by the list they are finished from (`lists.customerInvoices`,
+  `lists.vendorBills`, `lists.entries`), and the checklist gives each list still holding
+  any its own line, opening that list with the `draft` preset and an `accountingDate`
+  between the period's dates. The `trial_balance` step opens the trial balance of the
+  same dates. A reader who may not open a list or the report sees the count without
+  the link.
 
 ## Testing
 
@@ -304,3 +411,12 @@ receivable reconciliation and retry-stable coordination with the Loyalty wallet 
 
 The accounting overview has no browser suite while the accounting module is being rebuilt;
 one is written against the new module.
+
+
+### Transactional function composition
+
+The Account registry is assembled from named function groups; the compatibility entry point exports
+`reconcileFunction` and `registerPaymentFunction` unchanged. `setProductAccountsFunction({ inTransaction: true })`
+is for a trusted aggregate already owning a transaction, permission checks, and product revision claim.
+External callers use `account.setProductAccounts`, which owns those checks and the transaction itself.
+The Product record aggregate checks accounting write permission only when an override actually changes.

@@ -20,7 +20,7 @@ export function mutationFeedback(name, input, value, data) {
         }[kind] ??
         'tasks')
   const id = value.taskId ?? value.id ?? input.entityId ?? input.id
-  const entity = data[collection]?.find((x) => x.id === id)
+  const entity = data?.[collection]?.find((x) => x.id === id)
   const labels = {
     goals: 'goals',
     views: 'saved.views',

@@ -132,7 +132,8 @@ test('manufacturing BOM HTTP: modal split preserves locale, values, CSRF and leg
     redirect: 'manual',
   })
   assert.equal(created.status, 303)
-  assert.equal(created.headers.get('location'), '/admin/manufacturing/boms?lang=en')
+  // A new BOM is a draft version, opened on its own page.
+  assert.match(String(created.headers.get('location')), /^\/admin\/manufacturing\/boms\/[0-9a-f-]+\?lang=en$/)
 
   const legacyForm = bomForm('BOM/LEGACY')
   legacyForm.set('id', 'legacy-bom')
@@ -141,12 +142,139 @@ test('manufacturing BOM HTTP: modal split preserves locale, values, CSRF and leg
     redirect: 'manual',
   })
   assert.equal(legacy.status, 303)
-  assert.equal(legacy.headers.get('location'), '/admin/manufacturing/boms?lang=vi')
+  assert.equal(legacy.headers.get('location'), '/admin/manufacturing/boms/legacy-bom?lang=vi')
 
   const boms = await e2e.client.call<Row[]>('manufacturing.listBoms', {})
   assert.deepEqual(boms.value.map((row) => row.code).sort(), ['BOM/0001', 'BOM/0002', 'BOM/LEGACY'])
+  assert.deepEqual(
+    boms.value.filter((row) => row.code !== 'BOM/0001').map((row) => row.state),
+    ['draft', 'draft'],
+  )
   assert.equal(
     (await e2e.client.call<Row>('manufacturing.getBom', { id: 'legacy-bom' })).value.code,
     'BOM/LEGACY',
   )
+})
+
+test('manufacturing BOM HTTP: a draft saves both grids in one post, names a refused row, and needs another approver', async (t) => {
+  const e2e = await bootBoms(t)
+  const scope = { company: 'acme', branches: null }
+  await e2e.fixture.call('manufacturing.saveWorkCenter', { id: 'cook', code: 'NAU', name: 'Nấu' }, { scope })
+  await e2e.fixture.call(
+    'user.createUser',
+    {
+      id: 'owner',
+      login: 'owner',
+      password: 'correct horse',
+      name: 'Owner',
+      defaultCompanyId: 'acme',
+      superuser: true,
+    },
+    { scope },
+  )
+  await e2e.fixture.call(
+    'user.grantCompany',
+    { id: 'owner:acme', userId: 'owner', companyId: 'acme' },
+    { scope },
+  )
+  const created = await e2e.client.post('/admin/manufacturing/boms/new?lang=vi', bomForm('BTP-02'), {
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    redirect: 'manual',
+  })
+  const page = String(created.headers.get('location'))
+  const id = decodeURIComponent(page.split('/').pop()!.split('?')[0]!)
+
+  const html = await (await e2e.client.get(page)).text()
+  assert.match(html, /manufacturing\.bom-page/)
+  assert.match(html, /manufacturing-bom-help/)
+  const contextOf = async (client = e2e.client) => {
+    const response = await client.get(`/admin/manufacturing/boms/${encodeURIComponent(id)}/context?lang=vi`)
+    assert.equal(response.status, 200)
+    return ((await response.json()) as { data: Row }).data
+  }
+  const draft = await contextOf()
+  assert.deepEqual([(draft.record as Row).productQty, (draft.record as Row).productUomId], ['12.5', 'kg'])
+  assert.deepEqual(draft.can, {
+    save: true,
+    submit: true,
+    approve: false,
+    reject: false,
+    newVersion: false,
+    archive: true,
+    products: true,
+  })
+
+  const save = (lines: Row[], operations: Row[]) =>
+    e2e.client.post(
+      '/admin/manufacturing/boms/record-command?lang=vi',
+      new URLSearchParams({
+        id,
+        code: 'BTP-02',
+        productId: 'basket',
+        productQty: '10',
+        productUomId: 'kg',
+        consumption: 'strict',
+        lines: JSON.stringify(lines),
+        operations: JSON.stringify(operations),
+      }),
+      { headers: { 'content-type': 'application/x-www-form-urlencoded' } },
+    )
+  const refused = (await (
+    await save(
+      [
+        { id: `${id}:a`, productId: 'apple', productQty: '1', productUomId: 'kg' },
+        { id: `${id}:b`, productId: '', productQty: '1', productUomId: 'kg' },
+        { id: `${id}:c`, productId: 'apple', productQty: '1', productUomId: 'kg', lossPercent: '60' },
+      ],
+      [{ id: `${id}:o`, name: 'Nấu', workCenterId: '', durationExpected: 30 }],
+    )
+  ).json()) as { value: { ok: boolean; errors: Array<{ field: string; message: string }> } }
+  assert.equal(refused.value.ok, false)
+  assert.deepEqual(
+    refused.value.errors.map((error) => error.message),
+    [
+      'Công đoạn, dòng 1: Chưa chọn khu sản xuất cho công đoạn.',
+      'Nguyên vật liệu, dòng 2: Chưa chọn nguyên liệu.',
+      'Nguyên vật liệu, dòng 3: Hao hụt phải từ 0 đến 50%.',
+    ],
+  )
+  // A refused row leaves every row as it was.
+  assert.equal(((await contextOf()).record as Row).consumption, null)
+  const lines = Array.from({ length: 6 }, (_, index) => ({
+    id: `${id}:line-${index}`,
+    productId: 'apple',
+    productQty: String(index + 1),
+    productUomId: 'kg',
+    lossPercent: '2',
+    operationId: `${id}:op-${index % 3}`,
+  }))
+  const operations = ['Cân', 'Nấu', 'Đóng gói'].map((name, index) => ({
+    id: `${id}:op-${index}`,
+    name,
+    workCenterId: 'cook',
+    durationExpected: 10 * (index + 1),
+    timeMode: index === 1 ? 'fixed' : 'quantity',
+  }))
+  const saved = (await (await save(lines, operations)).json()) as { value: Row }
+  assert.equal(saved.value.ok, true, JSON.stringify(saved.value))
+  const record = (await contextOf()).record as Row
+  assert.deepEqual(
+    [(record.lines as Row[]).length, (record.operations as Row[]).length, record.consumption],
+    [6, 3, 'strict'],
+  )
+
+  assert.equal(
+    (await e2e.client.call<Row>('manufacturing.submitBom', { id, reason: 'Công thức mới' })).value.ok,
+    true,
+  )
+  assert.equal(((await contextOf()).can as Row).save, false)
+  const self = await e2e.client.call<Row>('manufacturing.approveBom', { id })
+  assert.equal((self.value.errors as Row[])[0]?.code, 'manufacturing.error.sameReviewer')
+  const owner = e2e.client.anonymous()
+  await owner.login({ login: 'owner', password: 'correct horse' })
+  assert.equal(((await contextOf(owner)).can as Row).approve, true)
+  assert.equal((await owner.call<Row>('manufacturing.approveBom', { id })).value.ok, true)
+  const active = await contextOf()
+  assert.equal((active.record as Row).state, 'active')
+  assert.equal((active.can as Row).newVersion, true)
 })

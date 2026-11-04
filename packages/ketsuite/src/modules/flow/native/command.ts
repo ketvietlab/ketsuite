@@ -13,7 +13,7 @@ export type NativeMutation = {
   requirements?: { capability: string; input: Row }[]
   /** Ownership read before the transaction must still match under its lock. */
   subjects?: {
-    model: 'flow.Task' | 'flow.Document' | 'flow.FlowAttachmentBinding'
+    model: 'flow.Task' | 'flow.Document' | 'flow.EpicRecord' | 'flow.FlowAttachmentBinding'
     id: unknown
     projectId: unknown
   }[]

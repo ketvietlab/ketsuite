@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Translator } from '@ketvietlab/ketjs'
 import { renderToString } from '@ketvietlab/ketjs-view'
+import stockBackend from '../packages/ketsuite/src/modules/stock_backend/index.ts'
 import { inventoryScreen } from '../packages/ketsuite/src/modules/stock_backend/screens/inventory.tsx'
 
 const messages: Record<string, string> = {
@@ -93,4 +94,15 @@ test('inventory read-only collection omits count creation and renders its empty 
   const html = renderToString(inventoryScreen(translate, { ...options, rows: [], createHref: null }, {}))
   assert.doesNotMatch(html, /record=stock.count%3Anew|inventory-adjustment-form/)
   assert.match(html, /Chưa có tồn kho/)
+})
+
+test('#1427 the stock page is titled as its menu item, in its heading and its tab, in Vietnamese and English', () => {
+  const messages = stockBackend.messages as Record<'vi' | 'en', Record<string, string>>
+  assert.deepEqual(
+    [messages.vi['inventory.workspace.title'], messages.en['inventory.workspace.title']],
+    ['Tồn kho', 'Stock'],
+  )
+  for (const lang of ['vi', 'en'] as const)
+    for (const key of ['inventory.workspace.title', 'inventory'])
+      assert.equal(messages[lang][key], messages[lang]['menu.inventory'], `${lang} ${key}`)
 })

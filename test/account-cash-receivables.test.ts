@@ -10,6 +10,7 @@ import {
   sqliteAdapter,
 } from '@ketvietlab/ketjs'
 import type { Adapter, Row } from '@ketvietlab/ketjs'
+import { referenceMatches } from '../packages/ketsuite/src/modules/account/cash-receivables.ts'
 import { account, address, company, partner, product, uom } from '@ketvietlab/ketsuite'
 
 const wave2Probe = defineModule({
@@ -264,6 +265,24 @@ test('account cash: explainable match, partial reconciliation, aging, and undo k
     )
     assert.equal((restored.rows as Row[]).length, 1)
     assert.equal((restored.rows as Row[])[0]?.amount, '100.00')
+    assert.equal((restored.rows as Row[])[0]?.moveName !== undefined, true)
+    // Aging reads the books as they stood on the cutoff: the bank payment of 18/08 had not
+    // arrived on 17/08, and the undo booked on 01/09 had not happened on 31/08.
+    const before = await call(
+      'account.receivableAging',
+      { cutoff: '2026-08-17', partnerId: 'customer' },
+      adapter,
+    )
+    assert.deepEqual(
+      (before.rows as Row[]).map((row) => [row.moveId, row.amount]),
+      [['INV-1', '100.00']],
+    )
+    const settled = await call(
+      'account.receivableAging',
+      { cutoff: '2026-08-31', partnerId: 'customer' },
+      adapter,
+    )
+    assert.equal((settled.rows as Row[]).length, 0)
     const partial = (
       (await call(
         'account_wave2_probe.rows',
@@ -349,6 +368,155 @@ test('account cash: cash differences stay draft and follow-up retries stay singu
       ).length,
       1,
     )
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('account cash: a period does not close over unmatched bank lines or unbooked cash differences (D12)', async () => {
+  const adapter = await boot()
+  const steps = async () => {
+    const refreshed = await call('account.refreshClosePeriod', { id: 'close:2026-08' }, adapter)
+    assert.equal(refreshed.ok, true, JSON.stringify(refreshed))
+    const period = refreshed.period as Row
+    return Object.fromEntries(
+      (period.steps as Row[])
+        .filter((row) => ['bank_reconciled', 'cash_counted'].includes(String(row.code)))
+        .map((row) => [row.code, [row.required, row.state, (row.evidence as Row).count]]),
+    )
+  }
+  try {
+    await call(
+      'account.createClosePeriod',
+      { id: 'close:2026-08', periodKey: '2026-08', dateFrom: '2026-08-01', dateTo: '2026-08-31' },
+      adapter,
+    )
+    await call(
+      'account.importBankStatement',
+      {
+        id: 'statement-close',
+        bankAccountId: 'primary-bank',
+        profileId: 'generic-csv',
+        rows: [
+          // Last month's line still open counts; a pending one and one after the period do not.
+          { date: '2026-07-30', amount: '40.00', reference: 'OLD', externalId: 'close-1', state: 'posted' },
+          { date: '2026-08-18', amount: '30.00', reference: 'NEW', externalId: 'close-2', state: 'posted' },
+          { date: '2026-08-31', amount: '20.00', reference: 'PEND', externalId: 'close-3', state: 'pending' },
+          { date: '2026-09-01', amount: '10.00', reference: 'NEXT', externalId: 'close-4', state: 'posted' },
+        ],
+        openingBalance: '0.00',
+        closingBalance: '100.00',
+        sourceChecksum: 'source-close',
+      },
+      adapter,
+    )
+    await call(
+      'account.createCashCount',
+      {
+        id: 'count-close',
+        bankAccountId: 'primary-bank',
+        countedAt: '2026-08-20T10:00:00.000Z',
+        countedBy: 'cashier',
+        actualBalance: '5.00',
+      },
+      adapter,
+    )
+    assert.deepEqual(await steps(), {
+      bank_reconciled: [true, 'blocked', 2],
+      cash_counted: [true, 'blocked', 1],
+    })
+
+    await call(
+      'account.approveCashCountDifference',
+      {
+        id: 'count-close',
+        moveId: 'count-close:move',
+        differenceAccountId: 'difference',
+        approvedBy: 'controller',
+      },
+      adapter,
+    )
+    await adapter.run(
+      `UPDATE account_bank_transaction SET "reconcileState" = 'reconciled' WHERE "reference" IN ('OLD', 'NEW')`,
+      [],
+    )
+    assert.deepEqual(await steps(), {
+      bank_reconciled: [true, 'complete', 0],
+      cash_counted: [true, 'complete', 0],
+    })
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('account cash: a transfer memo that wraps the document number still counts as its reference', async () => {
+  // Either side may hold the other; banks drop the slashes and spaces.
+  assert.equal(referenceMatches('INV/2026/0001', ['INV/2026/0001']), true)
+  assert.equal(referenceMatches('0001', ['INV/2026/0001']), true)
+  assert.equal(referenceMatches('CT DEN:123 TT INV/2026/0001 thanh toan', ['INV/2026/0001']), true)
+  assert.equal(referenceMatches('MBVCB.123.INV20260001.CT tu', ['INV/2026/0001', null]), true)
+  assert.equal(referenceMatches('TT INV/2026/0002', ['INV/2026/0001']), false)
+  // A short number turning up inside a long memo is chance, not a reference.
+  assert.equal(referenceMatches('CT DEN 12345 thanh toan', ['123']), false)
+  assert.equal(referenceMatches('', ['INV/2026/0001']), false)
+  assert.equal(referenceMatches('   ', ['INV/2026/0001']), false)
+
+  const adapter = await boot()
+  try {
+    await call(
+      'account.createInvoice',
+      {
+        id: 'INV-MEMO',
+        journalId: 'sales',
+        moveType: 'out_invoice',
+        partnerId: 'customer',
+        invoiceDate: '2026-08-15T00:00:00.000Z',
+        description: 'Subscription',
+        quantity: '1',
+        priceUnit: '100.00',
+        lineAccountId: 'revenue',
+        counterpartAccountId: 'receivable',
+      },
+      adapter,
+    )
+    await call('account.postMove', { id: 'INV-MEMO' }, adapter)
+    const name = String(((await call('account.getMove', { id: 'INV-MEMO' }, adapter)) as Row).name)
+    await call(
+      'account.importBankStatement',
+      {
+        id: 'statement-memo',
+        bankAccountId: 'primary-bank',
+        profileId: 'generic-csv',
+        rows: [
+          {
+            date: '2026-08-16',
+            amount: '100.00',
+            reference: `CT DEN:998 TT ${name} thanh toan`,
+            externalId: 'memo-1',
+            state: 'posted',
+          },
+        ],
+        openingBalance: '0.00',
+        closingBalance: '100.00',
+        sourceChecksum: 'source-memo',
+      },
+      adapter,
+    )
+    const [transaction] = (await call(
+      'account_wave2_probe.rows',
+      { model: 'account.BankTransaction' },
+      adapter,
+    )) as unknown as Row[]
+    const suggested = await call(
+      'account.suggestBankMatches',
+      { transactionId: transaction?.id, ruleId: 'exact' },
+      adapter,
+    )
+    assert.deepEqual((suggested.candidates as Row[])[0]?.reasons, [
+      'exact_amount',
+      'reference',
+      'date_window',
+    ])
   } finally {
     await adapter.close()
   }

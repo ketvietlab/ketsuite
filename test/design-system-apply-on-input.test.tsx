@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
 import { renderToString } from '@ketvietlab/ketjs-view'
-import { RecordForm } from '@ketvietlab/design-system'
+import { FilterBar, RecordForm, Select, Switch } from '@ketvietlab/design-system'
 import { attachApplyOnInput } from '../packages/design-system/src/runtime/apply-on-input.js'
 
 const filterForm = (applyOnInput: boolean) =>
@@ -29,20 +29,102 @@ test('RecordForm applyOnInput marks the form for the runtime and drops the visib
   assert.match(classic, /data-ui="form-actions"/)
 })
 
+test('a POST RecordForm with one switch saves the choice as it changes', () => {
+  const markup = renderToString(
+    <RecordForm
+      id="platform-messenger-switch"
+      action="/settings/chat"
+      method="post"
+      applyOnInput
+      submitLabel="Save Messenger"
+      hidden={{ action: 'chat-switch', platform: 'messenger' }}
+      fields={[{ id: 'messenger-on', name: 'enabled', label: 'Messenger on', type: 'switch', checked: true }]}
+    />,
+  )
+  assert.match(markup, /<form[^>]*action="\/settings\/chat"[^>]*method="post"[^>]*data-apply="input"/)
+  assert.match(markup, /<input type="hidden" name="platform" value="messenger"/)
+  // The switch is the same control `Switch` draws, posting `1` while on.
+  assert.match(markup, /data-kind="switch"/)
+  assert.match(
+    markup,
+    /<input[^>]*id="messenger-on"[^>]*type="checkbox"[^>]*role="switch"[^>]*name="enabled"[^>]*value="1"[^>]* checked[ =>]/,
+  )
+  assert.match(markup, /aria-checked="true"/)
+  assert.match(markup, /data-ui="switch-track"/)
+  assert.doesNotMatch(markup, /data-ui="form-actions"/)
+  assert.match(markup, /<button[^>]*type="submit"[^>]*hidden[^>]*aria-label="Save Messenger"/)
+  const off = renderToString(
+    <RecordForm
+      action="/settings/chat"
+      applyOnInput
+      submitLabel="Save"
+      fields={[{ id: 'shopee-on', name: 'enabled', label: 'Shopee on', type: 'switch', checked: false }]}
+    />,
+  )
+  assert.match(off, /aria-checked="false"/)
+  assert.doesNotMatch(off, /role="switch"[^>]* checked[ =>]/)
+})
+
+test('a Switch that is off stays off though it posts 1 when on', () => {
+  for (const props of [{}, { value: '1' }]) {
+    const off = renderToString(
+      <Switch id="rating-on" name="enabled" label="Stars" checked={false} {...props} />,
+    )
+    assert.match(off, /aria-checked="false"/)
+    assert.doesNotMatch(off, /role="switch"[^>]* checked[ =>]/)
+    assert.match(off, /value="1"/)
+  }
+  const on = renderToString(<Switch id="rating-on" name="enabled" label="Stars" checked />)
+  assert.match(on, /aria-checked="true"/)
+})
+
+test('FilterBar with an action is a GET form the runtime applies, carrying its hidden values', () => {
+  const markup = renderToString(
+    <FilterBar
+      label="Report choices"
+      action="/reports/sales"
+      hidden={{ company: 'north' }}
+      submitLabel="Apply"
+      filters={[
+        <Select
+          id="report-period"
+          name="period"
+          label="Period"
+          labelHidden
+          value="2026"
+          options={[{ value: '2026', label: 'Year 2026' }]}
+        />,
+      ]}
+    />,
+  )
+  assert.match(markup, /<form[^>]*data-ui="filter-bar"/)
+  assert.match(markup, /<form[^>]*action="\/reports\/sales"[^>]*method="get"[^>]*data-apply="input"/)
+  assert.match(markup, /aria-label="Report choices"/)
+  assert.match(markup, /<input type="hidden" name="company" value="north"/)
+  assert.match(markup, /<select[^>]*name="period"/)
+  assert.match(markup, /<button[^>]*type="submit"[^>]*hidden[^>]*aria-label="Apply"/)
+  // Without an action the bar only groups controls.
+  const plain = renderToString(<FilterBar filters={[<a href="?state=open">Open</a>]} />)
+  assert.match(plain, /<section data-ui="filter-bar"/)
+  assert.doesNotMatch(plain, /data-apply=/)
+})
+
 // The runtime needs a few DOM objects, not a renderer; the consumer screen carries the browser evidence.
 type Listener = (event: { type: string; target: unknown }) => void
-const FORM = 'form[data-ui="record-form"][data-apply="input"]'
+const FORMS = (kind: string) => `form[data-ui="${kind}"][data-apply="input"]`
 
 class FakeForm {
   submits = 0
   readonly id: string
   readonly auto: boolean
-  constructor(id: string, auto: boolean) {
+  readonly kind: string
+  constructor(id: string, auto: boolean, kind = 'record-form') {
     this.id = id
     this.auto = auto
+    this.kind = kind
   }
   matches(selector: string): boolean {
-    return this.auto && selector === FORM
+    return this.auto && selector.split(',').some((part) => part.trim() === FORMS(this.kind))
   }
   requestSubmit(): void {
     this.submits += 1
@@ -165,6 +247,17 @@ test('apply on input: other forms keep their submit step, a second attach submit
   assert.equal(classic.submits, 0)
   doc.dispatch('change', facet)
   assert.equal(form.submits, 1)
+})
+
+test('apply on input: a choice in a FilterBar form applies at once', () => {
+  const bar = new FakeForm('report-choices', true, 'filter-bar')
+  attach()
+  doc.dispatch('change', new FakeField('report-period', 'SELECT', 'select-one', bar))
+  assert.equal(bar.submits, 1)
+  // A bar that is not marked for the runtime keeps its own submit step.
+  const other = new FakeForm('other', true, 'search-bar')
+  doc.dispatch('change', new FakeField('other-state', 'SELECT', 'select-one', other))
+  assert.equal(other.submits, 0)
 })
 
 test('apply on input: a reloading submit gives the typed field focus back with the caret at the end', () => {

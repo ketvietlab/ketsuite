@@ -1,10 +1,10 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the standalone Flow workspace writes its own document head and island bootstrap — needs a kit document for apps outside the admin shell
 import {
   defineModule,
   document,
   isNavigationRequest,
   json,
   navigablePage,
-  streamed,
   text,
   withHeaders,
 } from '@ketvietlab/ketjs'
@@ -16,11 +16,12 @@ import { normalizeFlowLocale, setFlowLocale } from '@ketvietlab/flow-client/i18n
 import { flowShellData } from '@ketvietlab/flow-client/shell-model.mjs'
 import { routeScope, workspaceRecordTarget } from '@ketvietlab/flow-client/navigation.mjs'
 import { receiveAttachment } from '../storage/routes.ts'
-import { inlineTypes } from '../storage/policy.ts'
+import { flowFileResponse } from '../flow/native/file-response.ts'
 import { documentRoutes } from '../livedoc/index.ts'
 import { flowDocumentOwner } from '../flow/native/live-document.ts'
 import { flowUploadKey } from '../flow/native/blob-keys.ts'
-import { selectFlowContext } from './context.ts'
+import { FlowRefusal } from '../flow/native/policy.ts'
+import { flowSession, selectFlowContext } from './context.ts'
 import { compressFlowDocument } from './compression.ts'
 
 export type FlowWorkspaceDeliveryOptions = {
@@ -207,40 +208,64 @@ export function createFlowWorkspaceModule(options: FlowWorkspaceDeliveryOptions 
     if (!(await ctx.requestIdentityOf(url, req))) return text('Forbidden', { status: 403 })
     if (req.headers.origin && new URL(String(req.headers.origin)).host !== String(req.headers.host))
       return text('Forbidden', { status: 403 })
+    const limitBytes = Math.min(ctx.config.uploadMax, 25 * 1024 * 1024)
+    if (Number(req.headers['content-length'] ?? 0) > limitBytes) {
+      req.resume()
+      return json({ ok: false, code: 'upload_size', limitBytes }, { status: 413 })
+    }
     const taskId = url.searchParams.get('task') ?? ''
     const projectId = url.searchParams.get('project') ?? ''
     if (!!taskId === !!projectId) return text('Choose one upload owner', { status: 400 })
+    // The trusted internal prepare/complete bridge must retain the public
+    // mutation's platform permission as well as its Core sharing checks.
+    const canUpload =
+      (taskId && (await ctx.allows('flow.attachment.save', url, req))) ||
+      (await ctx.allows('flow.issue.save', url, req))
+    if (!canUpload) {
+      req.resume()
+      return text('Forbidden', { status: 403 })
+    }
     if (taskId) {
       const detail = (await ctx.call('flow.issue.detail', { id: taskId }, url, req)) as Row
       if (!detail?.task || detail.ok === false) return text('Forbidden', { status: 403 })
     }
-    const attachment = await receiveAttachment(ctx, url, req, {
-      public: false,
-      maxBytes: 25 * 1024 * 1024,
-      staged: {
-        key: flowUploadKey,
-        validate: async (body, _type, size) => {
-          let actual = 0
-          for await (const chunk of body) {
-            actual += chunk.byteLength
-            if (actual > 25 * 1024 * 1024) throw new Error('Upload exceeds limit')
-          }
-          if (actual !== size) throw new Error('Upload size changed')
+    try {
+      const attachment = await receiveAttachment(ctx, url, req, {
+        public: false,
+        maxBytes: 25 * 1024 * 1024,
+        staged: {
+          key: flowUploadKey,
+          validate: async (body, _type, size) => {
+            let actual = 0
+            for await (const chunk of body) {
+              actual += chunk.byteLength
+              if (actual > 25 * 1024 * 1024) throw new Error('Upload exceeds limit')
+            }
+            if (actual !== size) throw new Error('Upload size changed')
+          },
+          prepare: (metadata) =>
+            ctx.callUnchecked(
+              'flow.attachment.prepare',
+              { ...metadata, ...(taskId ? { taskId } : { projectId }), idempotencyKey: metadata.id },
+              url,
+              req,
+            ),
+          complete: async (id) =>
+            (await ctx.callUnchecked('flow.attachment.complete', { id }, url, req)) as unknown as Awaited<
+              ReturnType<typeof receiveAttachment>
+            >,
         },
-        prepare: (metadata) =>
-          ctx.callUnchecked(
-            'flow.attachment.prepare',
-            { ...metadata, ...(taskId ? { taskId } : { projectId }), idempotencyKey: metadata.id },
-            url,
-            req,
-          ),
-        complete: async (id) =>
-          (await ctx.callUnchecked('flow.attachment.complete', { id }, url, req)) as unknown as Awaited<
-            ReturnType<typeof receiveAttachment>
-          >,
-      },
-    })
-    return json({ ok: true, uploadId: attachment.id }, { status: 201 })
+      })
+      return json({ ok: true, uploadId: attachment.id }, { status: 201 })
+    } catch (error) {
+      if (!(error instanceof FlowRefusal)) throw error
+      return json(
+        { ok: false, code: error.code, fields: error.fields },
+        {
+          status: error.code === 'upload_quota' ? 413 : error.code === 'forbidden' ? 403 : 409,
+        },
+      )
+    }
   }
   const file: RouteEntry = (ctx: ServeContext) => async (url, req, params) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return text('GET', { status: 405 })
@@ -250,24 +275,7 @@ export function createFlowWorkspaceModule(options: FlowWorkspaceDeliveryOptions 
     } catch {
       return text('Forbidden', { status: 403 })
     }
-    const stored = await (await ctx.storageOf(url, req)).get(String(attachment.storeKey))
-    if (!stored) return text('Not found', { status: 404 })
-    const inline = inlineTypes.has(String(attachment.mimetype))
-    const headers = {
-      'cache-control': 'private, no-store',
-      'x-content-type-options': 'nosniff',
-      'content-length': String(stored.meta.size),
-      'content-disposition':
-        (inline ? 'inline' : 'attachment') +
-        "; filename*=UTF-8''" +
-        encodeURIComponent(String(attachment.name)),
-    }
-    return withHeaders(
-      req.method === 'HEAD'
-        ? text('')
-        : streamed(stored.body, { type: inline ? String(attachment.mimetype) : 'application/octet-stream' }),
-      headers,
-    )
+    return flowFileResponse(ctx, url, req, attachment)
   }
   return defineModule({
     name: 'flow_workspace',
@@ -291,12 +299,15 @@ export function createFlowWorkspaceModule(options: FlowWorkspaceDeliveryOptions 
     routes: {
       '/flow/': screen,
       '/flow/context': selectFlowContext,
+      '/flow/session': flowSession,
       '/flow/{screen}': screen,
       '/flow/_messages/{catalogue}': messages,
       '/flow/uploads': uploads,
       '/flow/files/{id}': file,
       ...documentRoutes(flowDocumentOwner(true), '/flow/live/pages'),
       ...documentRoutes(flowDocumentOwner(false), '/flow/live/issues'),
+      ...documentRoutes(flowDocumentOwner('project'), '/flow/live/projects'),
+      ...documentRoutes(flowDocumentOwner('epic'), '/flow/live/epics'),
     },
     islands: {
       'flow.workspace': defineIsland<FlowWorkspaceProps>()({

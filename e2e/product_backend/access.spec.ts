@@ -1,10 +1,11 @@
 import type { Locator } from '@playwright/test'
-import { DESKTOP, expect, listReady, productRow, recordReady, signIn, test } from './support.js'
+import { DESKTOP, expect, listReady, productRow, recordReady, settled, signIn, test } from './support.js'
 
 test.use({ viewport: DESKTOP, locale: 'vi-VN' })
 
 test('who may only view the catalogue reads it, with nothing to change', async ({ page }) => {
-  await signIn(page, 'viewer')
+  // Serum sits on a later page of the whole catalogue; the search brings it up.
+  await signIn(page, 'viewer', '/admin/product/templates?q=serum')
   await listReady(page)
   await expect(page.getByRole('heading', { level: 1, name: 'Sản phẩm' })).toBeVisible()
   await expect(productRow(page, 'Serum B5 phục hồi 30ml')).toBeVisible()
@@ -25,7 +26,7 @@ test('who may only view sees no way to create an attribute or a unit', async ({ 
 test('who may read the catalogue but not stock still gets the list, from the catalogue', async ({ page }) => {
   await signIn(page, 'reader')
   await listReady(page)
-  await expect(productRow(page, 'Serum B5 phục hồi 30ml')).toBeVisible()
+  await expect(productRow(page, 'Bông tẩy trang 120 miếng')).toBeVisible()
   await expect(page.locator('[data-product-list="true"] tbody tr')).toHaveCount(30)
 })
 
@@ -33,6 +34,8 @@ test('who may only view opens a product without the commands that change it', as
   await signIn(page, 'viewer', '/admin/product/templates/serum')
   await recordReady(page, 'Serum B5 phục hồi 30ml')
   await expect(page.getByRole('button', { name: 'Về danh sách' })).toBeVisible()
+  // What is absent is checked on the live page, not on the markup before it hydrates.
+  await settled(page)
   for (const name of ['Lưu thay đổi', 'Nhân bản', 'Lưu trữ', 'Thêm ảnh', 'Cấu hình thuộc tính'])
     await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
   // The conversation and activities are for who may follow the product; a viewer gets neither panel.
@@ -51,7 +54,8 @@ const pictures = (region: Locator) =>
     )
 
 test('who may see product images sees them, on the list and on the product', async ({ page }) => {
-  await signIn(page, 'viewer')
+  // Serum sits on a later page of the whole catalogue; the search brings it up.
+  await signIn(page, 'viewer', '/admin/product/templates?q=serum')
   await listReady(page)
   await expect
     .poll(() => pictures(productRow(page, 'Serum B5 phục hồi 30ml')))
@@ -64,12 +68,14 @@ test('who may see product images sees them, on the list and on the product', asy
 })
 
 test('who may not see product images is shown none, not a broken picture for each', async ({ page }) => {
-  await signIn(page, 'reader')
+  // Serum sits on a later page of the whole catalogue; the search brings it up.
+  await signIn(page, 'reader', '/admin/product/templates?q=serum')
   await listReady(page)
   await expect(productRow(page, 'Serum B5 phục hồi 30ml')).toBeVisible()
   await expect(page.locator('[data-product-list="true"] img')).toHaveCount(0)
   await page.goto('/admin/product/templates/serum')
   await recordReady(page, 'Serum B5 phục hồi 30ml')
+  await settled(page)
   await expect(page.getByRole('heading', { level: 2, name: 'Hình ảnh', exact: true })).toHaveCount(0)
   await expect(page.locator('main img')).toHaveCount(0)
 })
@@ -112,4 +118,18 @@ test('who has no part in the catalogue is told so, not shown an empty list', asy
   await page.goto('/admin/product/templates/serum')
   await expect(page.getByRole('alert')).toContainText('Bạn không có quyền mở màn hình này')
   await expect(page.getByRole('heading', { level: 1, name: 'Serum B5 phục hồi 30ml' })).toHaveCount(0)
+})
+
+test('who keeps tenant security starts on a screen it may open, with no catalogue menu it may not', async ({
+  page,
+  ui,
+}) => {
+  // M2: the combo menu once had no `needs`, so `/admin` sent this role to Combo, which answered 403.
+  await signIn(page, 'role-tenant-security-administrator', '/admin')
+  await expect(page).not.toHaveURL(/\/login|\/admin\/product\/combos/u)
+  await settled(page)
+  await expect(page.getByText('Bạn không có quyền mở màn hình này')).toHaveCount(0)
+  await expect(page.locator('body')).not.toHaveText(/^\s*Forbidden\s*$/u)
+  await expect(page.locator('a[href^="/admin/product/combos"]')).toHaveCount(0)
+  await ui.check('tenant security at /admin')
 })

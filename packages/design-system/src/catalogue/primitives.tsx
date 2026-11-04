@@ -405,6 +405,15 @@ export const PrimitiveHarness = (props: PrimitiveHarnessProps = {}): TemplateRes
                 currency="VND"
                 precision={0}
               />,
+              <MoneyField
+                id="primitive-money-localized"
+                name="amountLocalized"
+                label="Amount (typed in Vietnamese)"
+                value="1250000"
+                currency="VND"
+                precision={0}
+                locale="vi"
+              />,
               <TextArea
                 id="primitive-textarea"
                 name="notes"

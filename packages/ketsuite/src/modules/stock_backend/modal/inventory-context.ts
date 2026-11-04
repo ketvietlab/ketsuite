@@ -11,9 +11,7 @@ export const inventoryCountContext =
     const quants = (await ctx.call('stock.listQuants', {}, url, req)) as Row[]
     const record = params.id === 'new' ? {} : quants.find((row) => row.id === params.id)
     if (!record) return text('Not found', { status: 404 })
-    const save =
-      (await ctx.allows('stock.adjustInventory', url, req)) &&
-      (await ctx.allows('stock.previewInventoryCount', url, req))
+    const save = await ctx.allows('stock.requestInventoryCount', url, req)
     if (params.id === 'new' && !save) return text('Forbidden', { status: 403 })
     const [templates, locations, lots] = await Promise.all([
       optionalRead<Row[]>(ctx, 'stock.listStorableProducts', {}, url, req, []),
@@ -33,7 +31,10 @@ export const inventoryCountContext =
       messages: {
         ...Object.fromEntries(
           Object.entries(manifest.messages?.[lang] ?? {}).filter(
-            ([key]) => key.startsWith('stock_backend.') || key.startsWith('stock.'),
+            ([key]) =>
+              key.startsWith('stock_backend.') ||
+              key.startsWith('stock.') ||
+              key.startsWith('backend.relation.'),
           ),
         ),
         ...USER_RECORD_MODAL_LABELS[lang],

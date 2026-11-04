@@ -154,6 +154,8 @@ export const openingBalanceDetailScreen = (
     frame: Frame
     batch: Row
     lines: Row[]
+    /** The account's code and name, for an account id. */
+    accountLabel: (id: unknown) => string
     action: string
     currency: unknown
     entryHref?: string
@@ -173,11 +175,15 @@ export const openingBalanceDetailScreen = (
         imageFallback={icon('notebook-tabs')}
         summary={[
           { id: 'lines', label: _('account_backend.opening.lines'), value: options.lines.length },
-          { id: 'debit', label: _('account_backend.field.debit'), value: String(options.batch.controlDebit) },
+          {
+            id: 'debit',
+            label: _('account_backend.field.debit'),
+            value: formatMoney(_, options.batch.controlDebit, options.currency),
+          },
           {
             id: 'credit',
             label: _('account_backend.field.credit'),
-            value: String(options.batch.controlCredit),
+            value: formatMoney(_, options.batch.controlCredit, options.currency),
           },
         ]}
         body={stack(
@@ -208,7 +214,7 @@ export const openingBalanceDetailScreen = (
                         key: 'account',
                         label: _('account_backend.field.accountId'),
                         priority: 'primary',
-                        cell: (row) => code(String(row.accountId)),
+                        cell: (row) => options.accountLabel(row.accountId),
                       },
                       {
                         key: 'partner',

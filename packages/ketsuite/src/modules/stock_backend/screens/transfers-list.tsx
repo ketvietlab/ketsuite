@@ -13,21 +13,31 @@ import {
   shell,
 } from '../../../ui/index.ts'
 import type { Column, DataTable, Frame } from '../../../ui/index.ts'
+import { scheduledCell } from '../scheduled.ts'
+import { TransferHelp } from './transfer-help.tsx'
 
 export type TransferListRow = {
   id: string
   name: string
   operationType: string
+  /** The operation's kind: `incoming`, `outgoing` or `internal` (K21). */
+  kind?: string
   source: string
   destination: string
   scheduledDate: string
+  /** K18: the work order the list opens on: ready, waiting, draft by date, then closed newest first. */
+  queue?: number
   state: string
+  /** K60: a priority transfer takes goods first. */
+  priority?: boolean
   /** Localized detail URL supplied by the route. */
   href: string
 }
 
 export type TransfersListScreenOptions = {
   rows: TransferListRow[]
+  /** The queue's own heading when the list is filtered to one kind of transfer (K21). */
+  title?: string
   /** Localized `/admin/stock/transfers/new` URL supplied by the route. */
   createHref: string | null
   total?: number
@@ -54,6 +64,12 @@ export const transferListColumns = (_: Translator): Array<Column<TransferListRow
     width: 'wide',
   },
   {
+    key: 'priority',
+    label: _('stock_backend.transfer.priority'),
+    cell: (row) => (row.priority ? badge(_('stock_backend.transfer.priority'), 'warning') : ''),
+    kind: 'status',
+  },
+  {
     key: 'source',
     label: _('stock_backend.transfer.list.col.source'),
     cell: (row) => row.source,
@@ -68,7 +84,8 @@ export const transferListColumns = (_: Translator): Array<Column<TransferListRow
   {
     key: 'scheduledDate',
     label: _('stock_backend.transfer.list.col.scheduledDate'),
-    cell: (row) => row.scheduledDate || '—',
+    // The list holds every kind, so the day says what is planned on it (receipt, delivery, transfer).
+    cell: (row) => scheduledCell(_, row.kind, row.scheduledDate),
     kind: 'date',
   },
   {
@@ -108,27 +125,45 @@ export const transfersListScreen = (
 
   return shell(
     _,
-    _('stock_backend.transfers'),
-    <ListPage
-      variant="operational"
-      frame={collection.frame}
-      title={_('stock_backend.transfer.list.title')}
-      headerActions={
-        options.createHref ? (
-          <LinkButton label={_('stock_backend.action.create')} href={options.createHref} variant="primary" />
-        ) : undefined
-      }
-      actions={collectionActions(_, collection.frame, undefined, selection)}
-      controls={collectionControls(_, _('stock_backend.transfer.list.title'), collection.frame)}
-      footer={`${_('stock_backend.transfer.list.records.title')}: ${String(total)}`}
-      body={
-        options.rows.length || options.table?.groups?.length
-          ? collectionTable(_, collection.table)
-          : emptyState(_('stock_backend.transfer.list.empty'), _('stock_backend.transfer.list.emptyHint'), {
-              icon: icon('truck'),
-            })
-      }
-    />,
-    { ...collection.frame, chrome: null, topbar: false },
+    options.title ?? _('stock_backend.transfers'),
+    <>
+      <ListPage
+        variant="operational"
+        frame={collection.frame}
+        title={options.title ?? _('stock_backend.transfer.list.title')}
+        headerActions={
+          options.createHref ? (
+            <LinkButton
+              label={_('stock_backend.action.create')}
+              href={options.createHref}
+              variant="primary"
+            />
+          ) : undefined
+        }
+        actions={collectionActions(_, collection.frame, undefined, selection)}
+        controls={collectionControls(
+          _,
+          options.title ?? _('stock_backend.transfer.list.title'),
+          collection.frame,
+        )}
+        footer={`${_('stock_backend.transfer.list.records.title')}: ${String(total)}`}
+        body={
+          options.rows.length || options.table?.groups?.length
+            ? collectionTable(_, collection.table)
+            : emptyState(_('stock_backend.transfer.list.empty'), _('stock_backend.transfer.list.emptyHint'), {
+                icon: icon('truck'),
+              })
+        }
+      />
+      <TransferHelp lang={_.locale === 'en' ? 'en' : 'vi'} id="stock-transfers-help" />
+    </>,
+    {
+      ...collection.frame,
+      chrome: null,
+      topbar: false,
+      ...(collection.frame.applications
+        ? { applications: { ...collection.frame.applications, helpLabel: _('stock_backend.transfer.help') } }
+        : {}),
+    },
   )
 }

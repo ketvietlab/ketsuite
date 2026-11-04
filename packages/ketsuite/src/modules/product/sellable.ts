@@ -1,4 +1,5 @@
 import type { Ctx, Row } from '@ketvietlab/ketjs'
+import { variantSalePrice } from './variant-price.ts'
 
 export type SellableUom = {
   id: string
@@ -12,6 +13,8 @@ export type SellableProduct = {
   product: Row
   template: Row
   uoms: SellableUom[]
+  /** The variant's price before pricelists: its own price, or the template price plus extras. */
+  listPrice: string
 }
 
 export type SellableProductResult =
@@ -29,7 +32,7 @@ export async function sellableProduct(
   ctx: Ctx,
   productId: unknown,
   requestedUomId?: unknown,
-  options: { allowMeasurementTreeUom?: boolean } = {},
+  options: { allowMeasurementTreeUom?: boolean; allowCombo?: boolean } = {},
 ): Promise<SellableProductResult> {
   const product = (await ctx.db.select('product.Product', { id: productId }))[0]
   if (!product || !active(product.active))
@@ -38,6 +41,12 @@ export async function sellableProduct(
   const template = (await ctx.db.select('product.Template', { id: product.templateId }))[0]
   if (!template || !active(template.active) || template.saleOk !== true)
     return { ok: false, field: 'productId', message: 'product is not available for sale' }
+  if (template.type === 'combo' && !options.allowCombo)
+    return {
+      ok: false,
+      field: 'productId',
+      message: 'Combo sales require the sales order item-allocation workflow.',
+    }
   if (!template.uomId) return { ok: false, field: 'uomId', message: 'product has no default unit of measure' }
 
   const allowed = new Map<string, string | null>([[String(template.uomId), null]])
@@ -83,5 +92,8 @@ export async function sellableProduct(
     uoms.sort((a, b) => a.id.localeCompare(b.id))
   }
 
-  return { ok: true, value: { product, template, uoms } }
+  return {
+    ok: true,
+    value: { product, template, uoms, listPrice: await variantSalePrice(ctx, product, template) },
+  }
 }

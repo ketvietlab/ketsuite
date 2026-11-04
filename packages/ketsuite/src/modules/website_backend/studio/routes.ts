@@ -112,6 +112,11 @@ export const createStudioRoutes = (options: StudioOptions = {}): Record<string, 
   '/website/api/{operation}': api(options),
   '/website-client/theme/{file}': () => async (url) =>
     redirect(`/_ket/asset/website_backend/theme/${encodeURIComponent(url.pathname.split('/').at(-1)!)}`),
+  // The cosmetics preset keeps its pictures in a folder of their own, its card cover among them.
+  '/website-client/theme/cosmetics/{file}': () => async (url) =>
+    redirect(
+      `/_ket/asset/website_backend/theme/cosmetics/${encodeURIComponent(url.pathname.split('/').at(-1)!)}`,
+    ),
   ...imageRoutes,
   ...searchRoutes,
   ...formRoutes,

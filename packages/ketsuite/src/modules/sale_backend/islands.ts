@@ -1,14 +1,12 @@
-import { defineIsland, html, signal } from '@ketvietlab/ketjs-view'
-import { createSaleEditorStatusView } from './client/editor-view.mjs'
-
-const runtime = { html, signal }
-
-type SaleEditorProps = { identity: string; orderId: string; lang?: string }
+import { defineRecordPageIsland } from '../../ui/record-modal.tsx'
 
 export const islands = {
-  'sale.editor': defineIsland<SaleEditorProps>()({
-    props: { identity: 'text', orderId: 'id', lang: 'text?' },
-    key: ['identity'],
-    view: (props) => createSaleEditorStatusView(runtime, props),
+  // A quotation or order's own page (`/admin/sales/quotations/{id}`, `/admin/sales/orders/{id}`,
+  // `new` to create): the server renders the RecordPage loading and the client renders the
+  // order (modal/order-modal-view.tsx).
+  'sale.order-page': defineRecordPageIsland({
+    kind: 'sale.order',
+    client: 'sale-order-modal.mjs',
+    export: 'saleOrderPage',
   }),
 }

@@ -484,6 +484,10 @@
     margin-block-start: auto;
     padding-block-start: var(--kv-space-2);
   }
+  /* A host's fragment slot around Help lays out as if Help sat in the footer itself. */
+  :where([data-kv-design-system]) [data-ui="app-switcher-help-slot"] {
+    display: contents;
+  }
   :where([data-kv-design-system]) [data-ui="app-switcher"]:has(> [data-ui="app-switcher-brand"]) {
     padding-block-start: 0;
   }

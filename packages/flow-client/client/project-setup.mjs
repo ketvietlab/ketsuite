@@ -213,7 +213,7 @@ export function createProjectSetup(ctx) {
           label,
           value: d[id],
           placeholder,
-          disabled,
+          disabled: disabled || (editing && id === 'description' && !!project?.documentTransport),
           onInput: (e) => {
             d[id] = e.target.value
           },
@@ -463,6 +463,7 @@ export function createProjectSetup(ctx) {
           ctx.save(
             {
               ...d,
+              ...(editing && project?.documentTransport ? { description: undefined } : {}),
               collection: 'projects',
               ...(editing ? { entityId: project.id, projectId: project.id } : {}),
             },
@@ -488,6 +489,9 @@ export function createProjectSetup(ctx) {
             { disabled: disabled || editing },
           ),
           area('description', tr('flow.ui.description'), tr('flow.ui.context.and.scope.of.work')),
+          editing && project?.documentTransport
+            ? FlowHint({ children: tr('flow.validation.liveDocument') })
+            : null,
           select(
             'ownerId',
             tr('flow.ui.project.owner'),

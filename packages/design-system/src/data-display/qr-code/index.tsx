@@ -38,6 +38,28 @@ export const qrPath = (modules: readonly (readonly boolean[])[]): string => {
   return parts.join('')
 }
 
+const escapeXml = (text: string) =>
+  text.replace(/[&<>"]/gu, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!)
+
+/**
+ * The same symbol as a standalone SVG file, for an `<img>`, a download or a printed document that
+ * cannot carry the design system's stylesheet. The white plate and black modules are drawn into the
+ * file itself, since nothing styles it; `label` becomes its `<title>`.
+ */
+export const qrSvg = (
+  value: string,
+  options: { label: string; errorCorrection?: QrErrorCorrection },
+): string => {
+  const matrix = encodeQr(value, { errorCorrection: options.errorCorrection ?? 'M' })
+  const side = matrix.size + QR_QUIET_ZONE * 2
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${side} ${side}" role="img" shape-rendering="crispEdges">` +
+    `<title>${escapeXml(options.label)}</title>` +
+    `<rect width="${side}" height="${side}" fill="#fff"/>` +
+    `<path fill="#000" d="${qrPath(matrix.modules)}"/></svg>`
+  )
+}
+
 /**
  * A QR code a phone can scan: a payment request, a link, a pairing code.
  *

@@ -12,8 +12,14 @@ export const relations: Record<string, Record<string, RelationDef>> = {
     brand: { belongsTo: 'product.Brand', by: 'brandId' },
     uom: { belongsTo: 'uom.Unit', by: 'uomId' },
     uoms: { hasMany: 'product.TemplateUom', by: 'templateId' },
+    tags: { hasMany: 'product.TemplateTag', by: 'templateId' },
     attributeLines: { hasMany: 'product.TemplateAttributeLine', by: 'templateId' },
   },
+  'product.TemplateTag': {
+    template: { belongsTo: 'product.Template', by: 'templateId' },
+    tag: { belongsTo: 'product.Tag', by: 'tagId' },
+  },
+  'product.Tag': { assignments: { hasMany: 'product.TemplateTag', by: 'tagId' } },
   'product.Brand': {
     templates: { hasMany: 'product.Template', by: 'brandId' },
   },

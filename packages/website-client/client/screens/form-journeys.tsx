@@ -12,7 +12,7 @@ import {
   Status,
 } from '@ketvietlab/design-system'
 import { CommandButton } from '../ui.tsx'
-import { destinationStatus, formatDate, formatTime, newId } from './format.ts'
+import { destinationStatus, formatDate, formatTime, newId, noticeStatus } from './format.ts'
 import type { JSXChild } from '@ketvietlab/ketjs-view/jsx-runtime'
 import type { FormField, Screen, StudioContext } from '../types.ts'
 
@@ -27,6 +27,14 @@ type Destination = {
   error?: string | null
   href?: string | null
 }
+/** The email telling the form's owner, as the mail outbox reports it. */
+type MailNotice = {
+  state: string
+  attempts?: number
+  error?: string | null
+  queuedAt?: string | null
+  sentAt?: string | null
+}
 /** `website_studio.submissionDetail`: one submission, read under audit. */
 type SubmissionDetail = {
   form: { id: string; title: string }
@@ -39,6 +47,7 @@ type SubmissionDetail = {
     consentVersion?: string | null
     retentionUntil?: string | null
     destination?: Destination | null
+    delivery?: MailNotice | null
     audit?: { at: string; action: string }[]
   }
 }
@@ -129,6 +138,47 @@ const destinationBlock = (ctx: StudioContext, destination: Destination | null | 
     />
   ) : null
 
+/** Whether the owner was emailed about this submission; a form with no recipient shows nothing. */
+const noticeBlock = (ctx: StudioContext, notice: MailNotice | null | undefined) =>
+  notice ? (
+    <Stack
+      items={[
+        <DescriptionList
+          layout="strip"
+          items={[
+            {
+              id: 'notice-state',
+              label: ctx.tr('website.formJourney.notice'),
+              value: <Status {...noticeStatus(ctx.tr, notice.state)} />,
+            },
+            {
+              id: 'notice-attempts',
+              label: ctx.tr('website.formJourney.noticeAttempts'),
+              value: String(notice.attempts ?? 0),
+            },
+            {
+              id: 'notice-sent',
+              label: ctx.tr('website.formJourney.noticeSent'),
+              value: formatTime(notice.sentAt),
+            },
+          ]}
+        />,
+        // The outbox retries on its own; a failure is final and the queue is where to look instead.
+        notice.error && (notice.state === 'failed' || notice.state === 'retrying') ? (
+          <Notice
+            title={ctx.tr(
+              notice.state === 'failed'
+                ? 'website.formJourney.noticeFailed'
+                : 'website.formJourney.noticeRetrying',
+            )}
+            message={notice.error}
+            tone={notice.state === 'failed' ? 'danger' : 'warning'}
+          />
+        ) : null,
+      ]}
+    />
+  ) : null
+
 export function createSubmissionDetail(ctx: StudioContext) {
   let current: SubmissionDetail
   return {
@@ -195,6 +245,7 @@ export function createSubmissionDetail(ctx: StudioContext) {
                       },
                     ]}
                   />,
+                  noticeBlock(ctx, data.submission.delivery),
                   destinationBlock(ctx, data.submission.destination),
                   <DataTable
                     emptyTitle={ctx.tr('website.formJourney.auditEmpty')}

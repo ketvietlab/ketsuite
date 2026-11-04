@@ -27,7 +27,7 @@ export default defineModule({
   depends: ['partner_backend', 'mail_backend', 'mail_transport'],
   functions,
   fills: {
-    'partner_backend:record.collaboration': `{% island "mail.chatter" %}`,
+    'partner_backend:record.collaboration': `{% if may.partner_mail_backend.timeline %}{% island "mail.chatter" %}{% endif %}`,
   },
 })
 

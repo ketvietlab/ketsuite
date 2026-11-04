@@ -1,3 +1,5 @@
+import { permissions as sale_promotion_backend } from './permission-catalogue/sale_promotion_backend.ts'
+import { permissions as sale_template_backend } from './permission-catalogue/sale_template_backend.ts'
 import type { ModulePermissionsDef } from '@ketvietlab/ketjs'
 import { permissions as account } from './permission-catalogue/account.ts'
 import { permissions as account_backend } from './permission-catalogue/account_backend.ts'
@@ -59,6 +61,7 @@ import { permissions as purchase_backend } from './permission-catalogue/purchase
 import { permissions as purchase_staff_channel } from './permission-catalogue/purchase_staff_channel.ts'
 import { permissions as quality } from './permission-catalogue/quality.ts'
 import { permissions as quality_staff_channel } from './permission-catalogue/quality_staff_channel.ts'
+import { permissions as sale_template } from './permission-catalogue/sale_template.ts'
 import { permissions as sale } from './permission-catalogue/sale.ts'
 import { permissions as sale_backend } from './permission-catalogue/sale_backend.ts'
 import { permissions as sale_staff_channel } from './permission-catalogue/sale_staff_channel.ts'
@@ -151,6 +154,9 @@ const sources = {
   quality,
   quality_staff_channel,
   sale,
+  sale_template,
+  sale_template_backend,
+  sale_promotion_backend,
   sale_backend,
   sale_staff_channel,
   stock,

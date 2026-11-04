@@ -70,14 +70,14 @@ test('edits one variant in its dialog: code, barcode and cost', async ({ page })
 
   const dialog = page.getByRole('dialog', { name: 'Sửa biến thể · 15ml' })
   await dialog.getByRole('textbox', { name: 'Mã nội bộ' }).fill('GEL-15')
-  await dialog.getByRole('textbox', { name: 'Barcode' }).fill('8938501230029')
+  await dialog.getByRole('textbox', { name: 'Barcode' }).fill('8938501230027')
   await dialog.getByRole('textbox', { name: 'Giá vốn' }).fill('80000')
   await dialog.getByRole('button', { name: 'Lưu thay đổi' }).click()
   await expect(dialog).toBeHidden()
 
   const row = table.getByRole('row', { name: /^15ml/ })
   await expect(row).toContainText('GEL-15')
-  await expect(row).toContainText('8938501230029')
+  await expect(row).toContainText('8938501230027')
   await expect(row).toContainText('80.000 ₫')
 
   await page.reload()
@@ -91,7 +91,8 @@ test('a variant has its own page, reached from the product images', async ({ pag
   await signIn(page, 'admin', '/admin/product/templates/cream?tab=media')
   const row = page.getByRole('row', { name: /^30ml/ })
   await row.getByRole('link', { name: 'Chỉnh sửa hình ảnh biến thể' }).click()
-  await expect(page).toHaveURL(/\/admin\/product\/templates\/cream\/variants\/cream:capacity-30ml\b/)
+  // The original SKU became the first combination and kept its id.
+  await expect(page).toHaveURL(/\/admin\/product\/templates\/cream\/variants\/cream:default\b/)
   await recordReady(page, '30ml')
   await expect(page.getByText('Mẫu sản phẩm: Kem dưỡng ẩm ban đêm')).toBeVisible()
   await expect(page.getByRole('navigation', { name: 'Nội dung biến thể' })).toBeVisible()
