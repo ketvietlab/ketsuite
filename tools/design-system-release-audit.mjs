@@ -56,8 +56,8 @@ assert(
 
 const registeredNames = [...registry.matchAll(/entry\(\s*'([^']+)'/gu)].map((match) => match[1])
 assert(
-  registeredNames.length === 156,
-  `component registry has ${registeredNames.length} entries, expected 156`,
+  registeredNames.length === 161,
+  `component registry has ${registeredNames.length} entries, expected 161`,
 )
 for (const name of registeredNames) {
   const row = inventory.rows.find(
@@ -74,13 +74,17 @@ for (const name of registeredNames) {
 const infrastructureAllowlist = new Set([
   'BULK_CLEAR_COMMAND',
   'HOOKS',
+  'KET_GRID_NO_CHANGES',
   'OWNERS',
   'attachClientModalInteractions',
   'attachDesignSystemInteractions',
   'attachPeekInteractions',
   'clearFieldError',
   'configureMermaidLoader',
+  'formatLocaleNumber',
   'initials',
+  'numberControlValue',
+  'parseLocaleNumber',
   'readRowAnchor',
   'rememberRowAnchor',
   'restoreRowAnchor',
