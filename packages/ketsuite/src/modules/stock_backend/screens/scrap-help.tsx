@@ -23,7 +23,7 @@ flowchart TB
 - Trên trang lô, **Hủy hàng** hủy ngay phần kho đang giữ của lô. Bỏ trống số lượng là hủy hết. Lô đã hết hạn gợi ý lý do **Hết hạn**, lô bị cách ly gợi ý **Không đạt kiểm nghiệm**. Lịch sử lô ghi lại số phiếu, số lượng và lý do.
 
 ## Cần bổ sung
-Đánh dấu **Cần bổ sung** thì khi xác nhận, quy tắc bổ sung của mặt hàng ở kho đó đặt lại đúng số đã hủy, ví dụ một dòng trong yêu cầu báo giá gửi nhà cung cấp. Mặt hàng chưa có quy tắc ở kho thì không xác nhận được.
+Đánh dấu **Cần bổ sung** thì khi xác nhận, quy tắc bổ sung của mặt hàng ở kho đó đặt lại đúng số đã hủy, ví dụ một phiếu nhập nháp gửi nhà cung cấp. Mặt hàng chưa có quy tắc ở kho thì không xác nhận được.
 
 ## Hoàn tác
 Hủy nhầm thì quản lý kho hoặc chủ doanh nghiệp bấm **Hoàn tác** và nhập lý do. Hàng về lại đúng vị trí đã lấy, theo giá trị lúc hủy, kèm bút toán đảo Nợ 156 / Có 632. Phần đã đặt bổ sung vẫn giữ nguyên. Phiếu nháp bỏ đi thì bấm **Bỏ phiếu**.`,
@@ -48,7 +48,7 @@ flowchart TB
 - On a lot's page, **Scrap** scraps what a warehouse holds of the lot at once. Leave the quantity empty to scrap all of it. An expired lot suggests **Expired**; a quarantined lot suggests **Failed quality test**. The lot history keeps the order number, quantity and reason.
 
 ## Replenish
-Tick **Replenish** and validating asks the product's reorder rule in that warehouse to order the scrapped quantity again, for example as a line on a request for quotation to the supplier. A product with no rule in the warehouse cannot be validated this way.
+Tick **Replenish** and validating asks the product's reorder rule in that warehouse to order the scrapped quantity again, for example as a draft receipt from the supplier. A product with no rule in the warehouse cannot be validated this way.
 
 ## Undo
 If goods were scrapped by mistake, a stock manager or the owner selects **Undo** and gives a reason. The goods return to where they left, at the value they left at, with the reverse entry Dr 156 / Cr 632. What the rule ordered stays ordered. To drop a draft, select **Cancel order**.`,

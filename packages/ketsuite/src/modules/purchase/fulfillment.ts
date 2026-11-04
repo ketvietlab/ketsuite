@@ -13,16 +13,6 @@ import {
   productContext,
 } from './functions/shared.ts'
 import { refreshInvoiceStatus } from './order-amounts.ts'
-import {
-  approvalEffects,
-  clearApprovals,
-  draftedByCaller,
-  levelsFor,
-  orderApprovals,
-  pendingLevels,
-  purchaseConfiguration,
-  type ApprovalLevel,
-} from './approval.ts'
 
 export const confirmEffects = [
   'read:purchase.Order',
@@ -56,8 +46,6 @@ export async function createReceipt(ctx: Ctx, order: Row) {
     id: pickingId,
     pickingTypeId: order.pickingTypeId,
     scheduledDate: order.datePlanned,
-    // A request from a reorder rule delivers where the rule restocks.
-    ...(order.locationDestId ? { locationDestId: order.locationDestId } : {}),
   })) as Row
   if (created.ok !== true) return created
   // The receipt comes from the order's vendor.
@@ -97,110 +85,38 @@ export async function createReceipt(ctx: Ctx, order: Row) {
   return { ok: true, pickingId }
 }
 
-export const approvalConfirmEffects = [...confirmEffects, ...approvalEffects] as const
-
-const refusal = (field: string, code: string, message: string) => ({
-  ok: false,
-  errors: [{ field, code: `purchase.error.approval.${code}`, message }],
-})
-
-/** Receive the order: its receipt, its state and its invoice status, inside the caller's transaction. */
-async function place(tx: Ctx, order: Row): Promise<unknown> {
-  // The receipt is a picking plus one move per line plus the order's own
-  // state. A domain refusal rolls the entire graph back.
-  const receipt = (await createReceipt(tx, order)) as Row
-  if (receipt.ok !== true) throw new PurchaseRefused(receipt)
-  await tx.db.update('purchase.Order', { id: order.id }, { state: 'purchase', dateApprove: now() })
-  await refreshInvoiceStatus(tx, order.id)
-  return receipt.pickingId
-}
-
-/**
- * Confirm an RFQ. The company's thresholds decide from the saved total whether it
- * needs approval; `requested` asks for a purchasing manager's approval even below
- * them. An order that needs approval waits for it instead of becoming an order.
- */
-export async function confirm(ctx: Ctx, id: unknown, requested: boolean, expectedRevision?: unknown) {
+export async function confirm(ctx: Ctx, id: unknown, approval: boolean, expectedRevision?: unknown) {
   const order = (await ctx.db.select('purchase.Order', { id }))[0]
   if (!order) return invalid('id', 'purchase order does not exist')
   if (expectedRevision !== undefined && n(order.revision) !== n(expectedRevision))
     return invalid('expectedRevision', 'purchase order changed')
-  // A repeated confirmation reports where the order already is; it never
-  // turns a pending approval into an order.
-  if (order.state === 'purchase' || order.state === 'to approve') return { ok: true, id, state: order.state }
-  if (!['draft', 'sent'].includes(String(order.state)))
+  if (order.state === 'purchase') return { ok: true, id, state: order.state }
+  if (!['draft', 'sent', 'to approve'].includes(String(order.state)))
     return invalid('state', 'only an RFQ can be confirmed')
   if (!(await ctx.db.select('purchase.OrderLine', { orderId: id })).length)
     return invalid('lines', 'an RFQ needs at least one product line')
   try {
     let pickingId: unknown
-    let levels = 0
     await ctx.tx(async (tx) => {
       const current = (await tx.db.select('purchase.Order', { id }))[0]
       if (!current || !(await claimRevision(tx, current, expectedRevision)))
         throw new PurchaseRefused(invalid('expectedRevision', 'purchase order changed'))
-      levels = Math.max(levelsFor(await purchaseConfiguration(tx), current.amountTotal), requested ? 1 : 0)
-      if (levels > 0) {
-        await clearApprovals(tx, id)
-        await tx.db.update('purchase.Order', { id }, { state: 'to approve', approvalLevels: levels })
+      if (approval) {
+        await tx.db.update('purchase.Order', { id }, { state: 'to approve' })
         return
       }
-      pickingId = await place(tx, current)
+      // The receipt is a picking plus one move per line plus the order's own
+      // state. A domain refusal rolls the entire graph back.
+      const receipt = (await createReceipt(tx, current)) as Row
+      if (receipt.ok !== true) throw new PurchaseRefused(receipt)
+      pickingId = receipt.pickingId
+      await tx.db.update('purchase.Order', { id }, { state: 'purchase', dateApprove: now() })
+      await refreshInvoiceStatus(tx, id)
     })
     return {
       ok: true,
       id,
-      state: levels > 0 ? 'to approve' : 'purchase',
-      ...(pickingId ? { pickingId } : {}),
-    }
-  } catch (error) {
-    if (error instanceof PurchaseRefused) return error.result
-    throw error
-  }
-}
-
-/**
- * Give an approval to an order waiting for one. A purchasing manager gives level
- * one; a final approver gives every level still pending. The order becomes an
- * order once nothing is pending. Whoever drafted the order cannot approve it.
- */
-export async function approve(ctx: Ctx, id: unknown, as: ApprovalLevel, expectedRevision?: unknown) {
-  const order = (await ctx.db.select('purchase.Order', { id }))[0]
-  if (!order) return invalid('id', 'purchase order does not exist')
-  if (expectedRevision !== undefined && n(order.revision) !== n(expectedRevision))
-    return invalid('expectedRevision', 'purchase order changed')
-  if (order.state === 'purchase') return { ok: true, id, state: order.state, pending: [] }
-  if (order.state !== 'to approve') return invalid('state', 'order is not waiting for approval')
-  if (draftedByCaller(ctx, order))
-    return refusal('state', 'ownOrder', 'an order cannot be approved by the person who drafted it')
-  try {
-    let pickingId: unknown
-    let remaining: ApprovalLevel[] = []
-    await ctx.tx(async (tx) => {
-      const current = (await tx.db.select('purchase.Order', { id }))[0]
-      if (!current || current.state !== 'to approve' || !(await claimRevision(tx, current, expectedRevision)))
-        throw new PurchaseRefused(invalid('expectedRevision', 'purchase order changed'))
-      const pending = pendingLevels(current, await orderApprovals(tx, id))
-      const giving = as === 'owner' ? pending : pending.filter((level) => level === 'manager')
-      if (!giving.length)
-        throw new PurchaseRefused(refusal('state', 'finalPending', 'the order waits for a final approval'))
-      const at = now()
-      for (const level of giving)
-        await tx.db.insert('purchase.OrderApproval', {
-          id: `${String(id)}:approval:${level}`,
-          orderId: id,
-          level,
-          approvedBy: ctx.actor ?? null,
-          approvedAt: at,
-        })
-      remaining = pending.filter((level) => !giving.includes(level))
-      if (!remaining.length) pickingId = await place(tx, current)
-    })
-    return {
-      ok: true,
-      id,
-      state: remaining.length ? 'to approve' : 'purchase',
-      pending: remaining,
+      state: approval ? 'to approve' : 'purchase',
       ...(pickingId ? { pickingId } : {}),
     }
   } catch (error) {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { defineFn } from '@ketvietlab/ketjs'
 import { defineFormSchema, validateForm } from '@ketvietlab/ketjs-view'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
-import { PICKING_NAME_EFFECTS } from '../picking-names.ts'
+import { nextPickingNameOfType, PICKING_NAME_EFFECTS } from '../picking-names.ts'
 import { procure } from '../routing.ts'
 import { ours } from '../scope.ts'
 import {
@@ -115,18 +115,6 @@ export function orderpointRunner(provider?: SupplierReplenishment) {
             method: 'existing',
           }
         }
-        const asked = await provider?.requested(tx, args.moveId)
-        if (asked) {
-          if (asked.orderpointId !== String(point.id) || asked.productId !== point.productId)
-            return refuseReplenishment('moveId', 'conflict')
-          return {
-            ok: true,
-            quantity: asked.quantity,
-            moveIds: [],
-            orderId: asked.orderId,
-            method: 'existing',
-          }
-        }
         const at = new Date().toISOString()
         // The same run of a rule that makes answers the order it already drafted.
         if (point.source === 'manufacture' && provider?.make) {
@@ -195,7 +183,7 @@ export function orderpointRunner(provider?: SupplierReplenishment) {
           at,
           partnerId: point.vendorId,
         })
-        if (!provider || !vendor) return refuseReplenishment('vendorId', 'vendor')
+        if (!vendor) return refuseReplenishment('vendorId', 'vendor')
         const types = (
           await ours(tx, 'stock.PickingType', { warehouseId: point.warehouseId, code: 'incoming' })
         )
@@ -212,23 +200,63 @@ export function orderpointRunner(provider?: SupplierReplenishment) {
           type.id,
           vendor.partnerId,
         ])
-        const scheduledDate = new Date(
-          new Date(at).getTime() +
-            (point.leadDays == null ? vendor.delay : Number(point.leadDays)) * 86_400_000,
-        ).toISOString()
-        // The rule asks the vendor for a quotation, priced and approved as any other; the receipt
-        // follows its confirmation (#1737).
-        const { orderId } = await provider.request(tx, {
-          id: String(args.moveId),
-          point,
-          vendor,
-          quantity: plan.quantity,
-          uomId: plan.uomId,
-          pickingTypeId: String(type.id),
-          group,
-          scheduledDate,
+        const held = (await ours(tx, 'stock.Picking', { state: 'draft', replenishmentGroup: group })).sort(
+          (a, b) => String(a.id).localeCompare(String(b.id)),
+        )[0]
+        let pickingId: unknown = held?.id
+        if (held) {
+          const lock = await tx.db.compareAndSet(
+            'stock.Picking',
+            { id: held.id },
+            { state: 'draft' },
+            { state: 'draft' },
+          )
+          if (!('dryRun' in lock) && !lock.matched) throw new ReplenishmentRefused('id', 'conflict')
+        } else {
+          pickingId = randomUUID()
+          const days = point.leadDays == null ? vendor.delay : Number(point.leadDays)
+          await tx.db.insert('stock.Picking', {
+            id: pickingId,
+            name: (await nextPickingNameOfType(tx, type.id)) ?? `REPL/${String(pickingId).slice(0, 8)}`,
+            pickingTypeId: type.id,
+            locationId: source.id,
+            locationDestId: point.locationId,
+            partnerId: vendor.partnerId,
+            replenishmentGroup: group,
+            moveType: 'direct',
+            state: 'draft',
+            backorderId: null,
+            scheduledDate: new Date(new Date(at).getTime() + days * 86_400_000).toISOString(),
+            dateDone: null,
+          })
+        }
+        const inserted = await tx.db.insertIfAbsent('stock.Move', {
+          id: args.moveId,
+          name: template.name,
+          pickingId,
+          productId: point.productId,
+          productUomId: plan.baseUomId,
+          productUomQty: String(plan.baseQuantity),
+          quantity: '0',
+          replenishmentQuantity: String(plan.quantity),
+          replenishmentUomId: plan.uomId,
+          locationId: source.id,
+          locationDestId: point.locationId,
+          state: 'draft',
+          picked: false,
+          procureMethod: 'make_to_stock',
+          ruleId: null,
+          origin: `orderpoint:${String(point.id)}`,
         })
-        return { ok: true, quantity: String(plan.quantity), moveIds: [], orderId, method: 'purchase' }
+        if (!('dryRun' in inserted) && !inserted.inserted)
+          throw new ReplenishmentRefused('moveId', 'conflict')
+        return {
+          ok: true,
+          quantity: String(plan.quantity),
+          moveIds: [args.moveId],
+          pickingId,
+          method: 'supplier',
+        }
       }),
     )
   }
@@ -238,7 +266,6 @@ export function orderpointRunner(provider?: SupplierReplenishment) {
 export const orderpointWriteEffects = (provider?: SupplierReplenishment) => [
   ...replenishmentReads,
   ...(provider?.effects ?? []),
-  ...(provider?.requestEffects ?? []),
   ...(provider?.make?.effects ?? []),
   ...routeReads,
   'write:stock.Warehouse',
@@ -492,8 +519,6 @@ export function createOrderpointFunctions(provider?: SupplierReplenishment): Rec
         quantity: 'decimal?',
         moveIds: 'json?',
         pickingId: 'id?',
-        /** The request for quotation a supplier rule drafted, when Purchase is composed (#1737). */
-        orderId: 'id?',
         productionId: 'id?',
         href: 'text?',
         method: 'text?',

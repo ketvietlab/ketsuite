@@ -2523,18 +2523,6 @@ const recordController =
           { signal: lifetime },
         )
 
-        // A design-system `RelationSelect` that created a record in its dialog (a new
-        // attribute value, say) says so; the record is read again quietly, so its own data
-        // names the new record. Drafts, the tab, view state and the open dialog stay.
-        root?.addEventListener(
-          'ket:relation-created',
-          () => {
-            const current = open()
-            if (current) void load(current.id, true)
-          },
-          { signal: lifetime },
-        )
-
         // An input or select carrying `data-record-state` feeds view state as it
         // changes; a file chosen in a `data-record-submit` input submits its form.
         // A design-system `RelationSelect`'s own hidden native select carries no

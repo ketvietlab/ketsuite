@@ -70,33 +70,19 @@ coming operation with the stock after it and an overdue label, the drafts not ye
 totals and the rule beside them. The forecast reads with the stock (`report`); minimums, the
 below-minimum status and the rule appear only to readers of `stock.getOrderpointCollection`.
 
-## Forecast and requests for quotation
+## Forecast and receipts
 
 The forecast includes usable internal stock and confirmed incoming/outgoing demand due within
 the lead horizon. Outbound demand is not reduced by reserved stock. All draft receipts already
-on order reduce the remaining need, and so do requests for quotation not yet confirmed (draft,
-sent or awaiting approval) for the product delivering to the rule's location, whether a rule or
-a buyer drafted them (`SupplierReplenishment.onOrder`).
-Below the minimum, procure towards the maximum and round up in the replenishment unit.
+on order reduce the remaining need. Below the minimum, procure towards the maximum and round
+up in the replenishment unit; movements retain the product's base unit.
 
-Run replenishment confirms the action. A supplier rule (Purchase composed through
-`stockWithProductSuppliers()`, Commerce) asks the vendor instead of drafting a receipt (#1737): the quantity
-becomes a line of a draft `purchase.Order`, in the rule's unit and priced from the vendor price
-list like any line (`SupplierReplenishment.request`). New quantities join a draft request only
-when company, warehouse, destination, operation type and supplier match (`Order.replenishmentGroup`);
-once it is sent, the next run drafts another. The request delivers to the rule's location
-(`Order.locationDestId`), and confirming it drafts the receipt there, so the quantity stays on
-order exactly once. The run answers `orderId` and `method: 'purchase'` and stays on the rule,
-which shows it on order: a warehouse operator may not open Purchase. Purchasing finds open
-requests from rules under **Stock replenishment demands** on the purchase overview. A replenished
-scrap keeps its request in `Scrap.replenishmentOrderId`, linked for readers of `purchase.getOrder`.
-
-Zero remaining need returns to the rule. Concurrent runs serialize at the warehouse and product;
-retries with the same move ID reuse the original result and replenishment quantity, whether it
-was a receipt move or a request line (`SupplierReplenishment.requested`). Receipts and their
-backorders retain the supplier, and this feature does not change stock cost or valuation rules.
-The stock forecast at `/admin/stock/forecast` still counts only draft receipts and transfers as on
-order (#1866).
+Run replenishment confirms the action and opens the resulting native receipt. Zero remaining
+need returns to the rule. New quantities join a draft receipt only when company, warehouse,
+destination, operation type and supplier match. Concurrent runs serialize at the warehouse and
+product; retries with the same move ID reuse the original result and replenishment quantity.
+Receipts and their backorders retain the supplier. Receipts contain no supplier purchase price,
+and this feature does not change stock cost or valuation rules.
 
 Nullable schema additions preserve existing orderpoints, receipts and moves. No backfill rewrites
 historical records. Archived destinations, foreign scope, inactive/nonstorable products and

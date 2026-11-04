@@ -313,20 +313,12 @@ test('product workspace: vendor prices valid today, the preferred first', async 
   await price('cheap', 'vendor-b', { sequence: 1, price: '80' })
   await price('expired', 'vendor-b', { sequence: 0, dateEnd: new Date(Date.now() - day).toISOString() })
   await price('upcoming', 'vendor-b', { sequence: 0, dateStart: new Date(Date.now() + day).toISOString() })
-  // A price saved for today alone, as the price form saves days, is valid all day in the company calendar.
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date())
-  await price('today-only', 'vendor-a', { sequence: 9, dateStart: today, dateEnd: today })
 
   type Vendor = { id: string; vendor: string; vendorCode: string | null; price: string }
   const rows = await call<Vendor[]>('purchase.listProductVendors', { templateId: 'goods' }, adapter)
   assert.deepEqual(
     rows.map((row) => row.id),
-    ['cheap', 'dear', 'later', 'today-only'],
+    ['cheap', 'dear', 'later'],
   )
   assert.equal(rows[0]!.vendor, 'Vendor B')
   assert.equal(rows[1]!.vendorCode, 'VA-1')

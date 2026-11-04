@@ -2155,7 +2155,6 @@ export const baseline = {
         quantity: 'decimal?',
         moveIds: 'json?',
         pickingId: 'id?',
-        orderId: 'id?',
         productionId: 'id?',
         href: 'text?',
         method: 'text?',

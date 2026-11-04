@@ -6,15 +6,12 @@ export const purchaseOrderHelp = {
 
 \`\`\`mermaid
 flowchart TD
-  A[RFQ nháp] --> B{Tổng tiền từ<br>ngưỡng duyệt?}
+  A[RFQ nháp] --> B{Cần người<br>duyệt?}
   B -->|Không| C[Xác nhận đơn]
   B -->|Có| D[Gửi duyệt]
-  D --> E[Quản lý mua hàng<br>phê duyệt]
-  E --> G{Từ ngưỡng<br>cấp cuối?}
-  G -->|Có| H[Duyệt cấp cuối]
-  G -->|Không| F
+  D --> E[Phê duyệt]
   C --> F[Đơn mua:<br>nhập hàng, hoá đơn]
-  H --> F
+  E --> F
   class F kv-positive
 \`\`\`
 
@@ -31,9 +28,7 @@ flowchart TD
 
 - **Đánh dấu đã gửi** ghi nhận RFQ đã gửi cho nhà cung cấp. Bạn vẫn sửa được các dòng.
 - **Xác nhận đơn** chuyển RFQ thành đơn mua và tạo phiếu nhập. RFQ phải có ít nhất một dòng.
-- Công ty đặt ngưỡng ở **Cài đặt → Cấu hình mua hàng**. Đơn có tổng tiền từ ngưỡng cấp 1 thì chỉ còn nút **Gửi duyệt**: quản lý mua hàng bấm **Phê duyệt**. Đơn từ ngưỡng cấp cuối cần thêm **Duyệt cấp cuối**; người duyệt cấp cuối duyệt được cả cấp 1 còn chờ. Khối **Phê duyệt** trên trang cho biết đơn cần mấy cấp, ai đã duyệt và còn chờ ai.
-- Dưới ngưỡng, **Xác nhận đơn** thành đơn mua ngay; bấm **Gửi duyệt** nếu muốn quản lý xem trước.
-- Người lập đơn không tự duyệt đơn của mình. **Trả về nháp** đưa RFQ đã gửi hoặc đang chờ duyệt về nháp để sửa, không cần huỷ; các lượt duyệt bị xoá và gửi lại thì duyệt lại theo tổng tiền mới.
+- **Gửi duyệt** chuyển RFQ sang chờ duyệt; người có quyền duyệt bấm **Phê duyệt** để thành đơn mua. **Trả về nháp** đưa RFQ đã gửi hoặc đang chờ duyệt về nháp để sửa, không cần huỷ.
 - **Đồng bộ nhập hàng** cập nhật phiếu nhập và số lượng đã nhận theo các dòng của đơn mua.
 - **Khoá đơn** giữ đơn mua không bị huỷ; **Mở khoá** bỏ khoá. Nút **Huỷ** chỉ có khi đơn chưa khoá.
 
@@ -47,15 +42,12 @@ Khi đơn mua có số lượng cần lập hoá đơn, phần **Tạo hoá đơ
 
 \`\`\`mermaid
 flowchart TD
-  A[Draft RFQ] --> B{Total reaches the<br>approval threshold?}
+  A[Draft RFQ] --> B{Needs an<br>approver?}
   B -->|No| C[Confirm order]
   B -->|Yes| D[Request approval]
-  D --> E[A purchasing<br>manager approves]
-  E --> G{Reaches the<br>final threshold?}
-  G -->|Yes| H[Final approval]
-  G -->|No| F
+  D --> E[Approve]
   C --> F[Purchase order:<br>receive, bill]
-  H --> F
+  E --> F
   class F kv-positive
 \`\`\`
 
@@ -72,9 +64,7 @@ flowchart TD
 
 - **Mark as Sent** records that the RFQ went to the vendor. Its lines stay editable.
 - **Confirm Order** turns the RFQ into a purchase order and creates a receipt. The RFQ needs at least one line.
-- The company sets thresholds under **Settings → Purchasing settings**. An order totalling the level 1 threshold or more offers only **Request Approval**: a purchasing manager presses **Approve**. From the final threshold it also needs **Final approval**; a final approver can give a pending level 1 approval too. The **Approval** block on the page shows how many levels the order needs, who approved and who is still awaited.
-- Below the thresholds, **Confirm Order** makes the purchase order at once; choose **Request Approval** to have a manager look first.
-- Whoever drafted an order cannot approve it. **Reset to draft** returns a sent or pending RFQ to draft for changes, without cancelling it; its approvals are cleared and a resubmission is approved again at its new total.
+- **Request Approval** puts the RFQ up for approval; someone allowed to approve presses **Approve** to make it a purchase order. **Reset to draft** returns a sent or pending RFQ to draft for changes, without cancelling it.
 - **Sync Receipts** brings the receipts and received quantities in line with the order's lines.
 - **Lock** keeps a purchase order from being cancelled; **Unlock** lifts it. **Cancel** is only offered while the order is unlocked.
 

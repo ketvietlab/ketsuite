@@ -3127,36 +3127,6 @@ export const componentGroups: readonly ComponentGroup[] = [
                   },
                 }).view(),
               }),
-              // Tags: chips inside the control, searched as typed; a row of a product's attributes.
-              Field({
-                id: 'demo-relation-tags',
-                name: 'values[volume]',
-                label: 'Volume',
-                type: 'select',
-                control: createRelationSelectView({
-                  id: 'demo-relation-tags-picker',
-                  config: {
-                    ...relationSelectDemoConfig,
-                    name: 'values[volume]',
-                    ariaLabel: 'Volume',
-                    triggerId: 'demo-relation-tags',
-                    multiple: true,
-                    presentation: 'tags',
-                    values: ['100ml', '200ml'],
-                    options: ['30ml', '50ml', '100ml', '200ml', '300ml'].map((value) => ({
-                      value,
-                      label: value,
-                    })),
-                    labels: {
-                      ...relationSelectDemoConfig.labels,
-                      choose: 'Search or create a value…',
-                      createTitle: 'Create value',
-                      createNamed: 'Create “{query}”',
-                    },
-                  },
-                }).view(),
-                action: IconButton({ label: 'Remove attribute: Volume', icon: Icon({ name: 'x' }) }),
-              }),
             ]}
           />
         ),

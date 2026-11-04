@@ -1,7 +1,6 @@
 import { defineFn, type Ctx, type FnSpec, type Row } from '@ketvietlab/ketjs'
 import { invalid, n, PurchaseRefused, claimRevision } from './shared.ts'
-import { approvalConfirmEffects, approve, confirm } from '../fulfillment.ts'
-import { clearApprovals } from '../approval.ts'
+import { confirmEffects, confirm } from '../fulfillment.ts'
 
 export async function sendRfqHandler(ctx: Ctx, args: Record<string, unknown>) {
   const order = (await ctx.db.select('purchase.Order', { id: args.id }))[0]
@@ -15,12 +14,10 @@ export function confirmOrderHandler(ctx: Ctx, args: Record<string, unknown>) {
   return confirm(ctx, args.id, args.requiresApproval === true, args.expectedRevision)
 }
 
-export function approveOrderHandler(ctx: Ctx, args: Record<string, unknown>) {
-  return approve(ctx, args.id, 'manager', args.expectedRevision)
-}
-
-export function finalApproveOrderHandler(ctx: Ctx, args: Record<string, unknown>) {
-  return approve(ctx, args.id, 'owner', args.expectedRevision)
+export async function approveOrderHandler(ctx: Ctx, args: Record<string, unknown>) {
+  const order = (await ctx.db.select('purchase.Order', { id: args.id }))[0]
+  if (order?.state !== 'to approve') return invalid('state', 'order is not waiting for approval')
+  return confirm(ctx, args.id, false, args.expectedRevision)
 }
 
 export async function resetToDraftHandler(ctx: Ctx, args: Record<string, unknown>) {
@@ -32,12 +29,7 @@ export async function resetToDraftHandler(ctx: Ctx, args: Record<string, unknown
   // confirmed order is past that point because a receipt already exists.
   if (!['sent', 'to approve'].includes(String(order.state)))
     return invalid('state', 'only a request awaiting sending or approval can go back to draft')
-  // Approvals belong to the submission they were given to; a resubmitted
-  // order is approved again at its new total.
-  await ctx.tx(async (tx) => {
-    await clearApprovals(tx, args.id)
-    await tx.db.update('purchase.Order', { id: args.id }, { state: 'draft', approvalLevels: null })
-  })
+  await ctx.db.update('purchase.Order', { id: args.id }, { state: 'draft' })
   return { ok: true, id: args.id, state: 'draft' }
 }
 
@@ -94,45 +86,23 @@ export const lifecycleFunctions: Record<string, FnSpec> = {
   confirmOrder: defineFn({
     input: { id: 'id', requiresApproval: 'bool?', expectedRevision: 'int?' },
     output: { ok: 'bool', id: 'id?', state: 'text?', pickingId: 'id?', errors: 'json?' },
-    effects: [...approvalConfirmEffects],
+    effects: [...confirmEffects],
     idempotent: true,
     agent: true,
     handler: confirmOrderHandler,
   }),
   approveOrder: defineFn({
     input: { id: 'id', expectedRevision: 'int?' },
-    output: {
-      ok: 'bool',
-      id: 'id?',
-      state: 'text?',
-      pending: 'json?',
-      pickingId: 'id?',
-      errors: 'json?',
-    },
-    effects: [...approvalConfirmEffects],
+    output: { ok: 'bool', id: 'id?', state: 'text?', pickingId: 'id?', errors: 'json?' },
+    effects: [...confirmEffects],
     idempotent: true,
     agent: true,
     handler: approveOrderHandler,
   }),
-  finalApproveOrder: defineFn({
-    input: { id: 'id', expectedRevision: 'int?' },
-    output: {
-      ok: 'bool',
-      id: 'id?',
-      state: 'text?',
-      pending: 'json?',
-      pickingId: 'id?',
-      errors: 'json?',
-    },
-    effects: [...approvalConfirmEffects],
-    idempotent: true,
-    agent: true,
-    handler: finalApproveOrderHandler,
-  }),
   resetToDraft: defineFn({
     input: { id: 'id' },
     output: { ok: 'bool', id: 'id?', state: 'text?', errors: 'json?' },
-    effects: ['read:purchase.Order', 'write:purchase.Order', 'write:purchase.OrderApproval'],
+    effects: ['read:purchase.Order', 'write:purchase.Order'],
     idempotent: true,
     agent: true,
     handler: resetToDraftHandler,

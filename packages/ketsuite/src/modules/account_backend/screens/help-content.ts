@@ -606,8 +606,8 @@ Khoá sổ theo kỳ sau khi đã kiểm tra đủ, để không ai ghi thêm ch
 ## Đóng một kỳ
 
 1. Bấm **Tạo kỳ đóng sổ**, nhập **Kỳ** và khoảng ngày.
-2. Mở kỳ để xem **Checklist đóng kỳ**: không còn bút toán nháp, tổng Nợ bằng tổng Có, bằng chứng chuẩn kế toán, sao kê ngân hàng đã khớp hết, chênh lệch kiểm quỹ đã ghi sổ, đóng kho, đối chiếu tài sản.
-   Cột **Bằng chứng** chỉ chỗ cần xử lý: mỗi danh sách còn chứng từ nháp trong kỳ (**Hoá đơn khách hàng**, **Hoá đơn nhà cung cấp**, **Bút toán**) có một dòng riêng, bấm vào là mở danh sách đó đã lọc sẵn các chứng từ nháp trong kỳ. Bước Nợ/Có có link mở **Bảng cân đối phát sinh** cùng kỳ. Giao dịch ngân hàng chưa khớp và lần kiểm quỹ còn chênh lệch chưa ghi sổ được tính đến hết ngày cuối kỳ, kể cả từ kỳ trước, và chặn đóng kỳ; nếu có màn đối soát hoặc kiểm quỹ thì dòng đó mở thẳng màn ấy.
+2. Mở kỳ để xem **Checklist đóng kỳ**: không còn bút toán nháp, tổng Nợ bằng tổng Có, bằng chứng chuẩn kế toán, đối chiếu ngân hàng, đóng kho, đối chiếu tài sản.
+   Cột **Bằng chứng** chỉ chỗ cần xử lý: mỗi danh sách còn chứng từ nháp trong kỳ (**Hoá đơn khách hàng**, **Hoá đơn nhà cung cấp**, **Bút toán**) có một dòng riêng, bấm vào là mở danh sách đó đã lọc sẵn các chứng từ nháp trong kỳ. Bước Nợ/Có có link mở **Bảng cân đối phát sinh** cùng kỳ.
 3. Xử lý các bước **Bắt buộc** đang bị chặn rồi bấm **Chạy lại kiểm tra**.
    **Chạy lại kiểm tra** và **Khóa mềm** đều cập nhật lại bằng chứng của chuẩn kế toán đang dùng trước. Từng mục hiện ở **Bằng chứng theo chuẩn kế toán**: mục bắt buộc chưa đạt sẽ chặn kỳ, mục **Nên xử lý** thì không.
 4. Khi không còn bước chặn, nhập **Lý do** và bấm **Khóa mềm**.
@@ -646,8 +646,8 @@ Lock the books for a period once it has been checked, so nobody posts into a per
 ## Close a period
 
 1. Click **Create close period**, enter the **Period** and its dates.
-2. Open it to see the **Close checklist**: no draft entries, debits equal credits, localization evidence, bank lines all matched, cash count differences booked, inventory closed, assets tied out.
-   The **Evidence** column points to what needs doing: each list still holding drafts dated in the period (**Customer invoices**, **Vendor bills**, **Journal entries**) gets its own line that opens the list filtered to those drafts. The debit/credit step links to the **Trial balance** of the same dates. Bank lines not yet matched and cash counts with a difference not yet booked count up to the period's last day, earlier periods included, and block the close; when the deployment has a reconciliation or cash count screen, that line opens it.
+2. Open it to see the **Close checklist**: no draft entries, debits equal credits, localization evidence, bank reconciliation, inventory closed, assets tied out.
+   The **Evidence** column points to what needs doing: each list still holding drafts dated in the period (**Customer invoices**, **Vendor bills**, **Journal entries**) gets its own line that opens the list filtered to those drafts. The debit/credit step links to the **Trial balance** of the same dates.
 3. Clear the blocked **Required** steps, then click **Refresh checks**.
    **Refresh checks** and **Soft close** both update the evidence of the accounting standard in use first. Each item shows under **Accounting standard evidence**: a required item not met blocks the period, an **Advised** one does not.
 4. When nothing blocks, enter a **Reason** and click **Soft close**.

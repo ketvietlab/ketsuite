@@ -7,7 +7,6 @@ export const capabilityLabels: Record<string, { en: string; vi: string }> = {
   analytics: { en: 'Analytics', vi: 'Phân tích' },
   import: { en: 'Import CRM leads', vi: 'Nhập lead CRM' },
   approve: { en: 'Approve', vi: 'Phê duyệt' },
-  'final-approve': { en: 'Final approval', vi: 'Duyệt cấp cuối' },
   publish: { en: 'Publish content', vi: 'Xuất bản nội dung' },
   author: { en: 'Write documents', vi: 'Soạn nội dung' },
   assignment: { en: 'Assign records', vi: 'Phân công hồ sơ' },

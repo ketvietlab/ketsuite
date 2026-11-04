@@ -33,7 +33,6 @@ export async function createPurchaseDraft(ctx: Ctx, args: Record<string, unknown
     amountTotal: '0',
     notes: args.notes ?? null,
     revision: 0,
-    createdBy: ctx.actor ?? null,
   })
   return { ok: true, id: args.id, name }
 }

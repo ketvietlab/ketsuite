@@ -13,14 +13,13 @@ import {
 } from './period.ts'
 import { ACCOUNT_CORE_STANDARD } from './setup.ts'
 
-export const CLOSE_CHECKLIST_VERSION = 'account-close-v2'
+export const CLOSE_CHECKLIST_VERSION = 'account-close-v1'
 
 const CHECKS = [
   { code: 'draft_moves', required: true },
   { code: 'trial_balance', required: true },
   { code: 'localization_evidence', required: true },
-  { code: 'bank_reconciled', required: true },
-  { code: 'cash_counted', required: true },
+  { code: 'bank_reconciled', required: false },
   { code: 'inventory_closed', required: false },
   { code: 'assets_tied_out', required: false },
 ] as const
@@ -65,14 +64,6 @@ async function evidenceOf(ctx: Ctx, close: Row): Promise<Map<string, Row>> {
   const localization = await ctx.db.select('account.CloseEvidence', { closeId: close.id })
   const requiredLocalization = localization.filter((row) => row.required === true)
   const incompleteLocalization = requiredLocalization.filter((row) => row.state !== 'passed')
-  // Up to the period's last day, not from its first: a line left unmatched last month is
-  // still unmatched when this month closes.
-  const unmatched = (
-    await ctx.db.select('account.BankTransaction', { providerState: 'posted', reconcileState: 'unmatched' })
-  ).filter((row) => String(row.bookingDate).slice(0, 10) <= to)
-  const uncounted = (await ctx.db.select('account.CashCount', { state: 'difference' })).filter(
-    (row) => String(row.accountingDate).slice(0, 10) <= to,
-  )
   return new Map<string, Row>([
     [
       'draft_moves',
@@ -121,21 +112,9 @@ async function evidenceOf(ctx: Ctx, close: Row): Promise<Map<string, Row>> {
     [
       'bank_reconciled',
       {
-        complete: unmatched.length === 0,
-        blocker: unmatched.length
-          ? `${unmatched.length} bank lines up to the period end remain unmatched`
-          : null,
-        evidence: { count: unmatched.length, transactionIds: unmatched.map((row) => row.id).sort() },
-      },
-    ],
-    [
-      'cash_counted',
-      {
-        complete: uncounted.length === 0,
-        blocker: uncounted.length
-          ? `${uncounted.length} cash counts up to the period end have a difference not yet booked`
-          : null,
-        evidence: { count: uncounted.length, cashCountIds: uncounted.map((row) => row.id).sort() },
+        complete: false,
+        blocker: null,
+        evidence: { deferredTo: 'Wave 2', status: 'not_available' },
       },
     ],
     [
@@ -287,8 +266,6 @@ export const closeFunctions: Record<string, FnSpec> = {
       'read:account.MoveLine',
       'read:account.Setup',
       'read:account.CloseEvidence',
-      'read:account.BankTransaction',
-      'read:account.CashCount',
       'write:account.ClosePeriod',
       'write:account.CloseStep',
     ],
@@ -313,8 +290,6 @@ export const closeFunctions: Record<string, FnSpec> = {
       'read:account.MoveLine',
       'read:account.Setup',
       'read:account.CloseEvidence',
-      'read:account.BankTransaction',
-      'read:account.CashCount',
       'read:account.PeriodPolicy',
       'read:account.PeriodLockEvent',
       'write:account.ClosePeriod',

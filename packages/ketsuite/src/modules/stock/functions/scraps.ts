@@ -397,8 +397,6 @@ export function createScrapFunctions(provider?: SupplierReplenishment): Record<s
     })
     if (result.ok && result.pickingId)
       await ctx.db.update('stock.Scrap', { id: scrap.id }, { replenishmentPickingId: result.pickingId })
-    else if (result.ok && result.orderId)
-      await ctx.db.update('stock.Scrap', { id: scrap.id }, { replenishmentOrderId: String(result.orderId) })
     return result
   }
 

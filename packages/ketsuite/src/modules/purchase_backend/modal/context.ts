@@ -27,7 +27,6 @@ export const purchaseOrderContext =
       'sendRfq',
       'confirmOrder',
       'approveOrder',
-      'finalApproveOrder',
       'resetToDraft',
       'syncReceipts',
       'receiveOrderReceipt',

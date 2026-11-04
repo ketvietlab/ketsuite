@@ -196,13 +196,6 @@
     color: var(--kv-color-ink);
   }
 
-  /* A leading image or icon keeps its own size and sits on the line's centre. */
-  :where([data-kv-design-system]) [data-ui="disclosure-leading"] {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-  }
-
   :where([data-kv-design-system]) [data-ui="disclosure-meta"] {
     display: inline-flex;
     flex: 0 1 auto;

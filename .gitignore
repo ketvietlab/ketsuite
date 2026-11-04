@@ -117,7 +117,6 @@ npm-debug.log*
 
 # Commerce record modal bundles, rebuilt from typed sources.
 packages/ketsuite/src/modules/purchase_backend/client/purchase-order-modal.mjs*
-packages/ketsuite/src/modules/purchase_backend/client/purchase-configuration-page.mjs*
 packages/ketsuite/src/modules/sale_backend/client/sale-order-modal.mjs*
 packages/ketsuite/src/modules/sale_backend/client/sales-configuration-page.mjs*
 packages/ketsuite/src/modules/sale_backend/client/invoicing-policy-modal.mjs*

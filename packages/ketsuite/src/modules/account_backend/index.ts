@@ -79,8 +79,6 @@ import {
   periodClosesListScreen,
   vendorBillFormScreen,
   vendorBillsListScreen,
-  type BillMatchView,
-  type VendorBillMatchState,
 } from './screens/index.ts'
 import { adminPage, choices, localeQuery, optional, printGroup, selectionLabel } from '../backend/screen.ts'
 
@@ -243,28 +241,6 @@ const paymentTermLineModalPath = (url: URL, edit?: unknown): string => {
  * checklist to send the accountant to. The empty query keeps a saved default
  * search from replacing the filter on arrival.
  */
-/** Of the given pages, those this viewer's menu holds, each kept in the request's language. */
-const composedPages = async <K extends string>(
-  ctx: ServeContext,
-  url: URL,
-  req: Parameters<Route>[1],
-  pages: Record<K, string>,
-): Promise<Partial<Record<K, string>>> => {
-  const held = new Set<string>()
-  const walk = (nodes: Awaited<ReturnType<ServeContext['menu']>>): void => {
-    for (const node of nodes) {
-      if (node.path) held.add(node.path.split('?')[0]!)
-      walk(node.children)
-    }
-  }
-  walk(await ctx.menu(url, req))
-  return Object.fromEntries(
-    Object.entries<string>(pages)
-      .filter(([, path]) => held.has(path))
-      .map(([key, path]) => [key, `${path}${localeQuery(url)}`]),
-  ) as Partial<Record<K, string>>
-}
-
 const draftsInPeriodHref = (
   spec: Parameters<typeof parseListState>[0],
   path: string,
@@ -1368,30 +1344,22 @@ const accountMoveRoute =
                   url,
                   req,
                 )
-              : (form.action === 'hold' || form.action === 'release-hold') &&
-                  (await ctx.live(req)).functions?.['purchase.holdBill']
+              : form.action === 'add-line'
                 ? await ctx.call(
-                    form.action === 'hold' ? 'purchase.holdBill' : 'purchase.releaseBill',
-                    { id: params.id, ...(form.action === 'hold' ? { reason: form.reason ?? '' } : {}) },
+                    'account.addMoveLine',
+                    {
+                      id: form.lineId || randomUUID(),
+                      moveId: params.id,
+                      name: form.name ?? '',
+                      accountId: form.accountId ?? '',
+                      ...optional(form, 'partnerId'),
+                      debit: form.debit || '0',
+                      credit: form.credit || '0',
+                    },
                     url,
                     req,
                   )
-                : form.action === 'add-line'
-                  ? await ctx.call(
-                      'account.addMoveLine',
-                      {
-                        id: form.lineId || randomUUID(),
-                        moveId: params.id,
-                        name: form.name ?? '',
-                        accountId: form.accountId ?? '',
-                        ...optional(form, 'partnerId'),
-                        debit: form.debit || '0',
-                        credit: form.credit || '0',
-                      },
-                      url,
-                      req,
-                    )
-                  : null
+                : null
       if (!result) return text('invalid action', { status: 400 })
       if (succeeded(result))
         // A reversal is a journal entry of its own, so the user lands on it rather
@@ -1432,19 +1400,6 @@ const accountMoveRoute =
             href: `/admin/stock/transfers/${encodeURIComponent(pickingId)}?${new URLSearchParams([...url.searchParams].filter(([key]) => ['lang', 'company', 'branch'].includes(key)))}`,
           }
         : undefined
-    // A vendor bill shows how it matches its purchase orders when Purchasing is composed (#1737).
-    const live = (await ctx.live(req)).functions ?? {}
-    const billMatch =
-      move.moveType === 'in_invoice' &&
-      live['purchase.getBillMatch'] &&
-      (await ctx.allows('purchase.getBillMatch', url, req))
-        ? ((await ctx.call('purchase.getBillMatch', { id: move.id }, url, req)) as BillMatchView | null)
-        : null
-    const holds =
-      billMatch &&
-      move.state === 'draft' &&
-      live['purchase.holdBill'] &&
-      (await ctx.allows('purchase.holdBill', url, req))
     return accountingPage(ctx, url, req, {
       // A draft has no journal number, so `name` is still its raw id — not a
       // browser-tab title.
@@ -1459,15 +1414,6 @@ const accountMoveRoute =
           action: `${url.pathname}${localeQuery(url)}`,
           collaboration,
           stockSource,
-          ...(billMatch
-            ? {
-                billMatch: {
-                  match: billMatch,
-                  currency: move.currency,
-                  action: holds ? `${url.pathname}${localeQuery(url)}` : null,
-                },
-              }
-            : {}),
           printActions: printGroup(_, printable, String(move.id), url.search),
           rejected,
           lineId: rejected?.values.lineId || randomUUID(),
@@ -2628,23 +2574,7 @@ export default defineModule({
               groupLabel: (key, value) => accountGroupLabel(_, key, value),
             })
             const shown = listPage(url, search.rows, Boolean(search.groups))
-            // How each shown bill matches its purchase orders, when Purchasing is composed (#1737).
-            const matches =
-              (await ctx.live(req)).functions?.['purchase.listBillMatches'] &&
-              (await ctx.allows('purchase.listBillMatches', url, req))
-                ? new Map(
-                    (
-                      (await ctx.call(
-                        'purchase.listBillMatches',
-                        { ids: shown.rows.map((row) => String((row as AnyRow).id)) },
-                        url,
-                        req,
-                      )) as Array<VendorBillMatchState & { id: string }>
-                    ).map((row) => [String(row.id), { status: row.status, held: row.held }]),
-                  )
-                : undefined
             return vendorBillsListScreen(_, {
-              ...(matches ? { matches } : {}),
               frame: {
                 ...search.frame,
                 chrome: { ...search.frame.chrome, pager: shown.pager },
@@ -3945,12 +3875,6 @@ export default defineModule({
               }
             : {}),
           ...(readsTrialBalance ? { trialBalance: `${trialBalance.pathname}${trialBalance.search}` } : {}),
-          // The queue and the counts live in whichever module the deployment composes for them;
-          // link only to a page this viewer's menu actually holds.
-          ...(await composedPages(ctx, url, req, {
-            bank: '/admin/accounting/bank-reconciliation',
-            cash: '/admin/accounting/cash-counts',
-          })),
         }
         return accountingPage(ctx, url, req, {
           title: 'account_backend.close.title',
@@ -4259,10 +4183,7 @@ const vi: Record<string, string> = {
   'close.check.draft_moves': 'Không còn bút toán nháp',
   'close.check.trial_balance': 'Tổng Nợ bằng tổng Có',
   'close.check.localization_evidence': 'Bằng chứng chuẩn kế toán đang dùng',
-  'close.check.bank_reconciled': 'Sao kê ngân hàng đã khớp hết',
-  'close.check.cash_counted': 'Chênh lệch kiểm quỹ đã ghi sổ',
-  'close.bankUnmatched': '{count} giao dịch ngân hàng chưa khớp',
-  'close.cashDifferences': '{count} lần kiểm quỹ còn chênh lệch chưa ghi sổ',
+  'close.check.bank_reconciled': 'Đối chiếu ngân hàng',
   'close.check.inventory_closed': 'Đóng kho',
   'close.countWarning': '13811/33811 còn số dư từ kiểm kê',
   'close.check.assets_tied_out': 'Đối chiếu tài sản',
@@ -4577,28 +4498,6 @@ const vi: Record<string, string> = {
   'move.draftTitle': 'Bút toán nháp',
   'move.collaboration': 'Trao đổi và hoạt động của chứng từ',
   'move.fromStockPicking': 'Từ phiếu kho',
-  'billMatch.title': 'Đối chiếu đơn mua',
-  'billMatch.ok': 'Khớp đơn mua',
-  'billMatch.mismatch': 'Lệch đơn mua',
-  'billMatch.held': 'Đang tạm giữ',
-  'billMatch.heldTitle': 'Hoá đơn đang tạm giữ',
-  'billMatch.tolerance':
-    'Dung sai giá {tolerance}% trên giá sau chiết khấu. Số lượng không vượt số được lập: đã nhận, hoặc đã đặt với hàng lập hoá đơn theo số đặt.',
-  'billMatch.noTolerance':
-    'Chưa đặt dung sai giá nên không so đơn giá. Số lượng không vượt số được lập: đã nhận, hoặc đã đặt với hàng lập hoá đơn theo số đặt.',
-  'billMatch.quantity': 'Hoá đơn này / Được lập',
-  'billMatch.quantityDetail': 'Đã đặt {ordered} · Đã lập trước {billed}',
-  'billMatch.expectedPrice': 'Giá đơn mua',
-  'billMatch.price': 'Giá hoá đơn',
-  'billMatch.result': 'Đối chiếu',
-  'billMatch.matched': 'Khớp',
-  'billMatch.overQuantity': 'Vượt số lượng',
-  'billMatch.offPrice': 'Lệch giá {drift}%',
-  'billMatch.hold': 'Tạm giữ hoá đơn',
-  'billMatch.release': 'Bỏ tạm giữ',
-  'billMatch.reason': 'Lý do tạm giữ',
-  'billMatch.reasonHelp': 'Nêu điều nhà cung cấp cần sửa. Ghi sổ hoá đơn sẽ tự bỏ tạm giữ.',
-  'billMatch.column': 'Đối chiếu',
   'terms.lines': 'Số mốc thanh toán',
   'action.create': 'Tạo mới',
   'action.save': 'Lưu thay đổi',
@@ -4938,10 +4837,7 @@ const en: Record<string, string> = {
   'close.check.draft_moves': 'No draft journal entries',
   'close.check.trial_balance': 'Debits equal credits',
   'close.check.localization_evidence': 'Installed-standard evidence',
-  'close.check.bank_reconciled': 'Bank lines all matched',
-  'close.check.cash_counted': 'Cash count differences booked',
-  'close.bankUnmatched': '{count} bank lines not yet matched',
-  'close.cashDifferences': '{count} cash counts with a difference not yet booked',
+  'close.check.bank_reconciled': 'Bank reconciliation',
   'close.check.inventory_closed': 'Inventory close',
   'close.countWarning': '13811/33811 still have balances from stock counts',
   'close.check.assets_tied_out': 'Asset tie-out',
@@ -5187,28 +5083,6 @@ const en: Record<string, string> = {
   'move.draftTitle': 'Draft entry',
   'move.collaboration': 'Document conversation and activities',
   'move.fromStockPicking': 'From stock transfer',
-  'billMatch.title': 'Purchase order matching',
-  'billMatch.ok': 'Matches the order',
-  'billMatch.mismatch': 'Does not match',
-  'billMatch.held': 'On hold',
-  'billMatch.heldTitle': 'This bill is on hold',
-  'billMatch.tolerance':
-    'Price tolerance {tolerance}% on the price after discount. Quantities may not exceed the billable quantity: received, or ordered for products billed on ordered quantities.',
-  'billMatch.noTolerance':
-    'No price tolerance is set, so unit prices are not compared. Quantities may not exceed the billable quantity: received, or ordered for products billed on ordered quantities.',
-  'billMatch.quantity': 'This Bill / Billable',
-  'billMatch.quantityDetail': 'Ordered {ordered} · Billed before {billed}',
-  'billMatch.expectedPrice': 'Order Price',
-  'billMatch.price': 'Bill Price',
-  'billMatch.result': 'Matching',
-  'billMatch.matched': 'Matches',
-  'billMatch.overQuantity': 'Over quantity',
-  'billMatch.offPrice': 'Price off by {drift}%',
-  'billMatch.hold': 'Hold Bill',
-  'billMatch.release': 'Release Hold',
-  'billMatch.reason': 'Hold Reason',
-  'billMatch.reasonHelp': 'Say what the vendor needs to correct. Posting the bill releases the hold.',
-  'billMatch.column': 'Matching',
   'terms.lines': 'Due milestones',
   'action.create': 'Create',
   'action.save': 'Save changes',

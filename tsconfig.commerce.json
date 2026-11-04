@@ -97,8 +97,6 @@
     "test/product-variant-list.test.tsx",
     "test/product-variant-pricing-http.test.ts",
     "test/product.test.ts",
-    "test/purchase-approval-http.test.ts",
-    "test/purchase-bill-matching-http.test.ts",
     "test/purchase-e2e.test.ts",
     "test/purchase-function-contracts.test.ts",
     "test/purchase-line-grid-http.test.ts",

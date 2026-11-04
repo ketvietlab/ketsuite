@@ -4,7 +4,7 @@ export const baseline = {
       partnerId: 'id?',
       productId: 'id?',
     },
-    effects: ['read:purchase.SupplierInfo', 'read:company.Company'],
+    effects: ['read:purchase.SupplierInfo'],
     agent: true,
   },
   saveSupplierInfo: {

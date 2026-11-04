@@ -4,20 +4,6 @@ import { lotAvailable } from './lot-policy.ts'
 import { ours } from './scope.ts'
 
 export type SupplyOption = { partnerId: string; name: string; delay: number }
-/** What a supplier rule asks of a vendor when the composition can ask (#1737). */
-export type SupplierRequest = {
-  /** The run's retry key: the request line's id. */
-  id: string
-  point: Row
-  vendor: SupplyOption
-  /** In the rule's ordering unit. */
-  quantity: number
-  uomId: string
-  pickingTypeId: string
-  /** Rules of one company, warehouse, location, receipt type and vendor share a draft request. */
-  group: string
-  scheduledDate: string
-}
 /** A draft that brings goods once it is confirmed and has no stock move yet: a manufacturing order. */
 export type PlannedSupply = {
   id: string
@@ -63,20 +49,6 @@ export type SupplierReplenishment = {
     ctx: Ctx,
     input: { productId: unknown; quantity: number; uomId: unknown; at: string; partnerId?: unknown },
   ): Promise<SupplyOption | null>
-  /**
-   * Asks the vendor for the quantity: a request for quotation the buyer prices, sends and
-   * confirms, whose confirmation drafts the receipt. Refuses by throwing `ReplenishmentRefused`.
-   */
-  request(ctx: Ctx, input: SupplierRequest): Promise<{ orderId: string }>
-  /** A retried run's earlier request line, and the rule and quantity it asked for. */
-  requested(
-    ctx: Ctx,
-    id: unknown,
-  ): Promise<{ orderId: string; orderpointId: string; productId: string; quantity: string } | null>
-  /** Asked of vendors and not yet on a receipt, for the rule's product and location, in its unit. */
-  onOrder(ctx: Ctx, point: Row): Promise<number>
-  /** What `request` writes, beyond `effects`. */
-  requestEffects: readonly string[]
 }
 export const refuseReplenishment = (field: string, code: string) => ({
   ok: false as const,
@@ -186,8 +158,6 @@ export async function planOrderpoint(
     if (enters) incoming += quantity
     if (leaves) outgoing += quantity // Reservations are not completed deliveries.
   }
-  // Requests for quotation from a rule are on order too, until confirming them drafts the receipt.
-  if (point.source === 'supplier' && provider) onOrder += await provider.onOrder(ctx, point)
   // A draft manufacturing order is on order as a draft receipt is.
   if (provider?.make)
     for (const draft of await provider.make.planned(ctx, { productId: point.productId }))

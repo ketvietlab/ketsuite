@@ -96,12 +96,7 @@ export const scrapContext =
           source: transferHref(record.pickingId),
           operation: transferHref(record.operationId),
           undo: transferHref(record.undoId),
-          replenishment: record.replenishmentPickingId
-            ? transferHref(record.replenishmentPickingId)
-            : // The request lives in Purchase: linked only for a reader who may open it.
-              record.replenishmentOrderId && (await ctx.allows('purchase.getOrder', url, req))
-              ? `/admin/purchase/rfqs/${encodeURIComponent(String(record.replenishmentOrderId))}?${query}`
-              : null,
+          replenishment: transferHref(record.replenishmentPickingId),
         },
         value:
           valuation?.total != null

@@ -251,8 +251,6 @@ export const models: Record<string, ModelDef> = {
       validatedBy: 'text?',
       operationId: 'ref:stock.Picking?',
       replenishmentPickingId: 'ref:stock.Picking?',
-      /** The request for quotation a supplier rule drafted instead, when Purchase is composed (#1737). */
-      replenishmentOrderId: 'text?',
       undoId: 'ref:stock.Picking?',
       undoneBy: 'text?',
       undoReason: 'text?',

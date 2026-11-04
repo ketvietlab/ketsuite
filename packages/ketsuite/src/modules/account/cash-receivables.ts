@@ -193,26 +193,6 @@ const callCore = async (name: keyof typeof coreFunctions, ctx: Ctx, args: Record
   return fn.handler(ctx, args) as Promise<Record<string, unknown>>
 }
 
-/** Letters and digits only: banks drop the slashes, dashes and spaces a document number has. */
-const compactReference = (value: unknown): string =>
-  String(value ?? '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '')
-
-/**
- * Whether a bank line's reference names a document. Either may hold the other: a payer types
- * the bare number, or a transfer memo wraps it ("CT DEN:123 TT INV/2026/0001 thanh toan").
- * The memo side only counts a document number long enough not to turn up by chance.
- */
-export const referenceMatches = (reference: unknown, held: readonly unknown[]): boolean => {
-  const memo = compactReference(reference)
-  if (!memo) return false
-  return held.some((value) => {
-    const number = compactReference(value)
-    return number.length > 0 && (number.includes(memo) || (number.length >= 4 && memo.includes(number)))
-  })
-}
-
 export const cashReceivableFunctions: Record<string, FnSpec> = {
   listBankAccounts: defineFn({
     input: { active: 'bool?' },
@@ -557,7 +537,17 @@ export const cashReceivableFunctions: Record<string, FnSpec> = {
           score += Number(weights.amount ?? 60)
           reasons.push('exact_amount')
         }
-        if (referenceMatches(tx.reference, [line.move.name, line.move.ref])) {
+        const reference = String(tx.reference ?? '')
+          .trim()
+          .toLowerCase()
+        if (
+          reference &&
+          [line.move.name, line.move.ref].some((held) =>
+            String(held ?? '')
+              .toLowerCase()
+              .includes(reference),
+          )
+        ) {
           score += Number(weights.reference ?? 20)
           reasons.push('reference')
         }

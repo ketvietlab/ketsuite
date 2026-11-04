@@ -141,21 +141,17 @@ export const periodClosesListScreen = (
 
 const DRAFT_LISTS = ['customerInvoices', 'vendorBills', 'entries'] as const
 type DraftList = (typeof DRAFT_LISTS)[number]
-type CloseLinks = {
-  drafts?: Partial<Record<DraftList, string>>
-  trialBalance?: string
-  /** The queue of bank lines still to match, when the deployment composes one. */
-  bank?: string
-  /** The cash counts, when the deployment composes them. */
-  cash?: string
-}
 
 /**
  * What a check found, said where it can be acted on: drafts one line per list
  * that still holds them, each opening that list filtered to the period's drafts,
  * and the balance check opening the trial balance it was read from.
  */
-const stepEvidence = (_: Translator, row: Row, links: CloseLinks | undefined) => {
+const stepEvidence = (
+  _: Translator,
+  row: Row,
+  links: { drafts?: Partial<Record<DraftList, string>>; trialBalance?: string } | undefined,
+) => {
   const evidence = (row.evidence ?? {}) as Row
   if (row.code === 'draft_moves') {
     const lists = (evidence.lists ?? {}) as Partial<Record<DraftList, unknown>>
@@ -165,17 +161,6 @@ const stepEvidence = (_: Translator, row: Row, links: CloseLinks | undefined) =>
       return href ? <Link href={href} label={label} /> : label
     })
     return lines.length ? stack(lines, 'compact') : ''
-  }
-  // Bank lines and cash counts left open up to the period end, each opening where it is finished.
-  const open = {
-    bank_reconciled: ['bank', 'close.bankUnmatched'],
-    cash_counted: ['cash', 'close.cashDifferences'],
-  } as const
-  if (String(row.code) in open && Number(evidence.count ?? 0) > 0) {
-    const [page, key] = open[row.code as keyof typeof open]
-    const label = _(`account_backend.${key}`, { count: Number(evidence.count) })
-    const href = links?.[page]
-    return href ? <Link href={href} label={label} /> : label
   }
   if (row.code === 'trial_balance' && links?.trialBalance)
     return <Link href={links.trialBalance} label={_('account_backend.close.openTrialBalance')} />
@@ -201,7 +186,7 @@ export const periodCloseDetailScreen = (
      * the period, filtered to them, and the trial balance of the same dates.
      * Absent for a reader who may not open them.
      */
-    links?: CloseLinks
+    links?: { drafts?: Partial<Record<DraftList, string>>; trialBalance?: string }
   },
 ): TemplateResult => (
   <RecordScreen

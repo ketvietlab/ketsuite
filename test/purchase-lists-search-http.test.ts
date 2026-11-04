@@ -123,43 +123,6 @@ test('purchase vendor price list HTTP: the tiered preset narrows to lines above 
   assert.doesNotMatch(tiered, /data-row="xyz:desk"/)
 })
 
-test('purchase vendor price list HTTP: validity presets narrow to prices in force, ahead or expired today', async (t) => {
-  const app = await boot(t)
-  const price = (id: string, dates: Record<string, string>) =>
-    app.client.call('purchase.saveSupplierInfo', {
-      id,
-      partnerId: 'abc',
-      productTemplateId: 'goods',
-      productUomId: 'unit',
-      price: '1000000',
-      ...dates,
-    })
-  await price('abc:past', { dateStart: '2020-01-01', dateEnd: '2020-12-31' })
-  await price('abc:later', { dateStart: '2099-01-01' })
-  const rows = async (preset: string) =>
-    [
-      ...(await (await app.client.get(`${PRICELISTS}?lang=vi&preset=${preset}`)).text()).matchAll(
-        /data-row="([^"]+)"/g,
-      ),
-    ]
-      .map((match) => match[1])
-      .sort()
-  assert.deepEqual(await rows('current'), ['abc:desk', 'xyz:desk'])
-  assert.deepEqual(await rows('upcoming'), ['abc:later'])
-  assert.deepEqual(await rows('expired'), ['abc:past'])
-  // Without the renderer's hydration markers, so a cell reads as its text.
-  const all = (await (await app.client.get(`${PRICELISTS}?lang=vi`)).text()).replace(/<!--k\[?-->/g, '')
-  assert.match(
-    all,
-    /data-row="abc:past"[\s\S]*?data-col="validity"[\s\S]*?data-value="expired"[^>]*>(?:<span[^>]*>)?Hết hạn<[\s\S]*?1\/1\/20 – 31\/12\/20/,
-  )
-  assert.match(
-    all,
-    /data-row="abc:later"[\s\S]*?data-value="upcoming"[^>]*>(?:<span[^>]*>)?Sắp hiệu lực<[\s\S]*?Từ 1\/1\/99/,
-  )
-  assert.match(all, /id="purchase-vendor-pricelist-help"/)
-})
-
 test('purchase lists HTTP: the bar applies and saves searches through the shared functions', async (t) => {
   const app = await boot(t)
   const returnTo = `${RFQS}?lang=vi`

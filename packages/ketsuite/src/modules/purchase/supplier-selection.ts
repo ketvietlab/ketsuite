@@ -1,7 +1,6 @@
 import type { Ctx, Row } from '@ketvietlab/ketjs'
 import { minorText, multiplyToMinor, scaleOf } from '../account/money.ts'
 import { currency, inUnit, n, productContext } from './functions/shared.ts'
-import { companyCalendar, SUPPLIER_VALIDITY_EFFECTS, supplierValidity } from './supplier-validity.ts'
 
 export const SUPPLIER_SELECTION_EFFECTS = [
   'read:purchase.SupplierInfo',
@@ -9,7 +8,6 @@ export const SUPPLIER_SELECTION_EFFECTS = [
   'read:product.Product',
   'read:product.Template',
   'read:uom.Unit',
-  ...SUPPLIER_VALIDITY_EFFECTS,
 ] as const
 
 type Selection = { row: Row; quantityInSupplierUnit: number; unitsPerOrderUnit: number }
@@ -22,12 +20,15 @@ export async function selectProductSupplier(
   if (!ctx.scope.company || !Number.isFinite(args.quantity) || args.quantity < 0) return null
   const product = await productContext(ctx, args.productId)
   if (!product) return null
-  const calendar = await companyCalendar(ctx)
   const rows = (await ctx.db.select('purchase.SupplierInfo', { productTemplateId: product.template.id }))
     .filter((row) => String(row.companyId) === ctx.scope.company)
     .filter((row) => !args.partnerId || row.partnerId === args.partnerId)
     .filter((row) => !row.productId || row.productId === args.productId)
-    .filter((row) => supplierValidity(row, args.at, calendar) === 'current')
+    .filter(
+      (row) =>
+        (!row.dateStart || String(row.dateStart) <= args.at) &&
+        (!row.dateEnd || String(row.dateEnd) >= args.at),
+    )
     .sort((a, b) => n(a.sequence) - n(b.sequence) || String(a.id).localeCompare(String(b.id)))
   const partners = new Map<unknown, boolean>()
   let first: Selection | null = null

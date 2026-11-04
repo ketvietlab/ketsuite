@@ -1,5 +1,4 @@
 import type { Translator } from '@ketvietlab/ketjs'
-import { DescriptionList } from '@ketvietlab/design-system'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import {
   badge,
@@ -65,37 +64,12 @@ const detailActions = (_: Translator, order: PurchaseOrderDetail): PurchaseOrder
   const state = String(order.state)
   const actions: PurchaseOrderAction[] = []
   if (state === 'draft') actions.push({ value: 'send', label: _('purchase_backend.action.send') })
-  const approval = (order.approval ?? {}) as {
-    required?: number
-    pending?: string[]
-    draftedByCaller?: boolean
-  }
   if (['draft', 'sent'].includes(state)) {
-    // From a threshold, confirming sends the order for approval.
-    if (Number(approval.required ?? 0) > 0)
-      actions.push({
-        value: 'confirm',
-        label: _('purchase_backend.action.requestApproval'),
-        variant: 'primary',
-      })
-    else {
-      actions.push({ value: 'confirm', label: _('purchase_backend.action.confirm'), variant: 'primary' })
-      actions.push({ value: 'request-approval', label: _('purchase_backend.action.requestApproval') })
-    }
+    actions.push({ value: 'confirm', label: _('purchase_backend.action.confirm'), variant: 'primary' })
+    actions.push({ value: 'request-approval', label: _('purchase_backend.action.requestApproval') })
   }
-  // Whoever drafted the order cannot approve it, so they are not offered to.
-  if (state === 'to approve' && !approval.draftedByCaller) {
-    const pending = approval.pending ?? ['manager']
-    if (pending.includes('manager'))
-      actions.push({ value: 'approve', label: _('purchase_backend.action.approve'), variant: 'primary' })
-    // Once level one is given, the final approval is what is left to do.
-    if (pending.length)
-      actions.push({
-        value: 'final-approve',
-        label: _('purchase_backend.action.finalApprove'),
-        ...(pending.includes('manager') ? {} : { variant: 'primary' as const }),
-      })
-  }
+  if (state === 'to approve')
+    actions.push({ value: 'approve', label: _('purchase_backend.action.approve'), variant: 'primary' })
   // Approving is not the only answer to a request under review, and refusing it
   // should not mean destroying it.
   if (['sent', 'to approve'].includes(state))
@@ -171,64 +145,6 @@ const lineTable = (_: Translator, options: PurchaseOrderDetailScreenOptions): Te
         ],
       })
     : emptyState(_('purchase_backend.lines.empty'), _('purchase_backend.lines.emptyHint'))
-}
-
-type ApprovalFacts = {
-  required?: number
-  given?: { level: string; approverName?: string | null; approvedBy?: string | null }[]
-  pending?: string[]
-  draftedByCaller?: boolean
-}
-/** How many levels the order needs, who approved it and who is still awaited, as in the record modal. */
-const approvalFacts = (_: Translator, order: PurchaseOrderDetail): JSXChild => {
-  const facts = (order.approval ?? {}) as ApprovalFacts
-  const given = facts.given ?? []
-  if (!facts.required && !given.length) return null
-  const level = (name: string) => _(`purchase_backend.approval.level.${name}`)
-  const waiting = String(order.state) === 'to approve'
-  return (
-    <Section
-      title={_('purchase_backend.approval.title')}
-      body={
-        <DescriptionList
-          items={[
-            {
-              id: 'required',
-              label: _('purchase_backend.approval.required'),
-              value: _(`purchase_backend.approval.levels.${Math.min(2, Number(facts.required ?? 0))}`),
-            },
-            {
-              id: 'given',
-              label: _('purchase_backend.approval.given'),
-              value: given.length
-                ? given
-                    .map((row) => `${level(row.level)}: ${row.approverName || row.approvedBy || '—'}`)
-                    .join(' · ')
-                : '—',
-            },
-            ...(waiting
-              ? [
-                  {
-                    id: 'pending',
-                    label: _('purchase_backend.approval.pending'),
-                    value: (facts.pending ?? []).map(level).join(' · ') || '—',
-                  },
-                ]
-              : []),
-            ...(waiting && facts.draftedByCaller
-              ? [
-                  {
-                    id: 'own',
-                    label: _('purchase_backend.approval.ownLabel'),
-                    value: _('purchase_backend.approval.own'),
-                  },
-                ]
-              : []),
-          ]}
-        />
-      }
-    />
-  )
 }
 
 const receiptTable = (_: Translator, rows: PurchaseDetailRow[]): TemplateResult =>
@@ -350,7 +266,6 @@ export const purchaseOrderDetailScreen = (
       body={stack(
         [
           rejection(_, options.invalid),
-          approvalFacts(_, order),
           <Section
             title={_('purchase_backend.lines.title')}
             actions={

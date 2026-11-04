@@ -189,42 +189,12 @@ test("accounting close HTTP: each list holding drafts gets its own line, opening
     dateFrom: '2026-06-01',
     dateTo: '2026-06-30',
   })
-  // A bank line still unmatched at the period end, in a deployment that composes no queue for it.
-  await app.client.call('account.saveBankAccount', {
-    id: 'close-bank',
-    name: 'Bank',
-    journalId: 'core-bank-journal',
-    liquidityAccountId: 'core-bank',
-    clearingAccountId: 'core-input-tax',
-    suspenseAccountId: 'core-input-tax',
-    currency: 'VND',
-  })
-  await app.client.call('account.saveBankImportProfile', {
-    id: 'close-csv',
-    name: 'CSV',
-    format: 'csv',
-    balancePolicy: 'block',
-    mapping: { bookingDate: 'date', amount: 'amount', reference: 'reference', externalId: 'externalId' },
-  })
-  const imported = await app.client.call('account.importBankStatement', {
-    id: 'close-statement',
-    bankAccountId: 'close-bank',
-    profileId: 'close-csv',
-    rows: [{ date: '2026-06-20', amount: '1000', reference: 'R1', externalId: 'close-1' }],
-    openingBalance: '0',
-    closingBalance: '1000',
-    sourceChecksum: 'close-source',
-  })
-  assert.equal((imported as { ok?: boolean }).ok, true, JSON.stringify(imported))
   await app.client.call('account.refreshClosePeriod', { id: 'close-june' })
   const html = (await (await app.client.get('/admin/accounting/period-closes/close-june?lang=en')).text())
     .replace(/<!--[^>]*-->/g, '')
     .replace(/&amp;/g, '&')
   assert.match(html, />2 journal entries still in draft</)
   assert.match(html, />1 customer invoices still in draft</)
-  // Said, but not linked: this deployment's menu holds no bank reconciliation page.
-  assert.match(html, />1 bank lines not yet matched</)
-  assert.doesNotMatch(html, /href="\/admin\/accounting\/bank-reconciliation/)
   // No vendor bill is in draft, so that list gets no line.
   assert.doesNotMatch(html, /vendor bills still in draft/)
 

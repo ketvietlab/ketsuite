@@ -21,9 +21,6 @@ import {
 import type { FormField, Frame } from '../../../ui/index.ts'
 import { addDecimals } from '../../account/money.ts'
 import { labelOf, moveTitle } from './shared.tsx'
-import { HELP } from '../../product_backend/screens/help-words.ts'
-import { billMatchSection, type BillMatchSectionOptions } from './bill-match.tsx'
-import { VendorBillHelp } from './vendor-bill-help.tsx'
 
 export type MoveDetailRow = Record<string, unknown>
 
@@ -42,8 +39,6 @@ export type MoveDetailScreenOptions = {
   collaboration: JSXChild
   /** The transfer a stock-owned entry came from, when the viewer may open it. */
   stockSource?: { name: string; href: string }
-  /** How a vendor bill compares with its purchase orders, when Purchasing is composed and readable. */
-  billMatch?: BillMatchSectionOptions
   printActions?: JSXChild
   rejected?: MoveDetailRejection
   lineId: string
@@ -185,10 +180,9 @@ export const moveDetailScreen = (_: Translator, options: MoveDetailScreenOptions
     },
   ]
 
-  // A vendor bill or credit note carries the vendor bills guide; other entries have none yet.
-  const vendorBill = move.moveType === 'in_invoice' || move.moveType === 'in_refund'
-  const lang = _.locale === 'en' ? 'en' : 'vi'
-  const page = (
+  return shell(
+    _,
+    title,
     <FormPage
       variant="operational"
       frame={options.frame}
@@ -240,9 +234,6 @@ export const moveDetailScreen = (_: Translator, options: MoveDetailScreenOptions
               }
             />
           ) : null,
-          options.billMatch && options.billMatch.match.status !== 'none'
-            ? billMatchSection(_, options.billMatch)
-            : null,
           <Section title={_('account_backend.lines.title')} body={table} />,
           draft ? (
             <Section
@@ -259,10 +250,7 @@ export const moveDetailScreen = (_: Translator, options: MoveDetailScreenOptions
                       submitVariant="secondary"
                       hidden={{ action: 'add-line', lineId: options.lineId }}
                       fields={lineFields}
-                      // A refused post or cancel is told above; only a refused line belongs here.
-                      errors={
-                        options.rejected?.values.action === 'add-line' ? options.rejected.messages : undefined
-                      }
+                      errors={options.rejected?.messages}
                     />
                   }
                 />
@@ -275,27 +263,7 @@ export const moveDetailScreen = (_: Translator, options: MoveDetailScreenOptions
       aside={options.collaboration}
       asideLabel={_('account_backend.move.collaboration')}
       slots={{ header: 'account.move-header', body: 'account.move-body' }}
-    />
-  )
-
-  return shell(
-    _,
-    title,
-    vendorBill ? (
-      <>
-        {page}
-        <VendorBillHelp lang={lang} />
-      </>
-    ) : (
-      page
-    ),
-    {
-      ...options.frame,
-      topbar: false,
-      titled: false,
-      ...(vendorBill && options.frame.applications
-        ? { applications: { ...options.frame.applications, helpLabel: HELP[lang].trigger } }
-        : {}),
-    },
+    />,
+    { ...options.frame, topbar: false, titled: false },
   )
 }

@@ -386,8 +386,6 @@ export const replenishmentRecordDefinition: RecordModalDefinition<ReplenishmentD
       confirm: (c) => t(c, 'modal.confirmRun'),
       navigate: (result, c) => {
         const href = `/admin/stock/replenishment/${encodeURIComponent(c.id)}?lang=${language(c)}`
-        // A supplier rule drafts a request for quotation in Purchase instead (#1737), which a warehouse
-        // operator may not open: the rule shows it on order.
         const pickingId = (result as Row | null)?.pickingId
         // A rule that makes goods opens the order it drafted.
         const made = (result as Row | null)?.href

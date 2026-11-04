@@ -1,20 +1,9 @@
 import type { Page } from '@playwright/test'
-import {
-  DESKTOP,
-  MOBILE,
-  evidence,
-  expect,
-  fitsWidth,
-  recordReady,
-  settled,
-  signIn,
-  test,
-} from '../product_backend/support.js'
+import { DESKTOP, expect, recordReady, settled, signIn, test } from '../product_backend/support.js'
 
 // C11 (P48–P50), on the Commerce deployment: a product's suppliers in the order they are tried,
 // who sees their prices, a partner that only supplies kept out of a sale's customers, and a
-// supplier replenishment rule that names the supplier the quantity selects and asks it for a quotation
-// that purchasing finds among the stock demands (#1737).
+// supplier replenishment rule that names and orders from the supplier the quantity selects.
 
 test.use({ viewport: DESKTOP, locale: 'vi-VN' })
 
@@ -99,21 +88,16 @@ const summary = (page: Page) => page.getByRole('complementary').filter({ hasText
 const fact = (page: Page, term: string) =>
   summary(page).getByRole('term').filter({ hasText: term }).locator('xpath=following-sibling::dd[1]')
 
-test('a supplier rule left to the product names, and asks for a quotation from, the supplier its quantity selects', async ({
+test('a supplier rule left to the product names, and orders from, the supplier its quantity selects', async ({
   page,
-}, info) => {
+}) => {
   await newRule(page, 'bong tay trang 120', 'TM-001')
-  // Đông Á's request for TM-001 (M9: 100 packs, 120 once the line grid spec has edited it) is on order
-  // already (#1737): below 150, the rule tops up to 300.
-  await page.getByRole('spinbutton', { name: 'Tồn tối thiểu' }).fill('150')
   await page.getByRole('button', { name: 'Lưu' }).click()
   await expect(page).toHaveURL(/\/admin\/stock\/replenishment\/[^/?]+\?/)
   await settled(page)
-  await expect(fact(page, 'Đã đặt, chưa nhận')).toHaveText(/^(100|120)$/)
-  const asked = String(300 - Number(await fact(page, 'Đã đặt, chưa nhận').textContent()))
-  // The rest falls short of Đông Á's 500, reaches Bông Sen Việt's 100 (P49). Left empty, the
+  // 300 packs fall short of Đông Á's 500, reach Bông Sen Việt's 100 (P49). Left empty, the
   // look-ahead is the first supplier's ten days (P50).
-  await expect(fact(page, 'Cần đặt')).toHaveText(asked)
+  await expect(fact(page, 'Cần đặt')).toHaveText('300')
   await expect(fact(page, 'Nguồn hàng')).toHaveText('Công ty TNHH Bông Sen Việt')
   await expect(fact(page, 'Thời gian chờ (ngày)')).toHaveText('10')
 
@@ -122,51 +106,18 @@ test('a supplier rule left to the product names, and asks for a quotation from, 
     .getByRole('dialog', { name: 'Chạy bổ sung' })
     .getByRole('button', { name: 'Chạy bổ sung' })
     .click()
-  // #1737: running it asks Bông Sen Việt for a quotation; the rule shows it on order.
+  // Running it opens the draft receipt from Bông Sen Việt on its page (C24), without its purchase price.
+  await expect(page).toHaveURL(/\/admin\/stock\/transfers\/[^/?]+\?/)
+  const receipt = page.locator('[data-ui="record-page"]')
+  // The replenishment receipt takes the warehouse's next receipt number (C28).
+  await expect(receipt.getByRole('heading', { level: 1 })).toHaveText(/^HCM\/NK\/\d{4}$/)
+  await expect(receipt).toContainText('Công ty TNHH Bông Sen Việt')
+  await expect(receipt).toContainText('300')
+  await expect(receipt).not.toContainText('18.000')
+  await page.goBack()
   await settled(page)
-  await expect(page).toHaveURL(/\/admin\/stock\/replenishment\/[^/?]+\?/)
   await expect(fact(page, 'Đã đặt, chưa nhận')).toHaveText('300')
   await expect(fact(page, 'Cần đặt')).toHaveText('0')
-  await evidence(page, info, 'rule-after-run-desktop')
-
-  // Purchasing finds it among the stock demands, priced from the vendor price list.
-  await page.goto('/admin/purchase?lang=vi')
-  await settled(page)
-  const demands = page
-    .locator('main section[data-ui="section"]')
-    .filter({ has: page.getByRole('heading', { level: 2, name: 'Nhu cầu bổ sung từ kho', exact: true }) })
-  const row = demands.getByRole('row').filter({ hasText: 'Công ty TNHH Bông Sen Việt' })
-  await expect(row).toHaveCount(1)
-  await expect(row).toContainText('Kho Hồ Chí Minh')
-  await expect(row).toContainText('RFQ')
-  await fitsWidth(page)
-  await evidence(page, info, 'purchase-demands-desktop')
-  await row.click()
-  const rfq = page.getByRole('dialog').filter({ hasText: 'Công ty TNHH Bông Sen Việt' })
-  await expect(rfq).toContainText(asked)
-  await expect(rfq).toContainText('18.000')
-  await evidence(page, info, 'purchase-demand-rfq-desktop')
-  await page.keyboard.press('Escape')
-
-  // The overview's guide says where these come from.
-  await page.getByRole('button', { name: 'Hướng dẫn màn hình' }).click()
-  await expect(page.locator('#purchase-overview-help')).toContainText('Nhu cầu bổ sung từ kho')
-  await expect(page.locator('#purchase-overview-help [data-ui="mermaid"]')).toHaveAttribute(
-    'data-state',
-    'ready',
-  )
-  await evidence(page, info, 'purchase-overview-help-desktop')
-})
-
-test('the stock demands stay readable on a phone', async ({ page }, info) => {
-  await page.setViewportSize(MOBILE)
-  await signIn(page, 'admin', '/admin/purchase?lang=vi')
-  await settled(page)
-  await expect(
-    page.getByRole('heading', { level: 2, name: 'Nhu cầu bổ sung từ kho', exact: true }),
-  ).toBeVisible()
-  await fitsWidth(page)
-  await evidence(page, info, 'purchase-demands-mobile')
 })
 
 test('a rule that names its supplier uses that supplier', async ({ page }) => {
