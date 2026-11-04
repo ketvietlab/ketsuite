@@ -1159,6 +1159,7 @@ export const orderLoyaltyScreen = (
                                       rewardId: String(reward.rewardId),
                                     }}
                                     fields={[]}
+                                    layout="inline"
                                     submit={_('loyalty_backend.action.applyReward')}
                                     submitVariant="primary"
                                   />

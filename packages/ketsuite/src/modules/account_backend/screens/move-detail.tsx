@@ -1,4 +1,5 @@
 import type { Translator } from '@ketvietlab/ketjs'
+import { Link } from '@ketvietlab/design-system'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import {
   badge,
@@ -36,6 +37,8 @@ export type MoveDetailScreenOptions = {
   accountOptions: Array<{ value: string; label: string }>
   action: string
   collaboration: JSXChild
+  /** The transfer a stock-owned entry came from, when the viewer may open it. */
+  stockSource?: { name: string; href: string }
   printActions?: JSXChild
   rejected?: MoveDetailRejection
   lineId: string
@@ -78,7 +81,8 @@ export const moveDetailScreen = (_: Translator, options: MoveDetailScreenOptions
           fields={[]}
         />,
       ]
-    : move.state === 'posted'
+    : // An entry another module posted is undone by that module's own document, not here.
+      move.state === 'posted' && !move.sourceModule
       ? [
           <RecordForm
             scope="account-move"
@@ -217,6 +221,17 @@ export const moveDetailScreen = (_: Translator, options: MoveDetailScreenOptions
               tone="danger"
               title={_('account_backend.move.refused')}
               message={options.rejected.messages.join(' ')}
+            />
+          ) : null,
+          options.stockSource ? (
+            <Section
+              title={_('account_backend.move.fromStockPicking')}
+              body={
+                <Surface
+                  padding="compact"
+                  body={<Link label={options.stockSource.name} href={options.stockSource.href} />}
+                />
+              }
             />
           ) : null,
           <Section title={_('account_backend.lines.title')} body={table} />,

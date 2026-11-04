@@ -1,4 +1,4 @@
-import { defineListSearch, eq } from '@ketvietlab/ketjs'
+import { defineListSearch, eq, ne, or, isNull, and, inArray } from '@ketvietlab/ketjs'
 import type { ListState, Table } from '@ketvietlab/ketjs'
 
 export const emptyProductListState = (): ListState => ({
@@ -22,7 +22,7 @@ export const productListSearch = (T: Table) =>
     filterable: [
       { key: 'name', label: 'Name', col: T.name!, type: 'text' },
       { key: 'description', label: 'Description', col: T.description!, type: 'text' },
-      { key: 'type', label: 'Type', col: T.type!, type: 'selection', choices: ['goods', 'service'] },
+      { key: 'type', label: 'Type', col: T.type!, type: 'selection', choices: ['goods', 'service', 'combo'] },
       { key: 'categoryId', label: 'Category', col: T.categoryId!, type: 'reference' },
       { key: 'uomId', label: 'Unit of measure', col: T.uomId!, type: 'reference' },
       { key: 'listPrice', label: 'Sales price', col: T.listPrice!, type: 'number' },
@@ -62,8 +62,24 @@ export const productListSearch = (T: Table) =>
     presets: [
       { key: 'goods', label: 'Goods', group: 'type', expr: eq(T.type!, 'goods') },
       { key: 'service', label: 'Services', group: 'type', expr: eq(T.type!, 'service') },
-      { key: 'sale', label: 'Can be sold', group: 'sale', expr: eq(T.saleOk!, true) },
-      { key: 'purchase', label: 'Can be purchased', group: 'purchase', expr: eq(T.purchaseOk!, true) },
+      { key: 'combo', label: 'Combo', group: 'type', expr: eq(T.type!, 'combo') },
+      { key: 'sale', label: 'Can be sold', group: 'use', expr: or(eq(T.saleOk!, true), isNull(T.saleOk!)) },
+      {
+        key: 'purchase',
+        label: 'Can be purchased',
+        group: 'use',
+        expr: or(eq(T.purchaseOk!, true), isNull(T.purchaseOk!)),
+      },
+      { key: 'notSold', label: 'Not sold', group: 'use', expr: eq(T.saleOk!, false) },
+      {
+        key: 'tracked',
+        label: 'Tracked by lot',
+        group: 'use',
+        expr:
+          T.tracking && T.isStorable
+            ? and(ne(T.type!, 'service'), eq(T.tracking, 'lot'), eq(T.isStorable, true))
+            : inArray(T.id!, []),
+      },
     ],
     defaultSort: [{ key: 'name', dir: 'asc' }],
     // Product managers often classify across category, availability, sales and

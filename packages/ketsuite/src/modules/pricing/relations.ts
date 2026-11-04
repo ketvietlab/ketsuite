@@ -8,5 +8,6 @@ export const relations: Record<string, Record<string, RelationDef>> = {
     category: { belongsTo: 'product.Category', by: 'categoryId' },
     template: { belongsTo: 'product.Template', by: 'templateId' },
     product: { belongsTo: 'product.Product', by: 'productId' },
+    unit: { belongsTo: 'uom.Unit', by: 'uomId' },
   },
 }

@@ -205,6 +205,7 @@ test('attribute modal context: defaults, ordered colors, missing records and eff
     displayType: 'select',
     createVariant: 'always',
     sequence: 10,
+    active: true,
     values: [],
   })
   assert.equal(creating.data.permissions.save, true)

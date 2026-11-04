@@ -13,6 +13,7 @@ import {
   shell,
 } from '../../../ui/index.ts'
 import type { Column, DataTable, Frame } from '../../../ui/index.ts'
+import { LocationHelp } from './location-help.tsx'
 
 export type LocationListRow = {
   id: string
@@ -101,26 +102,40 @@ export const locationsListScreen = (
   return shell(
     _,
     _('stock_backend.locations'),
-    <ListPage
-      variant="operational"
-      frame={collection.frame}
-      title={_('stock_backend.location.title')}
-      headerActions={
-        options.createHref ? (
-          <LinkButton label={_('stock_backend.action.create')} href={options.createHref} variant="primary" />
-        ) : null
-      }
-      actions={collectionActions(_, collection.frame, undefined, selection)}
-      controls={collectionControls(_, _('stock_backend.location.title'), collection.frame)}
-      footer={`${_('stock_backend.location.configured.title')}: ${String(total)}`}
-      body={
-        options.rows.length || options.table?.groups?.length
-          ? collectionTable(_, collection.table)
-          : emptyState(_('stock_backend.location.empty'), _('stock_backend.location.emptyHint'), {
-              icon: icon('warehouse'),
-            })
-      }
-    />,
-    { ...collection.frame, chrome: null, topbar: false },
+    <>
+      <ListPage
+        variant="operational"
+        frame={collection.frame}
+        title={_('stock_backend.location.title')}
+        headerActions={
+          options.createHref ? (
+            <LinkButton
+              label={_('stock_backend.action.create')}
+              href={options.createHref}
+              variant="primary"
+            />
+          ) : null
+        }
+        actions={collectionActions(_, collection.frame, undefined, selection)}
+        controls={collectionControls(_, _('stock_backend.location.title'), collection.frame)}
+        footer={`${_('stock_backend.location.configured.title')}: ${String(total)}`}
+        body={
+          options.rows.length || options.table?.groups?.length
+            ? collectionTable(_, collection.table)
+            : emptyState(_('stock_backend.location.empty'), _('stock_backend.location.emptyHint'), {
+                icon: icon('warehouse'),
+              })
+        }
+      />
+      <LocationHelp lang={_.locale === 'en' ? 'en' : 'vi'} id="stock-locations-help" />
+    </>,
+    {
+      ...collection.frame,
+      chrome: null,
+      topbar: false,
+      ...(collection.frame.applications
+        ? { applications: { ...collection.frame.applications, helpLabel: _('stock_backend.location.help') } }
+        : {}),
+    },
   )
 }

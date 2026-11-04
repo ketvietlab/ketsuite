@@ -109,6 +109,7 @@ const options = {
   ledgerHref: (accountId: string) => `/admin/accounting/general-ledger?accountId=${accountId}&lang=vi`,
   partnerHref: (partnerId: string) =>
     `/admin/accounting/partner-statement?partnerId=${partnerId}&dateFrom=2026-01-01&dateTo=2026-12-31&lang=vi`,
+  kpiHref: '/admin/accounting/trial-balance?dateFrom=2026-01-01&dateTo=2026-12-31&lang=vi',
 }
 
 test('accounting overview presets use the company civil day at the UTC year boundary', () => {
@@ -149,6 +150,10 @@ test('accounting overview stays specialized: preserves period, ledger KPIs, dril
   assert.match(html, /Doanh thu thuần[\s\S]*?2\.000\.000/)
   assert.match(html, /Lợi nhuận trước thuế[\s\S]*?600\.000/)
   assert.match(html, /Tổng nợ phải trả[\s\S]*?400\.000/)
+  assert.match(
+    html,
+    /<a[^>]*data-ui="metric"[^>]*href="\/admin\/accounting\/trial-balance\?dateFrom=2026-01-01&amp;dateTo=2026-12-31&amp;lang=vi"[\s\S]*?Doanh thu thuần/,
+  )
   assert.match(html, /data-ui="delta" data-direction="down" data-sentiment="good"/)
   assert.match(html, /data-ui="chart" data-kind="line"[\s\S]*?Biểu đồ doanh thu/)
   assert.match(html, /data-ui="chart" data-kind="doughnut"[\s\S]*?Cơ cấu doanh thu/)

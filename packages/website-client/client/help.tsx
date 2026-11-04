@@ -12,21 +12,21 @@ const recipes: Record<string, readonly [string, string, string, string]> = {
   ],
   entries: [
     'Quản lý trang và bài viết của website đang chọn.',
-    'Tìm theo tiêu đề hoặc đường dẫn, lọc trạng thái rồi mở bản ghi. Dùng nút tạo mới khi có quyền chỉnh sửa.',
+    'Tìm theo tiêu đề hoặc đường dẫn, lọc trạng thái rồi mở bản ghi. Danh sách hiện 30 dòng mỗi trang; dùng Trang trước/Trang sau ở cuối bảng. Từ khoá, trạng thái và số trang nằm trên địa chỉ nên tải lại hoặc gửi đường dẫn vẫn mở đúng chỗ. Khi lọc không ra kết quả, dùng Xoá bộ lọc. Dùng nút tạo mới khi có quyền chỉnh sửa.',
     'Manage the selected website’s pages and posts.',
-    'Search by title or path, filter status and open a record. Use the create action when allowed.',
+    'Search by title or path, filter status and open a record. The list shows 30 rows per page; use Previous/Next below the table. The search, status and page are in the address, so reloading or sharing the link opens the same rows. When a filter finds nothing, use Clear filters. Use the create action when allowed.',
   ],
   editor: [
     'Soạn nội dung và thông tin hiển thị của một trang hoặc bài viết.',
-    'Sửa các trường và lưu bản nháp. Xem trước để kiểm tra nội dung; xuất bản là thao tác riêng.',
+    'Sửa các trường và lưu bản nháp. Xem trước để kiểm tra nội dung; xuất bản là thao tác riêng. Lưu trữ bản nháp là việc của người soạn; lưu trữ trang đang công khai hoặc đã lên lịch sẽ gỡ trang khỏi website nên cần quyền xuất bản. Khôi phục từ lưu trữ đưa trang về bản nháp, cần xuất bản lại thì khách mới thấy.',
     'Edit one page or post and its display information.',
-    'Edit the fields and save the draft. Preview the result; publishing is a separate action.',
+    'Edit the fields and save the draft. Preview the result; publishing is a separate action. Authors may archive drafts; archiving a live or scheduled page takes it off the website, so it needs publishing permission. Restoring from the archive returns a draft that must be published again before visitors see it.',
   ],
   builder: [
     'Chỉnh bố cục trang và nội dung từng khối.',
-    'Chọn khối, chỉnh nội dung hoặc cách hiển thị rồi lưu bản nháp. Trong phần giao diện dùng chung, logo và chân trang áp dụng cho cả website: kiểm tra và xác nhận trước khi lưu.',
+    'Chọn khối, chỉnh nội dung hoặc cách hiển thị rồi lưu bản nháp. Trong phần giao diện dùng chung, logo và chân trang áp dụng cho cả website: kiểm tra và xác nhận trước khi lưu. Lên lịch áp dụng cho phiên bản đã lưu; đổi giờ thì chỉ giờ mới có hiệu lực, và nếu đến giờ mà chưa xuất bản được thì hệ thống tự thử lại trong vài phút. Mẫu trang thay toàn bộ nội dung trang sau khi bạn xác nhận; bản trước vẫn nằm trong Lịch sử và khôi phục được.',
     'Edit page layout and individual blocks.',
-    'Select a block, edit its content or presentation and save the draft. Shared logo and footer changes affect the website: review and confirm before saving.',
+    'Select a block, edit its content or presentation and save the draft. Shared logo and footer changes affect the website: review and confirm before saving. A schedule applies to the saved version; moving it keeps only the new time, and a publication that could not run on time is retried within a few minutes. A page template replaces the whole page once you confirm; the previous version stays in History and can be restored.',
   ],
   preview: [
     'Kiểm tra cách nội dung hiển thị trước khi xuất bản.',
@@ -66,9 +66,9 @@ const recipes: Record<string, readonly [string, string, string, string]> = {
   ],
   submissions: [
     'Xem và xử lý thông tin khách gửi qua biểu mẫu.',
-    'Lọc trạng thái, mở bản ghi và xử lý bằng các thao tác được cấp quyền. Không thay đổi nội dung khách đã gửi.',
+    'Lọc trạng thái, mở bản ghi và xử lý bằng các thao tác được cấp quyền. Không thay đổi nội dung khách đã gửi. Cột thông báo cho biết email báo người phụ trách đã gửi, đang thử lại, thất bại hay chưa gửi; khi thất bại, mở bản ghi để xem lý do.',
     'Review visitor form submissions.',
-    'Filter status, open a record and use permitted processing actions. Do not change the visitor’s submitted content.',
+    'Filter status, open a record and use permitted processing actions. Do not change the visitor’s submitted content. The notice column shows whether the email to the form’s owner was sent, is being retried, failed or was never sent; open a failed one to read why.',
   ],
   'visitor-form': [
     'Kiểm tra thao tác gửi một biểu mẫu.',
@@ -150,9 +150,9 @@ const recipes: Record<string, readonly [string, string, string, string]> = {
   ],
   archive: [
     'Xác nhận thao tác gỡ hoặc lưu trữ bản ghi đang chọn.',
-    'Đọc tên bản ghi và tác động được hiển thị. Chỉ xác nhận khi đúng đối tượng; dùng Quay lại để giữ nguyên bản ghi.',
+    'Đọc tên bản ghi và tác động được hiển thị. Với trang hoặc bài viết, hộp thoại liệt kê mục menu và các trang khác đang liên kết tới nó: sau khi lưu trữ, các liên kết đó sẽ trỏ vào trang không còn. Chỉ xác nhận khi đúng đối tượng; dùng Quay lại để giữ nguyên bản ghi.',
     'Confirm removal or archival of the selected record.',
-    'Review the record name and displayed impact. Confirm only the intended record; go back to keep it unchanged.',
+    'Review the record name and displayed impact. For a page or post, the dialog lists the menu items and other pages linking to it: after archiving, those links point at nothing. Confirm only the intended record; go back to keep it unchanged.',
   ],
 }
 

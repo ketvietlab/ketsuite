@@ -1,6 +1,7 @@
 import type { ModelDef } from '@ketvietlab/ketjs'
 
 export const models: Record<string, ModelDef> = {
+  Namespace: { scope: 'company', fields: { id: 'id', revision: 'int' } },
   Pricelist: {
     scope: 'company',
     fields: { id: 'id', name: 'text', currency: 'text', sequence: 'int', active: 'bool' },
@@ -10,6 +11,7 @@ export const models: Record<string, ModelDef> = {
     fields: {
       id: 'id',
       pricelistId: 'ref:pricing.Pricelist',
+      creationOrder: 'int?',
       dateStart: 'datetime?',
       dateEnd: 'datetime?',
       minQuantity: 'decimal',
@@ -17,6 +19,7 @@ export const models: Record<string, ModelDef> = {
       categoryId: 'ref:product.Category?',
       templateId: 'ref:product.Template?',
       productId: 'ref:product.Product?',
+      uomId: 'ref:uom.Unit?',
       base: 'text',
       basePricelistId: 'ref:pricing.Pricelist?',
       computePrice: 'text',

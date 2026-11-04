@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import type { Row } from '@ketvietlab/ketjs'
@@ -63,8 +64,10 @@ test('pricing HTTP keeps collection context, stable create identity and rejected
   const detail = await app.client.get(detailPath)
   const detailHtml = await detail.text()
   assert.equal(detail.status, 200)
-  assert.match(detailHtml, /data-ui="form-page" data-scope="pricelist-detail-page"/)
-  const ruleId = hidden(detailHtml.match(/name="action" value="add-item"[\s\S]*/)?.[0] ?? detailHtml, 'id')
+  // The pricelist opens as a record page (#1269); the legacy form POST below still answers with its form.
+  assert.match(detailHtml, /pricing\.pricelist-page/)
+  assert.doesNotMatch(detailHtml, /data-ui="form-page" data-scope="pricelist-detail-page"/)
+  const ruleId = randomUUID()
 
   const invalidRule = await app.client.post(
     detailPath,
@@ -80,6 +83,7 @@ test('pricing HTTP keeps collection context, stable create identity and rejected
   )
   const invalidHtml = await invalidRule.text()
   assert.equal(invalidRule.status, 200)
+  assert.match(invalidHtml, /data-ui="form-page" data-scope="pricelist-detail-page"/)
   assert.match(invalidHtml, new RegExp(`name="id" value="${ruleId}"`))
   assert.match(invalidHtml, /name="minQuantity"[^>]*value="-1"/)
   assert.equal(

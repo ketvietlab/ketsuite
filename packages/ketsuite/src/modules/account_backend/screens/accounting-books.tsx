@@ -6,6 +6,7 @@ import {
   formatMoney,
   ListScreen,
   icon,
+  linkButton,
   RecordForm,
   RecordWorkspace,
   Section,
@@ -25,9 +26,16 @@ export const accountingBooksScreen = (
     currency: unknown
     errors?: string[]
     entryHref: (row: Row) => string
+    /** The same book as a spreadsheet, in the column order of the form it follows. */
+    csvHref?: string
   },
 ): TemplateResult => {
   const rows = (options.result?.rows as Row[] | undefined) ?? []
+  const result = options.result
+  // Only the general journal runs across every account at once, and it has no balance to carry.
+  const ledger = result?.opening !== null && result?.opening !== undefined
+  const byPartner = result?.book === 'partner'
+  const money = (value: unknown) => formatMoney(_, value, options.currency)
   return (
     <ListScreen
       translator={_}
@@ -37,31 +45,31 @@ export const accountingBooksScreen = (
         <RecordWorkspace
           kicker={_('account_backend.menu.reporting')}
           title={_('account_backend.books.title')}
-          subtitle={_('account_backend.books.subtitle')}
           imageFallback={icon('library-big')}
+          subtitle={result?.form ? _('account_backend.books.form', { form: String(result.form) }) : null}
           summary={
-            options.result
+            result
               ? [
-                  {
-                    id: 'opening',
-                    label: _('account_backend.books.opening'),
-                    value: String(options.result.opening),
-                  },
-                  {
-                    id: 'debit',
-                    label: _('account_backend.field.debit'),
-                    value: String(options.result.debit),
-                  },
-                  {
-                    id: 'credit',
-                    label: _('account_backend.field.credit'),
-                    value: String(options.result.credit),
-                  },
-                  {
-                    id: 'closing',
-                    label: _('account_backend.books.closing'),
-                    value: String(options.result.closing),
-                  },
+                  ...(ledger
+                    ? [
+                        {
+                          id: 'opening',
+                          label: _('account_backend.books.opening'),
+                          value: money(result.opening),
+                        },
+                      ]
+                    : []),
+                  { id: 'debit', label: _('account_backend.field.debit'), value: money(result.debit) },
+                  { id: 'credit', label: _('account_backend.field.credit'), value: money(result.credit) },
+                  ...(ledger
+                    ? [
+                        {
+                          id: 'closing',
+                          label: _('account_backend.books.closing'),
+                          value: money(result.closing),
+                        },
+                      ]
+                    : []),
                 ]
               : []
           }
@@ -90,6 +98,15 @@ export const accountingBooksScreen = (
               <Section
                 title={_('account_backend.books.result')}
                 description={_('account_backend.books.resultHint')}
+                actions={
+                  options.csvHref && rows.length
+                    ? linkButton({
+                        label: _('account_backend.books.csv'),
+                        href: options.csvHref,
+                        variant: 'secondary',
+                      })
+                    : undefined
+                }
                 body={
                   <Surface
                     padding="compact"
@@ -98,53 +115,75 @@ export const accountingBooksScreen = (
                       id: (row) => String(row.id),
                       rowHref: options.entryHref,
                       columns: [
-                        {
-                          key: 'date',
-                          label: _('account_backend.field.accountingDate'),
-                          priority: 'primary',
-                          cell: (row) => String(row.accountingDate),
-                        },
+                        // The row opens its entry from the first column, so the entry's number leads.
                         {
                           key: 'entry',
                           label: _('account_backend.field.entry'),
+                          priority: 'primary',
                           cell: (row) => code(String(row.moveName)),
+                        },
+                        {
+                          key: 'date',
+                          label: _('account_backend.field.accountingDate'),
+                          cell: (row) => String(row.accountingDate),
                         },
                         {
                           key: 'journal',
                           label: _('account_backend.field.journalId'),
                           cell: (row) => code(String(row.journalCode)),
                         },
-                        {
-                          key: 'account',
-                          label: _('account_backend.field.accountId'),
-                          cell: (row) => code(String(row.accountCode)),
-                        },
+                        // A book kept for one account names the other side; the journal, the account itself.
+                        ledger
+                          ? {
+                              key: 'contra',
+                              label: _('account_backend.books.contra'),
+                              cell: (row: Row) =>
+                                row.contraAccountCodes ? code(String(row.contraAccountCodes)) : '',
+                            }
+                          : {
+                              key: 'account',
+                              label: _('account_backend.field.accountId'),
+                              cell: (row: Row) => code(String(row.accountCode)),
+                            },
+                        ...(byPartner
+                          ? [
+                              {
+                                key: 'partner',
+                                label: _('account_backend.field.partnerId'),
+                                cell: (row: Row) => String(row.partnerName ?? ''),
+                              },
+                            ]
+                          : []),
                         {
                           key: 'description',
-                          label: _('account_backend.field.name'),
+                          label: _('account_backend.books.description'),
                           cell: (row) => String(row.description ?? ''),
                         },
                         {
                           key: 'debit',
                           label: _('account_backend.field.debit'),
-                          cell: (row) => formatMoney(_, row.debit, options.currency),
+                          cell: (row) => money(row.debit),
                           align: 'end',
                           kind: 'currency',
                         },
                         {
                           key: 'credit',
                           label: _('account_backend.field.credit'),
-                          cell: (row) => formatMoney(_, row.credit, options.currency),
+                          cell: (row) => money(row.credit),
                           align: 'end',
                           kind: 'currency',
                         },
-                        {
-                          key: 'running',
-                          label: _('account_backend.books.running'),
-                          cell: (row) => formatMoney(_, row.runningBalance, options.currency),
-                          align: 'end',
-                          kind: 'currency',
-                        },
+                        ...(ledger
+                          ? [
+                              {
+                                key: 'running',
+                                label: _('account_backend.books.running'),
+                                cell: (row: Row) => money(row.runningBalance),
+                                align: 'end' as const,
+                                kind: 'currency' as const,
+                              },
+                            ]
+                          : []),
                       ],
                     })}
                   />

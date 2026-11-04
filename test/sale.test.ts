@@ -12,10 +12,11 @@ import {
   SALE_STATES,
   stock,
   uom,
+  user,
 } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
 
-const modules = [address, partner, company, uom, product, pricing, stock, account, sale]
+const modules = [address, partner, company, user, uom, product, pricing, stock, account, sale]
 const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = (name: string, args: Record<string, unknown>, adapter: Adapter) =>
@@ -274,7 +275,7 @@ test('sale: quotation pricing, confirmation and delivery integrate with Stock', 
   }
 })
 
-test('sale: keeps accepting a compatible measurement-tree unit without a product link', async () => {
+test('sale: refuses an unlinked unit and accepts it once enabled for the product', async () => {
   const adapter = await boot()
   try {
     await call(
@@ -297,11 +298,60 @@ test('sale: keeps accepting a compatible measurement-tree unit without a product
         adapter,
       )
     ).value as Row
-    assert.equal(line.ok, true)
+    assert.equal(line.ok, false)
+    await call('product.addTemplateUom', { templateId: 'goods', uomId: 'box' }, adapter)
+    assert.equal(
+      (
+        (
+          await call(
+            'sale.addLine',
+            {
+              id: 'so:line',
+              orderId: 'so',
+              productId: 'goods-1',
+              productUomQty: '1',
+              productUomId: 'box',
+              priceUnit: '1000',
+            },
+            adapter,
+          )
+        ).value as Row
+      ).ok,
+      true,
+    )
     assert.equal(
       (await adapter.all('SELECT "amountTax" FROM sale_order WHERE id = ?', ['so']))[0]!.amountTax,
       '0',
     )
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('sale: a line added without a unit sells in the product unit, priced for it', async () => {
+  const adapter = await boot()
+  try {
+    // At list price: without `pricelistId: null` a new order takes the retail pricelist (D14).
+    await call(
+      'sale.createOrder',
+      { id: 'so', partnerId: 'customer', warehouseId: 'wh', pricelistId: null },
+      adapter,
+    )
+    // The quotation's add row leaves the unit empty unless a packaging is chosen.
+    const added = (
+      await call(
+        'sale.addLine',
+        { id: 'so:line', orderId: 'so', productId: 'goods-1', productUomQty: '2' },
+        adapter,
+      )
+    ).value as Row
+    assert.equal(added.ok, true)
+    const [line] = await adapter.all('SELECT "productUomId" FROM sale_order_line WHERE id = ?', ['so:line'])
+    const [template] = await adapter.all('SELECT "uomId", "listPrice" FROM product_template WHERE id = ?', [
+      'goods',
+    ])
+    assert.equal(line!.productUomId, template!.uomId)
+    assert.equal(Number(added.priceUnit), Number(template!.listPrice))
   } finally {
     await adapter.close()
   }
@@ -968,7 +1018,14 @@ test('sale: the overview counts every order and adds up one currency', async () 
     ] as const) {
       await call(
         'sale.createOrder',
-        { id, partnerId: 'customer', warehouseId: 'wh', ...(dateOrder ? { dateOrder } : {}) },
+        // List prices, not the company's retail pricelist a new order would take (D14).
+        {
+          id,
+          partnerId: 'customer',
+          warehouseId: 'wh',
+          pricelistId: null,
+          ...(dateOrder ? { dateOrder } : {}),
+        },
         adapter,
       )
       await call(

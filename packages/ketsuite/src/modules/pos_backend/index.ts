@@ -18,6 +18,7 @@ import {
   sessionsScreen,
 } from './screens.tsx'
 import { adminPage, choices, optional } from '../backend/screen.ts'
+import { optionalRead } from '../backend/optional-read.ts'
 import type { AnyRow } from '../backend/screen.ts'
 
 const crossSite = (req: Parameters<Route>[1]): boolean => {
@@ -63,18 +64,20 @@ const common = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) =>
     accounts,
     companies,
   ] = await Promise.all([
+    // The registers and methods are this screen's own; every other module's list only
+    // fills choices, so a role without it gets the page with those choices empty.
     ctx.call('pos.listConfigs', {}, url, req) as Promise<AnyRow[]>,
     ctx.call('pos.listPaymentMethods', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('partner.listPartners', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('user.listUsers', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('stock.listWarehouses', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('pricing.listPricelists', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('product.listTemplates', { withVariants: true }, url, req) as Promise<AnyRow[]>,
-    ctx.call('uom.listUnits', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('account.listTaxes', { typeTaxUse: 'sale' }, url, req) as Promise<AnyRow[]>,
-    ctx.call('account.listJournals', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('account.listAccounts', {}, url, req) as Promise<AnyRow[]>,
-    ctx.call('company.listCompanies', {}, url, req) as Promise<AnyRow[]>,
+    optionalRead<AnyRow[]>(ctx, 'partner.listPartners', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'user.listUsers', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'stock.listWarehouses', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'pricing.listPricelists', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'product.listTemplates', { withVariants: true }, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'uom.listUnits', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'account.listTaxes', { typeTaxUse: 'sale' }, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'account.listJournals', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'account.listAccounts', {}, url, req, []),
+    optionalRead<AnyRow[]>(ctx, 'company.listCompanies', {}, url, req, []),
   ])
   const variants: AnyRow[] = templates
     .filter((template) => template.saleOk)
@@ -594,8 +597,8 @@ export default defineModule({
         if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const [session, partners, companies] = await Promise.all([
           ctx.call('pos.getSession', { id: params.id }, url, req) as Promise<AnyRow | null>,
-          ctx.call('partner.listPartners', {}, url, req) as Promise<AnyRow[]>,
-          ctx.call('company.listCompanies', {}, url, req) as Promise<AnyRow[]>,
+          optionalRead<AnyRow[]>(ctx, 'partner.listPartners', {}, url, req, []),
+          optionalRead<AnyRow[]>(ctx, 'company.listCompanies', {}, url, req, []),
         ])
         if (!session) return text('not found', { status: 404 })
         const names = new Map(partners.map((row) => [String(row.id), row.name]))
@@ -686,7 +689,7 @@ export default defineModule({
         if (req.method !== 'GET') return text('GET', { status: 405 })
         const [rows, partners] = await Promise.all([
             ctx.call('pos.listOrders', {}, url, req) as Promise<AnyRow[]>,
-            ctx.call('partner.listPartners', {}, url, req) as Promise<AnyRow[]>,
+            optionalRead<AnyRow[]>(ctx, 'partner.listPartners', {}, url, req, []),
           ]),
           names = new Map(partners.map((row) => [String(row.id), row.name]))
         return adminPage(ctx, url, req, {

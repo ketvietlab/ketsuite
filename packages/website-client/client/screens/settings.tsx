@@ -1,6 +1,7 @@
 import { RecordPage } from '../page-regions.tsx'
 import {
   Checkbox,
+  CheckboxGroup,
   DescriptionList,
   Grid,
   Inline,
@@ -19,6 +20,9 @@ import type { ResourceRecord } from '../resources.ts'
 import { domainList } from './domains.tsx'
 import type { Domain } from './domains.tsx'
 import type { Screen, StudioContext } from '../types.ts'
+
+/** Languages a site can be written in; each needs its name under `website.locale.*`. */
+const SITE_LANGUAGES: readonly string[] = ['vi', 'en', 'ja', 'ko', 'zh']
 
 /** `website_studio.siteReadiness`: the site record and what still keeps it from going live. */
 type Readiness = {
@@ -48,7 +52,7 @@ export function createSettings(ctx: StudioContext) {
   const tr = ctx.tr
   let current: ResourceRecord
   let mailVersion: number | null = null
-  const save = async (changes: Record<string, string | boolean>) => {
+  const save = async (changes: Record<string, string | boolean | string[]>) => {
     const values = Object.fromEntries(
       resourceSchemas.sites.fields.map(({ name }) => [name, current[name] ?? '']),
     )
@@ -124,6 +128,33 @@ export function createSettings(ctx: StudioContext) {
                       value: locale,
                       label: tr(`website.locale.${locale}`),
                     }))}
+                    disabled={!canManage}
+                  />,
+                  <CheckboxGroup
+                    id="site-locales"
+                    name="locales"
+                    label={tr('website.settings.locales')}
+                    help={tr('website.settings.localesHelp')}
+                    options={SITE_LANGUAGES.map((locale) => ({
+                      value: locale,
+                      label: tr(`website.locale.${locale}`),
+                      checked: site.locales.includes(locale),
+                    }))}
+                    disabled={!canManage}
+                  />,
+                  <Select
+                    id="site-locale-fallback"
+                    name="localeFallback"
+                    label={tr('website.settings.localeFallback')}
+                    help={tr('website.settings.localeFallbackHelp')}
+                    value={site.localeFallback?.[0] ?? ''}
+                    options={[
+                      { value: '', label: tr('website.settings.localeFallbackNone') },
+                      ...site.locales.map((locale) => ({
+                        value: locale,
+                        label: tr(`website.locale.${locale}`),
+                      })),
+                    ]}
                     disabled={!canManage}
                   />,
                   <TextField
@@ -445,10 +476,19 @@ export function createSettings(ctx: StudioContext) {
           throw Object.assign(new Error(tr('website.settings.visitConsentNoticeRequired')), {
             code: 'validation',
           })
+        const defaultLocale = String(form.get('defaultLocale') ?? '')
+        // A checkbox group posts `locales[]`; the default language is always one of them.
+        const checked = [...form.getAll('locales'), ...form.getAll('locales[]')].map(String)
+        const locales = SITE_LANGUAGES.filter(
+          (locale) => locale === defaultLocale || checked.includes(locale),
+        )
+        const fallback = String(form.get('localeFallback') ?? '')
         await save({
           title: name,
           code: String(form.get('code') ?? '').trim(),
-          defaultLocale: String(form.get('defaultLocale') ?? ''),
+          defaultLocale,
+          locales: [defaultLocale, ...locales.filter((locale) => locale !== defaultLocale)],
+          localeFallback: fallback && locales.includes(fallback) ? [fallback] : [],
           googleTagManagerId,
           visitConsent,
           visitConsentNotice,

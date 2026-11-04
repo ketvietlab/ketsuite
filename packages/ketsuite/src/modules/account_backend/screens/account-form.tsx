@@ -38,8 +38,8 @@ export const accountFormModal = (_: Translator, options: AccountFormScreenOption
       : _('account_backend.account.create.hint'),
     closeHref: options.cancelHref,
     closeLabel: _('account_backend.action.cancelEdit'),
-    presentation: 'sheet',
-    size: 'large',
+    presentation: 'dialog',
+    size: 'small',
     form: {
       id: 'account-create-form',
       scope: 'account-chart',

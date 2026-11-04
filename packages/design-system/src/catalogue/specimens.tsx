@@ -1,3 +1,6 @@
+import { renderIsland, trustedMarkup } from '@ketvietlab/ketjs-view'
+import { ketGrid, KetGridPlaceholder } from '../interactions/ket-grid/index.tsx'
+import { ketGridDemoConfig, ketGridStockDemoConfig } from '../interactions/ket-grid/demo.ts'
 import { exampleApplications } from './application-switcher.ts'
 import type { JSXChild, TemplateResult } from '@ketvietlab/ketjs-view'
 import { Icon } from '../primitives/icon/index.tsx'
@@ -86,6 +89,7 @@ import { DataMatrix } from '../data-display/matrix/index.tsx'
 import { BarChart } from '../data-display/bar-chart/index.tsx'
 import { ColumnChart } from '../data-display/column-chart/index.tsx'
 import { QrCode } from '../data-display/qr-code/index.tsx'
+import { SignatureBlock } from '../data-display/signature-block/index.tsx'
 import { TimeframeFilter } from '../data-operations/timeframe-filter/index.tsx'
 import { AvatarGroup, DescriptionList, Person, Status } from '../record/display/index.tsx'
 import { FormattedDate, FormattedMoney, FormattedNumber } from '../record/formatted-values/index.tsx'
@@ -684,6 +688,7 @@ export const componentGroups: readonly ComponentGroup[] = [
                     name="deployment"
                     label="Deployment"
                     type="select"
+                    layout="inline"
                     value="commerce"
                     options={[
                       { value: 'commerce', label: 'Commerce' },
@@ -740,6 +745,59 @@ export const componentGroups: readonly ComponentGroup[] = [
                     span="full"
                     error="This code ended on 31 March."
                     action={<Button label="Apply" type="submit" variant="secondary" />}
+                  />,
+                ]}
+              />
+            }
+          />
+        ),
+      },
+      {
+        id: 'field-width',
+        name: 'Field width by value',
+        description:
+          'A control is as wide as its value needs: xs for a few characters, sm for an amount, a date or a reference, md for a short choice; a name or a note fills its column.',
+        render: () => (
+          <Surface
+            body={
+              <FormGrid
+                items={[
+                  <Field
+                    id="catalogue-width-name"
+                    name="name"
+                    label="Product name"
+                    value="Serum B5 repair"
+                  />,
+                  <Field id="catalogue-width-code" name="code" label="Reference" value="LX-01A" width="sm" />,
+                  <MoneyField
+                    id="catalogue-width-price"
+                    name="price"
+                    label="Sales price"
+                    value="289000"
+                    currency="VND"
+                    precision={0}
+                    width="sm"
+                  />,
+                  <Field
+                    id="catalogue-width-unit"
+                    name="unit"
+                    label="Unit"
+                    type="select"
+                    value="bottle"
+                    options={[
+                      { value: 'bottle', label: 'Bottle' },
+                      { value: 'box', label: 'Box' },
+                    ]}
+                    width="md"
+                  />,
+                  <Field
+                    id="catalogue-width-shelf"
+                    name="shelfLife"
+                    label="Shelf life"
+                    type="number"
+                    value="36"
+                    help="In months."
+                    width="xs"
                   />,
                 ]}
               />
@@ -3324,6 +3382,36 @@ export const componentGroups: readonly ComponentGroup[] = [
                   />,
                 ]}
               />,
+              <FilterBar
+                label="Report choices"
+                action="/reports/sales"
+                hidden={{ company: 'north' }}
+                submitLabel="Apply"
+                filters={[
+                  <Select
+                    id="specimen-report-period"
+                    name="period"
+                    label="Period"
+                    labelHidden
+                    value="2026"
+                    options={[
+                      { value: '2026', label: 'Year 2026' },
+                      { value: '2026-Q4', label: 'Q4 2026' },
+                    ]}
+                  />,
+                  <Select
+                    id="specimen-report-group"
+                    name="groupBy"
+                    label="Group by"
+                    labelHidden
+                    value="month"
+                    options={[
+                      { value: 'month', label: 'By month' },
+                      { value: 'customer', label: 'By customer' },
+                    ]}
+                  />,
+                ]}
+              />,
               <AppliedFilters
                 filters={[
                   { id: 'state', label: 'State', value: 'Open', removeHref: '/orders?q=An+Việt' },
@@ -3408,6 +3496,31 @@ export const componentGroups: readonly ComponentGroup[] = [
               { key: 'customer', label: 'Customer', cell: (row) => row.customer, width: '18rem' },
               { key: 'total', label: 'Total', cell: (row) => row.total, width: '10rem' },
               { key: 'state', label: 'State', cell: (row) => row.state, width: '9rem' },
+            ]}
+          />
+        ),
+      },
+      {
+        id: 'ket-grid',
+        name: 'Ket grid',
+        description:
+          'Editable grid drawn entirely in the browser: the server renders only its loading placeholder. Arrow keys move, Enter or F2 or typing edits, Tab moves to the next editable cell, Ctrl+C/V copies and pastes ranges with spreadsheets, Ctrl+D fills down, Ctrl+Z undoes, Alt+↑/↓ or the handle reorders. Cells the reader may edit are light green and an edited cell turns light yellow until the host saves; a row is filled whole only when every cell is (sections, notes, a new or moved row). The order lines show sections and notes, a delivered (read-only) line, a pinned subtotal and its total; the stock list draws 500 rows by drawing only those in view.',
+        render: () => (
+          <Stack
+            items={[
+              trustedMarkup(
+                renderIsland('design-system.ket-grid', ketGrid, {
+                  id: 'demo-ket-grid',
+                  config: ketGridDemoConfig,
+                }),
+              ),
+              trustedMarkup(
+                renderIsland('design-system.ket-grid', ketGrid, {
+                  id: 'demo-ket-grid-stock',
+                  config: ketGridStockDemoConfig,
+                }),
+              ),
+              <KetGridPlaceholder label="Loading order lines" rows={3} />,
             ]}
           />
         ),
@@ -3854,6 +3967,24 @@ export const componentGroups: readonly ComponentGroup[] = [
                 label="Join the shop's Wi-Fi"
                 size="small"
               />,
+            ]}
+          />
+        ),
+      },
+      {
+        id: 'signature-block',
+        name: 'Signature block',
+        description:
+          'Where each person signs a printed voucher: the role and how to sign, room to sign by hand, then the name the books know or a dotted line to write it on. A Grid sets them side by side.',
+        render: () => (
+          <Grid
+            columns={4}
+            mobileColumns={2}
+            items={[
+              <SignatureBlock label="Prepared by" hint="(Signature, full name)" />,
+              <SignatureBlock label="Received by" hint="(Signature, full name)" />,
+              <SignatureBlock label="Storekeeper" hint="(Signature, full name)" name="Minh Tam Pham" />,
+              <SignatureBlock label="Chief accountant" hint="(Signature, full name)" />,
             ]}
           />
         ),

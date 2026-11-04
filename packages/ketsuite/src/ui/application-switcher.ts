@@ -37,6 +37,7 @@ export const suiteApplications = (
   const sale = destination(menu.find((node) => node.id === 'sale'))
   const website = destination(menu.find((node) => node.id === 'website'))
   const phone = destination(menu.find((node) => node.id === 'phone'))
+  const accounting = destination(menu.find((node) => node.id === 'accounting'))
   const flow = flowDestination(menu.find((node) => node.id === 'flow'))
   return {
     label: _('backend.apps.label'),
@@ -80,6 +81,9 @@ export const suiteApplications = (
         id: 'accounting',
         label: _('backend.apps.accounting'),
         icon: 'calculator',
+        // Accounting is served inside this shell too, so it opens here like Phone.
+        href: accounting,
+        sameTab: true,
         unavailableLabel: _('backend.apps.comingSoon'),
       },
       {

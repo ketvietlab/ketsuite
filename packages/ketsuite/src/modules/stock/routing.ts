@@ -1,8 +1,8 @@
 import { defineFn } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
-import { convertQty, type Unit } from '../uom/convert.ts'
 import { toProductUnit } from './units.ts'
 import { company, ours } from './scope.ts'
+import { quantityText } from './quantity-text.ts'
 
 export const RULE_ACTIONS = ['pull', 'push', 'pull_push'] as const
 export const PROCUREMENT_METHODS = ['make_to_stock', 'make_to_order', 'mts_else_mto'] as const
@@ -104,7 +104,7 @@ export async function pushFromCompletedMove(ctx: Ctx, move: Row, quantity: numbe
       pickingId: null,
       productId: move.productId,
       productUomId: move.productUomId,
-      productUomQty: String(quantity),
+      productUomQty: quantityText(quantity),
       quantity: '0',
       locationId: move.locationDestId,
       locationDestId: rule.locationDestId,
@@ -129,7 +129,7 @@ async function available(ctx: Ctx, productId: unknown, locationId: unknown): Pro
   return quants.reduce((sum, quant) => sum + Number(quant.quantity) - Number(quant.reservedQuantity), 0)
 }
 
-async function procure(
+export async function procure(
   ctx: Ctx,
   args: {
     moveId: string
@@ -200,7 +200,7 @@ async function procure(
       pickingId: null,
       productId: args.productId,
       productUomId: args.productUomId,
-      productUomQty: String(args.quantity),
+      productUomQty: quantityText(args.quantity),
       quantity: '0',
       locationId: rule.locationSrcId,
       locationDestId: destinationId,
@@ -252,12 +252,6 @@ export const routingFunctions: Record<string, FnSpec> = {
         active: true,
         ...(args.routeId ? { routeId: args.routeId } : {}),
       }),
-  }),
-  listOrderpoints: defineFn({
-    input: {},
-    effects: ['read:stock.Orderpoint'],
-    agent: true,
-    handler: (ctx) => ours(ctx, 'stock.Orderpoint', { active: true }),
   }),
   saveRoute: defineFn({
     input: { id: 'id', name: 'text', sequence: 'int?' },
@@ -410,165 +404,4 @@ export const routingFunctions: Record<string, FnSpec> = {
         origin: args.origin,
       }),
   }),
-  saveOrderpoint: defineFn({
-    input: {
-      id: 'id',
-      productId: 'id',
-      warehouseId: 'id',
-      locationId: 'id',
-      trigger: 'text?',
-      minQuantity: 'decimal',
-      maxQuantity: 'decimal',
-      replenishmentUomId: 'id?',
-      routeId: 'id?',
-    },
-    output: { ok: 'bool', id: 'id?', errors: 'json?' },
-    effects: [
-      'read:stock.Orderpoint',
-      'write:stock.Orderpoint',
-      'read:stock.Warehouse',
-      'read:stock.Location',
-      'read:product.Product',
-      'read:product.Template',
-      'read:uom.Unit',
-    ],
-    idempotent: true,
-    agent: true,
-    handler: async (ctx, args) => {
-      if (Number(args.maxQuantity) < Number(args.minQuantity))
-        return invalid('maxQuantity', 'phải lớn hơn hoặc bằng minQuantity')
-      const trigger = String(args.trigger ?? 'auto')
-      if (!['auto', 'manual'].includes(trigger)) return invalid('trigger', 'phải là auto hoặc manual')
-      if (!(await ours(ctx, 'stock.Warehouse', { id: args.warehouseId }))[0])
-        return invalid('warehouseId', 'warehouse không tồn tại')
-      const location = (await ours(ctx, 'stock.Location', { id: args.locationId }))[0]
-      if (!location || location.warehouseId !== args.warehouseId)
-        return invalid('locationId', 'location không thuộc warehouse')
-      const product = (await ctx.db.select('product.Product', { id: args.productId }))[0]
-      const template = product
-        ? (await ctx.db.select('product.Template', { id: product.templateId }))[0]
-        : null
-      if (!product || !template?.uomId) return invalid('productId', 'sản phẩm chưa có UoM mặc định')
-      const replenishmentUomId = args.replenishmentUomId ?? template.uomId
-      const baseUom = (await ctx.db.select('uom.Unit', { id: template.uomId }))[0]
-      const replenishmentUom = (await ctx.db.select('uom.Unit', { id: replenishmentUomId }))[0]
-      const root = (unit: Row) => String(unit.parentPath).split('/').filter(Boolean)[0]
-      if (!baseUom || !replenishmentUom || root(baseUom) !== root(replenishmentUom))
-        return invalid('replenishmentUomId', 'đơn vị bổ sung phải cùng cây với UoM mặc định')
-      const existing = (await ours(ctx, 'stock.Orderpoint', { id: args.id }))[0]
-      const values = { ...args, trigger, replenishmentUomId, active: true }
-      const cs = ctx
-        .change('stock.Orderpoint', values, existing ?? null)
-        .cast([
-          'id',
-          'productId',
-          'warehouseId',
-          'locationId',
-          'trigger',
-          'minQuantity',
-          'maxQuantity',
-          'replenishmentUomId',
-          'routeId',
-          'active',
-        ])
-        .required(['productId', 'warehouseId', 'locationId', 'trigger', 'minQuantity', 'maxQuantity'])
-      if (!cs.valid) return { ok: false, errors: cs.errors }
-      await ctx.db.commit(cs, existing ? { id: args.id } : undefined)
-      return { ok: true, id: args.id }
-    },
-  }),
-  runOrderpoint: defineFn({
-    input: { id: 'id', moveId: 'id' },
-    output: { ok: 'bool', quantity: 'decimal?', moveIds: 'json?', method: 'text?', errors: 'json?' },
-    effects: [
-      'read:stock.Orderpoint',
-      'read:stock.Quant',
-      'read:stock.Move',
-      'read:stock.Location',
-      'read:product.Product',
-      'read:product.Template',
-      'read:product.Category',
-      'read:uom.Unit',
-      'read:stock.Route',
-      'read:stock.ProductRoute',
-      'read:stock.CategoryRoute',
-      'read:stock.WarehouseRoute',
-      'read:stock.Rule',
-      'write:stock.Move',
-      'write:stock.MoveLink',
-    ],
-    idempotent: true,
-    agent: true,
-    handler: async (ctx, args) => {
-      const point = (await ours(ctx, 'stock.Orderpoint', { id: args.id }))[0]
-      if (!point) return invalid('id', 'orderpoint không tồn tại')
-      const quants = await ours(ctx, 'stock.Quant', {
-        productId: point.productId,
-        locationId: point.locationId,
-      })
-      const onHand = quants.reduce((sum, quant) => sum + Number(quant.quantity), 0)
-      const moves = (await ours(ctx, 'stock.Move', { productId: point.productId })).filter(
-        (move) => !['done', 'cancel', 'draft'].includes(String(move.state)),
-      )
-      const incoming = moves
-        .filter((move) => move.locationDestId === point.locationId)
-        .reduce((sum, move) => sum + Math.max(0, Number(move.productUomQty) - Number(move.quantity)), 0)
-      const outgoing = moves
-        .filter((move) => move.locationId === point.locationId)
-        .reduce((sum, move) => sum + Math.max(0, Number(move.productUomQty) - Number(move.quantity)), 0)
-      const forecast = onHand + incoming - outgoing
-      if (forecast >= Number(point.minQuantity))
-        return { ok: true, quantity: '0', moveIds: [], method: 'none' }
-      const product = (await ctx.db.select('product.Product', { id: point.productId }))[0]!
-      const template = (await ctx.db.select('product.Template', { id: product.templateId }))[0]!
-      const baseUom = (await ctx.db.select('uom.Unit', { id: template.uomId }))[0]!
-      const replenishmentUom = (
-        await ctx.db.select('uom.Unit', {
-          id: point.replenishmentUomId ?? template.uomId,
-        })
-      )[0]!
-      let raw: number
-      try {
-        raw =
-          ((Number(point.maxQuantity) - forecast) * Number((baseUom as unknown as Unit).absoluteFactor)) /
-          Number((replenishmentUom as unknown as Unit).absoluteFactor)
-        convertQty(1, baseUom as unknown as Unit, replenishmentUom as unknown as Unit)
-      } catch (error) {
-        return invalid('replenishmentUomId', (error as Error).message)
-      }
-      const rounding = Math.max(Number(replenishmentUom.rounding), 1e-12)
-      const quantity = Math.ceil(raw / rounding - 1e-12) * rounding
-      const result = await procure(ctx, {
-        moveId: String(args.moveId),
-        productId: point.productId,
-        productUomId: point.replenishmentUomId,
-        quantity,
-        locationId: point.locationId,
-        routeId: point.routeId,
-        origin: `orderpoint:${String(point.id)}`,
-      })
-      return result.ok ? { ...result, quantity: String(quantity) } : result
-    },
-  }),
 }
-
-routingFunctions.runOrderpoints = defineFn({
-  input: { warehouseId: 'id?' },
-  output: { ok: 'bool', results: 'json' },
-  effects: routingFunctions.runOrderpoint!.effects,
-  agent: true,
-  handler: async (ctx, args) => {
-    const points = (await ours(ctx, 'stock.Orderpoint', { active: true })).filter(
-      (point) => point.trigger === 'auto' && (!args.warehouseId || point.warehouseId === args.warehouseId),
-    )
-    const results: Row[] = []
-    for (const point of points) {
-      const result = (await routingFunctions.runOrderpoint!.handler(ctx, {
-        id: point.id,
-        moveId: `${String(point.id)}:auto:${Date.now()}:${results.length}`,
-      })) as Row
-      results.push({ id: point.id, ...result })
-    }
-    return { ok: true, results }
-  },
-})

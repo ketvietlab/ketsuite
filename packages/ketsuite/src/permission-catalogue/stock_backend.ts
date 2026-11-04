@@ -8,6 +8,8 @@ export const permissions = {
     saveSearchFavorite: ['operate', 'operate'],
     deleteSearchFavorite: ['operate', 'operate'],
     searchProductTemplates: ['read', 'view'],
+    searchProductVariants: ['read', 'view'],
+    searchStock: ['read', 'view'],
     setDefaultSearchFavorite: ['operate', 'operate'],
   },
   exemptions: {},

@@ -65,6 +65,7 @@ jobs:
           - stock_backend
           - website_backend
           - user_backend
+          - commerce_supply
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

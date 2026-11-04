@@ -8,6 +8,8 @@ import { address, company, livedoc, mail, partner, user, userBackend } from '@ke
 import backend from '../packages/ketsuite/src/modules/backend/index.ts'
 import { createFlowModule } from '../packages/ketsuite/src/modules/flow/native/index.ts'
 import { createFlowStorageModule } from '../packages/ketsuite/src/modules/flow/native/attachments.ts'
+import { createFlowWorkspaceModule } from '../packages/ketsuite/src/modules/flow_workspace/index.ts'
+import { reviewFlow } from './helpers/flow-review.ts'
 import { everyFunction } from './helpers/permissions.ts'
 
 test('Teams, their people and a new project reach are read by the server, never from shipped membership', async () => {
@@ -27,6 +29,7 @@ test('Teams, their people and a new project reach are read by the server, never 
         livedoc,
         createFlowStorageModule(),
         native,
+        createFlowWorkspaceModule(),
       ],
       serve: {
         permissions: everyFunction,
@@ -352,6 +355,220 @@ test('Teams, their people and a new project reach are read by the server, never 
       ['flow.member.list', { teamId: alpha.id }],
     ] as const)
       assert.equal(code((await guest.call<Row>(name, args)).value), 'forbidden', name)
+    // C03: use the production Core engine, with no Pro module or paid extension.
+    const project = async (title: string, access: string) =>
+      ok(
+        await call('flow.project.save', {
+          workspaceId: closed.id,
+          title,
+          code: title.toUpperCase(),
+          access,
+          expectedRevision: revision,
+          idempotencyKey: 'project-' + title,
+        }),
+      )
+    const inheritedProject = await project('Inherited', 'workspace')
+    const privateProject = await project('Private', 'private')
+    const teammate = app.client.anonymous()
+    await teammate.login({ login: 'tm-a', password: 'local-test-password' })
+    const asTeammate = async (name: string, input: Row) => (await teammate.call<Row>(name, input)).value
+    assert.notEqual((await asTeammate('flow.issue.list', { projectId: inheritedProject.id })).ok, false)
+    assert.equal(
+      code(await asTeammate('flow.issue.list', { projectId: privateProject.id })),
+      'forbidden',
+      'a Workspace Team grant does not enter a private project',
+    )
+    const grantUser = async (key: string, targetId: unknown, subjectId: string, role: string) =>
+      ok(
+        await call('flow.access.grant', {
+          scope: 'project',
+          targetId,
+          subjectType: 'user',
+          subjectId,
+          role,
+          expectedRevision: revision,
+          idempotencyKey: key,
+        }),
+      )
+    await grantUser('private-direct', privateProject.id, 'tm-a', 'viewer')
+    assert.notEqual((await asTeammate('flow.issue.list', { projectId: privateProject.id })).ok, false)
+    assert.equal(
+      code(
+        await asTeammate('flow.issue.save', {
+          projectId: privateProject.id,
+          title: 'Denied viewer write',
+          idempotencyKey: 'viewer-write',
+        }),
+      ),
+      'forbidden',
+    )
+    ok(
+      await asTeammate('flow.issue.save', {
+        projectId: inheritedProject.id,
+        title: 'Team editor write',
+        idempotencyKey: 'team-write',
+      }),
+    )
+    // Organization epoch is returned on bootstrap, while task writes have their own CAS.
+    revision = Number((await call('flow.workspace.bootstrap', { route: 'teams' })).organizationRevision)
+    assert.equal(
+      code(
+        await call('flow.issue.save', {
+          projectId: privateProject.id,
+          title: 'Assign must not grant',
+          assigneeIds: ['tm-c'],
+          idempotencyKey: 'assign-no-grant',
+        }),
+      ),
+      'forbidden',
+    )
+    assert.equal(
+      code((await reader.call<Row>('flow.issue.list', { projectId: privateProject.id })).value),
+      'forbidden',
+    )
+    assert.equal(
+      (
+        (await call('flow.grant.list', { scope: 'project', targetId: privateProject.id })).items as Row[]
+      ).some((g) => g.subjectId === 'tm-c'),
+      false,
+    )
+    await grantUser('guest-direct', privateProject.id, 'tm-guest', 'viewer')
+    assert.notEqual(
+      (await guest.call<Row>('flow.issue.list', { projectId: privateProject.id })).value.ok,
+      false,
+    )
+    assert.equal(
+      code((await guest.call<Row>('flow.issue.list', { projectId: shared.id })).value),
+      'forbidden',
+      'guests never inherit an internal Workspace',
+    )
+    assert.equal(
+      code(
+        await call('flow.access.grant', {
+          scope: 'workspace',
+          targetId: closed.id,
+          subjectType: 'user',
+          subjectId: 'tm-guest',
+          role: 'viewer',
+          expectedRevision: revision,
+          idempotencyKey: 'guest-workspace',
+        }),
+      ),
+      'validation',
+    )
+    for (const revoke of [false, true])
+      assert.equal(
+        code(
+          await call('flow.member.update', {
+            id: 'tm-owner',
+            role: 'member',
+            revoke,
+            expectedVersion: 1,
+            expectedRevision: revision,
+            idempotencyKey: 'owner-' + revoke,
+          }),
+        ),
+        'owner_protected',
+        'the last owner cannot be demoted or revoked',
+      )
+    ok(
+      await call('flow.member.update', {
+        id: 'tm-d',
+        role: 'admin',
+        expectedVersion: 1,
+        expectedRevision: revision,
+        idempotencyKey: 'promote-admin',
+      }),
+    )
+    const admin = app.client.anonymous()
+    await admin.login({ login: 'tm-d', password: 'local-test-password' })
+    ok(
+      (
+        await admin.call<Row>('flow.team.save', {
+          title: 'Admin-managed',
+          expectedRevision: revision,
+          idempotencyKey: 'admin-team',
+        })
+      ).value,
+    )
+    assert.equal(
+      code(
+        await asTeammate('flow.team.save', {
+          title: 'Member cannot administer',
+          expectedRevision: revision,
+          idempotencyKey: 'member-team',
+        }),
+      ),
+      'forbidden',
+    )
+    // Membership revocation suspends existing sources. Only an organizer may
+    // explicitly reactivate the member; Team and direct grants then apply again.
+    const suspended = ok(
+      await call('flow.member.update', {
+        id: 'tm-a',
+        role: 'member',
+        revoke: true,
+        expectedVersion: 1,
+        expectedRevision: revision,
+        idempotencyKey: 'suspend-teammate',
+      }),
+    )
+    for (const projectId of [inheritedProject.id, privateProject.id])
+      assert.equal(code(await asTeammate('flow.issue.list', { projectId })), 'forbidden')
+    ok(
+      await call('flow.member.update', {
+        id: 'tm-a',
+        role: 'member',
+        revoke: false,
+        expectedVersion: suspended.version,
+        expectedRevision: revision,
+        idempotencyKey: 'reactivate-teammate',
+      }),
+    )
+    for (const projectId of [inheritedProject.id, privateProject.id])
+      assert.notEqual((await asTeammate('flow.issue.list', { projectId })).ok, false)
+
+    // Remove one source immediately, preserving an unrelated direct grant.
+    ok(
+      await call('flow.team.member', {
+        id: alpha.id,
+        memberId: 'tm-a',
+        remove: true,
+        expectedRevision: revision,
+        idempotencyKey: 'remove-team-source',
+      }),
+    )
+    assert.equal(code(await asTeammate('flow.issue.list', { projectId: inheritedProject.id })), 'forbidden')
+    assert.notEqual((await asTeammate('flow.issue.list', { projectId: privateProject.id })).ok, false)
+    if (process.env.FLOW_C03_REVIEW === '1') await reviewFlow(app, app.client, '/flow/teams?lang=vi')
+    revision = Number((await call('flow.workspace.bootstrap', { route: 'teams' })).organizationRevision)
+    // Cleanup of a revoked member must not reactivate or grant that member.
+    assert.equal(
+      code(
+        await call('flow.team.member', {
+          id: alpha.id,
+          memberId: 'tm-revoked',
+          expectedRevision: revision,
+          idempotencyKey: 'readd-revoked',
+        }),
+      ),
+      'validation',
+    )
+    ok(
+      await call('flow.team.member', {
+        id: alpha.id,
+        memberId: 'tm-revoked',
+        remove: true,
+        expectedRevision: revision,
+        idempotencyKey: 'cleanup-revoked',
+      }),
+    )
+    assert.equal(
+      ((await call('flow.member.list', { teamId: alpha.id })).items as Row[]).some(
+        (m) => m.id === 'tm-revoked',
+      ),
+      false,
+    )
   } finally {
     await app.close()
   }

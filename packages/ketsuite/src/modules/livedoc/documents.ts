@@ -48,6 +48,10 @@ export type DocumentOwner = {
   initialSnapshotOf?: (row: Record<string, unknown>) => Uint8Array | null
   /** A successful push must already be durable for these owners. */
   durablePush?: boolean
+  /** Native metadata paired with the same snapshot version on reads and no-op writes. */
+  recordOf?: (row: Record<string, unknown>) => Record<string, unknown>
+  /** Optional owner schema validation, before persistence or a no-op acknowledgement. */
+  validateSnapshot?: (ref: DocRef) => boolean
   /** Optional shared lease transport, authorized again by the owner functions. */
   presenceFn?: string
   presenceListFn?: string
@@ -198,6 +202,7 @@ export async function flatten(
     owner.snapshotKey?.(ref.company, ownerId, checksum) ??
     `blobs/${ref.company}/${checksum.slice(0, 2)}/${checksum}`
   const storage = await ctx.storageOf(url, req)
+  await ctx.callUnchecked('livedoc.sync.scheduleCleanup', {}, url, req)
   await storage.put(storeKey, singleChunk(bytes), { type: 'application/octet-stream', size: bytes.length })
   const result = await ctx.callUnchecked(
     owner.commitFn,

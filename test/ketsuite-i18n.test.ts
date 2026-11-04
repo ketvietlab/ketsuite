@@ -32,6 +32,7 @@ import {
 import { attributesScreen } from '../packages/ketsuite/src/modules/product_backend/screens/attributes.tsx'
 import { pricelistDetailScreen } from '../packages/ketsuite/src/modules/pricing_backend/screens/index.ts'
 import { stockScreen } from '../packages/ketsuite/src/modules/stock_backend/screens/index.ts'
+import { localizeGeneratedRecords } from '../packages/ketsuite/src/modules/stock_backend/generated-names.ts'
 
 const modules = [
   address,
@@ -115,8 +116,37 @@ test('ketsuite i18n: Pricing and Stock badges render localized labels while reta
   assert.match(enPricing, /All products/)
   assert.match(enPricing, /Formula/)
   assert.match(viStock, /Xuất kho/)
-  assert.match(viStock, /Đã giữ hàng/)
+  assert.match(viStock, /Sẵn sàng/)
   assert.match(enStock, /Delivery/)
   assert.match(enStock, /Ready/)
   assert.match(enStock, /data-value="assigned"/)
+})
+
+test('ketsuite i18n: locations and operation types a warehouse made read in the reader language (K10)', () => {
+  // saveWarehouse makes `wh:adjustment`; approving a count makes the `wh:count` operation type (#1426).
+  const locations = [
+    { id: 'wh:stock', name: 'Stock' },
+    { id: 'wh:customer', name: 'Customer' },
+    { id: 'wh:scrap', name: 'Scrap' },
+    { id: 'wh:adjustment', name: 'Inventory adjustment' },
+    { id: 'shelf', name: 'Inventory adjustment' },
+  ]
+  const types = [
+    { id: 'wh:adjustment', name: 'Inventory Adjustments' },
+    { id: 'wh:count', name: 'Physical count' },
+    { id: 'wh:count', name: 'Kiểm kê định kỳ' },
+  ]
+  const read = (lang: 'vi' | 'en') => [
+    localizeGeneratedRecords(translator(manifest, lang), locations, 'location').map((row) => row.name),
+    localizeGeneratedRecords(translator(manifest, lang), types, 'pickingType').map((row) => row.name),
+  ]
+  // A location someone named themselves keeps its name, even when it reads like a generated one.
+  assert.deepEqual(read('vi'), [
+    ['Tồn kho', 'Khách hàng', 'Hàng hủy', 'Điều chỉnh tồn kho', 'Inventory adjustment'],
+    ['Điều chỉnh kiểm kê', 'Kiểm kê', 'Kiểm kê định kỳ'],
+  ])
+  assert.deepEqual(read('en'), [
+    ['Stock', 'Customer', 'Scrap', 'Inventory adjustment', 'Inventory adjustment'],
+    ['Inventory Adjustments', 'Physical count', 'Kiểm kê định kỳ'],
+  ])
 })

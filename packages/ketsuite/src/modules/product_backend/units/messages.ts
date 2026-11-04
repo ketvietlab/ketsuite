@@ -48,8 +48,10 @@ export const unitMessages = {
     'uom.field.factor': 'Số lượng',
     'uom.field.active': 'Đang dùng',
     'uom.referenceNone': '— Đơn vị gốc —',
-    'uom.nameHelp': 'Ví dụ: Chai, kg, Hộp 6 chai. Không trùng tên đơn vị khác.',
+    'uom.nameHelp': 'Ví dụ: Chai, kg, Hộp 6 chai. Tối đa 20 ký tự, không trùng tên đơn vị khác.',
     'uom.referenceHelp': 'Để trống nếu đây là đơn vị gốc. Hộp, thùng tham chiếu tới đơn vị chúng chứa.',
+    'uom.referenceCounted':
+      'Đã có đơn vị quy về đơn vị này, nên nó là đơn vị gốc và không quy về đơn vị khác.',
     'uom.factorHelp': 'Một đơn vị này chứa bao nhiêu {reference}.',
     'uom.activeHelp': 'Bỏ chọn để lưu trữ: sản phẩm mới không chọn được đơn vị này nữa.',
     'uom.facts': 'Đang được dùng',
@@ -62,13 +64,16 @@ export const unitMessages = {
     'uom.no': 'Không',
     'uom.lockedTitle': 'Đơn vị đã được dùng',
     'uom.lockedHelp':
-      'Đơn vị đã gắn làm đóng gói của sản phẩm, hoặc đã có tồn kho, chứng từ: giữ đơn vị tham chiếu và số lượng để số lượng đã ghi không đổi nghĩa. Cần quy đổi khác thì tạo đơn vị mới.',
+      'Đơn vị đã nằm trên sản phẩm, đóng gói, tồn kho hoặc chứng từ: giữ tên, đơn vị tham chiếu và số lượng để số lượng đã ghi không đổi nghĩa. Cần tên hay quy đổi khác thì tạo đơn vị mới.',
     'uom.error.invalid': 'Chưa lưu được đơn vị. Kiểm tra lại các ô rồi thử lại.',
     'uom.error.denied': 'Vai trò của bạn không được sửa đơn vị tính.',
     'uom.error.factor': 'Nhập số lượng lớn hơn 0, ví dụ 12 hoặc 0,5.',
     'uom.error.reference': 'Đơn vị tham chiếu không còn. Chọn đơn vị khác.',
     'uom.error.archiveUsed':
-      'Còn {count} sản phẩm đang dùng đơn vị này làm đơn vị tính. Đổi đơn vị của chúng trước khi lưu trữ.',
+      'Còn {count} sản phẩm hoặc đóng gói đang dùng đơn vị này. Đổi đơn vị hoặc bỏ đóng gói của chúng trước khi lưu trữ.',
+    'uom.error.nameLength': 'Tên đơn vị tối đa {max} ký tự.',
+    'uom.error.inUse':
+      'Đơn vị đã được dùng nên không đổi tên, đơn vị tham chiếu hay số lượng. Tạo đơn vị mới nếu cần.',
   },
   en: {
     'menu.uoms': 'Units of measure',
@@ -117,8 +122,11 @@ export const unitMessages = {
     'uom.field.factor': 'Quantity',
     'uom.field.active': 'Active',
     'uom.referenceNone': '— Reference unit —',
-    'uom.nameHelp': 'For example: Bottle, kg, Box of 6. No other unit may have this name.',
+    'uom.nameHelp':
+      'For example: Bottle, kg, Box of 6. Up to 20 characters; no other unit may have this name.',
     'uom.referenceHelp': 'Leave empty for a reference unit. Boxes and cartons refer to the unit they hold.',
+    'uom.referenceCounted':
+      'Other units count in this one, so it is a reference unit and counts in no other.',
     'uom.factorHelp': 'How many {reference} one of this unit holds.',
     'uom.activeHelp': 'Clear to archive: new products can no longer choose this unit.',
     'uom.facts': 'In use',
@@ -131,12 +139,15 @@ export const unitMessages = {
     'uom.no': 'No',
     'uom.lockedTitle': 'This unit is in use',
     'uom.lockedHelp':
-      'It packs a product or has stock or documents, so its reference and quantity stay and recorded quantities keep their meaning. Create a new unit for another conversion.',
+      'It is on a product, a packaging, stock or documents, so its name, reference and quantity stay and recorded quantities keep their meaning. Create a new unit for another name or conversion.',
     'uom.error.invalid': 'The unit was not saved. Check the fields and try again.',
     'uom.error.denied': 'Your role cannot change units of measure.',
     'uom.error.factor': 'Enter a quantity above 0, for example 12 or 0.5.',
     'uom.error.reference': 'That reference unit is gone. Choose another.',
     'uom.error.archiveUsed':
-      '{count} products still use this unit as their unit. Change theirs before archiving it.',
+      '{count} products or packagings still use this unit. Change their unit or remove the packaging before archiving it.',
+    'uom.error.nameLength': 'A unit name has at most {max} characters.',
+    'uom.error.inUse':
+      'This unit is in use, so its name, reference and quantity stay. Create a new unit if you need another.',
   },
 }

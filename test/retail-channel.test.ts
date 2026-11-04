@@ -105,6 +105,15 @@ const signIn = async (e2e: TestDeployment, email: string): Promise<string> => {
 test('retail channel: a guest cart survives sign-in and becomes a sales order', async (t) => {
   const { e2e, seed } = await boot(t)
   await configure(seed)
+  // A backend quotation would take this pricelist (D14); the store has none, so its order keeps list prices.
+  await seed('pricing.savePricelist', { id: 'wholesale', name: 'Wholesale', sequence: 1 })
+  await seed('pricing.savePricelistItem', {
+    id: 'wholesale-fixed',
+    pricelistId: 'wholesale',
+    appliedOn: '3_global',
+    computePrice: 'fixed',
+    fixedPrice: '1000',
+  })
 
   const storefront = await channel<{ ordering: boolean; currency: string; orderPolicy: string }>(
     e2e,

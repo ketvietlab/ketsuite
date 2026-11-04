@@ -1,6 +1,8 @@
 import { defineIsland } from '@ketvietlab/ketjs-view'
 import {
   createLightboxView,
+  ketGrid,
+  type KetGridIslandConfig,
   createRelationSelectView,
   type KetTableConfig,
   type LightboxConfig,
@@ -26,6 +28,13 @@ type SearchFilterProps = { id: string; config: SearchFilterConfig }
 type LightboxProps = { id: string; config: LightboxConfig }
 
 export const islands = {
+  'backend.ket-grid': defineIsland<{ id: string; config: KetGridIslandConfig }>()({
+    props: { id: 'id', config: 'json' },
+    key: ['id'],
+    client: 'client/ket-grid.mjs',
+    export: 'ketGrid',
+    view: (props) => ketGrid(props),
+  }),
   /**
    * One chart. Keyed by id because a screen draws several, and an unkeyed
    * island is a single global instance — three charts would have been three

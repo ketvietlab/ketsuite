@@ -212,6 +212,7 @@ export const recordPageFrame = (o: {
   asideLabel?: string
   /** `before` (default) leads with the rail in reading and keyboard order; `after` follows the record. */
   asideWhenStacked?: 'before' | 'after'
+  asideBreakpoint?: 'wide'
   body: JSXChild
 }): TemplateResult => (
   <div data-record-layer="page">
@@ -226,6 +227,7 @@ export const recordPageFrame = (o: {
       aside: o.aside,
       asideLabel: o.asideLabel,
       asideWhenStacked: o.asideWhenStacked ?? 'before',
+      asideBreakpoint: o.asideBreakpoint,
       body: o.body,
     })}
   </div>

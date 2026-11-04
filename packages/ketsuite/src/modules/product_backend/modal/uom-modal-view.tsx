@@ -24,7 +24,7 @@ import {
   RecordModalForm,
   recordStateSelectControl,
 } from '../../../ui/client/record-modal-form.tsx'
-import { UNIT_COMMAND_PATH, typedQuantity } from '../units.ts'
+import { UNIT_COMMAND_PATH, UNIT_NAME_MAX, typedQuantity } from '../units.ts'
 import type { UnitModalData } from '../units.ts'
 import { HELP } from '../screens/help-words.ts'
 import { unitsHelp } from '../units/help.ts'
@@ -51,9 +51,14 @@ const helpId = (id: string, help: string | null, error: string | null): string |
 
 const form = (c: Context): JSXChild => {
   const { record, usage } = c.data
-  const locked = usage.locked
+  const locked = usage.inUse
   const chosen = referenceOf(c)
-  const referenceHelp = locked ? null : t(c, 'referenceHelp')
+  // A unit others count in is a reference unit and stays one: the catalogue keeps one level.
+  const referenceHelp = locked
+    ? null
+    : c.data.derived.length
+      ? t(c, 'referenceCounted')
+      : t(c, 'referenceHelp')
   const referenceError = c.fieldError('referenceId')
   const options = [{ value: '', label: t(c, 'referenceNone') }, ...c.data.references]
   return (
@@ -61,8 +66,8 @@ const form = (c: Context): JSXChild => {
       kind={c.kind}
       id={formId}
       command="save"
-      // Disabled controls are not submitted: a fixed conversion travels as its saved value.
-      hidden={locked ? { referenceId: record.referenceId, factor: record.factor } : {}}
+      // Disabled controls are not submitted: a unit in use sends its saved name and conversion.
+      hidden={locked ? { name: record.name, referenceId: record.referenceId, factor: record.factor } : {}}
       fields={[]}
       body={
         <Stack
@@ -72,11 +77,11 @@ const form = (c: Context): JSXChild => {
               name="name"
               label={t(c, 'field.name')}
               required
-              maxLength={40}
-              help={t(c, 'nameHelp')}
+              maxLength={UNIT_NAME_MAX}
+              help={locked ? null : t(c, 'nameHelp')}
               value={c.draft('name', record.name)}
               error={c.fieldError('name')}
-              disabled={c.busy}
+              disabled={c.busy || locked}
             />,
             <Field
               id="product-uom-reference"
@@ -226,7 +231,7 @@ export const uomModalDefinition: RecordModalDefinition<UnitModalData> = {
     <>
       <Stack
         items={[
-          ...(c.data.usage.locked
+          ...(c.data.usage.inUse
             ? [<Notice tone="info" title={t(c, 'lockedTitle')} message={t(c, 'lockedHelp')} />]
             : []),
           c.data.editable ? form(c) : readonly(c),

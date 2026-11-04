@@ -57,6 +57,19 @@ requirement of business logic.
 
 ## Declared and running
 
+Purchase functions are assembled at `purchase/functions/index.ts` with duplicate-key detection.
+Named handlers are grouped into supplier, query, order, line, lifecycle, receipt and bill capabilities.
+Atomic RFQ replacement and standalone creation share `purchase/draft-write.ts`; domain services own
+line planning, supplier selection, fulfillment and monetary/status aggregation. Descriptor names,
+permissions and public state constants remain stable across the split.
+
+`purchase/supplier-selection.ts` selects active supplier rows for the current company and requested
+variant in persisted sequence order, retaining validity dates and unit conversion. The first row
+whose minimum is met wins; otherwise the first eligible row is returned. Variant-specific rows and
+cheaper prices do not override the user's order. Purchase pricing restricts selection to its order's
+vendor and preserves explicit prices. The shared selector also accepts no vendor constraint for
+product-driven replenishment; the replenishment consumer is a separate implementation slice.
+
 A KetSuite deployment has one state: every module in its `modules` array participates in composition,
 schema migration, HTTP behavior, and worker behavior. There is no bootstrap list or per-database module
 lifecycle. Product variants are separate deployment declarations with explicit module lists.

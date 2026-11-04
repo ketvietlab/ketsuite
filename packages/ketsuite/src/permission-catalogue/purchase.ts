@@ -2,8 +2,20 @@ import type { CatalogueSource } from './source.ts'
 
 export const permissions = {
   posture: 'permission-bearing',
-  bundles: ['approve', 'configure', 'operate', 'report', 'sensitive', 'view'],
+  bundles: [
+    'approve',
+    'configure',
+    'operate',
+    'report',
+    'sensitive',
+    'view',
+    'supplier-view',
+    'supplier-operate',
+  ],
   functions: {
+    getProductSuppliers: ['read', 'supplier-view'],
+    listSupplierPartners: ['read', 'supplier-view'],
+    applyProductSupplierGrid: ['operate', 'supplier-operate'],
     addLine: ['operate', 'operate'],
     approveOrder: ['approve', 'approve', 'purchase.domain-policy'],
     cancelOrder: ['approve', 'approve', 'purchase.domain-policy'],
@@ -22,6 +34,7 @@ export const permissions = {
     removeLine: ['operate', 'operate'],
     resetToDraft: ['operate', 'operate'],
     saveDraft: ['configure', 'configure', 'purchase.configuration-audit'],
+    saveLines: ['operate', 'operate'],
     saveSupplierInfo: ['configure', 'configure', 'purchase.configuration-audit'],
     sendRfq: ['operate', 'operate'],
     setPurchaseMethod: ['configure', 'configure', 'purchase.configuration-audit'],

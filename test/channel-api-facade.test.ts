@@ -148,6 +148,16 @@ const probe = defineModule({
     }),
     defineChannelRoute({
       profile: 'customer',
+      method: 'POST',
+      path: 'probe/stale',
+      operationId: 'customer.probe.stale',
+      responses: { '200': envelope },
+      handler: () => {
+        throw Object.assign(new Error('Product stock changed; reload before retrying.'), { code: 'conflict' })
+      },
+    }),
+    defineChannelRoute({
+      profile: 'customer',
       method: 'GET',
       path: 'probe/forbidden',
       operationId: 'customer.probe.forbidden',
@@ -375,6 +385,17 @@ test('channel facade: an in-flight idempotent command is a retryable conflict, n
   assert.equal(body.error?.retryable, true)
   assert.equal(body.meta.requestId, 'req_probe_inflight')
   assert.equal(response.headers.get('x-request-id'), 'req_probe_inflight')
+})
+
+test('channel facade: a domain write that found its record changed is a 409, not a server fault', async (t) => {
+  const e2e = await boot(t)
+  const response = await e2e.client.request('/api/customer/v1/probe/stale', { method: 'POST' })
+  assert.equal(response.status, 409)
+  const body = await read(response)
+  assert.equal(body.error?.code, 'channel_api.stale')
+  assert.equal(body.error?.messageKey, 'channel_api.error.stale')
+  assert.equal(body.error?.message, 'The data has changed. Reload and try again.')
+  assert.equal(body.error?.retryable, false)
 })
 
 test('channel facade: a refused function permission is a stable forbidden response', async (t) => {

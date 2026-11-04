@@ -55,6 +55,35 @@
     grid-row: 1;
   }
 
+  /* A short value needs a short control (`width`): the control keeps to the start of its column at the
+     length its value takes, and never past the column. Label, help and error keep their own tracks. */
+  :where([data-kv-design-system]) [data-ui="field"][data-width] {
+    --kv-field-width: 100%;
+  }
+  :where([data-kv-design-system]) [data-ui="field"][data-width="xs"] {
+    --kv-field-width: 7rem;
+  }
+  :where([data-kv-design-system]) [data-ui="field"][data-width="sm"] {
+    --kv-field-width: 11rem;
+  }
+  :where([data-kv-design-system]) [data-ui="field"][data-width="md"] {
+    --kv-field-width: 18rem;
+  }
+  :where([data-kv-design-system])
+    [data-ui="field"][data-width]
+    > :not([data-ui="field-label"], [data-ui="field-help"], [data-ui="field-error"]) {
+    justify-self: start;
+    inline-size: 100%;
+    max-inline-size: var(--kv-field-width);
+  }
+  /* In a row (a toolbar, a quantity between its minus and plus) there is no column to fill: the field
+     starts at its width rather than at what a percent-wide input measures, which is next to nothing, and
+     gives way only when the row runs out of room. */
+  :where([data-kv-design-system]) [data-ui="inline"] > [data-ui="field"][data-width] {
+    flex: 0 1 var(--kv-field-width);
+    min-inline-size: min(4rem, 100%);
+  }
+
   /* A short entry with its command (`action`): the entry stays compact and the command follows it at
      the action gap, so it never drifts to the far edge of a wide form. */
   :where([data-kv-design-system]) [data-ui="field-row"] {
@@ -149,6 +178,12 @@
     color: var(--kv-text-secondary);
     transform: translateY(-25%) rotate(45deg);
     pointer-events: none;
+  }
+
+  /* A sized select keeps its chevron at its own end, not at the end of the column. */
+  :where([data-kv-design-system]) [data-ui="field"][data-kind="select"][data-width]:has(> select)::after {
+    justify-self: start;
+    margin-inline: calc(min(100%, var(--kv-field-width)) - var(--kv-space-3) - var(--kv-space-1-5)) 0;
   }
 
   :where([data-kv-design-system]) [data-ui="field"][data-kind="select"]:has(> select:disabled)::after {
@@ -271,6 +306,13 @@
     [data-ui="date-time-picker"]
   ) {
     container-type: inline-size;
+  }
+  /* A row whose fields all hide their label has no label to place, and a row sized by what it holds (a
+     quantity between its minus and plus buttons, at the end of a card) would measure nothing as a
+     container: it stays an ordinary box. */
+  :where([data-kv-design-system])
+  [data-ui="inline"][data-ui]:not(:has(> [data-ui="field"]:not([data-label-hidden="true"]))) {
+    container-type: normal;
   }
 
   @media (max-width: 47.9375rem) {
@@ -507,5 +549,12 @@
     )
     > :not([data-ui="field-label"], [data-ui="field-help"], [data-ui="field-error"]) {
     grid-row: 1;
+  }
+  /* Inline native selects keep their decorative arrow in the control cell at narrow widths. */
+  :where([data-kv-design-system])
+  [data-ui="field"][data-layout="inline"][data-kind="select"]:has(> select)::after {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
   }
 }

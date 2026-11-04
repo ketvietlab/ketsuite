@@ -421,6 +421,8 @@ test('seo: the metadata reaches the page that describes it', async () => {
     metaDescription: 'Trà và gốm thủ công.',
     canonical: '/gioi-thieu',
     ogImage: '/anh/tra.jpg',
+    // Where the site is served, so the presenter can hand a crawler that image absolute.
+    origin: 'https://moc.example',
   })
 
   // Setting the flag makes it travel.
@@ -440,7 +442,11 @@ test('seo: a page with no metadata carries an empty meta', async () => {
     siteId: 'site1',
     path: '/gioi-thieu',
   })) as { meta: Record<string, unknown> }
-  assert.deepEqual(page.meta, {}, 'nothing to say is said as nothing, not as four nulls')
+  assert.deepEqual(
+    page.meta,
+    { origin: 'https://moc.example' },
+    'nothing to say is said as nothing, not as four nulls: only where the site is served',
+  )
 })
 
 test('seo: only the declared public fields travel to the theme', async () => {

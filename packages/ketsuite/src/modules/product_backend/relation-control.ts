@@ -190,9 +190,9 @@ export const templateRelationControl = (
  * One sellable variant, searched across the whole catalogue.
  *
  * An order line names a variant rather than a template, and the forms were
- * flat-mapping every variant of every template into a `<select>`. The dialog
- * shows the template's name as each row's description, because "Xanh nghiệp vụ"
- * on its own does not say which product it belongs to.
+ * flat-mapping every variant of every template into a `<select>`. Each row reads
+ * the variant's full name, because "Xanh nghiệp vụ" on its own does not say which
+ * product it belongs to.
  */
 export const variantRelationControl = (
   ctx: ServeContext,
@@ -206,6 +206,8 @@ export const variantRelationControl = (
     value?: string | null
     variants: RelationOption[]
     templateId?: string | null
+    /** Narrows the server search the same way the preloaded options were narrowed. */
+    listInput?: Record<string, unknown>
     required?: boolean
     allowEmpty?: boolean
   },
@@ -219,8 +221,13 @@ export const variantRelationControl = (
     labels: relationLabels(_, _('product_backend.relation.variants')),
     manager: {
       listFunction: 'product.listVariants',
-      ...(options.templateId ? { listInput: { templateId: options.templateId } } : {}),
-      labelField: 'name',
-      descriptionField: 'templateName',
+      listInput: { ...options.listInput, ...(options.templateId ? { templateId: options.templateId } : {}) },
+      // A catalogue outgrows what one page can preload, and the server folds accents
+      // ("xanh la" finds "Xanh lá"); the local filter does neither.
+      searchInDropdown: true,
+      // The full name (product and values, P29) labels each row; the code tells two
+      // rows with the same name apart.
+      labelField: 'displayName',
+      descriptionField: 'defaultCode',
     },
   })

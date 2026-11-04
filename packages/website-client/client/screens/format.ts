@@ -25,6 +25,15 @@ export const formatTime = (iso: string | number | Date | null | undefined) =>
 export const formatDate = (iso: string | number | Date | null | undefined) =>
   iso ? date.format(new Date(iso)) : EMPTY_VALUE
 
+/**
+ * A saved revision as a person picks it from a list: when, under which title, and the start of its id
+ * so two saves in the same minute still differ. The bare id alone said nothing and filled a narrow panel.
+ */
+export const revisionLabel = (revision: { revisionId: string; title?: string; updatedAt?: string | null }) =>
+  [formatTime(revision.updatedAt), revision.title || null, revision.revisionId.slice(0, 6)]
+    .filter(Boolean)
+    .join(' · ')
+
 const ENTRY_TONES: Record<string, Tone> = {
   scheduled: 'info',
   published: 'positive',
@@ -53,6 +62,19 @@ const SUBMISSION_TONES: Record<string, Tone> = { new: 'info', read: 'neutral', h
 export const submissionStatus = (tr: Translate, state: string): StatusView => ({
   label: tr(`website.submission.state.${state}`),
   tone: SUBMISSION_TONES[state] ?? 'neutral',
+})
+
+const NOTICE_TONES: Record<string, Tone> = {
+  sent: 'positive',
+  pending: 'info',
+  retrying: 'warning',
+  failed: 'danger',
+  notQueued: 'warning',
+}
+/** Where the email telling a form's owner about a submission stands in the mail outbox. */
+export const noticeStatus = (tr: Translate, state: string): StatusView => ({
+  label: tr(`website.delivery.${state}`),
+  tone: NOTICE_TONES[state] ?? 'neutral',
 })
 
 /**

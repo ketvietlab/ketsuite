@@ -19,11 +19,19 @@ const messages: Record<string, string> = {
   'account_backend.trial.kicker': 'General ledger report',
   'account_backend.trial.result.hint': 'Debit and credit must balance.',
   'account_backend.trial.result.title': 'Balances by account',
-  'account_backend.trial.subtitle': 'Reconcile movements by account.',
   'account_backend.trial.summary.balance': 'Difference',
   'account_backend.trial.summary.credit': 'Total credit',
   'account_backend.trial.summary.debit': 'Total debit',
   'account_backend.trialBalance.title': 'Trial balance',
+  'account_backend.trial.column.openingDebit': 'Opening debit',
+  'account_backend.trial.column.openingCredit': 'Opening credit',
+  'account_backend.trial.column.debit': 'Debits in period',
+  'account_backend.trial.column.credit': 'Credits in period',
+  'account_backend.trial.column.closingDebit': 'Closing debit',
+  'account_backend.trial.column.closingCredit': 'Closing credit',
+  'account_backend.trial.summary.check': 'Debits equal credits',
+  'account_backend.trial.summary.balanced': 'Equal in all three pairs',
+  'account_backend.trial.summary.unbalanced': 'Not equal',
 }
 
 const translate = ((key: string) => messages[key] ?? key) as Translator
@@ -68,6 +76,8 @@ test('trial balance stays a specialized drillable report with locale-safe GET ra
   )
 
   assert.match(html, /data-ui="record-workspace"/)
+  // A report's header carries no static lead text (design-system page header rule).
+  assert.doesNotMatch(html, /data-ui="record-subtitle"/)
   assert.doesNotMatch(
     withoutGlobalSearchDialog(html),
     /data-ui="form-page"|data-ui="modal-layer"|mail\.chatter/,
@@ -83,8 +93,11 @@ test('trial balance stays a specialized drillable report with locale-safe GET ra
     html,
     /href="\/admin\/accounting\/general-ledger\?accountId=account-112&amp;dateFrom=2026-06-01/,
   )
-  assert.match(html, /Total debit[\s\S]*125[,.]000/)
-  assert.match(html, /Total credit[\s\S]*125[,.]000/)
+  assert.match(html, /Debits in period[\s\S]*125[,.]000/)
+  assert.match(html, /Credits in period[\s\S]*125[,.]000/)
+  // The check is a fact of the report: its value, then what it checks.
+  const check = html.indexOf('Equal in all three pairs')
+  assert.ok(check > 0 && html.indexOf('Debits equal credits', check) > check)
 })
 
 test('trial balance shows an inverted-range error without losing the empty report state', () => {

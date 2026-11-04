@@ -8,6 +8,7 @@ import {
   Stack,
 } from '@ketvietlab/design-system'
 import type { FieldProps } from '@ketvietlab/design-system'
+import type { JSXChild } from '@ketvietlab/ketjs-view'
 import { createRecordModal } from '../../../ui/client/record-modal.tsx'
 import type { RecordModalContext, RecordModalDefinition } from '../../../ui/client/record-modal.tsx'
 import {
@@ -16,6 +17,9 @@ import {
   RecordModalForm,
 } from '../../../ui/client/record-modal-form.tsx'
 import { USER_RECORD_MODAL_LABELS } from '../../user/modal-labels.ts'
+import { PurchaseOrderHelp } from '../screens/order-help.tsx'
+import { linesInGrid, PurchaseLinesGrid } from './line-grid.tsx'
+import { postedPurchaseLines } from './line-grid-draft.ts'
 
 type Row = Record<string, unknown>
 export type PurchaseOrderModalData = {
@@ -28,8 +32,6 @@ export type PurchaseOrderModalData = {
 type Context = RecordModalContext<PurchaseOrderModalData>
 const lang = () => (typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en' : 'vi')
 const t = (c: Context, key: string) => c.t(`purchase_backend.${key}`)
-const canEdit = (c: Context) =>
-  ['draft', 'sent', 'to approve'].includes(String(c.data.record.state)) && !c.data.record.locked
 const options = (c: Context, name: string) =>
   (c.data.choices[name] ?? []).map((row) => ({ value: String(row.id), label: String(row.name) }))
 const field = (c: Context, name: string, label: string, props: Partial<FieldProps> = {}): FieldProps => ({
@@ -41,13 +43,13 @@ const field = (c: Context, name: string, label: string, props: Partial<FieldProp
   error: c.fieldError(name),
   disabled: c.busy,
 })
-const action = (c: Context, command: string, label: string, primary = false) => (
+const action = (c: Context, command: string, label: string, primary = false, waiting = false) => (
   <RecordActionForm kind={c.kind} command={command}>
     <Button
       type="submit"
       label={t(c, `action.${label}`)}
       variant={primary ? 'primary' : 'secondary'}
-      disabled={c.busy}
+      disabled={c.busy || waiting}
     />
   </RecordActionForm>
 )
@@ -63,36 +65,17 @@ const input = (form: FormData, keys: string[]) =>
       return value ? [[key, value]] : []
     }),
   )
-const line = (c: Context) => c.data.record.lines.find((row) => row.id === c.dialog?.params.id)
-const lineFields = (c: Context, editing = false): FieldProps[] => {
-  const row = editing ? line(c) : undefined
-  return [
-    ...(!editing
-      ? [
-          field(c, 'productId', 'product', {
-            type: 'select',
-            options: options(c, 'variants'),
-            required: true,
-          }),
-        ]
-      : []),
-    field(c, 'productQty', 'productQty', {
-      type: 'decimal',
-      value: String(row?.productQty ?? '1'),
-      required: true,
-    }),
-    field(c, 'priceUnit', 'priceUnit', { type: 'decimal', value: String(row?.priceUnit ?? '') }),
-    ...(!editing
-      ? [field(c, 'productUomId', 'uom', { type: 'select', options: options(c, 'units'), required: true })]
-      : []),
-    field(c, 'discount', 'discount', { type: 'decimal', value: String(row?.discount ?? '0') }),
-    field(c, 'taxId', 'tax', {
-      type: 'select',
-      options: [{ value: '', label: '—' }, ...options(c, 'taxes')],
-      value: String(row?.taxId ?? ''),
-    }),
-  ]
-}
+/** Each view carries the order's guide, so the modal's Help opens it on every tab. */
+const guided =
+  (view: (c: Context) => JSXChild) =>
+  (c: Context): JSXChild => (
+    <>
+      <PurchaseOrderHelp lang={lang()} />
+      {view(c)}
+    </>
+  )
+/** Opens the guide inside this modal (DS help runtime: `screen-help` resolves the nearest sheet). */
+const help = (c: Context) => <Button name="screen-help" type="button" label={t(c, 'modal.help')} />
 const create = (c: Context) => (
   <RecordModalForm
     kind={c.kind}
@@ -128,69 +111,40 @@ const summary = (c: Context) => (
       <Section
         title={t(c, 'modal.lines')}
         body={
-          <DataTable
-            rows={c.data.record.lines}
-            emptyTitle={t(c, 'lines.empty')}
-            emptyMessage={t(c, 'lines.emptyHint')}
-            id={(row) => String(row.id)}
-            responsive="scroll"
-            columns={[
-              { key: 'name', label: t(c, 'field.product'), cell: (row) => String(row.name) },
-              { key: 'productQty', label: t(c, 'field.productQty'), cell: (row) => String(row.productQty) },
-              {
-                key: 'qtyReceived',
-                label: t(c, 'field.qtyReceived'),
-                cell: (row) => String(row.qtyReceived),
-              },
-              {
-                key: 'priceUnit',
-                label: t(c, 'field.priceUnit'),
-                cell: (row) => String(row.priceUnitLabel ?? row.priceUnit),
-              },
-              {
-                key: 'edit',
-                label: t(c, 'modal.edit'),
-                cell: (row) =>
-                  canEdit(c) && c.data.permissions.updateLine ? (
-                    <RecordDialogTrigger dialog="editLine" id={String(row.id)}>
-                      <Button label={t(c, 'modal.edit')} variant="tertiary" />
-                    </RecordDialogTrigger>
-                  ) : (
-                    ''
-                  ),
-              },
-            ]}
-          />
+          linesInGrid(c) ? (
+            <PurchaseLinesGrid context={c} />
+          ) : (
+            <DataTable
+              rows={c.data.record.lines}
+              emptyTitle={t(c, 'lines.empty')}
+              emptyMessage={t(c, 'lines.emptyHint')}
+              id={(row) => String(row.id)}
+              responsive="scroll"
+              columns={[
+                { key: 'name', label: t(c, 'field.product'), cell: (row) => String(row.name) },
+                { key: 'productQty', label: t(c, 'field.productQty'), cell: (row) => String(row.productQty) },
+                {
+                  key: 'qtyReceived',
+                  label: t(c, 'field.qtyReceived'),
+                  cell: (row) => String(row.qtyReceived),
+                },
+                {
+                  key: 'priceUnit',
+                  label: t(c, 'field.priceUnit'),
+                  cell: (row) => String(row.priceUnitLabel ?? row.priceUnit),
+                },
+              ]}
+            />
+          )
         }
       />,
-      ...(canEdit(c) && c.data.permissions.addLine
-        ? [
-            <Section
-              title={t(c, 'action.addLine')}
-              body={
-                <RecordModalForm
-                  kind={c.kind}
-                  command="addLine"
-                  columns={3}
-                  fields={lineFields(c)}
-                  actions={[
-                    <Button
-                      type="submit"
-                      label={t(c, 'action.addLine')}
-                      variant="primary"
-                      disabled={c.busy}
-                    />,
-                  ]}
-                />
-              }
-            />,
-          ]
-        : []),
     ]}
   />
 )
 export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderModalData> = {
   kind: 'purchase.order',
+  // The line grid's unsaved changes keep sending and confirming waiting.
+  observeDrafts: ['lines'],
   size: (c) => (c.creating ? 'default' : 'large'),
   labels: () => USER_RECORD_MODAL_LABELS[lang()],
   context: {
@@ -202,14 +156,14 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
   },
   title: (c) => (c.creating ? t(c, 'action.createRfq') : String(c.data.record.name)),
   status: (c) => (c.creating ? null : <Badge label={t(c, `state.${c.data.record.state}`)} />),
-  body: (c) => (c.creating ? create(c) : summary(c)),
+  body: guided((c) => (c.creating ? create(c) : summary(c))),
   tabs: [
-    { id: 'info', label: (c) => t(c, 'modal.info'), visible: (c) => !c.creating, view: summary },
+    { id: 'info', label: (c) => t(c, 'modal.info'), visible: (c) => !c.creating, view: guided(summary) },
     {
       id: 'receipts',
       label: (c) => t(c, 'modal.receipts'),
       visible: (c) => !c.creating,
-      view: (c) => (
+      view: guided((c) => (
         <DataTable
           rows={c.data.record.pickings}
           id={(row) => String(row.id)}
@@ -231,13 +185,13 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
             },
           ]}
         />
-      ),
+      )),
     },
     {
       id: 'bills',
       label: (c) => t(c, 'modal.bills'),
       visible: (c) => !c.creating,
-      view: (c) => (
+      view: guided((c) => (
         <Section
           title={t(c, 'modal.bills')}
           actions={
@@ -257,13 +211,13 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
             />
           }
         />
-      ),
+      )),
     },
     {
       id: 'actions',
       label: (c) => t(c, 'modal.more'),
       visible: (c) => !c.creating,
-      view: (c) => (
+      view: guided((c) => (
         <Stack
           items={[
             ...(['sent', 'to approve'].includes(String(c.data.record.state)) &&
@@ -287,18 +241,25 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
               : []),
           ]}
         />
-      ),
+      )),
     },
   ],
   actions: (c) =>
-    c.creating ? undefined : (
+    c.creating ? (
+      <ActionGroup actions={[help(c)]} />
+    ) : (
       <ActionGroup
         actions={[
+          help(c),
+          // Sending and confirming wait for the line grid to be saved.
           ...(c.data.record.state === 'draft' && c.data.permissions.sendRfq
-            ? [action(c, 'send', 'send')]
+            ? [action(c, 'send', 'send', false, c.recordChanged)]
             : []),
           ...(['draft', 'sent'].includes(String(c.data.record.state)) && c.data.permissions.confirmOrder
-            ? [action(c, 'confirm', 'confirm', true), action(c, 'requestApproval', 'requestApproval')]
+            ? [
+                action(c, 'confirm', 'confirm', true, c.recordChanged),
+                action(c, 'requestApproval', 'requestApproval', false, c.recordChanged),
+              ]
             : []),
           ...(c.data.record.state === 'to approve' && c.data.permissions.approveOrder
             ? [action(c, 'approve', 'approve', true)]
@@ -310,54 +271,6 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
       />
     ),
   dialogs: {
-    addLine: {
-      size: 'large',
-      title: (c) => t(c, 'action.addLine'),
-      view: (c) => (
-        <RecordModalForm
-          kind={c.kind}
-          command="addLine"
-          columns={3}
-          fields={lineFields(c)}
-          actions={[
-            <Button type="submit" label={t(c, 'action.addLine')} variant="primary" disabled={c.busy} />,
-          ]}
-        />
-      ),
-    },
-    editLine: {
-      size: 'large',
-      title: (c) => t(c, 'modal.edit'),
-      view: (c) => (
-        <RecordModalForm
-          kind={c.kind}
-          columns={3}
-          fields={lineFields(c, true)}
-          actions={[
-            <Button
-              type="submit"
-              name="__command"
-              value="updateLine"
-              label={t(c, 'action.updateLine')}
-              variant="primary"
-              disabled={c.busy}
-            />,
-            ...(c.data.permissions.removeLine
-              ? [
-                  <Button
-                    type="submit"
-                    name="__command"
-                    value="removeLine"
-                    label={t(c, 'action.removeLine')}
-                    variant="destructive"
-                    disabled={c.busy}
-                  />,
-                ]
-              : []),
-          ]}
-        />
-      ),
-    },
     bill: {
       title: (c) => t(c, 'action.createBill'),
       view: (c) => (
@@ -395,28 +308,21 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
       }),
       after: 'open',
     },
-    addLine: {
-      fn: 'purchase.addLine',
-      input: (form, c) => ({
-        id: c.data.draftId,
-        orderId: c.id,
-        ...input(form, ['productId', 'productUomId', 'productQty', 'priceUnit', 'discount', 'taxId']),
-      }),
+    // Every line the grid changed, in one call (`saveLines`).
+    saveLines: {
+      fn: 'purchase.saveLines',
+      input: (form, c) => {
+        // A new line takes this reading's draft id, so a retried save writes it once.
+        const posted = postedPurchaseLines(
+          c.data.record.lines,
+          String(form.get('lines') ?? ''),
+          (gridId) => `${c.data.draftId}:${gridId}`,
+        )
+        return { id: c.id, lines: posted?.lines ?? null, removed: posted?.removed ?? [] }
+      },
+      // Every refusal shows once, above the grid that posted the lines.
+      issueField: () => 'lines',
       after: 'reload',
-    },
-    updateLine: {
-      fn: 'purchase.updateLine',
-      input: (form, c) => ({
-        id: c.dialog?.params.id,
-        ...input(form, ['productQty', 'priceUnit', 'discount', 'taxId']),
-      }),
-      after: 'reload',
-    },
-    removeLine: {
-      fn: 'purchase.removeLine',
-      input: (_form, c) => ({ id: c.dialog?.params.id }),
-      after: 'reload',
-      confirm: (c) => t(c, 'modal.confirmRemove'),
     },
     send: { fn: 'purchase.sendRfq', input: (_form, c) => ({ id: c.id }), after: 'reload' },
     confirm: {

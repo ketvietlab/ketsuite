@@ -1,11 +1,9 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const moduleDir = dirname(fileURLToPath(import.meta.url))
-const artifacts = join(moduleDir, 'artifacts', 'forecast')
+// K40: the seed holds 12 jackets in Kho trung tâm and a confirmed delivery of 20 overdue since
+// 5 January 2026 (WH/OUT/LATE), so the jacket runs short from today; the draft delivery of 3
+// (WH/OUT/REVIEW) promises nothing yet.
 
 const login = async (page: Page) => {
   await page.goto('/login?lang=vi')
@@ -15,57 +13,89 @@ const login = async (page: Page) => {
   await expect(page).toHaveURL(/\/admin(?:\/|\?|$)/)
 }
 
+const today = (locale: 'vi' | 'en') =>
+  new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(new Date())
+
+const product = 'Áo khoác kiểm kê KETSUITE · STOCK-JACKET'
+
 test.describe.configure({ mode: 'serial' })
-test.beforeAll(async () => mkdir(artifacts, { recursive: true }))
+// Menu links carry no language: the browser's own picks it, as for a Vietnamese user.
+test.use({ locale: 'vi-VN' })
 test.beforeEach(async ({ page }) => login(page))
 
-for (const viewport of [
-  { name: 'desktop', width: 1440, height: 900 },
-  { name: 'mobile', width: 390, height: 844 },
-] as const) {
-  for (const locale of ['vi', 'en'] as const) {
-    test(`renders forecast in ${locale} correctly on ${viewport.name}`, async ({ page }) => {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height })
-      await page.goto(`/admin/stock/forecast?lang=${locale}`)
-      await expect(page.locator('[data-ui="app-main"]')).toBeVisible()
-      await expect(page.locator('form[action="/login"]')).toHaveCount(0)
-      await expect(page.locator('select[name="productId"]')).toContainText('STOCK-JACKET')
+test('the list opens from the menu, reads on the client and puts the shortage first', async ({ page }) => {
+  await page.goto('/admin/stock?lang=vi')
+  await page.getByRole('link', { name: 'Dự báo tồn kho', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/stock\/forecast/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Dự báo tồn kho')
+  const row = page.getByRole('row').filter({ hasText: 'STOCK-JACKET' })
+  await expect(row).toHaveCount(1)
+  for (const text of ['Kho trung tâm', '12 Cái', '20', '-8', today('vi'), 'Thiếu hàng'])
+    await expect(row).toContainText(text)
+  // The status preset narrows the list: nothing has enough.
+  await page.goto('/admin/stock/forecast?lang=vi&preset=ok')
+  await expect(page.getByText('Không có dòng phù hợp')).toBeVisible()
+})
 
-      const metrics = await page.evaluate(() => ({
-        documentWidth: document.documentElement.scrollWidth,
-        viewportWidth: window.innerWidth,
-        visibleControls: [
-          ...document.querySelectorAll<HTMLElement>(
-            '[data-ui="record-body"] input:not([type="hidden"]), [data-ui="record-body"] select',
-          ),
-        ]
-          .filter((control) => control.getBoundingClientRect().height > 0)
-          .map((control) => control.getBoundingClientRect().height),
-      }))
-      expect(metrics.documentWidth).toBeLessThanOrEqual(metrics.viewportWidth)
-      // A field is 32px on a touch screen and 28px with a cursor: a fingertip
-      // needs the target, a pointer does not.
-      const fieldHeight = 34
-      expect(metrics.visibleControls.every((height) => height === fieldHeight)).toBe(true)
-      await page.screenshot({
-        path: join(artifacts, `forecast-${locale}-${viewport.name}.png`),
-        fullPage: true,
-      })
-    })
-  }
-}
-
-test('calculates forecast for a selected product and warehouse', async ({ page }) => {
+test('a row opens the product page: when it runs short, which operation causes it, and what is left', async ({
+  page,
+}) => {
   await page.goto('/admin/stock/forecast?lang=vi')
-  await page.locator('select[name="productId"]').selectOption('stock-template:default')
-  await page.locator('select[name="warehouseId"]').selectOption('wh')
-  await page.getByRole('button', { name: 'Tính dự báo' }).click()
+  await page.getByRole('link', { name: product }).click()
+  await expect(page).toHaveURL(/\/admin\/stock\/forecast\/wh\/stock-template%3Adefault/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${product} · Kho trung tâm`)
+  await expect(page.getByRole('alert')).toContainText(`Thiếu hàng từ ${today('vi')}`)
+  await expect(page.getByRole('alert')).toContainText('Phiếu WH/OUT/LATE làm tồn xuống dưới 0.')
+  const late = page.getByRole('row').filter({ hasText: 'WH/OUT/LATE' })
+  for (const text of ['05/01/2026', 'Trễ hẹn', 'Xuất', '-20 Cái', '-8 Cái'])
+    await expect(late).toContainText(text)
+  // The draft delivery is not on its way yet: it is neither an operation nor on order.
+  await expect(page.getByText('WH/OUT/REVIEW')).toHaveCount(0)
+  const totals = page.getByRole('complementary', { name: 'Tổng' })
+  await expect(totals).toContainText('Dùng được')
+  await expect(totals).toContainText('Kho chưa có quy tắc bổ sung cho mặt hàng này.')
+  await late.getByRole('link', { name: 'WH/OUT/LATE' }).click()
+  await expect(page).toHaveURL(/\/admin\/stock\/transfers\/forecast-late/)
+})
 
-  await expect(page).toHaveURL(/productId=stock-template%3Adefault/)
-  await expect(page).toHaveURL(/warehouseId=wh/)
-  const forecast = page.locator('[data-ui="row"][data-row="stock-template:default"]')
-  await expect(forecast.locator('[data-col="onHand"]')).toHaveText('12')
-  await expect(forecast.locator('[data-col="incoming"]')).toHaveText('0')
-  await expect(forecast.locator('[data-col="outgoing"]')).toHaveText('0')
-  await expect(forecast.locator('[data-col="forecasted"]')).toHaveText('12')
+test('the help button opens the forecast guide and Escape gives focus back', async ({ page }) => {
+  await page.goto('/admin/stock/forecast?lang=vi')
+  await expect(page.getByRole('row').filter({ hasText: 'STOCK-JACKET' })).toHaveCount(1)
+  const help = page.getByRole('button', { name: 'Hướng dẫn Dự báo tồn kho' })
+  await help.click()
+  const drawer = page.getByRole('dialog', { name: 'Dự báo tồn kho' })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole('heading', { name: 'Cách tính' })).toBeVisible()
+  await expect(drawer.locator('svg').first()).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(drawer).toBeHidden()
+  await expect(help).toBeFocused()
+})
+
+test('in English on a phone, dark: rows and operations read as cards, nothing overflows', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/admin/stock/forecast?lang=en')
+  const row = page.getByRole('row').filter({ hasText: 'STOCK-JACKET' })
+  await expect(row).toContainText('Short')
+  await expect(row).toContainText(today('en'))
+  const width = () => page.evaluate(() => document.documentElement.scrollWidth)
+  expect(await width()).toBeLessThanOrEqual(390)
+  await row.getByRole('link', { name: product }).click()
+  await expect(page.getByRole('alert')).toContainText(`Short from ${today('en')}`)
+  await expect(page.getByRole('row').filter({ hasText: 'WH/OUT/LATE' })).toContainText('Overdue')
+  expect(await width()).toBeLessThanOrEqual(390)
+  const scroll = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('[data-ui="table-scroll"]')].map(
+      (node) => node.scrollWidth - node.clientWidth,
+    ),
+  )
+  expect(scroll.every((extra) => extra <= 0)).toBe(true)
 })

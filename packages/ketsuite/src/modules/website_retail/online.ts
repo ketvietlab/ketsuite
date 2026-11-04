@@ -12,6 +12,7 @@
 // goes through.
 
 import { randomBytes, randomUUID } from 'node:crypto'
+import { VARIANT_PRICE_EFFECTS, variantSalePrice } from '../product/variant-price.ts'
 import { asc, defineFn, deleteFrom, eq, from, inArray } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { functions as pricingFunctions } from '../pricing/functions.ts'
@@ -76,14 +77,14 @@ const priceOf = async (
   template: Row,
   quantity = '1',
 ): Promise<string> => {
-  if (!settings?.pricelistId) return String(template.listPrice)
+  if (!settings?.pricelistId) return variantSalePrice(ctx, product, template)
   const priced = (await pricingFunctions.priceFor!.handler(ctx, {
     pricelistId: settings.pricelistId,
     productId: product.id,
     quantity,
     uomId: template.uomId ?? settings.defaultUomId,
   })) as Row
-  return priced?.ok === true ? String(priced.price) : String(template.listPrice)
+  return priced?.ok === true ? String(priced.price) : variantSalePrice(ctx, product, template)
 }
 
 /**
@@ -286,6 +287,7 @@ export const online: Record<string, FnSpec> = {
       'read:product_media.Media',
       'read:pricing.Pricelist',
       'read:pricing.PricelistItem',
+      ...VARIANT_PRICE_EFFECTS,
       'read:product.Category',
       'read:product.Cost',
       'read:uom.Unit',
@@ -359,6 +361,7 @@ export const online: Record<string, FnSpec> = {
       'read:product_media.Media',
       'read:pricing.Pricelist',
       'read:pricing.PricelistItem',
+      ...VARIANT_PRICE_EFFECTS,
       'read:product.Category',
       'read:product.Cost',
       'read:uom.Unit',
@@ -540,6 +543,7 @@ export const online: Record<string, FnSpec> = {
       ...catalogEffects,
       'read:pricing.Pricelist',
       'read:pricing.PricelistItem',
+      ...VARIANT_PRICE_EFFECTS,
       'read:product.Category',
       'read:product.Cost',
       'read:uom.Unit',
@@ -656,7 +660,12 @@ export const online: Record<string, FnSpec> = {
           id: args.orderId,
           partnerId: args.partnerId,
           warehouseId: settings.warehouseId,
-          pricelistId: settings.pricelistId ?? undefined,
+          // The cart was priced by the storefront's pricelist or none; the customer's own sales terms do not apply.
+          pricelistId: settings.pricelistId ?? null,
+          paymentTermId: null,
+          // Nobody on the staff sold it: a web order has no salesperson and no team (D16).
+          userId: null,
+          teamId: null,
           clientOrderRef: String(cart.id),
           notes: note ?? undefined,
         })) as Row

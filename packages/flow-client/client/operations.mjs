@@ -1,3 +1,4 @@
+import { savedViewDestination } from './saved-view-state.mjs'
 import { tr, flowLocaleTag } from './i18n.mjs'
 import { taskAssigneeNames } from './task-assignees.mjs'
 import { taskColumns, isDone } from './project-catalogs.mjs'
@@ -114,9 +115,9 @@ export function createOperations(ctx) {
       disabled: !ctx.canWrite(),
     })
   const canManage = () => ctx.canWrite() && canManageScope(d(), 'project', ctx.projectId())
+  const canSaveView = () => d().capabilities?.views?.save ?? ctx.canWrite()
   const canManageView = (view) =>
-    ctx.canWrite() &&
-    (!view.ownerId || view.ownerId === d().user.id || canManageScope(d(), 'company', d().company.id))
+    view.canEdit ?? (canSaveView() && (!view.ownerId || view.ownerId === d().user.id))
   // A form's recipient is any internal person who can open the project, searched on the
   // server; the pick is posted as `assigneeId`, never resolved from a loaded name.
   const recipient = signal({ formId: null, id: '' }),
@@ -212,7 +213,12 @@ export function createOperations(ctx) {
         fields.set(
           structuredClone(
             f?.fields ?? [
-              { id: 'details', label: tr('flow.ui.request.details'), type: 'textarea', required: true },
+              {
+                id: crypto.randomUUID(),
+                label: tr('flow.ui.request.details'),
+                type: 'textarea',
+                required: true,
+              },
             ],
           ),
         )
@@ -251,7 +257,10 @@ export function createOperations(ctx) {
                     f.access === 'project' ? tr('flow.ui.project.members') : tr('flow.ui.internal'),
                   ]),
                   meta: FlowTag({
-                    label: f.status === 'published' ? tr('flow.ui.published') : tr('flow.ui.draft'),
+                    label:
+                      f.status === 'published'
+                        ? `${tr('flow.ui.published')} · v${f.schemaRevision ?? f.version}`
+                        : tr('flow.ui.draft'),
                   }),
                   actions: inline(
                     btn(tr('flow.ui.design'), () => edit(f), false, !canManage()),
@@ -339,7 +348,7 @@ export function createOperations(ctx) {
                     fields.set([
                       ...fields(),
                       {
-                        id: 'new-' + fields().length,
+                        id: crypto.randomUUID(),
                         label: tr('flow.ui.new.field'),
                         type: 'text',
                         required: false,
@@ -416,6 +425,7 @@ export function createOperations(ctx) {
                           'form.submit',
                           {
                             id: f.id,
+                            expectedSchemaRevision: f.schemaRevision ?? f.version,
                             title: v['request-title'],
                             answers: Object.fromEntries(f.fields.map((x) => [x.id, v['answer-' + x.id]])),
                           },
@@ -436,7 +446,7 @@ export function createOperations(ctx) {
                 .map((x) =>
                   FlowListItem({
                     title: x.title,
-                    description: `${x.person} · ${new Date(x.at).toLocaleString(flowLocaleTag())}`,
+                    description: `${x.person} · ${new Date(x.at).toLocaleString(flowLocaleTag())} · v${x.schemaRevision}`,
                     actions: nav(x.taskId, 'issue', { id: x.taskId, project: ctx.projectId() }),
                   }),
                 ),
@@ -641,12 +651,73 @@ export function createOperations(ctx) {
       ),
     })
   }
+  const viewLoading = signal(false),
+    viewError = signal('')
+  let viewTicket = 0,
+    viewController = null
+  const cancelViews = () => {
+    viewTicket++
+    viewController?.abort()
+    viewController = null
+  }
+  const moreViews = async () => {
+    if (!d()?.viewPage?.cursor || viewLoading()) return
+    cancelViews()
+    const ticket = viewTicket,
+      company = d().company.id,
+      project = ctx.projectId(),
+      cursor = d().viewPage.cursor
+    viewController = new AbortController()
+    viewLoading.set(true)
+    viewError.set('')
+    try {
+      const page = await ctx.call(
+        'flow.view.list',
+        { projectId: project || undefined, includePersonal: true, cursor, limit: 25 },
+        { signal: viewController.signal },
+      )
+      if (
+        ticket !== viewTicket ||
+        company !== d()?.company.id ||
+        project !== ctx.projectId() ||
+        ctx.screen() !== 'saved-views' ||
+        cursor !== d().viewPage?.cursor
+      )
+        return
+      const ids = new Set(d().views.map((v) => v.id))
+      ctx.data.set({
+        ...d(),
+        views: [...d().views, ...page.items.filter((v) => !ids.has(v.id))],
+        viewPage: {
+          total: page.total,
+          cursor: page.cursor,
+          loadedIds: [...(d().viewPage.loadedIds ?? []), ...page.items.map((v) => v.id)].filter(
+            (id, i, all) => all.indexOf(id) === i,
+          ),
+        },
+      })
+    } catch (error) {
+      if (ticket === viewTicket && company === d()?.company.id && error.name !== 'AbortError') {
+        if (['forbidden', 'unauthenticated'].includes(error.code)) ctx.refused?.(error)
+        else viewError.set(error.message)
+      }
+    } finally {
+      if (ticket === viewTicket) viewLoading.set(false)
+    }
+  }
+  const saveView = (values, view, success) =>
+    ctx.mutate(
+      'flow.view.save',
+      { ...values, ...(view ? { id: view.id, expectedVersion: view.version } : {}) },
+      success,
+      { allowReadOnly: true },
+    )
   const views = () => {
-    const items = d().views.filter((v) => !v.archived && v.projectId === ctx.projectId()),
+    const items = d().views.filter((v) => !v.archived && (!v.projectId || v.projectId === ctx.projectId())),
       v = items.find((v) => v.id === selected())
     return FlowSection({
       title: tr('flow.ui.saved.views'),
-      actions: btn(tr('flow.ui.save.current.view'), ctx.openSavedView, true, !ctx.canWrite()),
+      actions: btn(tr('flow.ui.save.current.view'), ctx.openSavedView, true, !canSaveView()),
       children: stack(
         FlowHint({
           children: tr('flow.ui.views.save.project.filters.tasks.remain.in.their.original.project'),
@@ -657,19 +728,17 @@ export function createOperations(ctx) {
               title: v.title,
               description: v.description,
               meta: inline(
-                html`<small>${d().members.find((m) => m.id === v.ownerId)?.name ?? d().user.name}</small>`,
+                html`<small>${v.ownerName || d().members.find((m) => m.id === v.ownerId)?.name || tr('flow.ui.not.set.ba42e8')}</small>`,
                 FlowTag({
                   label:
                     v.visibility === 'project' ? tr('flow.ui.share.with.project') : tr('flow.ui.personal'),
                 }),
               ),
               actions: inline(
-                nav(tr('flow.ui.open'), 'project-issues', {
-                  project: v.projectId,
-                  view: v.id,
-                  q: v.query ?? '',
-                  status: v.status ?? 'all',
-                }),
+                (() => {
+                  const target = savedViewDestination(v)
+                  return nav(tr('flow.ui.open'), target.route, target.params)
+                })(),
                 btn(
                   tr('flow.ui.manage'),
                   () =>
@@ -684,6 +753,20 @@ export function createOperations(ctx) {
             }),
           ),
         ),
+        d().viewPage
+          ? FlowHint({
+              children: tr('flow.views.showing', [
+                d().viewPage.loadedIds?.length ?? items.length,
+                d().viewPage.total,
+              ]),
+            })
+          : null,
+        viewError()
+          ? FlowNotice({ title: viewError(), action: btn(tr('flow.ui.try.again'), ctx.reloadViews) })
+          : null,
+        d().viewPage?.cursor
+          ? FlowButton({ label: tr('flow.views.more'), loading: viewLoading(), onClick: moreViews })
+          : null,
         editor() === 'view' && v
           ? FlowDisclosure({
               title: tr('flow.ui.manage.b905b0') + v.title,
@@ -700,10 +783,12 @@ export function createOperations(ctx) {
                     ]),
                     select('visibility', tr('flow.ui.who.can.use.this'), v.visibility ?? 'private', [
                       { value: 'private', label: tr('flow.ui.only.me') },
-                      { value: 'project', label: tr('flow.ui.project.members') },
+                      ...(v.projectId && v.canShare !== false
+                        ? [{ value: 'project', label: tr('flow.ui.project.members') }]
+                        : []),
                     ]),
                   ),
-                  (x) => run('view.save', { ...x, id: v.id }, () => editor.set('')),
+                  (x) => saveView(x, v, () => editor.set('')),
                 ),
                 btn(
                   tr('flow.ui.archive.view'),
@@ -712,8 +797,7 @@ export function createOperations(ctx) {
                       title: tr('flow.ui.archive.view'),
                       message: tr('flow.ui.confirmArchiveView', [v.title]),
                       label: tr('flow.ui.archive.view'),
-                      action: () =>
-                        run('view.save', { id: v.id, title: v.title, archive: true }, () => editor.set('')),
+                      action: () => saveView({ title: v.title, archive: true }, v, () => editor.set('')),
                     }),
                   false,
                   !canManageView(v),
@@ -745,10 +829,21 @@ export function createOperations(ctx) {
               'timezone',
               tr('flow.ui.display.timezone'),
               d().personalPreferences?.timezone ?? d().timezone,
-              ['Asia/Ho_Chi_Minh', 'Asia/Tokyo', 'Europe/London', 'America/New_York', 'UTC'].map((v) => ({
-                value: v,
-                label: v,
-              })),
+              [
+                ...new Set([
+                  d().personalPreferences?.timezone ?? d().timezone,
+                  'Asia/Ho_Chi_Minh',
+                  'Asia/Tokyo',
+                  'Europe/London',
+                  'America/New_York',
+                  'UTC',
+                ]),
+              ]
+                .filter(Boolean)
+                .map((v) => ({
+                  value: v,
+                  label: v,
+                })),
             ),
             FlowHint({
               children: tr(
@@ -760,6 +855,7 @@ export function createOperations(ctx) {
           tr('flow.ui.save.preferences'),
           null,
         ),
+        ...(ctx.settingsSection?.('personal-settings') ?? []),
       ),
     })
   return {
@@ -767,7 +863,15 @@ export function createOperations(ctx) {
     calendarWindow,
     view: (key) =>
       ({ forms, calendar, inbox, 'saved-views': views, 'personal-settings': preferences })[key](),
+    dispose() {
+      cancelViews()
+      inboxRequest++
+      recipients?.close()
+    },
     reset() {
+      cancelViews()
+      viewLoading.set(false)
+      viewError.set('')
       inboxRequest++
       inboxLoading.set(false)
       inboxError.set('')

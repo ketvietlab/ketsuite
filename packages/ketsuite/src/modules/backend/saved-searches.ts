@@ -1,3 +1,10 @@
+import {
+  isCatalogueSearch,
+  readVisibleSearch,
+  readVisibleSearches,
+  saveOwnedSearch,
+  removeOwnedSearch,
+} from './saved-search-policy.ts'
 import { asc, defineFn, eq, from } from '@ketvietlab/ketjs'
 import type { FnSpec, ModelDef, Row } from '@ketvietlab/ketjs'
 
@@ -10,12 +17,17 @@ export const savedSearchModels: Record<string, ModelDef> = {
       ownerId: 'text',
       listKey: 'text',
       name: 'text',
+      nameKey: 'text?',
+      shared: 'bool?',
+      companyId: 'text?',
+      revisionId: 'text?',
       state: 'json',
       defaultKey: 'text?',
       active: 'bool',
     },
     indexes: {
       owner_list_name: { fields: ['ownerId', 'listKey', 'name'], unique: true },
+      owner_list_name_key: { fields: ['ownerId', 'listKey', 'nameKey'], unique: true },
       one_default: { fields: ['defaultKey'], unique: true },
       owner_list: { fields: ['ownerId', 'listKey'] },
     },
@@ -52,6 +64,11 @@ export const savedSearchFunctions: Record<string, FnSpec> = {
     },
     effects: ['read:backend.SavedSearch'],
     handler: async (ctx, args) => {
+      if (isCatalogueSearch(args.listKey))
+        return (await readVisibleSearches(ctx, String(args.listKey))).map((row) => ({
+          ...row,
+          defaultKey: row.ownerId === ctx.actor ? row.defaultKey : null,
+        }))
       if (!ctx.actor) return []
       const S = ctx.table('backend.SavedSearch')
       return ctx.db.all(
@@ -74,6 +91,7 @@ export const savedSearchFunctions: Record<string, FnSpec> = {
       const state = safeState(args.state)
       if (!name || !listKey || !state)
         return { ok: false, errors: [{ field: 'state', message: 'invalid saved search' }] }
+      if (isCatalogueSearch(listKey)) return saveOwnedSearch(ctx, { ...args, state })
       return ctx.tx(async (tx) => {
         const S = tx.table('backend.SavedSearch')
         const owned = await tx.db.one(from(S).where(eq(S.id, args.id), eq(S.ownerId, ctx.actor)))
@@ -114,6 +132,16 @@ export const savedSearchFunctions: Record<string, FnSpec> = {
     effects: ['read:backend.SavedSearch', 'write:backend.SavedSearch'],
     handler: async (ctx, args) => {
       if (!ctx.actor) return { ok: false, errors: [{ field: 'owner', message: 'authentication required' }] }
+      if (isCatalogueSearch(args.listKey)) {
+        const row = await readVisibleSearch(ctx, args.id, String(args.listKey))
+        if (!row || row.ownerId !== ctx.actor)
+          return { ok: false, errors: [{ field: 'id', code: 'backend.error.savedSearch.owner' }] }
+        return saveOwnedSearch(ctx, {
+          ...row,
+          default: args.default,
+          expectedRevisionId: row.revisionId ?? 'initial',
+        })
+      }
       const S = ctx.table('backend.SavedSearch')
       const row = await ctx.db.one(
         from(S).where(eq(S.id, args.id), eq(S.ownerId, ctx.actor), eq(S.listKey, args.listKey)),
@@ -149,6 +177,7 @@ export const savedSearchFunctions: Record<string, FnSpec> = {
     output: { ok: 'bool', errors: 'json?' },
     effects: ['read:backend.SavedSearch', 'write:backend.SavedSearch'],
     handler: async (ctx, args) => {
+      if (isCatalogueSearch(args.listKey)) return removeOwnedSearch(ctx, args)
       if (!ctx.actor) return { ok: false, errors: [{ field: 'owner', message: 'authentication required' }] }
       const rows = await ctx.db.select('backend.SavedSearch', {
         id: args.id,

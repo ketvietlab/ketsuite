@@ -763,6 +763,13 @@ const FAILURES: Record<string, { status: number; code: string; messageKey: strin
     code: 'channel_api.idempotencyConflict',
     messageKey: 'channel_api.error.idempotencyConflict',
   },
+  // A domain write found the record changed under it (a product's stock setup, a
+  // revision). The caller reloads and decides again; answering 500 called it a fault.
+  conflict: {
+    status: 409,
+    code: 'channel_api.stale',
+    messageKey: 'channel_api.error.stale',
+  },
   // The first attempt is still running. A retry is the correct client response,
   // and answering 500 told it the opposite.
   E_IDEMPOTENCY_IN_FLIGHT: {

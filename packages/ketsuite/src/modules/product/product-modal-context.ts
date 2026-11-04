@@ -1,3 +1,11 @@
+import { readBulkEdits } from './bulk-history.ts'
+import { bulkFieldLabels, type BulkField } from './bulk-edit.ts'
+import { readProductImports } from './import-history.ts'
+import { templateComboIds } from './template-combos.ts'
+import { templateTagIds } from './tag-policy.ts'
+import { categoryPaths } from './category-tree.ts'
+import { shelfLifeFields } from '../stock/lot-policy.ts'
+import { hasPhysicalStock, stockPositionEffects } from './stock-policy.ts'
 // The record-modal context for a product template (KetSuite record-modal contract).
 //
 // The catalogue collection opens a template — and its create action — in a
@@ -7,7 +15,7 @@
 // Media (the gallery, uploads) and the description's rich-text controller stay on
 // the server-rendered detail page for now — this context does not answer for them.
 
-import { defineFn } from '@ketvietlab/ketjs'
+import { defineFn, desc, eq, from, inArray } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { recordIslandsFor, recordTabsFor } from './product-record-tabs.ts'
 import { TEMPLATE_RECORD_LABELS } from './template-record-labels.ts'
@@ -47,6 +55,14 @@ const byName = (a: Row, b: Row) =>
 const options = (rows: Row[]): Row[] =>
   rows.map((row) => ({ value: String(row.id), label: String(row.name ?? row.id) })).sort(byName)
 
+// A category reads by its full name: two branches may each hold a "Làm sạch".
+const categoryOptions = (rows: Row[]): Row[] => {
+  const paths = categoryPaths(rows)
+  return rows
+    .map((row) => ({ value: String(row.id), label: paths.get(String(row.id))! }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'vi') || a.value.localeCompare(b.value))
+}
+
 const newTemplateRecord = (): Row => ({
   id: '',
   name: '',
@@ -58,7 +74,10 @@ const newTemplateRecord = (): Row => ({
   description: null,
   listPrice: '0',
   saleOk: true,
+  saleVariantMode: 'inline',
   purchaseOk: true,
+  saleDelay: null,
+  saleWarning: null,
   defaultCode: null,
   barcode: null,
   active: true,
@@ -158,13 +177,24 @@ const packagingChoicesOf = (units: UnitRow[], uomId: string | null, linked: stri
 
 export const productModalContextFunctions: Record<string, FnSpec> = {
   templateModalContext: defineFn({
-    input: { id: 'id?', locale: 'text?' },
+    input: { id: 'id?', sourceId: 'id?', locale: 'text?' },
     effects: [
       ...readEffects,
+      ...stockPositionEffects,
       'read:product.Template',
+      'read:product.TemplateStateEvent',
+      'read:product.BulkEdit',
+      'read:product.BulkEditItem',
+      'read:user.User',
+      'read:product.Import',
+      'read:product.ImportItem',
       'read:product.Product',
       'read:product.ProductValue',
       'read:product.Category',
+      'read:product.Tag',
+      'read:product.TemplateTag',
+      'read:product.TemplateCombo',
+      'read:product.Combo',
       'read:product.Brand',
       'read:uom.Unit',
       'read:product.TemplateUom',
@@ -193,6 +223,9 @@ export const productModalContextFunctions: Record<string, FnSpec> = {
         money: can('product.listVariantCosts'),
         createAttribute: can('product.saveAttributeDraft'),
         setCost: can('product.setCost'),
+        setBarcode: can('product.setBarcode'),
+        saveVariantStock: can('product.saveVariantStock'),
+        saveRecord: can('product.saveRecord'),
         setProductUom: can('product.setProductUom'),
         addPackaging: can('product.addTemplateUom'),
         removePackaging: can('product.removeTemplateUom'),
@@ -211,15 +244,120 @@ export const productModalContextFunctions: Record<string, FnSpec> = {
       // existing template only to whoever may read it — the same split the
       // catalogue route enforced.
       if (creating ? !permissions.save : !can('product.getTemplate')) return null
-      const record = creating
+      if (args.sourceId && (!creating || !permissions.duplicate || !can('product.getTemplate'))) return null
+      let record = creating
         ? newTemplateRecord()
         : (await ctx.db.select('product.Template', { id: args.id }))[0]
       if (!record) return null
-      const [categoryRows, unitRows, brandRows] = await Promise.all([
-        ctx.db.select('product.Category'),
-        ctx.db.select('uom.Unit'),
-        ctx.db.select('product.Brand', { active: true }),
-      ])
+      // A duplicate keeps the source's attribute lines and extras (P31); saving makes its
+      // variants afresh, with new codes and no barcode or cost.
+      let duplicateLines: Array<{
+        attributeId: string
+        values: Array<{ valueId: string; priceExtra: string }>
+      }> = []
+      let duplicateCount = 0
+      if (args.sourceId) {
+        const source = (await ctx.db.select('product.Template', { id: args.sourceId }))[0]
+        if (!source) return null
+        if (permissions.configureAttributes) {
+          const lines = (await variantSetupOf(ctx, String(args.sourceId)))?.lines ?? []
+          duplicateLines = lines.map((line) => ({
+            attributeId: line.attributeId,
+            values: line.values.map((value) => ({ valueId: value.valueId, priceExtra: value.priceExtra })),
+          }))
+          const makers = lines.filter((line) => line.createVariant !== 'no_variant' && line.values.length)
+          duplicateCount = makers.length ? makers.reduce((count, line) => count * line.values.length, 1) : 0
+        }
+        record = {
+          ...record,
+          ...Object.fromEntries(
+            [
+              'type',
+              'categoryId',
+              'brandId',
+              'uomId',
+              'origin',
+              'description',
+              'listPrice',
+              'compareAtPrice',
+              'hsCode',
+              'saleOk',
+              'purchaseOk',
+              'saleDelay',
+              'saleWarning',
+              'saleVariantMode',
+              'isStorable',
+              'tracking',
+              ...shelfLifeFields,
+            ].map((key) => [key, source[key]]),
+          ),
+          name: `${String(source.name)} (${args.locale === 'en' ? 'copy' : 'bản sao'})`,
+        }
+      }
+      const bulkEdits =
+        creating || !can('product.listBulkEdits')
+          ? []
+          : (await readBulkEdits(ctx, { templateId: args.id })).rows
+      for (const row of bulkEdits) {
+        if (['saleOk', 'purchaseOk', 'isStorable'].includes(String(row.field)))
+          row.valueLabel =
+            row.value === 'true'
+              ? args.locale === 'en'
+                ? 'Yes'
+                : 'Có'
+              : args.locale === 'en'
+                ? 'No'
+                : 'Không'
+        row.actor = (await ctx.db.select('user.User', { id: row.actor }))[0]?.name ?? row.actor
+        // The view still needs the field itself to format a price; `field` becomes its label.
+        row.fieldKey = row.field
+        row.field = bulkFieldLabels[args.locale === 'en' ? 'en' : 'vi'][row.field as BulkField] ?? row.field
+      }
+      const imports =
+        creating || !can('product.listImports')
+          ? []
+          : (await readProductImports(ctx, { templateId: args.id, limit: 20 })).rows.map((row) => ({
+              id: String(row.id),
+              name: String(row.name),
+            }))
+      const importHistoryHref =
+        '/admin/product/imports?' +
+        new URLSearchParams({
+          templateId: String(args.id),
+          lang: args.locale === 'en' ? 'en' : 'vi',
+          ...(ctx.scope.company ? { company: ctx.scope.company } : {}),
+        })
+      const H = ctx.table('product.TemplateStateEvent')
+      const events = creating
+        ? []
+        : await ctx.db.all(from(H).where(eq(H.templateId, args.id)).orderBy(desc(H.occurredAt)).limit(20))
+      // Who archived or restored it, by name: the history names people, not ids.
+      const actorIds = [...new Set(events.map((event) => event.actor).filter(Boolean))]
+      const U = ctx.manifest.models['user.User'] && actorIds.length ? ctx.table('user.User') : null
+      const actorNames = new Map(
+        U
+          ? (await ctx.db.all(from(U).where(inArray(U.id, actorIds)))).map((user) => [user.id, user.name])
+          : [],
+      )
+      const lifecycle = events.map((event) => ({
+        ...event,
+        actorName: actorNames.get(event.actor) == null ? null : String(actorNames.get(event.actor)),
+      }))
+      const [categoryRows, unitRows, brandRows, tagRows, heldTags, comboRows, heldCombos] = await Promise.all(
+        [
+          ctx.db.select('product.Category'),
+          ctx.db.select('uom.Unit'),
+          ctx.db.select('product.Brand', { active: true }),
+          ctx.db.select('product.Tag'),
+          creating && !args.sourceId
+            ? Promise.resolve([] as string[])
+            : templateTagIds(ctx, String(args.sourceId ?? args.id)),
+          ctx.db.select('product.Combo'),
+          creating && !args.sourceId
+            ? Promise.resolve([] as string[])
+            : templateComboIds(ctx, String(args.sourceId ?? args.id)),
+        ],
+      )
       const products = creating ? [] : await ctx.db.select('product.Product', { templateId: args.id })
       const defaultVariant = products.find((product) => String(product.combinationKey ?? '') === '')
       // Archived combinations do not count: once every variant is archived the
@@ -306,19 +444,37 @@ export const productModalContextFunctions: Record<string, FnSpec> = {
           weight: measureOf(variant.weight),
           volume: measureOf(variant.volume),
           active: variant.active,
-          price: String(listPrice + chosen.reduce((sum, valueId) => sum + (extras.get(valueId) ?? 0), 0)),
+          // What the variant sells for: its own price, else the template price plus extras.
+          price:
+            variant.listPrice ??
+            String(listPrice + chosen.reduce((sum, valueId) => sum + (extras.get(valueId) ?? 0), 0)),
+          basePrice: String(listPrice + chosen.reduce((sum, valueId) => sum + (extras.get(valueId) ?? 0), 0)),
+          listPriceOverride: variant.listPrice,
+          hsCode: variant.hsCode,
           costPrice: permissions.money ? (costs.get(variant.id) ?? null) : null,
           image: variant.images[0]?.attachmentId ?? null,
           packagingBarcodes: Object.fromEntries(unitBarcodes.get(variant.id) ?? []),
         }
       })
+      const stockLocked =
+        !creating && hasStock && (permissions.configureStock || permissions.setCost)
+          ? await hasPhysicalStock(
+              ctx,
+              (await ctx.db.select('product.Product', { templateId: args.id })).map((product) =>
+                String(product.id),
+              ),
+            )
+          : false
       return {
         data: {
           record: {
+            stockLocked,
             id: String(record.id ?? ''),
             revisionId: String(record.revisionId ?? 'initial'),
             name: String(record.name ?? ''),
             type: String(record.type ?? 'goods'),
+            tagIds: heldTags,
+            comboIds: heldCombos,
             categoryId: record.categoryId == null ? null : String(record.categoryId),
             brandId: record.brandId == null ? null : String(record.brandId),
             uomId: record.uomId == null ? null : String(record.uomId),
@@ -326,12 +482,18 @@ export const productModalContextFunctions: Record<string, FnSpec> = {
             description: record.description == null ? null : String(record.description),
             listPrice: String(record.listPrice ?? '0'),
             saleOk: record.saleOk !== false,
+            saleVariantMode: record.type === 'combo' ? 'inline' : String(record.saleVariantMode ?? 'inline'),
             purchaseOk: record.purchaseOk !== false,
+            saleDelay: record.saleDelay == null ? null : Number(record.saleDelay),
+            saleWarning: record.saleWarning ?? null,
             defaultCode: defaultVariant?.defaultCode ? String(defaultVariant.defaultCode) : null,
             barcode: defaultVariant?.barcode ? String(defaultVariant.barcode) : null,
             active: record.active !== false,
             isStorable: hasStock ? record.isStorable === true : false,
             tracking: hasStock ? String(record.tracking ?? 'none') : 'none',
+            ...Object.fromEntries(
+              shelfLifeFields.map((field) => [field, hasStock ? (record[field] ?? null) : null]),
+            ),
             compareAtPrice: decimalOrNull(record.compareAtPrice),
             hsCode: record.hsCode == null ? null : String(record.hsCode),
             weight: measureOf(defaultVariant?.weight),
@@ -347,10 +509,28 @@ export const productModalContextFunctions: Record<string, FnSpec> = {
                   : String(record.updatedAt),
           },
           images,
-          hasVariants: sellingVariants.length > 0,
+          lifecycle,
+          bulkEdits,
+          imports,
+          importHistoryHref,
+          hasVariants:
+            sellingVariants.length > 0 ||
+            (record.active === false &&
+              products.some(
+                (product) =>
+                  Boolean(product.combinationKey) && !String(product.combinationKey).startsWith('archived:'),
+              )),
           variantSetup,
+          ...(args.sourceId ? { duplicateSourceId: String(args.sourceId) } : {}),
+          ...(duplicateLines.length ? { duplicateLines, duplicateCount } : {}),
           types: [...PRODUCT_TYPES],
-          categories: options(categoryRows),
+          combos: options(
+            comboRows.filter(
+              (row) => row.active !== false || (!creating && heldCombos.includes(String(row.id))),
+            ),
+          ),
+          categories: categoryOptions(categoryRows),
+          tags: options(tagRows.filter((tag) => tag.active !== false || heldTags.includes(String(tag.id)))),
           uoms: unitChoices(units, uomId, lang),
           // The unit's own name, which quantities on the page are counted in.
           uomName: units.find((unit) => unit.id === uomId)?.name ?? null,
@@ -365,7 +545,7 @@ export const productModalContextFunctions: Record<string, FnSpec> = {
           stockEnabled: hasStock,
           permissions,
           lang,
-          extensionTabs: creating ? [] : recordTabsFor(ctx, lang),
+          extensionTabs: creating ? [] : recordTabsFor(ctx, lang, can),
           collaboration: creating ? [] : recordIslandsFor(ctx, 'product_backend:template.collaboration', can),
         },
         messages: { ...messagesFor(ctx, lang), ...TEMPLATE_RECORD_LABELS[lang] },

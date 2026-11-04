@@ -20,6 +20,8 @@ import {
 import backend from '../packages/ketsuite/src/modules/backend/index.ts'
 import { createFlowModule } from '../packages/ketsuite/src/modules/flow/native/index.ts'
 import { createFlowStorageModule } from '../packages/ketsuite/src/modules/flow/native/attachments.ts'
+import { createFlowWorkspaceModule } from '../packages/ketsuite/src/modules/flow_workspace/index.ts'
+import { reviewFlow } from './helpers/flow-review.ts'
 import { everyFunction } from './helpers/permissions.ts'
 
 test('productivity invitations deliver after commit and reject obsolete tokens through HTTP', async () => {
@@ -51,6 +53,7 @@ test('productivity invitations deliver after commit and reject obsolete tokens t
       livedoc,
       createFlowStorageModule(),
       native,
+      createFlowWorkspaceModule(),
     ],
     worker: { queues: { mail: 1 } },
     serve: {
@@ -104,6 +107,7 @@ test('productivity invitations deliver after commit and reject obsolete tokens t
       ['invitation-reader', 'invited@example.test'],
       ['invitation-wrong', 'wrong@example.test'],
       ['invitation-guest', 'guest@example.test'],
+      ['invitation-expired', 'expired@example.test'],
     ]) {
       await app.fixture.call(
         'user.createUser',
@@ -227,6 +231,7 @@ test('productivity invitations deliver after commit and reject obsolete tokens t
         idempotencyKey: 'invite-expiry',
       }),
     )
+    const expiredToken = await tokenOf(expired.id)
     await app.fixture.withTenant('', ({ adapter }) =>
       adapter.run(
         'UPDATE flow_invitation SET "expiresAt" = ' +
@@ -236,6 +241,38 @@ test('productivity invitations deliver after commit and reject obsolete tokens t
         ['2000-01-01T00:00:00.000Z', expired.id],
       ),
     )
+    const expiredClient = app.client.anonymous()
+    await expiredClient.login({ login: 'invitation-expired', password: 'synthetic-invitation-password' })
+    assert.deepEqual(
+      (
+        await expiredClient.call<Row>('flow.workspace.bootstrap', {
+          route: 'invitation-accept',
+          recordId: expiredToken,
+        })
+      ).value.invitationOffer,
+      { available: false },
+      'the matching account cannot read an expired offer',
+    )
+    assert.equal(
+      (
+        await expiredClient.call<Row>('flow.invitation.accept', {
+          token: expiredToken,
+          idempotencyKey: 'expired-accept',
+        })
+      ).value.ok,
+      false,
+    )
+    await app.fixture.withTenant('', async ({ adapter }) => {
+      assert.equal(
+        (
+          await adapter.all('SELECT id FROM flow_member WHERE "userId" = ' + (env ? '$1' : '?'), [
+            'invitation-expired',
+          ])
+        ).length,
+        0,
+        'expiry does not create membership',
+      )
+    })
     const worker = await bootWorker(deployment, {
       env: app.env,
       now: () => new Date('2020-01-01T00:00:00.000Z'),
@@ -275,6 +312,26 @@ test('productivity invitations deliver after commit and reject obsolete tokens t
       ).available,
       true,
     )
+    if (process.env.FLOW_C04_REVIEW === '1') {
+      await reviewFlow(
+        app,
+        reader,
+        '/flow/invitation-accept?company=invitation-company&lang=vi&id=' + token,
+        3697,
+      )
+      await app.fixture.withTenant('', async ({ adapter }) => {
+        const rows = await adapter.all(
+          'SELECT role, status FROM flow_member WHERE "userId" = ' + (env ? '$1' : '?'),
+          ['invitation-reader'],
+        )
+        assert.deepEqual(
+          rows.map((row) => [row.role, row.status]),
+          [['member', 'active']],
+          'the native browser accepted once into the intended Company',
+        )
+      })
+      return // Normal mode independently tests replay/revoked/guest/issuer cases below.
+    }
     const accept = { token, idempotencyKey: 'accept' },
       accepted = ok((await reader.call<Row>('flow.invitation.accept', accept)).value)
     assert.deepEqual((await reader.call<Row>('flow.invitation.accept', accept)).value, accepted)

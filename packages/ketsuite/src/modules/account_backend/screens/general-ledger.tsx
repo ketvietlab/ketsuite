@@ -34,6 +34,8 @@ export type GeneralLedgerScreenOptions = {
   hidden?: Record<string, string>
   errors?: readonly string[]
   accountLabel?: (id: unknown) => string
+  /** The numbered form this book follows under the company's standard, when it names one. */
+  form?: string | null
   entryHref?: (row: GeneralLedgerRow) => string
 }
 
@@ -72,6 +74,11 @@ export const generalLedgerScreen = (_: Translator, options: GeneralLedgerScreenO
           label: _('account_backend.field.accountId'),
           cell: (row) => code(options.accountLabel?.(row.accountId) ?? String(row.accountId)),
         },
+        {
+          key: 'contra',
+          label: _('account_backend.books.contra'),
+          cell: (row) => (row.contraAccountCodes ? code(String(row.contraAccountCodes)) : ''),
+        },
         { key: 'name', label: _('account_backend.field.name'), cell: (row) => String(row.name) },
         {
           key: 'debit',
@@ -107,7 +114,7 @@ export const generalLedgerScreen = (_: Translator, options: GeneralLedgerScreenO
         <RecordWorkspace
           kicker={_('account_backend.ledger.kicker')}
           title={_('account_backend.generalLedger.title')}
-          subtitle={_('account_backend.ledger.subtitle')}
+          subtitle={options.form ? _('account_backend.books.form', { form: options.form }) : null}
           imageFallback={icon('notebook-tabs')}
           summary={[
             {

@@ -75,6 +75,8 @@ export type FieldProps = {
     | 'checkbox'
     | 'checkbox-group'
     | 'radio'
+    /** An on/off choice drawn as a switch (`role="switch"`); it posts `value` (default `1`) when on. */
+    | 'switch'
   value?: string | number | boolean | null
   checked?: boolean | 'indeterminate'
   /** Legacy checkbox value used checked state; submitValue opts into separate form data. */
@@ -84,6 +86,11 @@ export type FieldProps = {
   clearable?: boolean
   clearLabel?: string
   inputMode?: 'text' | 'decimal' | 'numeric' | 'tel' | 'search' | 'email' | 'url'
+  /**
+   * A number or decimal typed and shown as this language writes it ("1.800.000" in `vi`). The control
+   * becomes a text input; the design-system runtime submits the plain decimal ("1800000").
+   */
+  numberLocale?: string
   align?: 'start' | 'center' | 'end'
   rows?: number
   resize?: 'vertical' | 'none'
@@ -110,6 +117,8 @@ export type FieldProps = {
    */
   optionsOrientation?: 'horizontal' | 'vertical'
   span?: 'half' | 'full'
+  /** How long the value is: the control is no wider than it needs (FieldFrame). */
+  width?: 'xs' | 'sm' | 'md'
   step?: string | null
   autocomplete?: string | null
 }
@@ -143,6 +152,7 @@ export const Field = (props: FieldProps): TemplateResult => {
         <FieldMessages {...props} />
       </div>
     )
+  if (props.type === 'switch' && props.control === undefined) return SwitchField(props)
   if (props.type === 'datetime-local' && props.control === undefined) return DateTimePicker(props)
   if (props.type === 'date' && props.control === undefined) return DatePicker(props)
   const group = props.type === 'radio' || props.type === 'checkbox-group'
@@ -157,6 +167,44 @@ export const Field = (props: FieldProps): TemplateResult => {
         ) : (
           NativeFieldControl(props, describedBy(props.id, props.help, props.error))
         )
+      }
+    />
+  )
+}
+
+/** The switch control: a native checkbox with the switch role, so a record form posts it like any field. */
+const SwitchField = (props: FieldProps): TemplateResult => {
+  // `value` is what the switch posts; it says whether the switch is on only when `checked` is absent.
+  const checked = props.checked === undefined ? props.value === '1' : props.checked === true
+  return (
+    <FieldFrame
+      id={props.id}
+      label={props.label}
+      help={props.help}
+      error={props.error}
+      required={props.required}
+      labelHidden={props.labelHidden}
+      span={props.span}
+      size={props.size}
+      kind="switch"
+      layout={props.layout}
+      control={
+        <label data-ui="switch-control">
+          <input
+            id={props.id}
+            type="checkbox"
+            role="switch"
+            name={props.name}
+            value={props.value === undefined || props.value === null ? '1' : String(props.value)}
+            checked={checked}
+            aria-checked={String(checked)}
+            disabled={props.disabled === true}
+            required={props.required === true}
+            aria-invalid={props.error ? 'true' : null}
+            aria-describedby={describedBy(props.id, props.help, props.error)}
+          />
+          <span data-ui="switch-track" aria-hidden="true" />
+        </label>
       }
     />
   )

@@ -1,3 +1,4 @@
+import { savedViewDestination } from './saved-view-state.mjs'
 import { tr, flowMessageManifest } from './i18n.mjs'
 import { extensionCommands } from './extensions.mjs'
 const normalize = (value) =>
@@ -215,12 +216,17 @@ export function commandResults(data, query, { workspaceId, recent = [], extra = 
       (data.views ?? [])
         .filter((v) => !v.archived)
         .map((v) =>
-          result(`view:${v.id}`, v.title, project(v.projectId)?.title, 'list', 'project-issues', {
-            project: v.projectId,
-            view: v.id,
-            q: v.query ?? '',
-            status: v.status ?? 'all',
-          }),
+          (() => {
+            const target = savedViewDestination(v)
+            return result(
+              `view:${v.id}`,
+              v.title,
+              project(v.projectId)?.title,
+              'list',
+              target.route,
+              target.params,
+            )
+          })(),
         ),
     ],
     [

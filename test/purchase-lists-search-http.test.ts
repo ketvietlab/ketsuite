@@ -180,3 +180,69 @@ test('purchase lists HTTP: every purchasing list carries the bar', async (t) => 
     assert.doesNotMatch(html, /name="q"[^>]*data-ui="chrome-search-input"/, path)
   }
 })
+
+test('purchase overview HTTP: each counter opens the list narrowed to what it counts', async (t) => {
+  const app = await boot(t)
+  const call = (name: string, input: Record<string, unknown> = {}) => app.client.call(name, input)
+  // A service is billed on what was ordered, so its confirmed order waits for a bill; goods
+  // wait for their receipt first.
+  await call('product.saveTemplate', {
+    id: 'fitting',
+    name: 'Lắp đặt',
+    type: 'service',
+    uomId: 'unit',
+    purchaseOk: true,
+  })
+  await call('product.saveVariant', {
+    id: 'fit',
+    templateId: 'fitting',
+    defaultCode: 'LAP',
+    combinationKey: '',
+  })
+  for (const [id, productId] of [
+    ['po-fit', 'fit'],
+    ['po-desk', 'desk'],
+  ] as const) {
+    await call('purchase.createOrder', { id, partnerId: 'abc', pickingTypeId: 'incoming' })
+    await call('purchase.addLine', {
+      id: `${id}:line`,
+      orderId: id,
+      productId,
+      productQty: '2',
+      productUomId: 'unit',
+    })
+    await call('purchase.confirmOrder', { id })
+  }
+
+  const overview = await (await app.client.get('/admin/purchase?lang=vi')).text()
+  const counters = [...overview.matchAll(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)]
+    .map(([, href, inner]) => ({
+      href: href!.replaceAll('&amp;', '&'),
+      text: inner!
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    }))
+    .filter(
+      ({ text }) =>
+        /\d+$/.test(text) && /^(Cần gửi|Đang chờ|Chờ duyệt|Đơn mua hàng|Chờ lập hoá đơn) /.test(text),
+    )
+  const rows = async (href: string) =>
+    [
+      ...(await (await app.client.get(href)).text()).matchAll(
+        /data-ui="kt-row"[^>]*data-row="([^"]+)"|data-row="([^"]+)"[^>]*data-ui="kt-row"/g,
+      ),
+    ]
+      .map((match) => match[1] ?? match[2])
+      .sort()
+  const seen = Object.fromEntries(
+    await Promise.all(counters.map(async ({ href, text }) => [text, await rows(href)] as const)),
+  )
+  assert.deepEqual(seen, {
+    'Cần gửi 1': ['rfq-abc'],
+    'Đang chờ 1': ['rfq-xyz'],
+    'Chờ duyệt 0': [],
+    'Đơn mua hàng 2': ['po-desk', 'po-fit'],
+    'Chờ lập hoá đơn 1': ['po-fit'],
+  })
+})

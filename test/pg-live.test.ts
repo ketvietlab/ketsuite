@@ -1047,7 +1047,7 @@ test(
 
 test('live pg: concurrent stock reservations never over-reserve one quant', live, async () => {
   await withPg(async (a) => {
-    const stockModules = [uom, product, stock]
+    const stockModules = [address, partner, company, user, uom, product, stock]
     const stockManifest = compose(stockModules, { headless: true, companies: true })
     const stockSchema = schemaFromManifest(stockManifest)
     for (const tableName of Object.keys(stockSchema.tables))
@@ -1259,7 +1259,7 @@ test('live pg: concurrent accounting posts assign one gapless journal sequence',
 
 test('live pg: concurrent RFQs assign one gapless purchase sequence', live, async () => {
   await withPg(async (a) => {
-    const purchaseModules = [address, partner, company, uom, product, stock, account, purchase]
+    const purchaseModules = [address, partner, company, user, uom, product, stock, account, purchase]
     const purchaseManifest = compose(purchaseModules, { headless: true, companies: true })
     const purchaseSchema = schemaFromManifest(purchaseManifest)
     for (const tableName of Object.keys(purchaseSchema.tables))
@@ -1307,7 +1307,7 @@ test('live pg: concurrent RFQs assign one gapless purchase sequence', live, asyn
 
 test('live pg: concurrent quotations assign one gapless sales sequence', live, async () => {
   await withPg(async (a) => {
-    const saleModules = [address, partner, company, uom, product, pricing, stock, account, sale]
+    const saleModules = [address, partner, company, user, uom, product, pricing, stock, account, sale]
     const saleManifest = compose(saleModules, { headless: true, companies: true })
     const saleSchema = schemaFromManifest(saleManifest)
     for (const tableName of Object.keys(saleSchema.tables))

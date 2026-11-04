@@ -78,6 +78,11 @@ export type AccountingOverviewOptions = {
   /** The ledger behind an account's total. A number nobody can open is one to trust blindly. */
   ledgerHref: (accountId: string) => string
   partnerHref: (partnerId: string) => string
+  /**
+   * Where a headline card opens: the accounts its total adds up, over the same
+   * window. A card is the summary of a report, not a number of its own.
+   */
+  kpiHref: string
 }
 
 const n = (value: unknown): number => Number(value ?? 0)
@@ -205,6 +210,7 @@ const kpis = (_: Translator, o: AccountingOverviewOptions): TemplateResult => {
           value={formatMoney(_, card.value, o.currency)}
           trend={trend(_, card.value, card.was, card.better, o.currency)}
           tone="money"
+          href={o.kpiHref}
         />
       )}
     />

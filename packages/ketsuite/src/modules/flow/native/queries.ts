@@ -37,6 +37,7 @@ import { orderedTaskWindow, taskSort } from './task-read-order.ts'
 import type { TaskPosition } from './task-read-order.ts'
 import { sprintTaskTotals } from './sprint-totals.ts'
 import { overviewPeople } from './overview-people.ts'
+import { permittedFor } from '../../user/roles.ts'
 type VisibleProject = Row & { accessInfo: { role: string; sources: string[] } }
 const projectNavigation = (p: Row, directory = false): Row => ({
   id: p.id,
@@ -48,7 +49,7 @@ const projectNavigation = (p: Row, directory = false): Row => ({
   archived: p.archived,
   defaultView: projectDefaultView(p.defaultView),
   accessInfo: { role: (p.accessInfo as Row).role },
-  ...(directory ? { ownerId: p.ownerId, end: p.end } : {}),
+  ...(directory ? { ownerId: p.ownerId, end: p.end, version: p.version } : {}),
 })
 
 export async function taskByKey(ctx: Ctx, key: unknown) {
@@ -439,6 +440,7 @@ export async function listTasks(ctx: Ctx, input: Row, extensions: NativeServerEx
     return refuse('forbidden')
   if (!a.member) return { tasks: [], total: 0, cursor: null, statusCounts: {} }
   const selected = projects
+    .filter((p) => input.projectId || !p.archived)
     .filter((p) => !input.projectId || p.id === input.projectId)
     .filter((p) => !input.workspaceId || p.workspaceId === input.workspaceId)
   if (input.projectId && !selected.length) return refuse('forbidden')
@@ -747,6 +749,7 @@ export async function projectOptions(ctx: Ctx, input: Row) {
       access,
       Boolean(input.manage),
       Boolean(input.directory),
+      Boolean(input.archived),
       await revision(ctx),
       projects
         .map((p) => [p.id, p.title, p.code, p.workspaceId, p.archived, p.version, p.accessInfo.role])
@@ -756,7 +759,8 @@ export async function projectOptions(ctx: Ctx, input: Row) {
   const records = projects
     .filter(
       (p) =>
-        !p.archived &&
+        Boolean(p.archived) === (input.archived === true) &&
+        !p.deletionId &&
         (!input.workspaceId || p.workspaceId === input.workspaceId) &&
         (!access || p.access === access) &&
         // `manage` keeps the projects whose access the actor may change, as access.grant checks.
@@ -830,6 +834,12 @@ export async function taskDetail(ctx: Ctx, input: Row, extensions: NativeServerE
   return value
 }
 
+/** Metadata accompanying a native document version must use the same task DTO
+ * as the normal reader, so a fresh version never authorizes stale properties. */
+export async function taskDocumentRecord(ctx: Ctx, task: Row): Promise<Row> {
+  return (await taskDTOs(ctx, [task], true))[0]!
+}
+
 export async function bootstrap(ctx: Ctx, input: Row, extensions: NativeServerExtension[] = []) {
   const { a, projects, workspaces } = await visibleScope(ctx)
   if (input.companyId && input.companyId !== a.companyId) return refuse('forbidden')
@@ -851,6 +861,7 @@ export async function bootstrap(ctx: Ctx, input: Row, extensions: NativeServerEx
     ...(p.catalogOverrides as Row),
     defaultView: projectDefaultView(p.defaultView),
     description: ['project-profile', 'settings'].includes(string(input.route)) ? p.description : '',
+    documentTransport: { base: '/flow/live/projects', docId: p.id },
   })
   const projectRows = (records: VisibleProject[]) =>
     records.map((p) => (p.id === target?.id ? fullProject(p) : projectNavigation(p)))
@@ -859,8 +870,9 @@ export async function bootstrap(ctx: Ctx, input: Row, extensions: NativeServerEx
     company: {
       id: company.id,
       name: settings?.title || partner?.name || company.code,
-      version: settings?.version,
-      acceptanceEnabled: settings?.acceptanceEnabled ?? false,
+      ...(a.member && a.member.role !== 'guest'
+        ? { version: settings?.version, acceptanceEnabled: settings?.acceptanceEnabled ?? false }
+        : {}),
     },
     companies: 'companies' in contexts ? contexts.companies.map((c) => ({ id: c.id, name: c.name })) : [],
     // The actor's own Teams are always whole: access checks for the actor read them.
@@ -892,6 +904,22 @@ export async function bootstrap(ctx: Ctx, input: Row, extensions: NativeServerEx
     capabilities: {
       write: Boolean(a.member && a.member.role !== 'guest' && target?.accessInfo?.role !== 'viewer'),
       manageOrganization: a.manageOrganization || (await a.canInitialize()),
+      views: await (async () => {
+        const keys = await permittedFor(ctx, a.actorId)
+        return { save: Boolean(a.member && (keys === null || keys.includes('flow.view.save'))) }
+      })(),
+      projectLifecycle: await (async () => {
+        const keys = await permittedFor(ctx, a.actorId)
+        const allows = (key: string) => keys === null || keys.includes(key)
+        return {
+          archive: allows('flow.project.archive') && allows('flow.project.restore'),
+          delete: allows('flow.project.delete') && allows('flow.project.deletion.preview'),
+          history:
+            a.manageOrganization && allows('flow.project.delete') && allows('flow.project.deletion.list'),
+          retry:
+            a.manageOrganization && allows('flow.project.delete') && allows('flow.project.deletion.retry'),
+        }
+      })(),
     },
     columns: [],
     taskTypes: [],
@@ -953,6 +981,7 @@ export async function bootstrap(ctx: Ctx, input: Row, extensions: NativeServerEx
       'workspace-settings',
       'workspace-members',
       'organization',
+      'organization-settings',
       'organization-members',
       'permissions',
       'teams',
@@ -1053,7 +1082,11 @@ export async function bootstrap(ctx: Ctx, input: Row, extensions: NativeServerEx
       const owners = ownerIds.length
         ? await ctx.db.all(from(U).where(inArray(U.id, ownerIds)).limit(100))
         : []
-      value.epics = epics.map((e) => ({ ...e, owner: owners.find((u) => u.id === e.ownerId)?.name ?? '' }))
+      value.epics = epics.map((e) => ({
+        ...e,
+        owner: owners.find((u) => u.id === e.ownerId)?.name ?? '',
+        documentTransport: { base: '/flow/live/epics', docId: e.id },
+      }))
     }
     const catalog = async (model: string) => {
       const T = ctx.table(model)

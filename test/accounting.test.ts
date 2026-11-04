@@ -355,6 +355,71 @@ test('accounting: posting freezes company-civil dates, policy and sequence year'
     ).value as Row[]
     assert.equal(july.find((row) => row.accountId === 'bank')?.debit, '10')
     assert.equal(august.find((row) => row.accountId === 'bank')?.debit, '20')
+
+    // With balances, what was posted before the window is the opening, split by its sign,
+    // and the closing carries the window's movement on top of it.
+    const withBalances = (
+      await call(
+        'account.trialBalance',
+        { dateFrom: '2026-08-01', dateTo: '2026-12-31', balances: true },
+        adapter,
+      )
+    ).value as Row[]
+    const bank = withBalances.find((row) => row.accountId === 'bank')!
+    const revenue = withBalances.find((row) => row.accountId === 'revenue')!
+    assert.deepEqual(
+      [bank.openingDebit, bank.openingCredit, bank.debit, bank.credit, bank.closingDebit, bank.closingCredit],
+      ['10', '0', '20', '0', '30', '0'],
+    )
+    assert.deepEqual(
+      [
+        revenue.openingDebit,
+        revenue.openingCredit,
+        revenue.debit,
+        revenue.credit,
+        revenue.closingDebit,
+        revenue.closingCredit,
+      ],
+      ['0', '10', '0', '20', '0', '30'],
+    )
+    // The entry dated in the next civil year is after the window: in neither column.
+    assert.equal(
+      withBalances.some((row) => row.debit === '30' || row.credit === '30'),
+      false,
+    )
+    // A window with no movement still lists the accounts that hold a balance.
+    const quiet = (
+      await call(
+        'account.trialBalance',
+        { dateFrom: '2026-09-01', dateTo: '2026-09-30', balances: true },
+        adapter,
+      )
+    ).value as Row[]
+    assert.deepEqual(
+      quiet.map((row) => [row.accountId, row.openingDebit, row.debit, row.closingDebit]).sort(),
+      [
+        ['bank', '30', '0', '30'],
+        ['revenue', '0', '0', '0'],
+      ],
+    )
+    assert.equal(
+      quiet.every((row) => row.accountId === 'bank' || row.closingCredit === '30'),
+      true,
+    )
+    // Without balances a quiet window is empty, as it always was.
+    assert.deepEqual(
+      (await call('account.trialBalance', { dateFrom: '2026-09-01', dateTo: '2026-09-30' }, adapter)).value,
+      [],
+    )
+    const every = (
+      await call(
+        'account.trialBalance',
+        { dateFrom: '2026-09-01', dateTo: '2026-09-30', balances: true, includeEmpty: true },
+        adapter,
+      )
+    ).value as Row[]
+    const accounts = (await call('account.listAccounts', { includeArchived: true }, adapter)).value as Row[]
+    assert.equal(every.length, accounts.length)
   } finally {
     await adapter.close()
   }
@@ -580,6 +645,125 @@ test('accounting: core close is jurisdiction-neutral and still fences a closed p
   }
 })
 
+test('accounting: a period locks chosen kinds ahead and a soft close lets the named people post (D16)', async () => {
+  const adapter = await boot()
+  const as = (actor: string | undefined, name: string, args: Record<string, unknown>) =>
+    callFn(name, args, { adapter, manifest, scope, ...(actor ? { actor } : {}) })
+  const post = async (actor: string | undefined, id: string, journalId: string, closingEntry = false) => {
+    await call(
+      'account.createMove',
+      { id, journalId, moveType: 'entry', accountingDate: '2026-01-15' },
+      adapter,
+    )
+    for (const [suffix, accountId, side] of [
+      ['a', 'bank', 'debit'],
+      ['b', 'revenue', 'credit'],
+    ] as const)
+      await call(
+        'account.addMoveLine',
+        { id: `${id}:${suffix}`, moveId: id, name: id, accountId, [side]: '10' },
+        adapter,
+      )
+    if (closingEntry) await adapter.run('UPDATE account_move SET "closingEntry" = 1 WHERE id = ?', [id])
+    return JSON.stringify((await as(actor, 'account.postMove', { id })).value)
+  }
+  const period = async () =>
+    ((await call('account.getClosePeriod', { id: 'close:2026-01' }, adapter)).value as Row).period as Row
+  const controls = async (lockedKinds: unknown, softPosters: unknown) =>
+    (
+      await as('chief', 'account.setClosePeriodControls', {
+        id: 'close:2026-01',
+        lockedKinds,
+        softPosters,
+        expectedRevision: (await period()).revision,
+      })
+    ).value as Row
+  try {
+    await call(
+      'account.createClosePeriod',
+      { id: 'close:2026-01', periodKey: '2026-01', dateFrom: '2026-01-01', dateTo: '2026-01-31' },
+      adapter,
+    )
+    await call('account.refreshClosePeriod', { id: 'close:2026-01' }, adapter)
+    assert.match(JSON.stringify(await controls(['refunds'], [])), /periodControlKind/u)
+    assert.match(JSON.stringify(await controls(['payments'], [''])), /periodControlPoster/u)
+    const set = await controls(['payments', 'payments'], ['chief'])
+    assert.equal(set.ok, true, JSON.stringify(set))
+    assert.deepEqual([(await period()).lockedKinds, (await period()).softPosters], [['payments'], ['chief']])
+
+    // While the period is open, payments are locked ahead of the rest; other entries still post.
+    assert.match(await post('clerk', 'locked-payment', 'bank-journal'), /periodKindLocked/u)
+    assert.match(await post('chief', 'chief-payment', 'bank-journal'), /periodKindLocked/u)
+    assert.match(await post('clerk', 'open-entry', 'sales'), /"ok":true/u)
+    // The result transfer is part of the close, not a kind of document.
+    assert.match(await post('clerk', 'closing-payment', 'bank-journal', true), /"ok":true/u)
+
+    // The refused drafts would hold the close back; they are cancelled.
+    for (const id of ['locked-payment', 'chief-payment']) await call('account.cancelMove', { id }, adapter)
+    const closed = (
+      await call(
+        'account.closePeriod',
+        {
+          id: 'close:2026-01',
+          mode: 'soft',
+          expectedRevision: (await period()).revision,
+          reason: 'Month end',
+        },
+        adapter,
+      )
+    ).value as Row
+    assert.equal(closed.ok, true, JSON.stringify(closed))
+    // Soft closed: only the people it names may still post on its dates.
+    assert.match(await post('clerk', 'late-entry', 'sales'), /periodLocked/u)
+    assert.match(await post(undefined, 'system-entry', 'sales'), /periodLocked/u)
+    assert.match(await post('chief', 'chief-adjustment', 'sales'), /"ok":true/u)
+    // Locks by kind hold only while the period is open: the named people post payments too.
+    assert.match(await post('chief', 'chief-payment-adjustment', 'bank-journal'), /"ok":true/u)
+    assert.match(await post('clerk', 'late-payment', 'bank-journal'), /periodLocked/u)
+
+    const audit = (
+      await call(
+        'account.listAuditEvents',
+        { subjectType: 'closePeriod', subjectId: 'close:2026-01' },
+        adapter,
+      )
+    ).value as Row[]
+    assert.deepEqual(
+      audit.map((event) => [event.action, event.details]),
+      [
+        [
+          'controlsChanged',
+          {
+            before: { lockedKinds: [], softPosters: [] },
+            after: { lockedKinds: ['payments'], softPosters: ['chief'] },
+          },
+        ],
+      ],
+    )
+
+    // A hard close stops everyone, the named people too, and ends the controls.
+    for (const id of ['late-entry', 'system-entry', 'late-payment'])
+      await call('account.cancelMove', { id }, adapter)
+    const hard = (
+      await call(
+        'account.closePeriod',
+        {
+          id: 'close:2026-01',
+          mode: 'hard',
+          expectedRevision: (await period()).revision,
+          reason: 'Year end',
+        },
+        adapter,
+      )
+    ).value as Row
+    assert.equal(hard.ok, true, JSON.stringify(hard))
+    assert.match(await post('chief', 'after-hard', 'sales'), /periodLocked/u)
+    assert.match(JSON.stringify(await controls([], [])), /closePermanent/u)
+  } finally {
+    await adapter.close()
+  }
+})
+
 test('accounting: books preserve exact opening, movement, closing and move drill-down', async () => {
   const adapter = await boot()
   try {
@@ -645,6 +829,83 @@ test('accounting: books preserve exact opening, movement, closing and move drill
     ).value as Row
     assert.equal(journal.debit, journal.credit)
     assert.equal((journal.rows as Row[]).length, 4)
+    // The general journal lists every account at once; it carries no balance.
+    assert.deepEqual([journal.opening, journal.closing], [null, null])
+    assert.equal((journal.rows as Row[])[0]!.runningBalance, undefined)
+
+    // A ledger carries its balance down the page from the opening one.
+    assert.deepEqual(
+      (book.rows as Row[]).map((row) => row.runningBalance),
+      ['9007199254741014', '9007199254741009'],
+    )
+    const read = async (args: Row) =>
+      (
+        await call(
+          'account.accountingBook',
+          { dateFrom: '2026-01-01', dateTo: '2026-01-31', ...args },
+          adapter,
+        )
+      ).value as Row
+    // The bank book is the book of the account a bank journal pays through, whichever
+    // journal wrote the entry: these were written in the sales journal. Taking the
+    // lines of bank-journal entries instead left the bank out and closed on zero.
+    const bankBook = await read({ book: 'bank' })
+    assert.equal(bankBook.accountId, 'bank')
+    assert.deepEqual(
+      (bankBook.accounts as Row[]).map((account) => account.id),
+      ['bank'],
+    )
+    assert.deepEqual(
+      [bankBook.opening, bankBook.debit, bankBook.credit, bankBook.closing],
+      ['9007199254740994', '20', '5', '9007199254741009'],
+    )
+    // No cash journal names an account, so the cash book has none to keep.
+    const cashBook = await read({ book: 'cash' })
+    assert.deepEqual([cashBook.accountId, cashBook.accounts, cashBook.rows], [null, [], []])
+    // A book refuses an account it is not kept for rather than printing it under its name.
+    assert.equal(
+      ((await read({ book: 'bank', accountId: 'revenue' })).errors as Row[])[0]!.code,
+      'account.error.accountBookAccountOutside',
+    )
+    // Left without an account, a ledger opens the first by code that moved in the period.
+    assert.equal((await read({ book: 'general_ledger' })).accountId, 'bank')
+    assert.equal(
+      (await read({ book: 'general_ledger', dateFrom: '2026-02-01', dateTo: '2026-02-28' })).accountId,
+      null,
+    )
+    // A partner book is kept for the accounts tracked per partner.
+    assert.deepEqual(
+      ((await read({ book: 'partner' })).accounts as Row[]).map((account) => account.code),
+      ['131', '331'],
+    )
+    // Without a standard naming them, a book follows no numbered form.
+    assert.equal(bankBook.form, null)
+
+    // Each line names the accounts on the other side of its own entry.
+    const codeOf = new Map(
+      ((await call('account.listAccounts', { includeArchived: true }, adapter)).value as Row[]).map((row) => [
+        row.id,
+        row.code,
+      ]),
+    )
+    assert.deepEqual(
+      (book.rows as Row[]).map((row) => row.contraAccountCodes),
+      [codeOf.get('revenue'), codeOf.get('expense')],
+    )
+    const ledger = (
+      await call(
+        'account.generalLedger',
+        { accountId: 'bank', dateFrom: '2026-01-01', dateTo: '2026-01-31' },
+        adapter,
+      )
+    ).value as Row[]
+    assert.deepEqual(
+      ledger.map((row) => [row.moveId, row.contraAccountCodes]),
+      [
+        ['book-inflow', codeOf.get('revenue')],
+        ['book-outflow', codeOf.get('expense')],
+      ],
+    )
   } finally {
     await adapter.close()
   }
@@ -779,21 +1040,12 @@ test('accounting: the shared draft boundary rejects malformed and cross-company 
   }
 })
 
-/** A module's functions: one functions.ts, or functions/ once it is split by capability. */
-const functionsSource = async (module: string): Promise<string> => {
-  const root = `packages/ketsuite/src/modules/${module}`
-  try {
-    return await readFile(`${root}/functions.ts`, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-  const files = (await readdir(`${root}/functions`)).filter((file) => file.endsWith('.ts')).sort()
-  return (await Promise.all(files.map((file) => readFile(`${root}/functions/${file}`, 'utf8')))).join('\n')
-}
-
 test('accounting: domain modules cannot bypass the shared draft boundary', async () => {
-  for (const module of ['sale', 'purchase', 'pos']) {
-    const source = await functionsSource(module)
+  // Handlers moved from functions.ts into functions/ and helpers beside it, so read the whole module.
+  for (const module of ['sale', 'purchase', 'pos', 'stock']) {
+    const root = `packages/ketsuite/src/modules/${module}`
+    const files = (await readdir(root, { recursive: true })).filter((file) => /\.tsx?$/u.test(file))
+    const source = (await Promise.all(files.map((file) => readFile(`${root}/${file}`, 'utf8')))).join('\n')
     assert.doesNotMatch(source, /\.insert(?:IfAbsent)?\('account\.(?:Move|MoveLine)'/u, module)
     assert.match(source, /insertDraftMove/u, module)
   }

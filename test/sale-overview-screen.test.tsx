@@ -54,8 +54,8 @@ test('sales overview: remains a specialized KPI, pipeline and recent-work dashbo
     overviewScreen(translate, {
       frame: {},
       localeQuery: '?lang=vi',
-      createHref: '/admin/sales/quotations?lang=vi&record=sale.order%3Anew',
-      rowHref: (row) => `/admin/sales?lang=vi&record=sale.order%3A${String(row.id)}`,
+      createHref: '/admin/sales/quotations/new?lang=vi&returnTo=%2Fadmin%2Fsales%3Flang%3Dvi',
+      rowHref: (row) => `/admin/sales/quotations/${String(row.id)}?lang=vi`,
       awaiting: [
         {
           id: 'so-awaiting',
@@ -99,7 +99,10 @@ test('sales overview: remains a specialized KPI, pipeline and recent-work dashbo
   assert.doesNotMatch(html, /data-ui="list-page"|data-ui="form-page"|data-ui="record-workspace"/)
   assert.match(html, /Tổng quan bán hàng/)
   // The primary action opens the quotation create modal over the quotation list.
-  assert.match(html, /href="\/admin\/sales\/quotations\?lang=vi&amp;record=sale\.order%3Anew"/)
+  assert.match(
+    html,
+    /href="\/admin\/sales\/quotations\/new\?lang=vi&amp;returnTo=%2Fadmin%2Fsales%3Flang%3Dvi"/,
+  )
   assert.match(html, /href="\/admin\/sales\/quotations\?lang=vi&amp;preset=draft"/)
   assert.match(html, /href="\/admin\/sales\/quotations\?lang=vi&amp;preset=sent"/)
   assert.match(html, /data-ui="metric-value"[^>]*>[\s\S]*?7/)
@@ -111,8 +114,8 @@ test('sales overview: remains a specialized KPI, pipeline and recent-work dashbo
   assert.match(html, /Báo giá đang chờ phản hồi[\s\S]*?S00031[\s\S]*?Công ty Hoà Bình[\s\S]*?Đơn gần đây/)
   assert.match(html, /Đơn gần đây[\s\S]*?S00027[\s\S]*?Khách hàng Minh Anh/)
   // A row opens its order in the record modal.
-  assert.match(html, /href="\/admin\/sales\?lang=vi&amp;record=sale\.order%3Aso-awaiting"/)
-  assert.match(html, /href="\/admin\/sales\?lang=vi&amp;record=sale\.order%3Aso-recent"/)
+  assert.match(html, /href="\/admin\/sales\/quotations\/so-awaiting\?lang=vi"/)
+  assert.match(html, /href="\/admin\/sales\/quotations\/so-recent\?lang=vi"/)
   assert.match(html, /href="\/admin\/sales\/orders\?lang=vi"/)
   assert.doesNotMatch(html, /data-island="mail\.chatter"|data-ui="form-page-aside"/)
 })

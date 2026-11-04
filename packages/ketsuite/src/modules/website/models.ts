@@ -14,6 +14,10 @@ export const models: Record<string, ModelDef> = {
       name: 'text',
       title: 'text',
       defaultLocale: 'text',
+      /** The site's languages in the order editors see them; always includes `defaultLocale`. */
+      locales: 'json?',
+      /** Which language a visitor is offered when a page has no translation; empty offers none. */
+      localeFallback: 'json?',
       theme: 'text',
       googleTagManagerId: 'text?',
       /**
@@ -137,10 +141,22 @@ export const models: Record<string, ModelDef> = {
       authorId: 'text?',
       publishAt: 'datetime?',
       publishedAt: 'datetime?',
+      /**
+       * The entry's language, one of its site's `locales`. Each language is its own entry, published
+       * on its own. Null only on rows saved before translations; readers take the site's default.
+       */
+      locale: 'text?',
+      /** Shared by an entry and its translations; a new entry starts its own group with its id. */
+      translationGroupId: 'text?',
     },
     indexes: {
       site_path: { fields: ['companyId', 'siteId', 'path'], unique: true },
-      site_type_slug: { fields: ['companyId', 'siteId', 'type', 'slug'], unique: true },
+      // A translation may keep its source's slug; only the language makes it a different page.
+      site_type_locale_slug: { fields: ['companyId', 'siteId', 'type', 'locale', 'slug'], unique: true },
+      site_translation_locale: {
+        fields: ['companyId', 'siteId', 'translationGroupId', 'locale'],
+        unique: true,
+      },
       site_status: { fields: ['companyId', 'siteId', 'status', 'updatedAt'] },
     },
   },
@@ -177,6 +193,11 @@ export const models: Record<string, ModelDef> = {
       descriptionDoc: 'text?',
       /** Title, description, canonical and indexing for the term's public page. */
       seo: 'json?',
+      /**
+       * `thumbnail` and `cover` as `/website/files/{id}` paths with their alternative text.
+       * The term owns these images: an upload claimed on save, collected once no term names it.
+       */
+      images: 'json?',
       /** Changes on every save, so two editors cannot overwrite each other unseen. */
       revisionId: 'text?',
       /** Hidden from editors' pickers and from visitors; kept so old revisions still resolve. */

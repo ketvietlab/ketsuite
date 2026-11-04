@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Translator } from '@ketvietlab/ketjs'
 import { renderToString } from '@ketvietlab/ketjs-view'
-import { lotsListScreen } from '../packages/ketsuite/src/modules/stock_backend/screens/lots-list.tsx'
+import {
+  lotCondition,
+  lotsListScreen,
+} from '../packages/ketsuite/src/modules/stock_backend/screens/lots-list.tsx'
 
 const messages: Record<string, string> = {
   'stock_backend.lots': 'Lô / Sê-ri',
@@ -18,6 +21,8 @@ const messages: Record<string, string> = {
   'stock_backend.lot.list.emptyHint': 'Tạo định danh đầu tiên để bắt đầu truy xuất hàng hóa.',
   'stock_backend.lot.status.active': 'Đang hoạt động',
   'stock_backend.lot.status.archived': 'Đã lưu trữ',
+  'stock_backend.lot.list.col.expiry': 'Hạn dùng',
+  'stock_backend.lot.condition.expiring': 'Sắp hết hạn',
   'stock_backend.action.create': 'Tạo mới',
   'backend.table.columns': 'Cột',
   'backend.table.selectAll': 'Chọn tất cả dòng',
@@ -50,6 +55,8 @@ test('stock lots list: follows ListPage hierarchy and sends creation to the loca
             onHand: '1.250',
             onHandValue: 1250,
             active: true,
+            condition: 'expiring',
+            expiry: '15/12/26',
             href: '/admin/stock/lots/lot-denim-2026?lang=vi',
           },
         ],
@@ -73,6 +80,33 @@ test('stock lots list: follows ListPage hierarchy and sends creation to the loca
   assert.match(html, /data-col="name"[\s\S]*?DENIM-2026-08/)
   assert.match(html, /href="\/admin\/stock\/lots\/lot-denim-2026\?lang=vi"/)
   assert.doesNotMatch(html, /lot-create-form/)
+  // The list carries its own guide, once.
+  assert.equal(html.match(/id="stock-lots-help"/g)?.length, 1)
+  // K28: each lot says when it expires and what it is fit for today.
+  assert.match(html, /data-col="expiry"[\s\S]*?15\/12\/26/)
+  assert.match(html, /data-col="condition"[\s\S]*?Sắp hết hạn/)
+})
+
+test('K28 a lot reads archived, quarantined, depleted, expired, expiring, in date or without expiry', () => {
+  const now = Date.parse('2026-10-08T05:00:00.000Z')
+  const lot = (dates: Record<string, unknown> = {}) => ({ active: true, quarantined: false, ...dates })
+  // A day before and after `now`, and as many days ahead as given.
+  const ahead = (days: number) => new Date(now + days * 86_400_000).toISOString()
+  assert.equal(lotCondition({ ...lot({ expirationDate: ahead(-30) }), active: false }, 5, now), 'archived')
+  assert.equal(
+    lotCondition({ ...lot({ expirationDate: ahead(-30) }), quarantined: true }, 5, now),
+    'quarantined',
+  )
+  assert.equal(lotCondition(lot({ expirationDate: ahead(-30) }), 0, now), 'depleted')
+  assert.equal(lotCondition(lot({ expirationDate: ahead(0) }), 6, now), 'expired')
+  assert.equal(lotCondition(lot({ expirationDate: ahead(-1) }), 6, now), 'expired')
+  // Without an alert date, 90 days before it expires.
+  assert.equal(lotCondition(lot({ expirationDate: ahead(90) }), 6, now), 'expiring')
+  assert.equal(lotCondition(lot({ expirationDate: ahead(91) }), 6, now), 'valid')
+  // An alert date says when, sooner or later than that.
+  assert.equal(lotCondition(lot({ expirationDate: ahead(300), alertDate: ahead(-1) }), 6, now), 'expiring')
+  assert.equal(lotCondition(lot({ expirationDate: ahead(60), alertDate: ahead(10) }), 6, now), 'valid')
+  assert.equal(lotCondition(lot(), 6, now), 'noExpiry')
 })
 
 test('stock lots list: keeps the empty state within the same list baseline', () => {

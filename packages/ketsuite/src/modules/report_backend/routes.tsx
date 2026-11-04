@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises'
-import { bytes, compileReportTemplate, interFontUrl, renderPdf, text } from '@ketvietlab/ketjs'
+import { bytes, interFontUrl, renderPdf, text } from '@ketvietlab/ketjs'
 import type { Route, ServeContext } from '@ketvietlab/ketjs'
 import { readForm, seeOther } from '../backend/forms.ts'
 import { adminPage, inLocale } from '../backend/screen.ts'
 import type { AnyRow } from '../backend/screen.ts'
+import { compileReport } from '../report/routes.ts'
 import { reportEditorScreen, reportsScreen } from './screens/index.tsx'
 
 export const listReports =
@@ -85,10 +86,13 @@ export const previewReport =
     const form = await readForm(req)
     const data = await ctx.call(report.source, { id: form.recordId ?? '' }, url, req)
     if (!data) return text('Document not found', { status: 404 })
-    const rendered = compileReportTemplate(form.source ?? '', {
-      name: `${reportId}:preview`,
-      translate: ctx.translate(ctx.localeOf(url, req)),
-    }).render(data as AnyRow)
+    const locale = ctx.localeOf(url, req)
+    const rendered = compileReport(
+      form.source ?? '',
+      `${reportId}:preview`,
+      locale,
+      ctx.translate(locale),
+    ).render(data as AnyRow)
     const [font, semiboldFont, boldFont] = await Promise.all([
       readFile(interFontUrl()),
       readFile(interFontUrl('semibold')),

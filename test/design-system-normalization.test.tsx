@@ -330,6 +330,18 @@ test('stacked data tables override desktop fixed row height at the owning select
   assert.doesNotMatch(flat, /\[data-ui="table-scroll"\]\[data-gutter="compact"\] \{ margin: 10px/)
 })
 
+test('a stacked data table gives a progress bar the whole row, as it does a field', () => {
+  const css = readFileSync('packages/design-system/src/patterns/data-table/styles.css', 'utf8')
+  const full = css
+    .replace(/\s+/g, ' ')
+    .split('}')
+    .find((rule) => rule.includes('[role="combobox"], [data-ui="progress"] ) {'))
+  // A bar has no width of its own: in a flex cell it shrank to the width of the percent beside it.
+  assert.ok(full, 'the full-row rule must name progress bars beside editable values')
+  assert.match(full, /display: grid;/)
+  assert.match(full, /grid-template-columns: minmax\(0, 1fr\);/)
+})
+
 test('page gutter and card gaps share the responsive layout token', () => {
   const css = readFileSync('packages/design-system/src/foundations/tokens.css', 'utf8')
   const declarations = [...css.matchAll(/--kv-page-padding-x:\s*([^;]+);/g)]

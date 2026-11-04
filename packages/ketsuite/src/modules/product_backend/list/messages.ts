@@ -2,11 +2,15 @@
 // resolved, as `labels`, so the browser holds no catalogue of its own.
 
 const vi = {
+  exportCsv: 'Xuất CSV',
+  tags: 'Thẻ',
+  allTags: 'Mọi thẻ',
   'col.product': 'Sản phẩm',
   'col.type': 'Loại',
-  'col.category': 'Danh mục',
+  'col.category': 'Nhóm sản phẩm',
   'col.available': 'Tồn kho',
   'col.price': 'Giá bán',
+  priceFrom: 'Từ {price}',
   'col.margin': 'Biên LN',
   'col.variants': 'Biến thể',
   'col.status': 'Trạng thái',
@@ -15,6 +19,9 @@ const vi = {
   'status.archived': 'Lưu trữ',
   'sort.asc': '{column}, sắp xếp tăng dần',
   'sort.desc': '{column}, sắp xếp giảm dần',
+  'group.use': 'Công dụng',
+  'preset.notSold': 'Không bán',
+  'preset.tracked': 'Theo dõi theo lô',
   'group.type': 'Loại',
   'group.state': 'Trạng thái',
   'preset.outOfStock': 'Hết hàng',
@@ -46,8 +53,9 @@ const vi = {
   'filtered.message': 'Không có sản phẩm khớp bộ lọc hiện tại.',
   'filtered.clear': 'Xoá bộ lọc',
   'card.available': 'Tồn kho: {count}',
-  selected: '{count} đã chọn',
+  selected: 'Đã chọn {count} sản phẩm trên trang này',
   'bulk.clear': 'Bỏ chọn',
+  'bulk.edit': 'Sửa hàng loạt',
   'bulk.archive': 'Lưu trữ',
   'bulk.delete': 'Xoá',
   'confirm.cancel': 'Huỷ',
@@ -59,16 +67,23 @@ const vi = {
     'Không hoàn tác được. Sản phẩm đã dùng trong đơn hàng hay phiếu kho không xoá được; khi đó hãy lưu trữ.',
   'bulkError.delete':
     'Không xoá được các sản phẩm đã chọn: có sản phẩm đã dùng trong giao dịch. Hãy lưu trữ thay vì xoá.',
-  'bulkError.title': 'Chưa xoá sản phẩm nào',
+  'bulkError.title': 'Chưa thay đổi sản phẩm nào',
+  archiveReason: 'Lý do lưu trữ',
+  'bulkError.archive':
+    'Chưa lưu trữ sản phẩm nào. Cần lý do lưu trữ; sản phẩm có báo giá hoặc phiếu kho chưa hoàn tất phải xử lý trước.',
   rowMissing: 'Sản phẩm bạn vừa mở không còn trong danh sách với bộ lọc hiện tại.',
 }
 
 const en: Record<keyof typeof vi, string> = {
+  exportCsv: 'Export CSV',
+  tags: 'Tags',
+  allTags: 'Every tag',
   'col.product': 'Product',
   'col.type': 'Type',
   'col.category': 'Category',
   'col.available': 'Available',
   'col.price': 'Sales price',
+  priceFrom: 'From {price}',
   'col.margin': 'Margin',
   'col.variants': 'Variants',
   'col.status': 'Status',
@@ -77,6 +92,9 @@ const en: Record<keyof typeof vi, string> = {
   'status.archived': 'Archived',
   'sort.asc': '{column}, sort ascending',
   'sort.desc': '{column}, sort descending',
+  'group.use': 'Use',
+  'preset.notSold': 'Not sold',
+  'preset.tracked': 'Tracked by lot',
   'group.type': 'Type',
   'group.state': 'Status',
   'preset.outOfStock': 'Out of stock',
@@ -108,8 +126,9 @@ const en: Record<keyof typeof vi, string> = {
   'filtered.message': 'No products match the current filters.',
   'filtered.clear': 'Clear filters',
   'card.available': 'Available: {count}',
-  selected: '{count} selected',
+  selected: '{count} products selected on this page',
   'bulk.clear': 'Clear selection',
+  'bulk.edit': 'Bulk edit',
   'bulk.archive': 'Archive',
   'bulk.delete': 'Delete',
   'confirm.cancel': 'Cancel',
@@ -121,7 +140,10 @@ const en: Record<keyof typeof vi, string> = {
     'This cannot be undone. Products already used on an order or a stock transfer cannot be deleted; archive them instead.',
   'bulkError.delete':
     'The selected products could not be deleted: some are used in transactions. Archive them instead.',
-  'bulkError.title': 'No product was deleted',
+  'bulkError.title': 'No products changed',
+  archiveReason: 'Archive reason',
+  'bulkError.archive':
+    'No products archived. Enter a reason and complete any open quotations or stock operations first.',
   rowMissing: 'The product you just opened is no longer in the list with the current filters.',
 }
 

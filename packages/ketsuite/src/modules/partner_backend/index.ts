@@ -18,13 +18,15 @@ export default defineModule({
   menus,
   functions,
   joints: {
+    'record.salesProfile': { props: { partnerId: 'id', lang: 'text', may: 'json?' }, multiple: true },
     'record.actions': { props: { partnerId: 'id', locale: 'text?' } },
     'record.salesActions': {
       props: { partnerId: 'id', lang: 'text' },
       multiple: true,
     },
+    // `may` answers the functions a fill names in its condition (ui/fill-needs.ts).
     'record.collaboration': {
-      props: { resModel: 'text', resId: 'id', lang: 'text' },
+      props: { resModel: 'text', resId: 'id', lang: 'text', may: 'json?' },
       multiple: true,
     },
     'address.form': {

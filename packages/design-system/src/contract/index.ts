@@ -16,6 +16,7 @@ import { HOOKS as skeletonHooks } from '../interactions/skeleton/index.tsx'
 import { HOOKS as lightboxHooks } from '../interactions/lightbox/index.tsx'
 import { HOOKS as relationSelectHooks } from '../interactions/relation-select/index.tsx'
 import { HOOKS as searchFilterHooks } from '../interactions/search-filter/index.tsx'
+import { HOOKS as ketGridHooks } from '../interactions/ket-grid/index.tsx'
 import { HOOKS as ketTableHooks } from '../interactions/ket-table/index.tsx'
 import { HOOKS as scalarFieldHooks } from '../forms/scalar-fields/index.tsx'
 import { HOOKS as comboboxHooks } from '../forms/combobox/index.tsx'
@@ -31,6 +32,7 @@ import { HOOKS as matrixHooks } from '../data-display/matrix/index.tsx'
 import { HOOKS as barChartHooks } from '../data-display/bar-chart/index.tsx'
 import { HOOKS as columnChartHooks } from '../data-display/column-chart/index.tsx'
 import { HOOKS as qrCodeHooks } from '../data-display/qr-code/index.tsx'
+import { HOOKS as signatureBlockHooks } from '../data-display/signature-block/index.tsx'
 import { HOOKS as timeframeHooks } from '../data-operations/timeframe-filter/index.tsx'
 import { HOOKS as recordDisplayHooks } from '../record/display/index.tsx'
 import { HOOKS as formattedValueHooks } from '../record/formatted-values/index.tsx'
@@ -79,6 +81,7 @@ const GROUPS = {
   relationSelect: relationSelectHooks,
   searchFilter: searchFilterHooks,
   ketTable: ketTableHooks,
+  ketGrid: ketGridHooks,
   scalarFields: scalarFieldHooks,
   combobox: comboboxHooks,
   dateTime: dateTimeHooks,
@@ -93,6 +96,7 @@ const GROUPS = {
   barChart: barChartHooks,
   columnChart: columnChartHooks,
   qrCode: qrCodeHooks,
+  signatureBlock: signatureBlockHooks,
   timeframe: timeframeHooks,
   recordDisplay: recordDisplayHooks,
   formattedValues: formattedValueHooks,

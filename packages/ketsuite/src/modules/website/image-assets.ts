@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { defineFn, KetError, from, eq, ne, deleteFrom, asc, gt } from '@ketvietlab/ketjs'
 import type { Ctx, JobContext, Row, ModelDef, FnSpec, JobSpec } from '@ketvietlab/ketjs'
-import { canEditEntry, canAccessSite, canAdministerSite } from './access.ts'
+import { canEditEntry, canAccessSite, canAdministerSite, canManageStructure } from './access.ts'
+import { translationsOf } from './translations.ts'
 
 export const IMAGE_TTL = 24 * 60 * 60 * 1000
 const invalid = (): never => {
@@ -53,6 +54,7 @@ export function imageIds(value: unknown, result = new Set<string>()): Set<string
   return result
 }
 export const imageClaimEffects = [
+  'read:website.Entry',
   'read:website.ImageAsset',
   'write:website.ImageAsset',
   'write:website.ImageReference',
@@ -83,12 +85,27 @@ async function siteImageInUse(ctx: Ctx, asset: Row, scheduled: boolean) {
   )
 }
 
+/**
+ * A category or tag image: like the logo, its `entryId` is an id no entry carries (the term's),
+ * so neither a page nor another term can claim it. The term's saved `images` is the reference.
+ */
+async function termOf(ctx: Ctx, asset: Row): Promise<Row | null> {
+  if (isSiteImage(asset)) return null
+  return (await ctx.db.select('website.TaxonomyTerm', { id: asset.entryId, siteId: asset.siteId }))[0] ?? null
+}
+
 /** Moves an uploaded image to attached, or refuses one that is not this owner's to take. */
-async function claimAsset(ctx: Ctx, id: string, entryId: unknown, siteId: unknown) {
+async function claimAsset(
+  ctx: Ctx,
+  id: string,
+  entryId: unknown,
+  siteId: unknown,
+  owners: ReadonlySet<string> = new Set([String(entryId)]),
+) {
   const asset = (await ctx.db.select('website.ImageAsset', { id }))[0]
   if (
     !asset ||
-    asset.entryId !== entryId ||
+    !owners.has(String(asset.entryId)) ||
     asset.siteId !== siteId ||
     !asset.ready ||
     !['pending', 'attached'].includes(String(asset.state)) ||
@@ -111,6 +128,11 @@ export async function claimSiteImages(ctx: Ctx, siteId: unknown, value: unknown)
   for (const id of imageIds(value)) await claimAsset(ctx, id, siteId, siteId)
 }
 
+/** Called inside the transaction that saves a category or tag; its `images` is the reference. */
+export async function claimTermImages(ctx: Ctx, termId: unknown, siteId: unknown, value: unknown) {
+  for (const id of imageIds(value)) await claimAsset(ctx, id, termId, siteId)
+}
+
 /** Called inside the same transaction that inserts an immutable revision. */
 export async function claimImages(
   ctx: Ctx,
@@ -119,8 +141,13 @@ export async function claimImages(
   revisionId: string,
   value: unknown,
 ) {
+  // Translations of one piece of content may reuse each other's images; nobody else's.
+  const entry = (await ctx.db.select('website.Entry', { id: entryId }))[0]
+  const owners = new Set(
+    entry ? (await translationsOf(ctx, entry)).map((row) => String(row.id)) : [String(entryId)],
+  )
   for (const id of imageIds(value)) {
-    await claimAsset(ctx, id, entryId, siteId)
+    await claimAsset(ctx, id, entryId, siteId, owners)
     await ctx.db.insertIfAbsent('website.ImageReference', {
       id: `${revisionId}:${id}`,
       imageId: id,
@@ -141,16 +168,31 @@ export const imageFunctions: Record<string, FnSpec> = {
       mimetype: 'text',
       size: 'int',
       checksum: 'text',
+      /** `term` when the image belongs to a category or tag rather than a page. */
+      owner: 'text?',
     },
     output: { ok: 'bool' },
-    effects: [...entryEffects, 'write:website.ImageAsset', 'enqueue:website.collectImages'],
+    effects: [
+      ...entryEffects,
+      'read:website.TaxonomyTerm',
+      'write:website.ImageAsset',
+      'enqueue:website.collectImages',
+    ],
     handler: async (ctx, args) => {
+      const { owner, ...asset } = args
       const entry = (await ctx.db.select('website.Entry', { id: args.entryId, siteId: args.siteId }))[0]
+      // A term not saved yet has no row; one that exists must be this site's and still in use.
+      const term =
+        owner === 'term' ? (await ctx.db.select('website.TaxonomyTerm', { id: args.entryId }))[0] : undefined
       if (
         !ctx.actor ||
         !(await canAccessSite(ctx, args.siteId)) ||
-        (entry && (!(await canEditEntry(ctx, entry)) || entry.status === 'trash')) ||
-        (args.entryId === args.siteId && !(await canAdministerSite(ctx, args.siteId)))
+        (entry && (owner === 'term' || !(await canEditEntry(ctx, entry)) || entry.status === 'trash')) ||
+        (args.entryId === args.siteId && !(await canAdministerSite(ctx, args.siteId))) ||
+        (owner === 'term' &&
+          (args.entryId === args.siteId ||
+            (term && (term.siteId !== args.siteId || term.archivedAt)) ||
+            !(await canManageStructure(ctx, args.siteId))))
       )
         invalid()
       if (
@@ -163,7 +205,7 @@ export const imageFunctions: Record<string, FnSpec> = {
         invalid()
       await ctx.tx(async (tx) => {
         await tx.db.insert('website.ImageAsset', {
-          ...args,
+          ...asset,
           ownerId: ctx.actor,
           state: 'pending',
           ready: false,
@@ -230,6 +272,7 @@ export const imageFunctions: Record<string, FnSpec> = {
       ...entryEffects,
       'read:website.EntryRevision',
       'read:website.Publication',
+      'read:website.TaxonomyTerm',
       'read:website.ImageAsset',
       'read:website.ImageReference',
     ],
@@ -239,6 +282,10 @@ export const imageFunctions: Record<string, FnSpec> = {
       const publicEntry = (await ctx.db.select('website.Entry', { id: asset.entryId }))[0]
       const site = (await ctx.db.select('website.Site', { id: asset.siteId }))[0]
       if (isSiteImage(asset) && site?.active && (await siteImageInUse(ctx, asset, false)))
+        return { image: { ...asset, public: true } }
+      // A category or tag page shows its cover and shares its thumbnail while the term is in use.
+      const term = site?.active && !publicEntry ? await termOf(ctx, asset) : null
+      if (term && !term.archivedAt && imageIds(term.images).has(String(asset.id)))
         return { image: { ...asset, public: true } }
       const published = publicEntry?.publishedRevisionId
         ? (await ctx.db.select('website.EntryRevision', { id: publicEntry.publishedRevisionId }))[0]
@@ -250,6 +297,17 @@ export const imageFunctions: Record<string, FnSpec> = {
         imageIds(published).has(String(asset.id))
       )
         return { image: { ...asset, public: true } }
+      // A translation drawing an image its source uploaded publishes it too.
+      if (site?.active) {
+        const revisions = (await ctx.db.select('website.ImageReference', { imageId: asset.id })).map((ref) =>
+          String(ref.revisionId),
+        )
+        for (const revisionId of revisions) {
+          const live = (await ctx.db.select('website.Entry', { publishedRevisionId: revisionId }))[0]
+          if (live && live.status !== 'trash' && live.siteId === asset.siteId)
+            return { image: { ...asset, public: true } }
+        }
+      }
       if (!ctx.actor || !(await canAccessSite(ctx, asset.siteId))) return { image: null }
       if (
         asset.state === 'pending' &&
@@ -262,6 +320,8 @@ export const imageFunctions: Record<string, FnSpec> = {
 }
 async function referenced(ctx: Ctx, asset: Row) {
   if (isSiteImage(asset) && (await siteImageInUse(ctx, asset, true))) return true
+  // An archived term keeps its images: restoring it must not bring back a broken picture.
+  if (imageIds((await termOf(ctx, asset))?.images).has(String(asset.id))) return true
   for (const ref of await ctx.db.select('website.ImageReference', { imageId: asset.id }))
     if ((await ctx.db.select('website.EntryRevision', { id: ref.revisionId }))[0]) return true
   // Legacy publication snapshots may outlive a revision-retention job.
@@ -335,6 +395,7 @@ export const imageJobs: Record<string, JobSpec> = {
       'read:website.Entry',
       'read:website.EntryRevision',
       'read:website.Publication',
+      'read:website.TaxonomyTerm',
       'storage:remove',
     ],
     handler: collectImages,

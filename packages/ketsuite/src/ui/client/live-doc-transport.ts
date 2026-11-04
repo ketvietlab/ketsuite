@@ -1,6 +1,6 @@
 /** An acknowledged, disposable queue. Failed requests retain exactly the same CRDT update. */
 export type LiveDocSyncState = {
-  status: 'saving' | 'saved' | 'offline' | 'error'
+  status: 'saving' | 'saved' | 'offline' | 'error' | 'forbidden'
   record?: Record<string, unknown>
 }
 export function createLiveDocTransport(options: {
@@ -15,6 +15,11 @@ export function createLiveDocTransport(options: {
     timer: ReturnType<typeof setTimeout> | undefined
   let retryDelay = 500,
     status: LiveDocSyncState['status'] = 'saved'
+  // Keep pending fragments bounded while a request is blocked/offline. The
+  // in-flight update is immutable; compaction must never consume its successors.
+  const compact = () => {
+    if (queue.length >= 64) queue.splice(0, queue.length, options.merge(queue))
+  }
   const notify = (next: LiveDocSyncState['status'], record?: Record<string, unknown>) => {
     if (!disposed && (next !== status || record)) {
       status = next
@@ -31,14 +36,15 @@ export function createLiveDocTransport(options: {
           notify('offline')
           return false
         }
-        const batch = queue.slice()
+        const batch = options.merge(queue.splice(0))
         notify('saving')
         try {
-          const ack = await options.send(options.merge(batch))
-          queue.splice(0, batch.length)
+          const ack = await options.send(batch)
           retryDelay = 500
           notify(queue.length ? 'saving' : 'saved', ack.record)
         } catch {
+          queue.unshift(batch)
+          compact()
           notify(options.online?.() === false ? 'offline' : 'error')
           if (!disposed)
             timer = setTimeout(() => {
@@ -51,6 +57,7 @@ export function createLiveDocTransport(options: {
       return queue.length === 0
     })().finally(() => {
       running = null
+      if (!disposed && queue.length && status === 'saving') void flush()
     })
     return running
   }
@@ -58,6 +65,7 @@ export function createLiveDocTransport(options: {
     enqueue(update: Uint8Array) {
       if (!disposed) {
         queue.push(update)
+        compact()
         notify('saving')
         void flush()
       }

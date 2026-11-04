@@ -34,7 +34,6 @@ test('relational select HTTP: empty partner relations keep create flows availabl
   const e2e = await boot(t)
   for (const [path, identity, title] of [
     ['/admin/partner/partners/new', 'partner-parent-new', 'Quản lý tổ chức'],
-    ['/admin/sales/quotations/new', 'sale-customer', 'Quản lý khách hàng'],
     ['/admin/purchase/rfqs/new', 'purchase-vendor', 'Quản lý nhà cung cấp'],
   ]) {
     const response = await e2e.client.get(path)
@@ -49,9 +48,15 @@ test('relational select HTTP: empty partner relations keep create flows availabl
     assert.doesNotMatch(html, /partner\.archivePartner/, path)
   }
 
-  const english = await e2e.client.get('/admin/sales/quotations/new?lang=en')
+  // A quotation is created on its page, rendered client side: its customer picker and the
+  // words it needs come from the order's context (sale-packaging-modal.test.tsx renders it).
+  const english = await e2e.client.get('/admin/sales/record/new/context?lang=en', {
+    headers: { accept: 'application/json' },
+  })
   assert.equal(english.status, 200)
-  assert.match(await english.text(), /Manage customers/)
+  const { messages } = (await english.json()) as { messages: Record<string, string> }
+  assert.equal(messages['sale_backend.relation.customers'], 'Manage customers')
+  assert.equal(messages['partner_backend.field.name'] !== undefined, true)
 })
 
 test('relational select HTTP: generated browser islands are served by backend', async (t) => {

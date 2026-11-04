@@ -1,3 +1,9 @@
+import {
+  isCatalogueSearch,
+  readVisibleSearch,
+  saveOwnedSearch,
+  removeOwnedSearch,
+} from './saved-search-policy.ts'
 // The server half of the search-filter bar.
 //
 // The bar talks to four functions: one that turns the viewer's facets into a
@@ -171,9 +177,11 @@ export const stateFromPayload = (ctx: Ctx, binding: ListSearchBinding, payload: 
 const savedState = async (ctx: Ctx, binding: ListSearchBinding, id: string): Promise<ListState | null> => {
   if (!ctx.actor) return null
   const S = ctx.table('backend.SavedSearch')
-  const saved = await ctx.db.one(
-    from(S).where(eq(S.id, id), eq(S.ownerId, ctx.actor), eq(S.listKey, binding.key), eq(S.active, true)),
-  )
+  const saved = isCatalogueSearch(binding.key)
+    ? await readVisibleSearch(ctx, id, binding.key)
+    : await ctx.db.one(
+        from(S).where(eq(S.id, id), eq(S.ownerId, ctx.actor), eq(S.listKey, binding.key), eq(S.active, true)),
+      )
   if (!saved?.state || typeof saved.state !== 'object' || Array.isArray(saved.state)) return null
   const spec = binding.spec(ctx)
   const fallback = emptyListState(spec)
@@ -284,6 +292,17 @@ export const listSearchFilterFunctions = (
         const binding = bindingOf(bindings, payload.listKey)
         const state = stateFromPayload(ctx, binding, payload)
         const id = randomUUID()
+        if (isCatalogueSearch(binding.key)) {
+          const result = await saveOwnedSearch(ctx, {
+            id,
+            listKey: binding.key,
+            name,
+            state,
+            default: args.isDefault,
+          })
+          if (!result.ok) throw new Error(result.errors?.[0]?.code ?? 'invalid saved search')
+          return { id }
+        }
         await ctx.tx(async (tx) => {
           if (args.isDefault === true) await clearCurrentDefault(tx, ctx.actor!, binding.key)
           await tx.db.insert('backend.SavedSearch', {
@@ -307,6 +326,11 @@ export const listSearchFilterFunctions = (
       handler: async (ctx, args) => {
         if (!ctx.actor) throw new Error('authentication required')
         const binding = bindingOf(bindings, args.listKey)
+        if (isCatalogueSearch(binding.key)) {
+          const result = await removeOwnedSearch(ctx, { ...args, listKey: binding.key })
+          if (!result.ok) throw new Error(result.errors?.[0]?.code ?? 'invalid saved search')
+          return { ok: true }
+        }
         await ctx.db.update(
           'backend.SavedSearch',
           { id: args.id, ownerId: ctx.actor, listKey: binding.key },
@@ -323,6 +347,17 @@ export const listSearchFilterFunctions = (
       handler: async (ctx, args) => {
         if (!ctx.actor) throw new Error('authentication required')
         const binding = bindingOf(bindings, args.listKey)
+        if (isCatalogueSearch(binding.key)) {
+          const row = await readVisibleSearch(ctx, args.id, binding.key)
+          if (!row || row.ownerId !== ctx.actor) throw new Error('saved search not found')
+          const result = await saveOwnedSearch(ctx, {
+            ...row,
+            default: true,
+            expectedRevisionId: row.revisionId ?? 'initial',
+          })
+          if (!result.ok) throw new Error(result.errors[0]?.code)
+          return { ok: true }
+        }
         await ctx.tx(async (tx) => {
           const S = tx.table('backend.SavedSearch')
           const target = await tx.db.one(

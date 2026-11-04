@@ -523,16 +523,18 @@
       white-space: normal;
     }
 
-    /* Editable values need a full row. Intrinsic flex sizing can shrink a nested
-       field to its padding when a cell also carries price/help text. The table
-       owns its immediate child layout; Field still owns the control itself. */
+    /* Editable values and progress bars need a full row. Intrinsic flex sizing can
+       shrink a nested field to its padding when a cell also carries price/help text.
+       A bar has no width of its own: it shrank to the percent beside it. The table
+       owns its immediate child layout; Field and Progress still own the control. */
     :where([data-kv-design-system])
       [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
       [data-ui="cell"]:has(
         input:not([type="hidden"], [type="checkbox"], [type="radio"]),
         select,
         textarea,
-        [role="combobox"]
+        [role="combobox"],
+        [data-ui="progress"]
       ) {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -546,7 +548,8 @@
         input:not([type="hidden"], [type="checkbox"], [type="radio"]),
         select,
         textarea,
-        [role="combobox"]
+        [role="combobox"],
+        [data-ui="progress"]
       )
       > * {
       min-width: 0;
@@ -607,6 +610,62 @@
       [data-ui="row-link"] {
       min-height: auto;
       padding: var(--kv-space-2) 0;
+    }
+
+    /* A stacked row has no header row and its title cell shows no column name. A field there that
+       relied on the header for its name shows its own label above the control in the type of the
+       other cells' names: an entry row's first inputs need it. */
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      :is([data-ui="cell"]:first-child, [data-ui="select-cell"] + [data-ui="cell"])
+      [data-ui="field"][data-label-hidden="true"]
+      > [data-ui="field-label"] {
+      position: static;
+      width: auto;
+      height: auto;
+      overflow: visible;
+      clip-path: none;
+      white-space: normal;
+      grid-column: 1 / -1;
+      grid-row: 1;
+      color: var(--kv-text-muted);
+      font-size: var(--kv-text-sm);
+      font-weight: var(--kv-weight-normal);
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      :is([data-ui="cell"]:first-child, [data-ui="select-cell"] + [data-ui="cell"])
+      [data-ui="field"][data-label-hidden="true"]
+      > :not([data-ui="field-label"]) {
+      grid-column: 1 / -1;
+      grid-row: auto;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      :is([data-ui="cell"]:first-child, [data-ui="select-cell"] + [data-ui="cell"])
+      [data-ui="field"][data-label-hidden="true"][data-kind="select"]:has(> select)::after,
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      :is([data-ui="cell"]:first-child, [data-ui="select-cell"] + [data-ui="cell"])
+      [data-ui="field"][data-label-hidden="true"][data-kind="select"]
+      > select[data-ui="field-control"] {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+
+    /* A row's commands need no column name; they sit at the row's end. */
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      [data-ui="cell"][data-kind="actions"] {
+      justify-content: flex-end;
+    }
+
+    :where([data-kv-design-system])
+      [data-ui="table-scroll"][data-pattern="data-table"][data-responsive="stack"]
+      [data-ui="cell"][data-kind="actions"]::before {
+      display: none;
     }
   }
 }

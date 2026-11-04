@@ -31,7 +31,7 @@ export const journalEntryCreateModal = (
     description: _('account_backend.entry.create.hint'),
     closeHref: options.cancelHref,
     closeLabel: _('account_backend.action.cancelEdit'),
-    presentation: 'sheet',
+    presentation: 'dialog',
     size: 'large',
     form: {
       id: 'journal-entry-create-form',

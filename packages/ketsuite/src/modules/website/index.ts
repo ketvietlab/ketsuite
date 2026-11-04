@@ -13,6 +13,7 @@ import { tokens } from './tokens.ts'
 import { contentTypes, taxonomies } from './content-types.ts'
 import { saveStudioStyle } from './studio-style.ts'
 import { cmsFunctions } from './cms.ts'
+import { translationFunctions, translationJobs } from './translations.ts'
 import { publicationFunctions } from './publication.ts'
 import { customerFunctions } from './customer.ts'
 import { jobs } from './jobs.ts'
@@ -46,6 +47,15 @@ export default defineModule({
       'error.invalidName': 'Tên không hợp lệ hoặc quá dài.',
       'error.invalidTitle': 'Tiêu đề không hợp lệ hoặc quá dài.',
       'error.invalidLocale': 'Mã ngôn ngữ không hợp lệ.',
+      'error.invalidLocales': 'Danh sách ngôn ngữ hoặc thứ tự dự phòng không hợp lệ.',
+      'error.localeInUse':
+        'Còn nội dung bằng ngôn ngữ này. Chuyển hoặc xóa nội dung đó trước khi bỏ ngôn ngữ.',
+      'error.localeNotOnSite': 'Ngôn ngữ này chưa được bật cho website.',
+      'error.translationExists': 'Nội dung này đã có bản dịch bằng ngôn ngữ đó.',
+      'error.translationLinked': 'Trang này đang nối với bản dịch khác. Gỡ nối trước khi nối vào nhóm mới.',
+      'error.translationMismatch': 'Chỉ nối được bản dịch cùng website và cùng loại nội dung.',
+      'error.invalidCopy': 'Cách chép bản dịch không hợp lệ.',
+      'error.entryNotFound': 'Không tìm thấy nội dung.',
       'error.invalidGoogleTagManagerId': 'Mã container phải có dạng GTM-XXXXXXX.',
       'error.visitConsentNoticeRequired': 'Nhập câu chữ xin đồng ý trước khi bật theo dõi lượt truy cập.',
       'error.visitConsentNoticeTooLong': 'Câu chữ xin đồng ý tối đa 2.000 ký tự.',
@@ -92,6 +102,8 @@ export default defineModule({
       'error.invalidTermSeo':
         'Thông tin SEO không hợp lệ: canonical cần là đường dẫn nội bộ hoặc địa chỉ HTTPS.',
       'error.coverAltRequired': 'Ảnh bìa cần có mô tả cho người không xem được ảnh.',
+      'error.invalidTermImage':
+        'Ảnh không hợp lệ, đã hết hạn hoặc không thuộc chuyên mục/thẻ này. Hãy tải lại ảnh.',
       'error.termInUse': 'Không thể xóa term đang có term con hoặc đang được gán cho nội dung.',
       'error.mediaInUse': 'Không thể xóa ảnh đang được đặt trên một trang. Hãy gỡ khỏi trang trước.',
       'error.mediaUsageUnknown':
@@ -152,6 +164,16 @@ export default defineModule({
       'error.invalidName': 'The name is invalid or too long.',
       'error.invalidTitle': 'The title is invalid or too long.',
       'error.invalidLocale': 'The locale code is invalid.',
+      'error.invalidLocales': 'The language list or fallback order is invalid.',
+      'error.localeInUse':
+        'Content in this language still exists. Move or delete it before removing the language.',
+      'error.localeNotOnSite': 'This language is not enabled for the site.',
+      'error.translationExists': 'This content already has a translation in that language.',
+      'error.translationLinked':
+        'This page is linked to other translations. Unlink it before joining another group.',
+      'error.translationMismatch': 'Only content of the same site and type can be linked as translations.',
+      'error.invalidCopy': 'The translation copy mode is invalid.',
+      'error.entryNotFound': 'The content was not found.',
       'error.invalidGoogleTagManagerId': 'The container ID must match GTM-XXXXXXX.',
       'error.visitConsentNoticeRequired': 'Enter the consent notice before turning on visit tracking.',
       'error.visitConsentNoticeTooLong': 'The consent notice can be at most 2,000 characters.',
@@ -198,6 +220,8 @@ export default defineModule({
       'error.invalidTermSeo':
         'The SEO settings are invalid: the canonical must be a local path or an HTTPS address.',
       'error.coverAltRequired': 'The cover image needs a description for people who cannot see it.',
+      'error.invalidTermImage':
+        'The image is invalid, expired or belongs to another category or tag. Upload it again.',
       'error.termInUse': 'A term with children or content assignments cannot be deleted.',
       'error.mediaInUse': 'This image is placed on a page. Take it off the page first.',
       'error.mediaUsageUnknown':
@@ -248,13 +272,14 @@ export default defineModule({
   functions: {
     ...functions,
     ...cmsFunctions,
+    ...translationFunctions(cmsFunctions.saveEntry!),
     saveStudioStyle,
     ...publicationFunctions,
     ...customerFunctions,
     ...imageFunctions,
     ...visitFunctions,
   },
-  jobs: { ...jobs, ...imageJobs, ...visitJobs },
+  jobs: { ...jobs, ...imageJobs, ...visitJobs, ...translationJobs },
   tokens,
 })
 

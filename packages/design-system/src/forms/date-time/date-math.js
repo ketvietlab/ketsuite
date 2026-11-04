@@ -73,11 +73,52 @@ export const withinBounds = (value, min = '', max = '') =>
 /** @param {string} start @param {string} end @returns {[string, string]} */
 export const orderedRange = (start, end) => (start <= end ? [start, end] : [end, start])
 
-/** Compact display keeps the shared year once; submitted values remain ISO civil dates.
- * @param {string} start @param {string} end */
-export const formatRange = (start, end) => {
+/** The order a language writes a day in, the way the person reading chose it, not the browser's:
+ * English month first, Japanese year first, Vietnamese day first.
+ * @param {string} [locale] @returns {('day' | 'month' | 'year')[]} */
+export const dayOrder = (locale) =>
+  locale === 'en'
+    ? ['month', 'day', 'year']
+    : locale === 'ja'
+      ? ['year', 'month', 'day']
+      : ['day', 'month', 'year']
+/** The pattern shown in an empty date field. @param {string} [locale] */
+export const dayPattern = (locale) => {
+  const pattern = dayOrder(locale)
+    .map((part) => ({ day: 'dd', month: 'mm', year: 'yyyy' })[part])
+    .join('/')
+  return locale === 'vi' || !locale ? pattern : pattern.toUpperCase()
+}
+/** A civil date written in the reader's order; '' for anything that is not one.
+ * @param {string} value @param {string} [locale] @param {boolean} [year] */
+export const formatDay = (value, locale, year = true) => {
+  if (!parseDate(value)) return ''
+  const parts = { year: value.slice(0, 4), month: value.slice(5, 7), day: value.slice(8, 10) }
+  return dayOrder(locale)
+    .filter((part) => year || part !== 'year')
+    .map((part) => parts[part])
+    .join('/')
+}
+/** Reads a date typed in the reader's order (any of / . - or spaces between, one or two digits for the
+ * day and month) or as an ISO date; '' when it is not a real calendar day.
+ * @param {string} text @param {string} [locale] */
+export const parseDay = (text, locale) => {
+  const value = text.trim()
+  if (parseDate(value)) return value
+  const numbers = value.split(/[\s./-]+/u)
+  if (numbers.length !== 3 || numbers.some((number) => !/^\d+$/u.test(number))) return ''
+  /** @type {Record<string, string>} */
+  const parts = {}
+  dayOrder(locale).forEach((part, index) => {
+    parts[part] = numbers[index]
+  })
+  if (parts.year.length !== 4 || parts.month.length > 2 || parts.day.length > 2) return ''
+  const iso = `${parts.year}-${parts.month.padStart(2, '0')}-${parts.day.padStart(2, '0')}`
+  return parseDate(iso) ? iso : ''
+}
+/** Compact display keeps the shared year once, in the reader's order; submitted values remain ISO civil dates.
+ * @param {string} start @param {string} end @param {string} [locale] */
+export const formatRange = (start, end, locale = 'vi') => {
   if (!parseDate(start) || !parseDate(end)) return ''
-  const date = (/** @type {string} */ value, /** @type {boolean} */ year = true) =>
-    `${value.slice(8, 10)}/${value.slice(5, 7)}${year ? `/${value.slice(0, 4)}` : ''}`
-  return `${date(start, start.slice(0, 4) !== end.slice(0, 4))} – ${date(end)}`
+  return `${formatDay(start, locale, start.slice(0, 4) !== end.slice(0, 4))} – ${formatDay(end, locale)}`
 }

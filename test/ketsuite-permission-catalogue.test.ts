@@ -73,7 +73,11 @@ test('public production permission catalogue covers every function owned by its 
     // records after checking hospitality_core.attachContentImage.
     // 134: website.recordVisit and .recordVisitEvent, written only through the public visit route for a
     // site that asks first and a visitor who agreed.
-    Object.keys(manifest.permissions.exemptions).length <= 134,
+    // 135: website_form_mail.noticeStates, the outbox state of each submission's notice, read by the
+    // Studio submission screens after they check the viewer may list or read those submissions.
+    // 136: livedoc.sync.scheduleCleanup, the cleanup a native Flow file route schedules after its own
+    // read or write check, like the other two livedoc.sync functions.
+    Object.keys(manifest.permissions.exemptions).length <= 136,
     'a new permission exemption was added — say why, in the declaration',
   )
 
@@ -83,6 +87,7 @@ test('public production permission catalogue covers every function owned by its 
     'website.stageImage',
     'website.completeImage',
     'website.imageForReader',
+    'website_form_mail.noticeStates',
   ]) {
     assert.equal(manifest.functions[key]?.exposure, 'internal', key)
   }

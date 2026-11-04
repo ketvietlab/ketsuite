@@ -1,17 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { text } from '@ketvietlab/ketjs'
-import type { Route, RouteEntry, ServeContext, SessionContext } from '@ketvietlab/ketjs'
+import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'
 import { readForm, seeOther } from '../backend/forms.ts'
 import { rowListSearch } from '../backend/row-list.ts'
-import { adminPage, inLocale, localeQuery, localized } from '../backend/screen.ts'
+import { adminPage, inLocale, jointFor, localeQuery, localized } from '../backend/screen.ts'
 import type { AnyRow, Req } from '../backend/screen.ts'
-import {
-  branchFormScreen,
-  companiesListScreen,
-  companyFormScreen,
-  contextScreen,
-  hierarchyScreen,
-} from './screens/index.ts'
+import { branchFormScreen, companiesListScreen, companyFormScreen, hierarchyScreen } from './screens/index.ts'
 import type {
   BranchFormValues,
   BranchRow,
@@ -123,7 +117,7 @@ const renderCompany = async (
     active: row.active,
     version: row.version,
   }
-  const collaboration = await ctx.joint(url, req, 'partner_backend:record.collaboration', {
+  const collaboration = await jointFor(ctx, url, req, 'partner_backend:record.collaboration', {
     resModel: 'partner.Partner',
     resId: row.partnerId,
     lang,
@@ -568,100 +562,4 @@ export const routes: Record<string, RouteEntry> = {
         errors: translatedErrors(result, ctx.translate(ctx.localeOf(url, req))),
       })
     },
-
-  '/admin/context': {
-    handler:
-      (ctx: ServeContext): Route =>
-      async (url, req) => {
-        const sessions = await ctx.sessionsOf(url, req)
-        const record = await sessions?.of(req)
-        if (!sessions || !record) return text('Unauthorized', { status: 401 })
-        const _ = ctx.translate(ctx.localeOf(url, req))
-        const options = (await ctx.call('user.contextOptions', { userId: record.userId }, url, req)) as {
-          companies: Array<{ id: string; code: string; name: string }>
-          branches: Array<{
-            id: string
-            companyId: string
-            code: string
-            name: string
-            isRoot?: boolean
-          }>
-        }
-        const render = (
-          errors?: string[],
-          values: {
-            companyId?: string
-            branchId?: string
-            companies?: string[]
-            branches?: string[]
-          } = {},
-        ) =>
-          adminPage(ctx, url, req, {
-            title: 'company_backend.context.title',
-            active: '/admin/context',
-            body: (_, frame) =>
-              contextScreen(_, frame, {
-                ...options,
-                selectedCompanies: values.companies ?? record.companies,
-                selectedBranches:
-                  values.branches ?? record.branches ?? options.branches.map((branch) => branch.id),
-                companyId: values.companyId ?? record.company ?? '',
-                branchId: values.branchId ?? record.branch ?? '',
-                action: inLocale(url, '/admin/context'),
-                errors,
-              }),
-          })
-        if (req.method === 'GET') return render()
-        if (req.method !== 'POST') return text('GET or POST', { status: 405 })
-        if (crossSite(req)) return text('Forbidden', { status: 403 })
-        const form = await readForm(req)
-        // The new form names its save command. Keep accepting an absent action
-        // for established API/test clients that predate explicit commands.
-        if (form.action && form.action !== 'save') return text('invalid action', { status: 400 })
-        const companies = Object.keys(form)
-          .filter((key) => key.startsWith('company.'))
-          .map((key) => key.slice('company.'.length))
-        const branches = Object.keys(form)
-          .filter((key) => key.startsWith('branch.'))
-          .map((key) => key.slice('branch.'.length))
-        const result = (await ctx.call(
-          'user.prepareContext',
-          {
-            userId: record.userId,
-            companyId: form.companyId ?? '',
-            branchId: form.branchId ?? '',
-            companies,
-            branches,
-            securityVersion: record.securityVersion,
-          },
-          url,
-          req,
-        )) as { ok?: boolean; context?: SessionContext; errors?: unknown[] }
-        if (!result.ok || !result.context)
-          return render(translatedErrors(result, _), {
-            companyId: form.companyId,
-            branchId: form.branchId,
-            companies,
-            branches,
-          })
-        if (!(await sessions.update(record, result.context)))
-          return render([_('company_backend.context.conflict')], {
-            companyId: form.companyId,
-            branchId: form.branchId,
-            companies,
-            branches,
-          })
-        await ctx.call(
-          'user.recordSecurityEvent',
-          {
-            event: 'context.switch',
-            userId: record.userId,
-            metadata: { company: result.context.company, branch: result.context.branch },
-          },
-          url,
-          req,
-        )
-        return seeOther(inLocale(url, '/admin/context'))
-      },
-  },
 }

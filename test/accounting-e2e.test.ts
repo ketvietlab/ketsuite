@@ -125,7 +125,7 @@ test('e2e accounting: invoice, payment reconciliation and reports cross real HTT
     ['/admin/accounting/vendor-bills', /Hoá đơn nhà cung cấp/],
     ['/admin/accounting/customer-invoices/invoice-1', /SAL\/2026\/00001/],
     ['/admin/accounting/payments', /Thanh toán/],
-    ['/admin/accounting/trial-balance', /Bảng cân đối thử/],
+    ['/admin/accounting/trial-balance', /Bảng cân đối phát sinh/],
     ['/admin/accounting/general-ledger', /Sổ cái/],
     ['/admin/accounting/partner-statement?partnerId=customer', /Sổ đối tác/],
   ]
@@ -204,7 +204,7 @@ test('e2e accounting: invoice, payment reconciliation and reports cross real HTT
     if (path === '/admin/accounting/taxes') {
       assert.match(html, /data-ui="list-page"/)
       assert.doesNotMatch(html, /id="tax-create-form"/)
-      assert.match(html, /href="\/admin\/accounting\/taxes\/new\?returnTo=/)
+      assert.match(html, /href="\/admin\/accounting\/taxes\?create=1"/)
       assert.doesNotMatch(html, /data-island="mail\.chatter"/)
     }
     if (path === '/admin/accounting/terms') {
@@ -488,12 +488,23 @@ test('e2e accounting: tax list and form preserve computation, account, ordering 
   const taxAccount = accounts.find((row) => row.code === 'TAX.OUT') ?? accounts[0]!
   const path = '/admin/accounting/taxes'
 
-  const createPage = await e2e.client.get(`${path}/new?lang=vi`, {
+  // The form used to be a page of its own: an old link lands on the list's modal.
+  const legacyCreate = await e2e.client.get(`${path}/new?lang=vi`, {
+    headers: { accept: 'text/html' },
+    redirect: 'manual',
+  })
+  assert.equal(legacyCreate.status, 303)
+  assert.equal(legacyCreate.headers.get('location'), `${path}?lang=vi&create=1`)
+  const createPage = await e2e.client.get(`${path}?lang=vi&create=1`, {
     headers: { accept: 'text/html' },
   })
   const createHtml = await createPage.text()
   assert.equal(createPage.status, 200)
-  assert.match(createHtml, /data-ui="form-page"/)
+  assert.match(createHtml, /data-ui="list-page"/)
+  // A centred modal over the list, never a panel docked to the side.
+  assert.match(createHtml, /data-ui="modal-layer" data-route-modal="true" data-presentation="dialog"/)
+  assert.match(createHtml, /data-ui="modal-sheet" data-size="small"/)
+  assert.doesNotMatch(createHtml, /data-ui="form-page"/)
   assert.match(createHtml, /id="tax-create-form"/)
   assert.match(createHtml, /Số tiền \/ tỷ lệ/)
   assert.match(createHtml, /data-island="backend\.relation-select"/)
@@ -501,7 +512,7 @@ test('e2e accounting: tax list and form preserve computation, account, ordering 
   assert.doesNotMatch(createHtml, /data-island="mail\.chatter"/)
 
   const invalid = await e2e.client.post(
-    `${path}/new?lang=vi`,
+    `${path}?lang=vi&create=1`,
     new URLSearchParams({
       name: 'Thuế HTTP nhập dở',
       description: 'Giữ lại mô tả thuế',
@@ -518,7 +529,7 @@ test('e2e accounting: tax list and form preserve computation, account, ordering 
   )
   const invalidHtml = await invalid.text()
   assert.equal(invalid.status, 200)
-  assert.match(invalidHtml, /data-ui="form-page"/)
+  assert.match(invalidHtml, /data-ui="modal-sheet" data-size="small"/)
   assert.match(invalidHtml, /value="Thuế HTTP nhập dở"/)
   assert.match(invalidHtml, /value="Giữ lại mô tả thuế"/)
   assert.match(invalidHtml, /value="1250"/)
@@ -581,7 +592,7 @@ test('e2e accounting: tax list and form preserve computation, account, ordering 
   })
   const legacyEditorHtml = await legacyEditor.text()
   assert.equal(legacyEditor.status, 200)
-  assert.match(legacyEditorHtml, /data-ui="form-page"/)
+  assert.match(legacyEditorHtml, /data-ui="modal-sheet" data-size="small"/)
   assert.match(legacyEditorHtml, /value="Thuế HTTP cố định"/)
   assert.match(legacyEditorHtml, /name="priceInclude"[^>]*checked/)
 
@@ -785,7 +796,10 @@ test('e2e accounting: the overview reports posted moves, and never a draft', asy
     ).replace(/<!--[^>]*-->/g, '')
 
   const metricNamed = (html: string, label: string): string => {
-    const cards = [...html.matchAll(/<article data-ui="metric"[\s\S]*?<\/article>/g)].map((match) => match[0])
+    // A metric card that opens its accounts is a link rather than an article.
+    const cards = [...html.matchAll(/<(article|a)\b[^>]*data-ui="metric"[\s\S]*?<\/\1>/g)].map(
+      (match) => match[0],
+    )
     const card = cards.find((held) => held.includes(label))
     assert.ok(card, label)
     return /data-ui="metric-value"[^>]*>([^<]*)</.exec(card)?.[1] ?? ''
@@ -1129,4 +1143,17 @@ test('e2e accounting: a product category posts to the accounts it was given', as
   // The category is narrower than the company, so it decides the revenue account.
   assert.equal(invoice.lines.find((row) => String(row.id).endsWith(':base'))?.accountId, idOf('REV.OTHER'))
   assert.equal(invoice.lines.find((row) => String(row.id).endsWith(':counterpart'))?.accountId, idOf('AR'))
+})
+
+test('e2e accounting: an invoice line picks a product by its name, not by an ID (#1812)', async (t) => {
+  const { e2e } = await bootAccounting(t)
+  for (const [lang, label, idLabel] of [
+    ['vi', 'Sản phẩm', 'ID biến thể'],
+    ['en', 'Product', 'Variant ID'],
+  ] as const) {
+    const html = await (await e2e.client.get(`/admin/accounting/customer-invoices/new?lang=${lang}`)).text()
+    // The label sits right before the product picker of the line.
+    assert.match(html, new RegExp(`data-ui="form-label"><!--k\\[-->${label}<[\\s\\S]{0,400}name="productId"`))
+    assert.doesNotMatch(html, new RegExp(idLabel))
+  }
 })

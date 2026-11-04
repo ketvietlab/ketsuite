@@ -207,7 +207,7 @@ Kiểm tra đúng Công ty, Workspace hoặc dự án trước khi thay đổi q
 ## Quản lý
 - Mời thành viên bằng địa chỉ email và vai trò phù hợp. Khách cần được cấp dự án cụ thể.
 - Mở **Quản lý** để đổi vai trò hoặc thu hồi quyền Flow. Chủ sở hữu được bảo vệ khỏi thay đổi vai trò thông thường.
-- Team giúp cấp quyền cho nhóm; kiểm tra cả quyền trực tiếp và quyền được kế thừa trước khi thu hồi một nguồn.
+- Team giúp cấp quyền cho nhóm; kiểm tra cả quyền trực tiếp và quyền được kế thừa trước khi thu hồi một nguồn. Người đã bị thu hồi quyền tổ chức không còn nhận quyền từ Team; quản trị vẫn có thể bỏ họ khỏi Team, nhưng không thêm lại khi quyền còn bị thu hồi.
 - Người nhận lời mời đăng nhập bằng tài khoản KetSuite chung rồi chấp nhận lời mời của mình.
 
 ## Kiểm tra kết quả
@@ -218,7 +218,7 @@ Check the selected Company, Workspace or project before changing access. The dir
 ## Manage access
 - Invite a member with their email and an appropriate role. Guests need an explicit project grant.
 - Open **Manage** to change a role or revoke Flow access. The owner is protected from ordinary role changes.
-- Teams grant access to groups. Check both direct and inherited sources before removing a grant.
+- Teams grant access to groups. Check both direct and inherited sources before removing a grant. A revoked organization member receives no Team access; managers can still remove that person from a Team, but cannot add them while access remains revoked.
 - Invitation recipients sign in with their shared KetSuite account and accept their own invitation.
 
 ## Check the outcome
@@ -372,18 +372,18 @@ Retry when connected. A failed action is not complete; verify its state after re
   personal: {
     routes: ['personal-settings', 'timezone'],
     vi: `## Tuỳ chỉnh trải nghiệm
-Chọn ngôn ngữ, giao diện và các lựa chọn cá nhân có trên màn hình. Múi giờ ảnh hưởng cách hiển thị thời gian; kiểm tra ngày hạn khi làm việc với nhóm ở múi giờ khác.
+Chọn ngôn ngữ, giao diện và các lựa chọn cá nhân có trên màn hình. Giao diện và ngôn ngữ được nhớ trên trình duyệt theo từng tài khoản và Công ty. URL có ngôn ngữ sẽ ưu tiên lựa chọn đó.
 
 ## Lưu lựa chọn
-Áp dụng bằng nút lưu nếu biểu mẫu yêu cầu. Kiểm tra thông báo xác nhận hoặc lỗi trước khi rời màn. Cài đặt nhận thông báo chỉ điều khiển kênh đã được hệ thống hỗ trợ.
+Múi giờ và tuỳ chọn thông báo được lưu trên máy chủ theo từng tài khoản và Công ty. Múi giờ cá nhân dùng cho giờ trong lịch sử và bình luận; ngày hạn giữ nguyên ngày đã nhập, còn ngày nghiệp vụ dùng múi giờ Công ty. Áp dụng bằng nút lưu nếu biểu mẫu yêu cầu và kiểm tra thông báo xác nhận hoặc lỗi. Cài đặt nhận thông báo chỉ điều khiển kênh đã được hệ thống hỗ trợ.
 
 ## Công ty và tài khoản
 Dùng menu người dùng để chuyển Công ty hoặc mở phần quản lý được cấp quyền. Quyền và dữ liệu thay đổi theo Công ty đang chọn.`,
     en: `## Personalize your experience
-Choose the language, appearance and personal options available on this screen. Timezone affects displayed times; check due dates when collaborating across timezones.
+Choose the language, appearance and personal options available on this screen. Appearance and language are remembered in this browser for each account and Company. An explicit URL language takes priority.
 
 ## Save preferences
-Use Save when the form requires it. Check success or error feedback before leaving. Notification preferences apply only to channels supported by the system.
+Timezone and notification preferences are stored on the server for each account and Company. Personal timezone applies to history and comment timestamps; due dates retain their calendar date, and business-day boundaries use the Company timezone. Use Save when required and check success or error feedback. Notification preferences apply only to channels supported by the system.
 
 ## Company and account
 Use the user menu to switch Company or open administration you can access. Permissions and data follow the selected Company.`,

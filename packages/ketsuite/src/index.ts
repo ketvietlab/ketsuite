@@ -113,18 +113,32 @@ export type { Unit } from './modules/uom/convert.ts'
 // product vertical
 export { default as product } from './modules/product/index.ts'
 export { sellableProduct } from './modules/product/index.ts'
+export { VARIANT_PRICE_EFFECTS } from './modules/product/variant-price.ts'
+export { companyCatalogueModules, sharedCatalogueModules } from './modules/product/company-catalogue.ts'
+export { productReferenceModels, withProductVariantReferences } from './modules/product/variant-references.ts'
 export type { SellableProduct, SellableProductResult, SellableUom } from './modules/product/index.ts'
 export { default as productMedia } from './modules/product_media/index.ts'
 export { default as productBackend } from './modules/product_backend/index.ts'
+export { productBackendWith, type ProductBackendOptions } from './modules/product_backend/with-options.ts'
 export { default as pricing } from './modules/pricing/index.ts'
 /** Stable extension boundary for private modules that compose Pricing queries in one transaction. */
 export { functions as pricingFunctionSpecs } from './modules/pricing/functions.ts'
 export { default as stock } from './modules/stock/index.ts'
 export { stockFunctionSpecs } from './modules/stock/index.ts'
+export { MOVE_DEMAND_EFFECTS, resizeMoveDemand } from './modules/stock/move-demand.ts'
+export { InventoryRefused } from './modules/stock/inventory-validation.ts'
 export { default as stockBackend } from './modules/stock_backend/index.ts'
+export { stockBackendWith } from './modules/stock_backend/with-options.ts'
+export type { StockBackendOptions } from './modules/stock_backend/with-options.ts'
 export { default as manufacturing } from './modules/manufacturing/index.ts'
 export { default as manufacturingBackend } from './modules/manufacturing_backend/index.ts'
-export { manufacturingFunctionSpecs } from './modules/manufacturing/index.ts'
+export { manufacturingBackendWith } from './modules/manufacturing_backend/with-options.ts'
+export type { ManufacturingBackendOptions } from './modules/manufacturing_backend/with-options.ts'
+export {
+  manufacturingFunctionSpecs,
+  manufactureReplenishment,
+  withSaleProductions,
+} from './modules/manufacturing/index.ts'
 export {
   BOM_TYPES,
   PRODUCTION_STATES,
@@ -148,7 +162,9 @@ export { default as accountBackend } from './modules/account_backend/index.ts'
 export { default as purchase } from './modules/purchase/index.ts'
 export { default as purchaseStaffChannel } from './modules/purchase_staff_channel/index.ts'
 export { default as purchaseBackend } from './modules/purchase_backend/index.ts'
+export { default as saleTemplates } from './modules/sale_template/index.ts'
 export { default as sale } from './modules/sale/index.ts'
+export { migrateSaleFreeLines } from './modules/sale/free-lines-migration.ts'
 export { default as saleStaffChannel } from './modules/sale_staff_channel/index.ts'
 export { default as stockStaffChannel } from './modules/stock_staff_channel/index.ts'
 export { default as inventoryStaffChannel } from './modules/inventory_staff_channel/index.ts'
@@ -203,7 +219,8 @@ export { default as crmSale } from './modules/crm_sale/index.ts'
 export { default as crmBackend } from './modules/crm_backend/index.ts'
 export { default as crmWebsite } from './modules/crm_website/index.ts'
 /** Stable extension boundary for private modules that compose Sale commands in one transaction. */
-export { functions as saleFunctionSpecs } from './modules/sale/functions.ts'
+export { functions as saleFunctionSpecs } from './modules/sale/functions/index.ts'
+export { VARIANT_NAME_EFFECTS } from './modules/product/functions/variants.ts'
 export {
   CASE_KINDS,
   TERMINAL_STATES,
@@ -332,8 +349,8 @@ export {
   periodKey,
   quarterKey,
 } from './modules/account/date.ts'
-export { PURCHASE_STATES, INVOICE_STATUSES, PURCHASE_METHODS } from './modules/purchase/functions.ts'
-export { SALE_STATES, SALE_INVOICE_STATUSES, INVOICE_POLICIES } from './modules/sale/functions.ts'
+export { PURCHASE_STATES, INVOICE_STATUSES, PURCHASE_METHODS } from './modules/purchase/types.ts'
+export { SALE_STATES, SALE_INVOICE_STATUSES, INVOICE_POLICIES } from './modules/sale/functions/index.ts'
 export {
   POS_ORDER_STATES,
   POS_PAYMENT_SETTLEMENT_KINDS,
@@ -483,6 +500,11 @@ export {
   backfillNativeFlowLabelScope,
   backfillNativeFlowDependencyScope,
 } from './modules/flow/native/migrations.ts'
+export { backfillNativeFlowSavedViewVisibility } from './modules/flow/native/view-migration.ts'
+export {
+  inspectNativeFlowUpgrade,
+  applyNativeFlowUpgrade,
+} from './modules/flow/native/migration-inspection.ts'
 export { createFlowStorageModule } from './modules/flow/native/attachments.ts'
 export type { NativeFlowOptions, NativeServerExtension, NativeMutation } from './modules/flow/native/index.ts'
 export { createFlowWorkspaceModule } from './modules/flow_workspace/index.ts'
@@ -574,3 +596,15 @@ export type { HospitalityCollectionPageDefinition } from './modules/hospitality_
 export { hospitalityScreenHelp } from './modules/hospitality_core/screens/screen-help.tsx'
 
 export { hospitalityRecordBack } from './modules/hospitality_core/screens/scoped-href.ts'
+
+export { stockWithProductSuppliers } from './modules/purchase/stock-suppliers.ts'
+export { moduleWithSaleDeliveries, withSaleDeliveries } from './modules/sale/stock-deliveries.ts'
+export { moduleWithSaleInvoices, withSaleInvoices } from './modules/sale/invoice-settlement.ts'
+
+export { default as saleTemplatesBackend } from './modules/sale_template_backend/index.ts'
+
+export { saleWithLoyalty } from './modules/loyalty_sale/sale-with-loyalty.ts'
+
+export { default as salePromotionBackend } from './modules/sale_promotion_backend/index.ts'
+
+export { saleTemplatesWithLoyalty } from './modules/loyalty_sale/templates-with-loyalty.ts'

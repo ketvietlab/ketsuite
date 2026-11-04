@@ -7,7 +7,7 @@ import { attributeModalDefinition } from '../packages/ketsuite/src/modules/produ
 import { templateModalDefinition } from '../packages/ketsuite/src/modules/product_backend/modal/product-modal-view.tsx'
 import { vendorPricelistDefinition } from '../packages/ketsuite/src/modules/purchase_backend/modal/pricelist-view.tsx'
 import { purchaseOrderModalDefinition } from '../packages/ketsuite/src/modules/purchase_backend/modal/order-modal-view.tsx'
-import { invoicingPolicyDefinition } from '../packages/ketsuite/src/modules/sale_backend/modal/policy-view.tsx'
+import { salePolicyModalDefinition } from '../packages/ketsuite/src/modules/sale_backend/policies/modal-view.tsx'
 import { saleOrderModalDefinition } from '../packages/ketsuite/src/modules/sale_backend/modal/order-modal-view.tsx'
 import { stockConfigurationDefinition } from '../packages/ketsuite/src/modules/stock_backend/modal/configuration-view.tsx'
 import { inventoryCountDefinition } from '../packages/ketsuite/src/modules/stock_backend/modal/inventory-view.tsx'
@@ -24,7 +24,7 @@ const definitions = [
   templateModalDefinition,
   vendorPricelistDefinition,
   purchaseOrderModalDefinition,
-  invoicingPolicyDefinition,
+  salePolicyModalDefinition,
   saleOrderModalDefinition,
   ...['warehouse', 'location', 'picking-type', 'lot', 'route', 'replenishment'].map(
     stockConfigurationDefinition,

@@ -4,6 +4,7 @@ import { validateCustomFields } from '@ketvietlab/flow-client/custom-fields.mjs'
 import {
   catalogColors,
   catalogTitleKey,
+  isReservedTaskFieldTitle,
   statusKinds,
   taskTypeIcons,
 } from '@ketvietlab/flow-client/catalog-contract.mjs'
@@ -31,6 +32,8 @@ async function uniqueTitle(
   id?: unknown,
   domain?: unknown,
 ) {
+  if (model === 'flow.CustomField' && isReservedTaskFieldTitle(title))
+    return refuse('validation', { title: 'catalog_reserved_field' })
   const T = ctx.table(model)
   let after = ''
   const key = catalogTitleKey(title)

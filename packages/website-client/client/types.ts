@@ -28,6 +28,8 @@ export type Site = {
   url?: string
   publicOrigin?: string
   locales: string[]
+  /** Where a visitor is sent when a page has no translation; empty sends nowhere. */
+  localeFallback?: string[]
   defaultLocale?: string
   timezone: string
   revisionId?: string

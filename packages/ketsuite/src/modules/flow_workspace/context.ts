@@ -1,4 +1,4 @@
-import { json } from '@ketvietlab/ketjs'
+import { json, withHeaders } from '@ketvietlab/ketjs'
 import type { RouteEntry, SessionContext } from '@ketvietlab/ketjs'
 
 /** A session boundary, not a Flow authentication system. */
@@ -78,4 +78,13 @@ export const selectFlowContext: RouteEntry = {
       return json({ ok: false, code: 'conflict' }, { status: 409 })
     return json({ ok: true })
   },
+}
+
+/** Whether the deployment session is still alive. A function call answers a lost session
+ * and a missing permission alike, so the client asks here before it offers to sign in again.
+ * Without a session the platform answers 401 before this runs. */
+export const flowSession: RouteEntry = (ctx) => async (url, req) => {
+  if (req.method !== 'GET') return json({ ok: false }, { status: 405 })
+  const live = Boolean(await ctx.requestIdentityOf(url, req))
+  return withHeaders(json({ ok: live }, { status: live ? 200 : 401 }), { 'cache-control': 'no-store' })
 }

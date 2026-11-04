@@ -37,6 +37,16 @@ export type TaxesListScreenOptions = {
   table?: Partial<DataTable<TaxListRow>>
 }
 
+/** The document dates a tax applies to, as the list shows them. */
+export const taxValidity = (_: Translator, row: TaxListRow): string => {
+  const from = row.validFrom ? String(row.validFrom).slice(0, 10) : null
+  const to = row.validTo ? String(row.validTo).slice(0, 10) : null
+  if (from && to) return _('account_backend.validity.range', { from, to })
+  if (from) return _('account_backend.validity.from', { from })
+  if (to) return _('account_backend.validity.to', { to })
+  return _('account_backend.validity.always')
+}
+
 export const taxListColumns = (
   _: Translator,
   accountCodes: ReadonlyMap<string, string>,
@@ -71,6 +81,11 @@ export const taxListColumns = (
     key: 'account',
     label: _('account_backend.field.accountId'),
     cell: (row: TaxListRow) => (row.accountId ? (accountCodes.get(String(row.accountId)) ?? '—') : '—'),
+  },
+  {
+    key: 'validity',
+    label: _('account_backend.column.validity'),
+    cell: (row: TaxListRow) => taxValidity(_, row),
   },
   {
     key: 'included',

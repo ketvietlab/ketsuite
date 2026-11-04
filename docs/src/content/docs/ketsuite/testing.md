@@ -123,9 +123,11 @@ database and use the repository's configured test URL rather than a developer's 
 
 ## UI and generated artifacts
 
-`test/backend-ui.test.ts` and `tools/ui-audit.ts` enforce the shared markup and CSS-hook contract. Add
-or update a representative contract case when changing a shared component. A vertical screen still
-needs an HTTP test to prove real data assembly and translations.
+`test/backend-ui.test.ts` and the Biome rules in `lint/rules` enforce the shared markup and CSS-hook
+contract; `tools/ui-audit.ts` still runs beside the rules for one release. Add or update a
+representative contract case when changing a shared component, and a case in `test/lint-rules.test.ts`
+when changing a rule. A vertical screen still needs an HTTP test to prove real data assembly and
+translations.
 
 Screenshots and generated browser evidence are disposable test output. Inspect them locally when visual
 behavior matters, keep reusable fixtures intentionally small, and do not commit PR evidence images into

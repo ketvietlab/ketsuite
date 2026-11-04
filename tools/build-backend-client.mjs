@@ -16,6 +16,14 @@ const USER_BACKEND_DIR = join(ROOT, 'packages/ketsuite/src/modules/user_backend'
 const PRODUCT_BACKEND_DIR = join(ROOT, 'packages/ketsuite/src/modules/product_backend')
 const entries = [
   {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/modal/matrix-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-variant-matrix.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/ui/client/sale-catalogue-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-catalogue.mjs'),
+  },
+  {
     source: join(UI_CLIENT_DIR, 'communication-collections.tsx'),
     output: join(UI_CLIENT_DIR, 'communication-collections-bundle.mjs'),
   },
@@ -73,16 +81,104 @@ const entries = [
     output: join(ROOT, 'packages/ketsuite/src/modules/hospitality_core/client/catalogue-modal.mjs'),
   },
   {
+    source: join(ROOT, 'packages/ketsuite/src/modules/pricing_backend/list/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/pricing_backend/client/pricelist-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/manufacturing_backend/record/bom-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/manufacturing_backend/client/bom-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/pricing_backend/record/view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/pricing_backend/client/pricelist-page.mjs'),
+  },
+  {
     source: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/modal/pricelist-view.tsx'),
     output: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/client/vendor-pricelist-modal.mjs'),
   },
   {
-    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/modal/policy-view.tsx'),
-    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/invoicing-policy-modal.mjs'),
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_promotion_backend/record/view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_promotion_backend/client/promotion-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_promotion_backend/list/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_promotion_backend/client/promotion-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_template_backend/record/view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_template_backend/client/template-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_template_backend/list/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_template_backend/client/template-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/record/customer-warning.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-customer-warning.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/customers/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-customer-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/customers/view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-customer-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/record/warning-preview.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-warning-preview.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/record/configuration-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sales-configuration-page.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/tags/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-tag-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/tags/modal-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-tag-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/teams/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-team-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/teams/modal-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-team-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/policies/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-policy-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/policies/modal-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-policy-modal.mjs'),
   },
   {
     source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/transfer-view.tsx'),
     output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-transfer-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/scrap-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-scrap-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/landed-cost-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-landed-cost.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/shipment-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-shipment.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/delivery-statement-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-delivery-statement.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/count-view.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-count-session-modal.mjs'),
   },
   {
     source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/modal/inventory-view.tsx'),
@@ -99,6 +195,10 @@ const entries = [
   {
     source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/modal/order-modal-view.tsx'),
     output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-order-modal.mjs'),
+  },
+  {
+    source: join(DESIGN_SYSTEM_DIR, 'interactions/ket-grid/index.tsx'),
+    output: join(BACKEND_CLIENT_DIR, 'ket-grid.mjs'),
   },
   {
     source: join(DESIGN_SYSTEM_DIR, 'interactions/relation-select/index.tsx'),
@@ -173,8 +273,94 @@ const entries = [
   },
   // The Units of measure list, and a unit's record modal over any admin page.
   {
+    source: join(PRODUCT_BACKEND_DIR, 'combos/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/combo-list.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'search/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/catalogue-search.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'imports/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/import-list.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/filter-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/filter-modal.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/bulk-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/bulk-modal.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/import-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/import-modal.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/combo-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/combo-modal.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/replenishment/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/replenishment-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/forecast/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/forecast-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/valuation/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/valuation-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/reports/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-report-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/scraps/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/scrap-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/landed-costs/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/landed-cost-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/delivery/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/delivery-list.mjs'),
+  },
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/counts/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/count-list.mjs'),
+  },
+  // K55: Search in Stock.
+  {
+    source: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/search/island.tsx'),
+    output: join(ROOT, 'packages/ketsuite/src/modules/stock_backend/client/stock-search.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'tags/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/tag-list.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/tag-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/tag-modal.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'categories/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/category-list.mjs'),
+  },
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'modal/category-modal-view.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/category-modal.mjs'),
+  },
+  {
     source: join(PRODUCT_BACKEND_DIR, 'units/island.tsx'),
     output: join(PRODUCT_BACKEND_DIR, 'client/uom-list.mjs'),
+  },
+  // The Variants list.
+  {
+    source: join(PRODUCT_BACKEND_DIR, 'variants/island.tsx'),
+    output: join(PRODUCT_BACKEND_DIR, 'client/variant-list.mjs'),
   },
   {
     source: join(PRODUCT_BACKEND_DIR, 'modal/uom-modal-view.tsx'),

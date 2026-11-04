@@ -14,6 +14,7 @@ import {
   shell,
 } from '../../../ui/index.ts'
 import type { Column, DataTable, Frame } from '../../../ui/index.ts'
+import { WarehouseHelp } from './warehouse-help.tsx'
 
 export type WarehouseListRow = {
   id: string
@@ -102,26 +103,40 @@ export const warehousesListScreen = (
   return shell(
     _,
     _('stock_backend.warehouses'),
-    <ListPage
-      variant="operational"
-      frame={collection.frame}
-      title={_('stock_backend.warehouse.title')}
-      headerActions={
-        options.createHref ? (
-          <LinkButton label={_('stock_backend.action.create')} href={options.createHref} variant="primary" />
-        ) : null
-      }
-      actions={collectionActions(_, collection.frame, undefined, selection)}
-      controls={collectionControls(_, _('stock_backend.warehouse.title'), collection.frame)}
-      footer={`${_('stock_backend.warehouse.summary.total')}: ${String(total)}`}
-      body={
-        options.rows.length || options.table?.groups?.length
-          ? collectionTable(_, collection.table)
-          : emptyState(_('stock_backend.warehouse.empty'), _('stock_backend.warehouse.emptyHint'), {
-              icon: icon('warehouse'),
-            })
-      }
-    />,
-    { ...collection.frame, chrome: null, topbar: false },
+    <>
+      <ListPage
+        variant="operational"
+        frame={collection.frame}
+        title={_('stock_backend.warehouse.title')}
+        headerActions={
+          options.createHref ? (
+            <LinkButton
+              label={_('stock_backend.action.create')}
+              href={options.createHref}
+              variant="primary"
+            />
+          ) : null
+        }
+        actions={collectionActions(_, collection.frame, undefined, selection)}
+        controls={collectionControls(_, _('stock_backend.warehouse.title'), collection.frame)}
+        footer={`${_('stock_backend.warehouse.summary.total')}: ${String(total)}`}
+        body={
+          options.rows.length || options.table?.groups?.length
+            ? collectionTable(_, collection.table)
+            : emptyState(_('stock_backend.warehouse.empty'), _('stock_backend.warehouse.emptyHint'), {
+                icon: icon('warehouse'),
+              })
+        }
+      />
+      <WarehouseHelp lang={_.locale === 'en' ? 'en' : 'vi'} id="stock-warehouses-help" />
+    </>,
+    {
+      ...collection.frame,
+      chrome: null,
+      topbar: false,
+      ...(collection.frame.applications
+        ? { applications: { ...collection.frame.applications, helpLabel: _('stock_backend.warehouse.help') } }
+        : {}),
+    },
   )
 }

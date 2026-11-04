@@ -14,7 +14,8 @@ Source chính:
 
 - `packages/ketsuite/src/modules/company` — pháp nhân và cây chi nhánh;
 - `packages/ketsuite/src/modules/user` — company/branch membership và session context;
-- `packages/ketsuite/src/modules/company_backend` — UI quản trị và context switcher;
+- `packages/ketsuite/src/modules/company_backend` — UI quản trị công ty và chi nhánh;
+- `packages/ketsuite/src/modules/user_backend` — màn đổi công ty `/admin/context`, có ở mọi deployment;
 - `packages/ketsuite/src/modules/backend` — named company/branch selector trên topbar.
 
 ## Phạm vi
@@ -26,7 +27,7 @@ Cụm này cung cấp:
 - cây Branch vận hành nằm trong đúng một Company;
 - một root/default Branch được tạo cùng Company trong một transaction;
 - Company membership và Branch membership riêng cho từng User;
-- một Company và một Branch xác định để ghi, cùng tập Company/Branch được đọc;
+- mỗi phiên làm việc trong đúng một Company (đọc và ghi), cùng một Branch để ghi và tập Branch được đọc trong Company đó;
 - live session resolution ở mỗi request;
 - UI list, form, hierarchy, branch management và context switcher vi/en.
 
@@ -63,7 +64,7 @@ flowchart LR
   end
 
   subgraph Session["Session context"]
-    RC["companies[] · readable"]
+    RC["companies[] · exactly the active company"]
     WC["company · one write target"]
     RB["branches[] · readable"]
     WB["branch · one write target"]
@@ -176,18 +177,23 @@ Trong app có User, archive phải đi qua `user.archiveCompany` hoặc
 
 ## Session context
 
-Session phân biệt tập đọc và đích ghi như the domain contract:
+Owner chốt ngày 19/10/2026: mọi luồng làm việc trong KetSuite phải đổi công ty. Một
+phiên làm việc trong đúng một company, cả đọc lẫn ghi; muốn xem hay sửa dữ liệu công ty
+khác thì đổi công ty ở `/admin/context` (mục đổi công ty trong menu người dùng):
 
 ```text
 # File: docs/src/content/docs/ketsuite/company-branch.md
-companies[]  -> các company được đọc
-company      -> đúng một company được ghi
-branches[]   -> các branch được đọc
+companies[]  -> đúng [company]; danh sách công ty gửi lên bị bỏ qua
+company      -> company đang làm việc, đọc và ghi
+branches[]   -> các branch được đọc, chỉ trong company đó
 branch       -> đúng một branch được ghi
 ```
 
-`company` bắt buộc nằm trong `companies`; `branch` bắt buộc nằm trong `branches` và
-thuộc `company`. Engine tự stamp `companyId`/`branchId` cho model
+`user.resolveSessionContext` và `user.prepareContext` luôn trả `companies = [company]`,
+kể cả khi User là thành viên nhiều công ty. `branch` bắt buộc nằm trong `branches` và
+thuộc `company`; khi đổi công ty mà danh sách branch gửi lên không có branch nào của
+công ty mới, phiên đọc mọi branch được cấp của công ty đó. Màn đổi công ty chọn branch
+gốc của công ty mới khi branch đang chọn thuộc công ty cũ. Engine tự stamp `companyId`/`branchId` cho model
 `company+branch`, không nhận hai field này từ payload.
 
 ```mermaid

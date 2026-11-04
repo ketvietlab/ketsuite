@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/kit-component-as-jsx: pending kit work — the #1044 reservation workspace calls section(...) instead of <Section />
 import { HospitalityGuestForm } from './form-sections.tsx'
 import { GUEST_LOYALTY_TIERS } from '../types.ts'
 import {

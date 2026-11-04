@@ -1,3 +1,4 @@
+import { savedViewDestination } from './saved-view-state.mjs'
 import { auditChange } from './audit-display.mjs'
 import { createMemberOptions } from './member-options.mjs'
 import { createStatusOptions } from './status-options.mjs'
@@ -5,7 +6,7 @@ import { createPlanningWindows } from './planning-window.mjs'
 import { createScreenHelp, screenHelpTrigger } from './screen-help.mjs'
 import { projectRecord, taskEpic } from './project-record.mjs'
 import { mutationFeedback } from './mutation-feedback.mjs'
-import { prepareFlowCommand } from './command-contract.mjs'
+import { prepareFlowCommand, canRunReadOnlyCommand } from './command-contract.mjs'
 import { FlowLiveDoc, FlowLiveDocText, setFlowLiveDocEditor } from '@ketvietlab/flow-ui'
 import { tr, flowLocaleTag, flowLocale, setFlowLocale, normalizeFlowLocale, FLOW_LANGUAGES } from './i18n.mjs'
 import { taskAssigneeIds, taskUsers, taskAssigneeNames, isAssignedTo } from './task-assignees.mjs'
@@ -21,8 +22,8 @@ import {
   taskTypeIcons,
 } from './project-catalogs.mjs'
 import { html, each, signal, batch, effect, hydrateRoot, domHost } from '@ketvietlab/ketjs-view'
-import { readFlowAppearance, writeFlowAppearance } from './preferences.mjs'
-import { normalizeBulkOutcome, selectionAfterBulk, bulkReasonKey } from './bulk.mjs'
+import { flowPreferenceKey, readFlowAppearance, writeFlowAppearance } from './preferences.mjs'
+import { normalizeBulkOutcome, selectionAfterBulk, bulkReasonKey, bulkCatalogOptions } from './bulk.mjs'
 import { createFormLeaveGuard } from './form-leave.mjs'
 import { createFlowHistory, createHistoryLeaveGuard } from './navigation-history.mjs'
 import {
@@ -107,10 +108,12 @@ import { canManageScope } from './access-model.mjs'
 import { createDocuments, documentRoutes } from './documents.mjs'
 import { retainedDocumentSnapshot } from './document-navigation.mjs'
 import { documentMoveCandidates } from './document-tree.mjs'
-import { todayDate, addDays } from './timeline.mjs'
+import { todayDate, addDays, displayTime } from './timeline.mjs'
 import { sortedListTasks, taskPage, orderedTasks, taskGroupValue, taskGroups } from './task-order.mjs'
 import { createTaskAutosave } from './task-autosave.mjs'
 import { createProjectSetup } from './project-setup.mjs'
+import { createProjectLifecycle } from './project-lifecycle.mjs'
+import { createRecordDescriptions } from './record-descriptions.mjs'
 import { usesSprints, nextSprint } from './sprint-cadence.mjs'
 import { createFirstRun } from './first-run.mjs'
 import { taskFieldControl } from './task-field-control.mjs'
@@ -118,7 +121,13 @@ import { createTaskComposer } from './task-composer.mjs'
 import { createTaskExchange } from './task-exchange.mjs'
 import { createTaskRelocation, relocationRoutes } from './task-relocation.mjs'
 import { createTransientNotice } from './notice.mjs'
-import { createFnClient, createFileUploader, FlowApiError, selectFlowCompany } from './api.mjs'
+import {
+  createFnClient,
+  createFileUploader,
+  FlowApiError,
+  flowSessionEnded,
+  selectFlowCompany,
+} from './api.mjs'
 
 const moreRoutes = {
   dashboard: ['flow.ui.overview', 'flow.ui.manage'],
@@ -338,6 +347,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   const history = globalThis.history ? createFlowHistory(globalThis.history) : null
   const transport = dependencies.call ?? createFnClient()
   const upload = dependencies.upload ?? createFileUploader()
+  const sessionEnded = dependencies.sessionEnded ?? (props.serverShell ? flowSessionEnded : async () => false)
   const stagedDraftFiles = new WeakMap()
   const companyId = signal(props.companyId ?? 'demo'),
     workspaceId = signal(props.workspaceId ?? '')
@@ -482,8 +492,21 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     return true
   }
   let appearanceStorage
+  let appearanceIdentityKey
+  const appearanceScope = () => ({ companyId: companyId(), userId: data()?.user?.id ?? '' })
+  const restoreAppearance = () => {
+    const scope = appearanceScope()
+    const key = JSON.stringify([scope.companyId, scope.userId])
+    if (key === appearanceIdentityKey) return
+    appearanceIdentityKey = key
+    const appearance = readFlowAppearance(appearanceStorage, scope)
+    batch(() => {
+      theme.set(appearance.theme)
+      density.set(appearance.density)
+    })
+  }
   const changeAppearance = (key, value) => {
-    if (!writeFlowAppearance(appearanceStorage, key, value)) return
+    if (!writeFlowAppearance(appearanceStorage, key, value, appearanceScope())) return
     if (key === 'theme') theme.set(value)
     else if (key === 'density') density.set(value)
   }
@@ -948,6 +971,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       route: activeRoute(),
       query: query(),
       status: status(),
+      viewId: selectedView() || undefined,
       sort: listKeys.has(activeRoute()) ? listSort() : activeRoute() === 'calendar' ? 'due' : 'manual',
       ...(activeRoute() === 'calendar' ? operations.calendarWindow() : {}),
       inboxFilter: activeRoute() === 'inbox' ? operations.inboxFilter() : undefined,
@@ -1022,11 +1046,12 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       return false
     } catch (e) {
       if (e.name !== 'AbortError') {
-        if ((props.serverShell && !primaryReady()) || ['forbidden', 'unauthenticated'].includes(e.code))
-          data.set(
-            e.code === 'forbidden' && props.chrome?.problem?.code === 'forbidden' ? props.chrome : null,
-          )
-        failure.set({ code: e.code, message: e.message })
+        // The product signs people in elsewhere; a refused read may only mean that session ended.
+        const code = e.code === 'forbidden' && (await sessionEnded()) ? 'unauthenticated' : e.code
+        if (['forbidden', 'unauthenticated'].includes(code)) reads.clear()
+        if ((props.serverShell && !primaryReady()) || ['forbidden', 'unauthenticated'].includes(code))
+          data.set(code === 'forbidden' && props.chrome?.problem?.code === 'forbidden' ? props.chrome : null)
+        failure.set({ code, message: e.message })
         readFailure.set(true)
         primaryReady.set(true)
       }
@@ -1772,14 +1797,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     }, REVALIDATE_MS)
   }
   const mutate = (name, input = {}, success, opts = {}) => {
-    if (
-      !canWrite() &&
-      !(
-        ['flow.inbox.read', 'flow.preferences.save'].includes(name) ||
-        (['flow.issue.copyTo', 'flow.invitation.accept'].includes(name) && opts.allowReadOnly)
-      )
-    )
-      return Promise.resolve(false)
+    if (!canWrite() && !canRunReadOnlyCommand(name, opts, extensions)) return Promise.resolve(false)
     // KetJS can delegate submit before our root capture listener. The focused
     // native form is the same submission boundary for keyboard and pointer use.
     const submission =
@@ -1824,8 +1842,12 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         reads.clear()
         if (mutationCompany !== companyId()) return false
         writes++
-        if (patchRecord(value?.record)) revalidate()
-        else await reload()
+        // A command that retires the current owner navigates from its accepted
+        // callback; rereading that owner would turn success into access failure.
+        if (opts.revalidate !== false) {
+          if (patchRecord(value?.record)) revalidate()
+          else await reload()
+        }
         formGuard.accept(submission)
         if (!opts.quiet)
           feedback.show(opts.message ? opts.message(value) : mutationFeedback(name, input, value, data()))
@@ -1835,9 +1857,9 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         if (success) success(value)
         return true
       } catch (e) {
-        // A definitive refusal committed nothing. Retry may capture the fresh
-        // version after reloading; an uncertain network failure keeps its intent.
-        if (intent && ['conflict', 'validation'].includes(e.code)) intent.input = null
+        // A definitive refusal committed nothing. A rebased request needs a new
+        // transport key; uncertain network failures retain their exact intent.
+        if (intent && ['conflict', 'validation'].includes(e.code)) pendingOperations.delete(signature)
         if (e.name !== 'AbortError') {
           opts.onError?.(e)
           const claimed = e.code === 'bulkResult' ? {} : extensionValue('mutationError', e, input)
@@ -1901,7 +1923,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           size: 'media',
           title: file.title,
           onRequestClose: () => previewFile.set(''),
-          body: FlowMediaPreview({ title: file.title, type: file.contentType, url: file.url }),
+          body: FlowMediaPreview({ title: file.title, type: file.contentType ?? file.type, url: file.url }),
           footer: FlowInline({
             align: 'end',
             children: html`<a data-flow="button" data-variant="secondary" data-size="md" href=${file.url + '?download=1'} download=${file.title}>${tr('flow.ui.download')}</a>`,
@@ -1911,13 +1933,24 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   }
   const liveTaskControllers = new Map(),
     liveTaskState = signal({})
+  const recordDescriptions = createRecordDescriptions({
+    data,
+    companyId,
+    lifetime,
+    reload,
+    canManage: (id) => canWrite() && canManageScope(data(), 'project', id),
+  })
   const flushLiveTasks = async () => {
     for (const editor of liveTaskControllers.values())
       if (editor.isPending() && !(await editor.flush())) return false
-    return true
+    return recordDescriptions.flush()
   }
   const liveTaskSync = (id, company, state) => {
     if (company !== companyId() || !data()) return
+    if (state.status === 'forbidden') {
+      void reload()
+      return
+    }
     liveTaskState.set({ ...liveTaskState(), [id]: state.status })
     if (state.record?.task)
       data.set({
@@ -1931,14 +1964,16 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   }
   const autosave = createTaskAutosave({
     onChange: () => saveRevision.set(saveRevision() + 1),
-    save: async (id, patch) => {
-      const ok = await mutate(
-        'flow.issue.save',
-        () => ({ id, ...patch, expectedVersion: data().tasks.find((t) => t.id === id)?.version }),
-        null,
-        { quiet: true },
-      )
-      if (!ok) throw new Error(failure()?.message ?? tr('flow.ui.unable.to.save.changes'))
+    version: (id) => data().tasks.find((t) => t.id === id)?.version,
+    save: async (id, patch, expectedVersion) => {
+      let refusal
+      const ok = await mutate('flow.issue.save', () => ({ id, ...patch, expectedVersion }), null, {
+        quiet: true,
+        onError: (error) => {
+          refusal = error
+        },
+      })
+      if (!ok) throw refusal ?? new Error(failure()?.message ?? tr('flow.ui.unable.to.save.changes'))
     },
   })
   const statusOptions = (task, items = taskColumns(data(), task.projectId)) =>
@@ -2052,11 +2087,14 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   }
   const retryTaskSave = async () => {
     const ids = data()
-      .tasks.filter((t) => autosave.state(t.id) === 'error')
+      .tasks.filter((t) => Object.keys(autosave.draft(t.id)).length)
       .map((t) => t.id)
+    // Clicking retry blurs the title first, which may still be flushing the old
+    // version. Let that attempt finish before refreshing and rebasing the draft.
+    await Promise.all(ids.map((id) => autosave.flush(id)))
     // Refresh CAS while retaining the user's pending patch in the autosave queue.
-    await reload()
-    for (const id of ids) await autosave.flush(id)
+    if (!(await reload())) return
+    for (const id of ids) await autosave.retry(id)
   }
   const composer = createTaskComposer({
     call,
@@ -2618,7 +2656,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           label: tr('flow.ui.save.view'),
           icon: 'filter',
           size: 'sm',
-          disabled: !canWrite(),
+          disabled: !canSaveView(),
           onClick: openSavedView,
         }),
       ),
@@ -2862,7 +2900,9 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 name: 'bulk-status',
                 label: tr('flow.ui.new.status'),
                 value: bulkStatus(),
-                options: data().columns.map((c) => ({ value: c.id, label: c.label })),
+                options: bulkCatalogOptions(data().tasks, selected(), (id) => taskColumns(data(), id)).map(
+                  (c) => ({ value: c.id, label: c.label }),
+                ),
                 onChange: (e) => bulkStatus.set(e.target.value),
               }),
               FlowHint({
@@ -2951,7 +2991,15 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               ? FlowButton({
                   label: tr('flow.ui.change') + selected().length + tr('flow.ui.tasks.05e55a'),
                   size: 'sm',
-                  onClick: () => bulkPreview.set(!bulkPreview()),
+                  onClick: () => {
+                    if (!bulkPreview()) {
+                      const first = data().tasks.find((t) => selected().includes(t.id))
+                      const options = taskColumns(data(), first?.projectId)
+                      if (!options.some((c) => c.id === bulkStatus()))
+                        bulkStatus.set(options.find((c) => c.kind === 'done')?.id ?? options[0]?.id ?? '')
+                    }
+                    bulkPreview.set(!bulkPreview())
+                  },
                 })
               : html`<span data-flow="muted">${tr('flow.ui.tasks.in.this.view', [tasks.length])}</span>`,
           })
@@ -3245,7 +3293,8 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                 FlowAttachment({
                   title: f.title,
                   meta: f.description,
-                  type: f.contentType,
+                  size: f.size,
+                  type: f.contentType ?? f.type,
                   url: f.url,
                   onPreview: () => previewFile.set(f.id),
                 }),
@@ -3271,17 +3320,21 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
                                 ' · ' +
                                 h.changes.map((c) => auditChange(c, data(), t.catalogs)).join('; ')
                               : h.text,
-                            time: h.time?.includes('T')
-                              ? new Date(h.time).toLocaleString(flowLocaleTag())
-                              : h.time,
+                            time: displayTime(
+                              h.time,
+                              flowLocaleTag(),
+                              data().personalPreferences?.timezone ?? data().timezone,
+                            ),
                           }))
                       : data()
                           .comments.filter((c) => c.taskId === t.id)
                           .map((c) => ({
                             ...c,
-                            time: c.time?.includes('T')
-                              ? new Date(c.time).toLocaleString(flowLocaleTag())
-                              : c.time,
+                            time: displayTime(
+                              c.time,
+                              flowLocaleTag(),
+                              data().personalPreferences?.timezone ?? data().timezone,
+                            ),
                           })),
                 }),
             html`<form
@@ -4087,6 +4140,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     )
   }
   const help = createScreenHelp({
+    load: dependencies.loadScreenHelp,
     key: () => JSON.stringify([companyId(), workspaceId(), activeProject(), activeRoute(), flowLocale()]),
     route: activeRoute,
     title: () => routes[activeRoute()]?.title ?? routes[screen()]?.title ?? 'Flow',
@@ -4463,11 +4517,14 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       if (activeRoute() === 'task-exchange' && !modalRoute()) formGuard.discard()
     },
   })
+  const projectLifecycle = createProjectLifecycle({ data, call, mutate, navigate, busy })
   const settings = () =>
     FlowSection({
       title: tr('flow.ui.project.setup.863c6d', [selectedProject()?.title ?? '']),
       children: stack(
         ...extensions.map((x) => x.settingsSection?.('project-settings') ?? null),
+        projectLifecycle.projectSection(selectedProject()),
+        selectedProject()?.documentTransport ? recordDescriptions.render('project', selectedProject()) : null,
         FlowListItem({
           title: tr('flow.exchange.title'),
           description: tr('flow.exchange.scope'),
@@ -4668,6 +4725,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       ),
     })
   }
+  const canSaveView = () => data()?.capabilities?.views?.save ?? canWrite()
   const openSavedView = () => {
     const url = new URL(location.href)
     url.searchParams.set('modal', 'save-view')
@@ -4692,13 +4750,25 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           feedback: feedbackToast('inline'),
           body: html`<form id="flow-view-create" on:submit=${async (e) => {
             e.preventDefault()
-            const ok = await mutate('flow.entity.save', {
-              collection: 'views',
-              ...collect(e),
-              projectId: project(),
-              query: query(),
-              status: status(),
-            })
+            const sourceRoute = ['my-work', 'all-issues', 'board', 'project-issues'].includes(activeRoute())
+              ? activeRoute()
+              : project()
+                ? 'project-issues'
+                : 'all-issues'
+            const ok = await mutate(
+              'flow.view.save',
+              {
+                ...collect(e),
+                projectId: ['board', 'project-issues'].includes(sourceRoute) ? project() : null,
+                sourceRoute,
+                sort: sourceRoute === 'board' ? 'manual' : listSort(),
+                group: groupBy(),
+                query: query(),
+                status: status(),
+              },
+              undefined,
+              { allowReadOnly: true },
+            )
             if (ok) {
               savedViewDraft = { title: '', description: '' }
               closeSavedView()
@@ -4708,7 +4778,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               id: 'title',
               label: tr('flow.ui.view.name'),
               required: true,
-              disabled: !canWrite(),
+              disabled: !canSaveView(),
               value: savedViewDraft.title,
               error: formError().title,
               onInput: (e) => {
@@ -4719,7 +4789,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
               id: 'description',
               label: tr('flow.ui.notes'),
               placeholder: tr('flow.ui.describe.the.purpose.or.usage.of.this.view'),
-              disabled: !canWrite(),
+              disabled: !canSaveView(),
               value: savedViewDraft.description,
               onInput: (e) => {
                 savedViewDraft.description = e.target.value
@@ -4738,7 +4808,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             FlowButton({
               label: tr('flow.ui.save.view'),
               variant: 'primary',
-              disabled: !canWrite(),
+              disabled: !canSaveView(),
               loading: busy(),
               onClick: () => host?.querySelector('#flow-view-create')?.requestSubmit(),
             }),
@@ -4884,7 +4954,9 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
             ? navButton('epic-map', tr('flow.ui.dependencies.6bc581'), 'link')
             : null,
           children: stack(
-            FlowHint({ children: epic.description }),
+            epic.documentTransport
+              ? recordDescriptions.render('epic', epic)
+              : FlowHint({ children: epic.description }),
             goalProjection
               ? FlowSelectField({
                   name: 'epic-goal',
@@ -5234,12 +5306,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           ),
         })
   const openListView = (id) => {
-    const v = data().views.find((v) => v.id === id && (v.projectId ?? 'core') === project())
-    navigate('project-issues', {
-      q: v?.query ?? '',
-      status: v?.status ?? 'all',
-      ...(v ? { view: v.id } : {}),
-    })
+    const view = data().views.find((v) => v.id === id)
+    if (view) {
+      const target = savedViewDestination(view)
+      navigate(target.route, target.params)
+    } else navigate('project-issues', { project: project(), view: '', q: '', status: 'all' })
   }
   const projectViews = () =>
     FlowToolbar({
@@ -5248,7 +5319,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         views: data().views.filter((v) => !v.archived && (v.projectId ?? 'core') === project()),
         onView: openListView,
         onSave: openSavedView,
-        canSave: canWrite(),
+        canSave: canSaveView(),
         value: pageRoutes.has(screen()) ? 'pages' : screen(),
         options: [
           { value: 'board', label: tr('flow.ui.board'), icon: 'board' },
@@ -5336,8 +5407,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
           )
   const operationsState = createOperationsState(data)
   const operationsContext = {
+    settingsSection: (key, entity) =>
+      extensions.map((extension) => extension.settingsSection?.(key, entity) ?? null),
     state: operationsState,
     reloadCalendar: () => void reload(),
+    reloadViews: () => void reload(),
     collectionMore,
     screen,
     data,
@@ -5425,6 +5499,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   }
   // Extensions see the same narrow context the built-in feature modules get; core never names them.
   const extensionContext = {
+    selectCompany: (id) => switchContext(id),
     filtered,
     filterbar,
     table,
@@ -5492,6 +5567,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     reload,
     data,
     demo: props.signInDemo,
+    fixtureAuth: dependencies.fixtureAuth,
     finish: (id) => switchContext(companyId(), id, true),
   })
   const organizationContext = {
@@ -5510,7 +5586,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     teamPageView,
     catalogPageView,
     confirmAction,
-    settingsSection: (key, entity) => extensions.map((x) => x.settingsSection?.(key, entity) ?? null),
+    settingsSection: (key, entity) => [
+      key === 'organization-settings' ? projectLifecycle.organizationSection() : null,
+      ...extensions.map((x) => x.settingsSection?.(key, entity) ?? null),
+    ],
     data,
     workspaceId,
     projectId: activeProject,
@@ -5860,7 +5939,8 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     }
     setFlowLocale(value)
     try {
-      localStorage.setItem('flow.language', flowLocale())
+      const key = flowPreferenceKey('language', appearanceScope())
+      if (key) appearanceStorage?.setItem(key, flowLocale())
     } catch {}
     if (typeof document !== 'undefined') document.documentElement.lang = flowLocale()
     if (typeof location !== 'undefined') {
@@ -5999,6 +6079,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
   })
   let chromeBound = false,
     appearanceStop,
+    appearanceIdentityStop,
     relocationStop
   const enhanceChrome = () => {
     if (!props.serverShell || chromeBound) return
@@ -6022,6 +6103,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       ${data() && primaryReady() && !scopeDenied() ? taskModal() : null}${data() && primaryReady() && !scopeDenied() && modalRoute() ? filePreview() : null}${data() && primaryReady() && !scopeDenied() ? formModal() : null}${data() && primaryReady() && !scopeDenied() ? savedViewDialog() : null}
       ${discardConfirmation()}
       ${destructiveConfirmation()}
+      ${projectLifecycle.dialog()}
       ${globalSearch.view()}
       ${help.view()}
       ${screen() !== 'project-profile' && !pendingAction() && !pendingLeave() && !modalRoute() && !savedViewOpen() && !extensions.some((x) => x.ownsFeedback?.()) ? feedbackToast() : null}
@@ -6133,13 +6215,11 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       try {
         appearanceStorage = localStorage
       } catch {}
-      const appearance = readFlowAppearance(appearanceStorage)
-      theme.set(appearance.theme)
-      density.set(appearance.density)
       if (typeof location !== 'undefined') {
         let saved
         try {
-          saved = localStorage.getItem('flow.language')
+          const key = flowPreferenceKey('language', appearanceScope())
+          if (key) saved = appearanceStorage?.getItem(key)
         } catch {}
         const requested = new URL(location.href).searchParams.get('lang')
         setFlowLocale(requested ?? saved ?? 'en')
@@ -6157,6 +6237,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
         if (typeof document !== 'undefined') document.documentElement.lang = flowLocale()
       }
       host = props.serverShell ? (context.root.closest('[data-flow-app]') ?? context.root) : context.root
+      appearanceIdentityStop = effect(restoreAppearance)
       if (props.serverShell)
         appearanceStop = effect(() => {
           host.setAttribute('data-theme', theme())
@@ -6227,7 +6308,8 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       })
       const pendingTaskSaves = () =>
         data()?.tasks.some((task) => autosave.state(task.id) !== 'saved') ||
-        [...liveTaskControllers.values()].some((editor) => editor.isPending())
+        [...liveTaskControllers.values()].some((editor) => editor.isPending()) ||
+        recordDescriptions.pending()
       const readHistory = () => {
         const target = new URL(location.href)
         const key = target.pathname.slice(base.length).replace(/\/$/, '')
@@ -6397,8 +6479,10 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
     },
     dispose() {
       appearanceStop?.()
+      appearanceIdentityStop?.()
       relocationStop?.()
       relocation.dispose()
+      projectLifecycle.dispose()
       taskExchange.dispose()
       composer.dispose()
       help.dispose()
@@ -6411,6 +6495,7 @@ export function createFlowWorkspace(props = {}, dependencies = {}) {
       feedback.dispose()
       for (const x of extensions) x.dispose?.()
       autosave.dispose()
+      recordDescriptions.dispose()
       pendingOperations.clear()
       documents.dispose()
       globalSearch.dispose()

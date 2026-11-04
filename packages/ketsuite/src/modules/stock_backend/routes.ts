@@ -1,3 +1,31 @@
+import { replenishmentDataRoute } from './screens/replenishment-data.tsx'
+import { forecastDataRoute } from './screens/forecast-data.tsx'
+import { forecastDetailRoute } from './screens/forecast-detail.tsx'
+import { forecastCollectionScreen } from './screens/forecast-collection.tsx'
+import { valuationDataRoute } from './screens/valuation-data.tsx'
+import { valuationRoute } from './screens/valuation-page.tsx'
+import { agingDataRoute, moveAnalysisDataRoute, moveHistoryDataRoute } from './screens/stock-reports-data.tsx'
+import { agingRoute, moveAnalysisRoute, moveHistoryRoute } from './screens/stock-reports-page.tsx'
+import { scrapsDataRoute } from './screens/scraps-data.tsx'
+import { scrapsRoute } from './screens/scraps-page.tsx'
+import { scrapContext } from './modal/scrap-context.ts'
+import { landedCostsDataRoute } from './screens/landed-costs-data.tsx'
+import { landedCostPageRoute, landedCostsRoute } from './screens/landed-costs-page.tsx'
+import { landedCostContext } from './modal/landed-cost-context.ts'
+import { deliveryDataRoute } from './delivery/data.ts'
+import { deliveryListRoute, deliveryOverviewRoute, deliveryRecordRoute } from './delivery/pages.tsx'
+import { shipmentContext } from './modal/shipment-context.ts'
+import { deliveryStatementContext } from './modal/delivery-statement-context.ts'
+import { countsDataRoute } from './screens/counts-data.tsx'
+import { CountPrint } from './screens/count-print.tsx'
+import { countsRoute } from './screens/counts-page.tsx'
+import { countSessionContext } from './modal/count-context.ts'
+import { accountingRoute } from './screens/accounting.tsx'
+import { replenishmentCollectionRoute, replenishmentRecordRoute } from './screens/replenishment-page.tsx'
+import { lotPageScreen } from './screens/lot-page.tsx'
+import { transferPageScreen } from './screens/transfer-page.tsx'
+import { localizeGeneratedRecords } from './generated-names.ts'
+import { productPageLink } from '../backend/product-page.ts'
 import { stockOverviewScreen } from './screens/overview.tsx'
 import { transferContext } from './modal/transfer-context.ts'
 import { inventoryCountContext } from './modal/inventory-context.ts'
@@ -10,35 +38,33 @@ import {
   locationListSearch,
   lotListSearch,
   pickingTypeListSearch,
-  replenishmentListSearch,
   stockRouteListSearch,
+  TRANSFER_KINDS,
   transferListSearch,
   warehouseListSearch,
 } from './search.ts'
 
+/** The sidebar label of each kind's queue, which heads the list opened on it (K21). */
+const QUEUE_LABELS = { incoming: 'receipts', outgoing: 'deliveries', internal: 'internalTransfers' } as const
+
 import { randomUUID } from 'node:crypto'
-import { fragment, json, NAVIGATION_TYPE, text, withHeaders } from '@ketvietlab/ketjs'
+import { json, text } from '@ketvietlab/ketjs'
 import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'
 import type { Translator } from '@ketvietlab/ketjs'
 import { backendPage, formatDateTime, modalWorkspace } from '../../ui/index.ts'
 import { errorsOf, readForm, seeOther } from '../backend/forms.ts'
 import {
-  forecastScreen,
   inventoryScreen,
+  lotCondition,
   lotCreateModal,
-  lotDetailScreen,
   lotsListScreen,
   locationCreateModal,
   locationsListScreen,
   pickingTypeCreateModal,
   pickingTypesListScreen,
-  replenishmentCreateScreen,
-  replenishmentListScreen,
   stockRouteCreateModal,
   stockRouteDetailScreen,
   stockRoutesListScreen,
-  transferCreateScreen,
-  transferDetailScreen,
   transfersListScreen,
   warehouseCreateModal,
   warehousesListScreen,
@@ -68,9 +94,17 @@ const refusePost = (req: Parameters<Route>[1], accepts = 'POST') =>
       ? text('Forbidden', { status: 403 })
       : null
 
-import { adminPage, frameOf, inLocale, printGroup } from '../backend/screen.ts'
+import { adminPage, frameOf, inLocale, timezoneOf } from '../backend/screen.ts'
+import { TransferPrint } from './screens/transfer-print.tsx'
+import { PICKING_PRINTS } from '../stock/reports.ts'
+import { lotAvailable } from '../stock/lot-policy.ts'
+import { reservesStock } from '../stock/reservation-policy.ts'
+import { transferStatus } from './transfer-status.ts'
+import { formatMoney } from '../../ui/money-format.ts'
+import { overviewFigures } from './overview-data.ts'
 import { selectionLabel as resolveSelection } from '../backend/screen.ts'
 import type { AnyRow, Req } from '../backend/screen.ts'
+import { searchRoutes } from './search/routes.ts'
 
 /**
  * A group heading in the reader's language: a selection code reads as its
@@ -136,40 +170,6 @@ const completeLocationName = (row: AnyRow, nameById: Map<string, string>) =>
     .map((id) => nameById.get(id) ?? id)
     .join(' / ')
 
-const generatedNames: Record<string, string> = {
-  stock: 'Stock',
-  input: 'Input',
-  quality: 'Quality',
-  output: 'Output',
-  pick: 'Pick',
-  pack: 'Pack',
-  supplier: 'Supplier',
-  customer: 'Customer',
-}
-
-const localizeGeneratedRecords = (_: Translator, rows: AnyRow[], group: 'location' | 'pickingType') =>
-  rows.map((row) => {
-    if (group === 'pickingType') {
-      const suffix = String(row.id).split(':').at(-1) ?? ''
-      const defaults: Record<string, string> = {
-        incoming: 'Receipts',
-        outgoing: 'Delivery Orders',
-        internal: 'Internal Transfers',
-        quality: 'Quality Control',
-        store: 'Store',
-        pick: 'Pick',
-        pack: 'Pack',
-        adjustment: 'Inventory Adjustments',
-      }
-      return defaults[suffix] === row.name
-        ? { ...row, name: selectionLabel(_, 'record.pickingType', suffix) }
-        : row
-    }
-    const suffix = String(row.id).split(':').at(-1) ?? ''
-    return generatedNames[suffix] === row.name
-      ? { ...row, name: selectionLabel(_, 'record.location', suffix) }
-      : row
-  })
 const invalid = (url: URL, _: Translator) =>
   url.searchParams.has('invalid') ? [_('stock_backend.error.invalid')] : undefined
 const createModalHref = (url: URL, collection: string): string => inLocale(url, `${collection}?create=1`)
@@ -180,7 +180,6 @@ const resultRedirect = (result: unknown, success: string) =>
   (result as { ok?: boolean }).ok
     ? seeOther(success)
     : seeOther(`${success}${success.includes('?') ? '&' : '?'}invalid=1`)
-const isStockPartial = (req: Req): boolean => req.headers['x-ket-partial'] === 'stock-transfer'
 const lotProductOptions = (products: AnyRow[]) =>
   products.flatMap((template) =>
     (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : [])
@@ -192,7 +191,8 @@ const lotProductOptions = (products: AnyRow[]) =>
           : String(template.name),
       })),
   )
-const dateTimeLabel = (value: unknown, lang: string): string => {
+/** A moment as the company reads it: its accounting time zone, not the server's. */
+const dateTimeLabel = (value: unknown, lang: string, timeZone: string): string => {
   const raw = String(value ?? '')
   if (!raw) return ''
   const date = new Date(raw)
@@ -201,7 +201,30 @@ const dateTimeLabel = (value: unknown, lang: string): string => {
     : formatDateTime(lang === 'vi' ? 'vi-VN' : 'en-US', date, {
         dateStyle: 'short',
         timeStyle: 'short',
+        timeZone,
       })
+}
+
+/**
+ * Where a transfer sits in the warehouse's work (K18): ready, then waiting for goods, then drafts,
+ * each by scheduled date, then the closed ones newest first.
+ */
+const TRANSFER_QUEUE_RANK: Record<string, number> = {
+  assigned: 0,
+  waiting: 1,
+  confirmed: 1,
+  partially_available: 1,
+  draft: 2,
+}
+const transferQueueOrder = (row: AnyRow): number => {
+  const time = (value: unknown) => {
+    const ms = Date.parse(String(value ?? ''))
+    return Number.isNaN(ms) ? 0 : ms
+  }
+  const rank = TRANSFER_QUEUE_RANK[String(row.state)]
+  return rank === undefined
+    ? 3e13 + (1e13 - time(row.dateDone ?? row.scheduledDate))
+    : rank * 1e13 + time(row.scheduledDate)
 }
 
 const common = async (ctx: ServeContext, url: URL, req: Req) => {
@@ -224,38 +247,165 @@ const common = async (ctx: ServeContext, url: URL, req: Req) => {
   }
 }
 
+/** A stock path in the locale, company and branch of the page linking to it. */
+const scoped = (url: URL, path: string): string => {
+  const target = new URL(inLocale(url, path), url)
+  for (const key of ['company', 'branch'])
+    if (url.searchParams.has(key)) target.searchParams.set(key, url.searchParams.get(key)!)
+  return `${target.pathname}${target.search}`
+}
+/** A transfer's page; `null` creates one. */
+export const transferHref = (url: URL, id: string | null): string =>
+  scoped(url, `/admin/stock/transfers/${id ?? 'new'}`)
+/**
+ * A transfer is a page (`/admin/stock/transfers/{id}`, `new` to create). The server renders the
+ * RecordPage loading; the record runtime reads `/admin/stock/transfer/{id}/context` and renders
+ * the transfer (modal/transfer-view.tsx).
+ */
+const transferPageRoute =
+  (ctx: ServeContext): Route =>
+  async (url, req, params) => {
+    if (req.method !== 'GET') return text('GET', { status: 405 })
+    const lang = ctx.localeOf(url, req)
+    const _ = ctx.translate(lang)
+    const creating = params.id === 'new'
+    const picking = creating
+      ? null
+      : ((await ctx.call('stock.getPicking', { id: params.id }, url, req)) as AnyRow | null)
+    if (!creating && !picking) return text('not found', { status: 404 })
+    const title = picking ? String(picking.name) : _('stock_backend.transfer.create.title')
+    const island = await ctx.joint(url, req, 'stock_backend:transfer.page', {
+      id: params.id,
+      title,
+      loading: _('backend.relation.loading'),
+      back: scoped(url, '/admin/stock/transfers'),
+      // Saved transfers are wide for their grids, so loading does not shift the page.
+      width: creating ? 'default' : 'wide',
+    })
+    return backendPage(ctx, req, {
+      lang,
+      title,
+      body: transferPageScreen(_, title, island, await frameOf(ctx, url, req), lang === 'en' ? 'en' : 'vi'),
+    })
+  }
+
 export const routes: Record<string, RouteEntry> = {
+  ...searchRoutes,
   '/admin/stock':
     (ctx): Route =>
     async (url, req) => {
       if (req.method !== 'GET') return text('GET', { status: 405 })
-      const [rows, locations, pickingTypes] = await Promise.all([
-        ctx.call('stock.listPickings', {}, url, req) as Promise<AnyRow[]>,
-        optionalRead<AnyRow[]>(ctx, 'stock.listLocations', {}, url, req, []),
-        optionalRead<AnyRow[]>(ctx, 'stock.listPickingTypes', {}, url, req, []),
-      ])
+      const may = (fn: string) => ctx.allows(fn, url, req)
+      // K51: each figure reads the list behind it, and only when the reader may open that list.
+      const readIf = async (fn: string, input: Record<string, unknown> = {}) =>
+        (await may(fn)) ? await optionalRead<AnyRow[] | null>(ctx, fn, input, url, req, null) : null
+      const [rows, locations, pickingTypes, cycles, warehouses, quants, lots, counts, orderpoints] =
+        await Promise.all([
+          ctx.call('stock.listPickings', {}, url, req) as Promise<AnyRow[]>,
+          optionalRead<AnyRow[]>(ctx, 'stock.listLocations', {}, url, req, []),
+          optionalRead<AnyRow[]>(ctx, 'stock.listPickingTypes', {}, url, req, []),
+          optionalRead<AnyRow[]>(ctx, 'stock.listCountCycles', {}, url, req, []),
+          optionalRead<AnyRow[]>(ctx, 'stock.listWarehouses', {}, url, req, []),
+          readIf('stock.listQuants'),
+          readIf('stock.listLots'),
+          readIf('stock.listCountSessions'),
+          readIf('stock.getOrderpointCollection'),
+        ])
+      const requested = url.searchParams.get('warehouse') ?? ''
+      const warehouseId = warehouses.some((row) => String(row.id) === requested) ? requested : ''
+      const values = (await may('stock.listValuation'))
+        ? Object.fromEntries(
+            await Promise.all(
+              ['', ...warehouses.map((row) => String(row.id))].map(async (id) => {
+                const read = (await optionalRead<AnyRow | null>(
+                  ctx,
+                  'stock.listValuation',
+                  { ...(id ? { warehouseId: id } : {}), pageSize: 1 },
+                  url,
+                  req,
+                  null,
+                )) as AnyRow | null
+                return [id, read ? JSON.stringify([read.totalValue, read.currency]) : null] as const
+              }),
+            ),
+          )
+        : null
+      const figures = overviewFigures(
+        {
+          pickings: rows,
+          pickingTypes,
+          warehouses,
+          locations,
+          quants,
+          lots,
+          counts,
+          orderpoints,
+          values: values
+            ? Object.fromEntries(
+                Object.entries(values).filter((entry): entry is [string, string] => !!entry[1]),
+              )
+            : null,
+        },
+        warehouseId,
+        Date.now(),
+      )
       return adminPage(ctx, url, req, {
         title: 'stock_backend.overview.title',
-        body: async (_, frame) =>
-          stockOverviewScreen(_, frame, {
-            rows: rows.map((row) => ({
+        body: async (_, frame) => {
+          const money = (value: string | null) => {
+            if (!value) return '—'
+            const [amount, currency] = JSON.parse(value) as [unknown, unknown]
+            return formatMoney(_, amount, currency)
+          }
+          const here = (path: string) => scoped(url, path)
+          const timeZone = await timezoneOf(ctx, url, req)
+          // The warehouse's own places keep their English seed names; the reader sees them in their language.
+          const places = localizeGeneratedRecords(_, locations, 'location')
+          return stockOverviewScreen(_, frame, {
+            rows: figures.todo.map((row) => ({
               ...row,
               operationType:
                 localizeGeneratedRecords(_, pickingTypes, 'pickingType').find(
                   (item) => item.id === row.pickingTypeId,
                 )?.name ?? '—',
-              source: locations.find((item) => item.id === row.locationId)?.name ?? '—',
-              destination: locations.find((item) => item.id === row.locationDestId)?.name ?? '—',
-              scheduledDate: dateTimeLabel(row.scheduledDate, _.locale),
+              kind: pickingTypes.find((item) => item.id === row.pickingTypeId)?.code ?? '',
+              source: places.find((item) => item.id === row.locationId)?.name ?? '—',
+              destination: places.find((item) => item.id === row.locationDestId)?.name ?? '—',
+              scheduledDate: dateTimeLabel(row.scheduledDate, _.locale, timeZone),
+              status: transferStatus(
+                row.state,
+                reservesStock(pickingTypes.find((item) => item.id === row.pickingTypeId)),
+              ),
             })),
+            tiles: figures.tiles.map((tile) => ({
+              ...tile,
+              value: tile.id === 'value' ? money(String(tile.value)) : String(tile.value),
+              href: tile.href ? here(tile.href) : null,
+            })),
+            warehouses: figures.warehouses.map((row) => ({
+              ...row,
+              value: row.value === null ? null : money(row.value),
+              href: here(`/admin/stock/inventory?warehouse=${encodeURIComponent(row.id)}`),
+            })),
+            warehouseChoices: [
+              { id: '', name: _('stock_backend.overview.allWarehouses'), href: here('/admin/stock') },
+              ...warehouses.map((row) => ({
+                id: String(row.id),
+                name: String(row.name),
+                href: here(`/admin/stock?warehouse=${encodeURIComponent(String(row.id))}`),
+              })),
+            ].map((choice) => ({ ...choice, active: choice.id === warehouseId })),
+            showValue: values !== null,
             at: (path) => inLocale(url, path),
-            rowHref: (row) => recordModalHref(url, { kind: 'stock.transfer', id: String(row.id) }),
-            createHref: (await ctx.allows('stock.createPicking', url, req))
-              ? recordModalCreateHref(new URL(inLocale(url, '/admin/stock/transfers'), url), {
-                  kind: 'stock.transfer',
-                })
-              : null,
-          }),
+            rowHref: (row) => transferHref(url, String(row.id)),
+            cycles: cycles.filter((row) => !warehouseId || String(row.warehouseId) === warehouseId),
+            cycleHref: (row) =>
+              row.countingId
+                ? recordModalHref(url, { kind: 'stock.countSession', id: String(row.countingId) })
+                : recordModalHref(url, { kind: 'stock.warehouse', id: String(row.warehouseId) }),
+            createHref: (await ctx.allows('stock.createPicking', url, req)) ? transferHref(url, null) : null,
+          })
+        },
       })
     },
   '/admin/stock/transfer/{id}/context': transferContext,
@@ -270,21 +420,24 @@ export const routes: Record<string, RouteEntry> = {
         if (crossSite(req)) return text('Forbidden', { status: 403 })
         const form = await readForm(req)
         const result = await ctx.call(
-          'stock.adjustInventory',
+          'stock.requestInventoryCount',
           {
             id: randomUUID(),
             productId: form.productId ?? '',
             locationId: form.locationId ?? '',
-            inventoryLocationId: form.inventoryLocationId ?? '',
             countedQuantity: form.countedQuantity || '0',
-            productUomId: form.productUomId ?? '',
             ...(form.lotId ? { lotId: form.lotId } : {}),
           },
           url,
           req,
         )
         return (result as { ok?: boolean }).ok
-          ? seeOther(inLocale(url, '/admin/stock/inventory?applied=1'))
+          ? seeOther(
+              recordModalHref(new URL('/admin/stock/counts', url), {
+                kind: 'stock.countSession',
+                id: String((result as AnyRow).id),
+              }),
+            )
           : seeOther(inLocale(url, '/admin/stock/inventory?invalid=1'))
       }
       if (req.method !== 'GET') return text('GET or POST', { status: 405 })
@@ -303,28 +456,78 @@ export const routes: Record<string, RouteEntry> = {
               ? `${String(template.name)} · ${String(variant.defaultCode)}`
               : String(template.name),
             reference: String(variant.defaultCode ?? ''),
+            templateId: String(template.id),
           })),
       )
       const productById = new Map(products.map((product) => [product.value, product]))
+      const productHref = await productPageLink(ctx, url, req)
       const locationById = new Map(data.locations.map((location) => [String(location.id), location]))
       const lotById = new Map(data.lots.map((lot) => [String(lot.id), lot]))
+      const now = Date.now()
+      // K51: the overview's row of a warehouse opens its stock alone.
+      const warehouse = url.searchParams.get('warehouse') ?? ''
+      // K58: each row opens what moved it and its replenishment, for whoever may read them.
+      const [readsHistory, readsRules] = await Promise.all([
+        ctx.allows('stock.listMoveHistory', url, req),
+        ctx.allows('stock.listOrderpoints', url, req),
+      ])
+      const rules = readsRules ? ((await ctx.call('stock.listOrderpoints', {}, url, req)) as AnyRow[]) : []
+      const ruleAt = new Map(
+        rules
+          .filter((rule) => rule.active !== false)
+          .map((rule) => [`${String(rule.productId)}|${String(rule.locationId)}`, String(rule.id)] as const),
+      )
+      // A rule of the row's product and place opens itself; otherwise the rules searched for the product.
+      const replenishment = (quant: AnyRow, product: AnyRow | undefined) => {
+        const ruleId = ruleAt.get(`${String(quant.productId)}|${String(quant.locationId)}`)
+        return ruleId
+          ? `/admin/stock/replenishment/${encodeURIComponent(ruleId)}`
+          : `/admin/stock/replenishment?q=${encodeURIComponent(String(product?.reference || product?.name || ''))}`
+      }
+      // The day the goods came in where the company keeps its books, not where the server runs.
+      const timeZone = await timezoneOf(ctx, url, req)
+      const dateOf = (value: unknown) =>
+        value
+          ? formatDateTime(lang === 'vi' ? 'vi-VN' : 'en-US', new Date(String(value)), {
+              dateStyle: 'short',
+              timeZone,
+            })
+          : ''
       const rows = quants
         .filter((quant) =>
           ['internal', 'transit'].includes(String(locationById.get(String(quant.locationId))?.usage)),
+        )
+        .filter(
+          (quant) =>
+            !warehouse || String(locationById.get(String(quant.locationId))?.warehouseId) === warehouse,
         )
         .map((quant) => {
           const product = productById.get(String(quant.productId))
           const quantity = String(quant.quantity)
           const reserved = String(quant.reservedQuantity)
+          const lot = quant.lotId ? lotById.get(String(quant.lotId)) : undefined
+          // K28: an expired, removed or quarantined lot is still on hand but nothing may take it.
+          const blocked = Boolean(quant.lotId) && !lotAvailable(lot, now)
           return {
             id: String(quant.id),
             product: product?.name ?? String(quant.productId),
+            productHref: productHref(product?.templateId),
             reference: product?.reference ?? '',
             location: String(locationById.get(String(quant.locationId))?.name ?? quant.locationId),
-            lot: String(lotById.get(String(quant.lotId))?.name ?? ''),
+            lot: String(lot?.name ?? ''),
+            expiry: dateOf(lot?.expirationDate),
+            blocked,
+            inDate: dateOf(quant.inDate),
+            historyHref: readsHistory
+              ? inLocale(
+                  url,
+                  `/admin/stock/moves?q=${encodeURIComponent(String(lot?.name || product?.reference || product?.name || ''))}`,
+                )
+              : null,
+            replenishHref: readsRules ? inLocale(url, replenishment(quant, product)) : null,
             quantity,
             reserved,
-            available: String(Number(quantity) - Number(reserved)),
+            available: blocked ? '0' : String(Number(quantity) - Number(reserved)),
           }
         })
       return adminPage(ctx, url, req, {
@@ -342,13 +545,17 @@ export const routes: Record<string, RouteEntry> = {
             _,
             {
               rows: search.rows,
-              createHref: (await ctx.allows('stock.adjustInventory', url, req))
+              createHref: (await ctx.allows('stock.requestInventoryCount', url, req))
                 ? recordModalCreateHref(url, { kind: 'stock.count' })
                 : null,
               table: {
                 ...(search.groups ? { groups: search.groups } : {}),
                 rowHref: (row) => recordModalHref(url, { kind: 'stock.count', id: row.id }),
+                // The row opens its count; the product's name inside it links to the
+                // product (P24), so the row cannot also be an anchor around that name.
+                rowLink: false,
               },
+              lang: ctx.localeOf(url, req) === 'en' ? 'en' : 'vi',
               products: products.map(({ value, label }) => ({ value, label })),
               locations: options(data.locations.filter((row) => row.usage === 'internal')),
               inventoryLocations: options(data.locations.filter((row) => row.usage === 'inventory')),
@@ -396,35 +603,87 @@ export const routes: Record<string, RouteEntry> = {
       ])) as [AnyRow[], Awaited<ReturnType<typeof common>>]
       const locationsById = new Map(data.locations.map((row) => [String(row.id), String(row.name)]))
       const pickingTypesById = new Map(data.pickingTypes.map((row) => [String(row.id), String(row.name)]))
+      // Counts, adjustments and scrap post through operation types of their own that the stock
+      // module creates as `internal`; they are not transfers anyone works through (K21).
+      const pickingTypesByIdRow = new Map(data.pickingTypes.map((row) => [String(row.id), row]))
+      const pickingTypeCode = new Map(
+        data.pickingTypes.map((row) => [
+          String(row.id),
+          /:(adjustment|count|scrap)$/.test(String(row.id)) ? 'adjustment' : String(row.code),
+        ]),
+      )
+      // K51: the warehouse a transfer belongs to, by its operation type, so the overview narrows to it.
+      const warehouseNameById = new Map(data.warehouses.map((row) => [String(row.id), String(row.name)]))
+      const warehouseByType = new Map(
+        data.pickingTypes.map((row) => [
+          String(row.id),
+          warehouseNameById.get(String(row.warehouseId)) ?? '',
+        ]),
+      )
       return adminPage(ctx, url, req, {
         title: 'stock_backend.transfers',
         body: async (_, frame) => {
+          const timeZone = await timezoneOf(ctx, url, req)
           const search = await rowListSearch(ctx, url, req, {
             spec: transferListSearch,
             frame,
-            rows: pickings.map((row) => ({
-              id: String(row.id),
-              name: String(row.name),
-              operationType: pickingTypesById.get(String(row.pickingTypeId)) ?? String(row.pickingTypeId),
-              source: locationsById.get(String(row.locationId)) ?? String(row.locationId),
-              destination: locationsById.get(String(row.locationDestId)) ?? String(row.locationDestId),
-              scheduledDate: dateTimeLabel(row.scheduledDate, lang),
-              state: String(row.state),
-              href: recordModalHref(url, { kind: 'stock.transfer', id: String(row.id) }),
-            })),
+            rows: pickings.map((row) => {
+              // K18: the list reads and filters by the five statuses of the plan.
+              const state = transferStatus(
+                row.state,
+                reservesStock(pickingTypesByIdRow.get(String(row.pickingTypeId))),
+              )
+              return {
+                id: String(row.id),
+                name: String(row.name),
+                operationType: pickingTypesById.get(String(row.pickingTypeId)) ?? String(row.pickingTypeId),
+                kind: pickingTypeCode.get(String(row.pickingTypeId)) ?? '',
+                warehouse: warehouseByType.get(String(row.pickingTypeId)) ?? '',
+                source: locationsById.get(String(row.locationId)) ?? String(row.locationId),
+                destination: locationsById.get(String(row.locationDestId)) ?? String(row.locationDestId),
+                scheduledDate: dateTimeLabel(row.scheduledDate, lang, timeZone),
+                queue: transferQueueOrder({ ...row, state }),
+                state,
+                priority: row.priority === true,
+                href: transferHref(url, String(row.id)),
+              }
+            }),
             name: 'stock-transfer-filter',
             bodyId: 'stock-transfer-list',
             functions: stockSearchFunctions,
             labels: { searchPlaceholder: _('stock_backend.transfers') },
             groupLabel: (key, value) => stockGroupLabel(_, key, value),
           })
+          // K60: transfers waiting for goods reserve several at once, priority first.
+          const bulk = await ctx.allows('stock.reservePickings', url, req)
+          // Opened on one kind's queue, the list is headed by that queue's name (K21).
+          const kinds = url.searchParams
+            .getAll('preset')
+            .flatMap((preset) => Object.entries(TRANSFER_KINDS).filter(([, key]) => key === preset))
+          const queueTitle =
+            kinds.length === 1
+              ? _(`stock_backend.menu.${QUEUE_LABELS[kinds[0]![0] as keyof typeof QUEUE_LABELS]}`)
+              : null
           return transfersListScreen(
             _,
             {
               rows: search.rows,
-              ...(search.groups ? { table: { groups: search.groups } } : {}),
+              ...(queueTitle ? { title: queueTitle } : {}),
+              table: {
+                ...(search.groups ? { groups: search.groups } : {}),
+                ...(bulk
+                  ? {
+                      selection: {
+                        formId: 'stock-transfer-bulk',
+                        action: inLocale(url, '/admin/stock/transfers/bulk'),
+                        hidden: { returnTo: `${url.pathname}${url.search}` },
+                        actions: [{ id: 'reserve', label: _('stock_backend.action.assign') }],
+                      },
+                    }
+                  : {}),
+              },
               createHref: (await ctx.allows('stock.createPicking', url, req))
-                ? recordModalCreateHref(url, { kind: 'stock.transfer' })
+                ? transferHref(url, null)
                 : null,
             },
             search.frame,
@@ -433,220 +692,93 @@ export const routes: Record<string, RouteEntry> = {
       })
     },
 
-  '/admin/stock/transfers/new':
+  '/admin/stock/transfers/bulk':
     (ctx): Route =>
     async (url, req) => {
+      if (req.method !== 'POST') return text('POST', { status: 405 })
+      if (crossSite(req)) return text('Forbidden', { status: 403 })
+      const form = await readForm(req)
+      const ids = Object.keys(form)
+        .filter((key) => key.startsWith('selected.'))
+        .map((key) => key.slice('selected.'.length))
+        .filter(Boolean)
+      const fallback = inLocale(url, '/admin/stock/transfers')
+      const requested = new URL(form.returnTo || fallback, 'http://ket.local')
+      const returnTo =
+        requested.pathname === '/admin/stock/transfers'
+          ? `${requested.pathname}${requested.search}`
+          : fallback
+      if (!ids.length) return seeOther(returnTo)
+      if (form.action !== 'reserve') return text('Unknown bulk action', { status: 400 })
+      const result = (await ctx.call('stock.reservePickings', { ids }, url, req)) as { ok?: boolean }
+      if (result.ok === false) return text('Invalid bulk selection', { status: 400 })
+      return seeOther(returnTo)
+    },
+
+  // K65: an operation's printed copy, a page of its own printed with the browser. `?values=1` asks for
+  // the copy with values, which only a done operation has and only a stock value reader may read.
+  '/admin/stock/count-session/{id}/print':
+    (ctx): Route =>
+    async (url, req, params) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return text('GET', { status: 405 })
       const lang = ctx.localeOf(url, req)
       const _ = ctx.translate(lang)
-      const here = inLocale(url, '/admin/stock/transfers/new')
-      if (req.method === 'POST') {
-        if (crossSite(req)) return text('Forbidden', { status: 403 })
-        const form = await readForm(req)
-        const id = randomUUID()
-        const result = await ctx.call(
-          'stock.createPicking',
-          {
-            id,
-            name: form.name || id,
-            pickingTypeId: form.pickingTypeId ?? '',
-            ...(form.scheduledDate ? { scheduledDate: form.scheduledDate } : {}),
-          },
-          url,
-          req,
-        )
-        return (result as { ok?: boolean }).ok
-          ? seeOther(inLocale(url, `/admin/stock/transfers/${id}`))
-          : seeOther(`${here}${here.includes('?') ? '&' : '?'}invalid=1`)
-      }
-      if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-      const data = await common(ctx, url, req)
-      return adminPage(ctx, url, req, {
-        title: 'stock_backend.transfer.create.title',
-        body: (_, frame) =>
-          transferCreateScreen(
-            _,
-            {
-              pickingTypes: options(data.pickingTypes),
-              action: here,
-              cancelHref: inLocale(url, '/admin/stock/transfers'),
-              errors: invalid(url, _),
-            },
-            frame,
-          ),
+      const source =
+        url.searchParams.get('values') === '1' ? 'stock.getValuedCountReport' : 'stock.getCountReport'
+      if (!(await ctx.allows(source, url, req))) return text('Forbidden', { status: 403 })
+      const data = (await ctx.call(source, { id: params.id }, url, req)) as AnyRow | null
+      if (!data) return text(_('stock_backend.print.missing'), { status: 404 })
+      const query = new URLSearchParams(
+        [...url.searchParams].filter(([key]) => ['lang', 'company', 'branch'].includes(key)),
+      )
+      const back = recordModalHref(new URL(`/admin/stock/counts?${query}`, url), {
+        kind: 'stock.countSession',
+        id: params.id,
+      })
+      return backendPage(ctx, req, {
+        lang,
+        title: `${_('stock_backend.count.minutesTitle')} ${String(data.name)}`,
+        body: CountPrint({ _, data, back }),
       })
     },
 
-  '/admin/stock/transfers/{id}':
+  '/admin/stock/transfers/{id}/print':
     (ctx): Route =>
     async (url, req, params) => {
-      const here = `${url.pathname}${url.search}`
+      if (req.method !== 'GET' && req.method !== 'HEAD') return text('GET', { status: 405 })
       const lang = ctx.localeOf(url, req)
       const _ = ctx.translate(lang)
-      let current = (await ctx.call('stock.getPicking', { id: params.id }, url, req)) as AnyRow | null
-      if (!current) return text('Transfer not found', { status: 404 })
-      let moves = Array.isArray(current.moves) ? (current.moves as AnyRow[]) : []
-      let savedPartial = false
-      if (req.method === 'POST') {
-        if (crossSite(req)) return text('Forbidden', { status: 403 })
-        const partial = isStockPartial(req)
-        const form = await readForm(req)
-        let result: unknown
-        if (form.action === 'add-move')
-          result = await ctx.call(
-            'stock.addMove',
-            {
-              id: randomUUID(),
-              name: form.name || form.productId || '',
-              pickingId: params.id,
-              productId: form.productId ?? '',
-              productUomId: form.productUomId ?? '',
-              productUomQty: form.productUomQty || '0',
-            },
-            url,
-            req,
-          )
-        else if (form.action === 'confirm')
-          result = await ctx.call('stock.confirmPicking', { id: params.id }, url, req)
-        else if (form.action === 'assign')
-          result = await ctx.call('stock.assignPicking', { id: params.id }, url, req)
-        else if (form.action === 'pick') {
-          const operationId = String(form.operationId ?? '')
-          const existingLine = moves
-            .flatMap((move) => (Array.isArray(move.lines) ? (move.lines as AnyRow[]) : []))
-            .find((line) => `line:${String(line.id)}` === operationId)
-          const move = existingLine
-            ? moves.find((candidate) => candidate.id === existingLine.moveId)
-            : moves.find((candidate) => `move:${String(candidate.id)}` === operationId)
-          result = move
-            ? await ctx.call(
-                'stock.saveMoveLine',
-                {
-                  id: existingLine?.id ?? randomUUID(),
-                  moveId: move.id,
-                  quantity: form.quantity || existingLine?.quantity || '0',
-                  picked: true,
-                  ...(form.lotId || existingLine?.lotId ? { lotId: form.lotId || existingLine?.lotId } : {}),
-                },
-                url,
-                req,
-              )
-            : { ok: false }
-        } else if (form.action === 'validate')
-          result = await ctx.call(
-            'stock.validatePicking',
-            { id: params.id, ...(form.backorder ? { backorder: form.backorder } : {}) },
-            url,
-            req,
-          )
-        else if (form.action === 'cancel')
-          result = await ctx.call('stock.cancelPicking', { id: params.id }, url, req)
-        else return text('Unknown transfer action', { status: 400 })
-        if (!(result as { ok?: boolean }).ok) {
-          if (partial)
-            return json(
-              { ok: false, message: _('stock_backend.error.invalid'), errors: errorsOf(result) },
-              { status: 422 },
-            )
-          return resultRedirect(result, here)
-        }
-        if (!partial) return seeOther(here)
-        savedPartial = true
-        current = (await ctx.call('stock.getPicking', { id: params.id }, url, req)) as AnyRow | null
-        if (!current) return text('Transfer not found', { status: 404 })
-        moves = Array.isArray(current.moves) ? (current.moves as AnyRow[]) : []
-      }
-      if (req.method !== 'GET' && !savedPartial) return text('GET or POST', { status: 405 })
-      const [data, templates] = await Promise.all([
-        common(ctx, url, req),
-        ctx.call('stock.listStorableProducts', {}, url, req) as Promise<AnyRow[]>,
-      ])
-      const products = templates.flatMap((template) =>
-        (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : [])
-          .filter((variant) => variant.active !== false)
-          .map((variant) => ({
-            value: String(variant.id),
-            label: variant.defaultCode
-              ? `${String(template.name)} · ${String(variant.defaultCode)}`
-              : String(template.name),
-          })),
+      const valued = url.searchParams.get('values') === '1'
+      const keep = new URLSearchParams(
+        [...url.searchParams].filter(([key]) => ['lang', 'company', 'branch'].includes(key)),
       )
-      const operationOptions = moves.flatMap((move) => {
-        const lines = Array.isArray(move.lines) ? (move.lines as AnyRow[]) : []
-        return lines.length
-          ? lines.map((line) => ({
-              value: `line:${String(line.id)}`,
-              label: `${String(move.name)} · ${String(line.lotId ?? '—')} · ${String(line.quantity)}`,
-            }))
-          : [{ value: `move:${String(move.id)}`, label: String(move.name) }]
-      })
-      const pickingType = data.pickingTypes.find((row) => row.id === current.pickingTypeId)
-      const reportId = {
-        incoming: 'stock.receipt',
-        outgoing: 'stock.delivery',
-        internal: 'stock.internalTransfer',
-      }[String(pickingType?.code)]
-      const printable = (await ctx.reportsOf(url, req, 'stock.Picking')).filter(
-        (report) => report.id === reportId,
+      const back = `/admin/stock/transfers/${encodeURIComponent(params.id)}${keep.size ? `?${keep}` : ''}`
+      // The picking's kind picks the voucher; a source refuses a picking of another kind, so trying each
+      // allowed one finds the copy without reading the picking twice.
+      let data: AnyRow | null = null
+      for (const prints of Object.values(PICKING_PRINTS)) {
+        const source = valued ? prints.valued.source : prints.plain.source
+        if (!(await ctx.allows(source, url, req))) continue
+        data = (await ctx.call(source, { id: params.id }, url, req)) as AnyRow | null
+        if (data) break
+      }
+      if (!data) return text(_('stock_backend.print.missing'), { status: 404 })
+      // The copy names the warehouse's own places in the reader's language, as every stock screen does.
+      const [source, destination] = localizeGeneratedRecords(
+        _,
+        [data.source as AnyRow, data.destination as AnyRow],
+        'location',
       )
-      const backorderPolicy = String(pickingType?.createBackorder ?? 'ask')
-      const state = String(current.state)
-      const moveRows = moves.flatMap((move) => [
-        {
-          id: String(move.id),
-          name: String(move.name),
-          kind: 'move',
-          state: String(move.state),
-          detail: `${String(move.quantity)} / ${String(move.productUomQty)} ${String(move.productUomId)}`,
-        },
-        ...(Array.isArray(move.lines) ? (move.lines as AnyRow[]) : []).map((line) => ({
-          id: String(line.id),
-          name: `${String(move.name)} · ${String(line.lotId ?? '—')}`,
-          kind: 'move-line',
-          state: line.picked ? 'done' : 'reserved',
-          detail: `${String(line.quantity)} ${String(line.productUomId)}`,
-        })),
-      ])
-      const screenOptions = {
-        transfer: {
-          id: String(current.id),
-          name: String(current.name),
-          state,
-          scheduledDate: dateTimeLabel(current.scheduledDate, lang),
-          pickingTypeName: String(pickingType?.name ?? current.pickingTypeId ?? ''),
-        },
-        rows: moveRows,
-        products,
-        units: options(data.units),
-        lots: options(data.lots),
-        operationOptions,
-        backorderPolicy,
-        printActions: printGroup(_, printable, String(current.id), url.search),
-        action: here,
-        collaboration: savedPartial
-          ? ''
-          : await ctx.joint(url, req, 'stock_backend:picking.collaboration', {
-              resModel: 'stock.Picking',
-              resId: String(current.id),
-              lang,
-            }),
-        editor: savedPartial
-          ? ''
-          : await ctx.joint(url, req, 'stock_backend:picking.editor', {
-              identity: `picking:${String(current.id)}`,
-              pickingId: String(current.id),
-              lang,
-            }),
-        errors: invalid(url, _),
-      }
-      if (savedPartial) {
-        const body = transferDetailScreen(_, screenOptions, {}, true)
-        return withHeaders(fragment(body, { type: NAVIGATION_TYPE }), { vary: 'X-Ket-Partial' })
-      }
-      return adminPage(ctx, url, req, {
-        title: 'stock_backend.transferDetail',
-        body: (_, frame) => transferDetailScreen(_, screenOptions, frame),
+      data = { ...data, source, destination }
+      return backendPage(ctx, req, {
+        lang,
+        title: `${_(String((data.voucher as AnyRow).title))} ${String(data.name)}`,
+        body: TransferPrint({ _, data, back }),
       })
     },
+
+  // The only way a transfer opens: the list, its create button and every link lead here.
+  '/admin/stock/transfers/{id}': transferPageRoute,
 
   '/admin/stock/warehouses':
     (ctx): Route =>
@@ -1048,14 +1180,31 @@ export const routes: Record<string, RouteEntry> = {
           .map((location) => String(location.id)),
       )
       const onHandByLot = new Map<string, number>()
+      // K51: the warehouses holding some of each lot, by name.
+      const warehouseOfLocation = new Map(
+        locations.map((row) => [String(row.id), String(row.warehouseId ?? '')]),
+      )
+      const warehouseNames = new Map(
+        ((await optionalRead<AnyRow[]>(ctx, 'stock.listWarehouses', {}, url, req, [])) ?? []).map((row) => [
+          String(row.id),
+          String(row.name),
+        ]),
+      )
+      const warehousesByLot = new Map<string, Set<string>>()
       for (const quant of quants) {
         const lotId = String(quant.lotId ?? '')
         if (!lotId || !stockLocationIds.has(String(quant.locationId))) continue
         onHandByLot.set(lotId, (onHandByLot.get(lotId) ?? 0) + Number(quant.quantity ?? 0))
+        const warehouse = warehouseNames.get(warehouseOfLocation.get(String(quant.locationId)) ?? '')
+        if (warehouse && Number(quant.quantity) > 0)
+          warehousesByLot.set(lotId, (warehousesByLot.get(lotId) ?? new Set()).add(warehouse))
       }
       const number = new Intl.NumberFormat(lang === 'vi' ? 'vi-VN' : 'en-US', {
         maximumFractionDigits: 6,
       })
+      const now = Date.now()
+      // A lot expires on a day where the company keeps its books, not where the server runs.
+      const timeZone = await timezoneOf(ctx, url, req)
       return adminPage(ctx, url, req, {
         title: 'stock_backend.lots',
         body: async (_, frame) => {
@@ -1071,6 +1220,14 @@ export const routes: Record<string, RouteEntry> = {
               onHand: number.format(onHandByLot.get(String(row.id)) ?? 0),
               onHandValue: onHandByLot.get(String(row.id)) ?? 0,
               active: row.active !== false,
+              condition: lotCondition(row, onHandByLot.get(String(row.id)) ?? 0, now),
+              warehouses: [...(warehousesByLot.get(String(row.id)) ?? [])].sort().join(', '),
+              expiry: row.expirationDate
+                ? formatDateTime(lang === 'vi' ? 'vi-VN' : 'en-US', new Date(String(row.expirationDate)), {
+                    dateStyle: 'short',
+                    timeZone,
+                  })
+                : '',
               href: inLocale(url, `/admin/stock/lots/${String(row.id)}`),
             })),
             name: 'stock-lot-filter',
@@ -1133,7 +1290,7 @@ export const routes: Record<string, RouteEntry> = {
           : seeOther(createModalErrorHref(url, '/admin/stock/lots'))
       }
       if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-      return seeOther(createModalHref(url, '/admin/stock/lots'))
+      return seeOther(recordModalCreateHref(inLocale(url, '/admin/stock/lots'), { kind: 'stock.lot' }))
     },
 
   '/admin/stock/lots/{id}':
@@ -1176,82 +1333,30 @@ export const routes: Record<string, RouteEntry> = {
         if (!partial) return seeOther(here)
         current = { ...current, ...values }
       }
-      const [products, rawLocations, quants] = (await Promise.all([
-        ctx.call('stock.listStorableProducts', {}, url, req),
-        ctx.call('stock.listLocations', {}, url, req),
-        ctx.call('stock.listQuants', { productId: String(current.productId) }, url, req),
-      ])) as [AnyRow[], AnyRow[], AnyRow[]]
-      const locations = localizeGeneratedRecords(_, rawLocations, 'location')
-      const listedProductOptions = lotProductOptions(products)
-      const productOptions = listedProductOptions.some(
-        (product) => product.value === String(current.productId),
-      )
-        ? listedProductOptions
-        : [{ value: String(current.productId), label: String(current.productId) }, ...listedProductOptions]
-      const productLabel =
-        productOptions.find((product) => product.value === String(current.productId))?.label ??
-        String(current.productId)
-      const rawLocationNameById = new Map(
-        locations.map((location) => [String(location.id), String(location.name)]),
-      )
-      const locationById = new Map(locations.map((location) => [String(location.id), location]))
-      const locationNameById = new Map(
-        locations.map((location) => [
-          String(location.id),
-          completeLocationName(location, rawLocationNameById),
-        ]),
-      )
-      const inventoryRows = quants
-        .filter((quant) => String(quant.lotId ?? '') === params.id)
-        .map((quant) => {
-          const quantity = String(quant.quantity)
-          const reserved = String(quant.reservedQuantity)
-          return {
-            id: String(quant.id),
-            location: locationNameById.get(String(quant.locationId)) ?? String(quant.locationId),
-            quantity,
-            reserved,
-            available: String(Number(quantity) - Number(reserved)),
-            countsAsOnHand: ['internal', 'transit'].includes(
-              String(locationById.get(String(quant.locationId))?.usage),
-            ),
-          }
-        })
-      const body = lotDetailScreen(
-        _,
-        {
-          lot: {
-            id: String(current.id),
-            name: String(current.name),
-            productId: String(current.productId),
-            productLabel,
-            ref: String(current.ref ?? ''),
-            note: String(current.note ?? ''),
-            active: current.active !== false,
-          },
-          rows: inventoryRows,
-          products: productOptions,
-          action: here,
-          collaboration: await ctx.joint(url, req, 'stock_backend:lot.collaboration', {
-            resModel: 'stock.Lot',
-            resId: String(current.id),
-            lang,
-          }),
-          editor: await ctx.joint(url, req, 'stock_backend:lot.editor', {
-            identity: `lot:${String(current.id)}`,
-            lotId: String(current.id),
-            lang,
-          }),
-          errors: invalid(url, _),
-        },
-        await frameOf(ctx, url, req),
-        partial,
-      )
-      if (partial) return withHeaders(fragment(body, { type: NAVIGATION_TYPE }), { vary: 'X-Ket-Partial' })
+      const title = String(current.name)
+      const island = await ctx.joint(url, req, 'stock_backend:lot.page', {
+        id: params.id,
+        title,
+        loading: _('backend.relation.loading'),
+        back: inLocale(url, '/admin/stock/lots'),
+        width: 'wide',
+      })
+      const collaboration = await ctx.joint(url, req, 'stock_backend:lot.collaboration', {
+        resModel: 'stock.Lot',
+        resId: params.id,
+        lang,
+      })
       return backendPage(ctx, req, {
         lang,
-        title: String(current.name),
-        body,
+        title,
+        body: lotPageScreen(
+          _,
+          title,
+          island,
+          await frameOf(ctx, url, req),
+          lang === 'en' ? 'en' : 'vi',
+          collaboration,
+        ),
       })
     },
 
@@ -1469,195 +1574,43 @@ export const routes: Record<string, RouteEntry> = {
       })
     },
 
-  '/admin/stock/replenishment':
-    (ctx): Route =>
-    async (url, req) => {
-      const canRun = await ctx.allows('stock.runOrderpoint', url, req)
-      const lang = ctx.localeOf(url, req)
-      const _ = ctx.translate(lang)
-      if (req.method === 'POST') {
-        if (crossSite(req)) return text('Forbidden', { status: 403 })
-        const form = await readForm(req)
-        const result = await ctx.call(
-          'stock.saveOrderpoint',
-          {
-            id: randomUUID(),
-            productId: form.productId ?? '',
-            warehouseId: form.warehouseId ?? '',
-            locationId: form.locationId ?? '',
-            trigger: form.trigger || 'auto',
-            minQuantity: form.minQuantity || '0',
-            maxQuantity: form.maxQuantity || '0',
-            ...(form.replenishmentUomId ? { replenishmentUomId: form.replenishmentUomId } : {}),
-            ...(form.routeId ? { routeId: form.routeId } : {}),
-          },
-          url,
-          req,
-        )
-        return (result as { ok?: boolean }).ok
-          ? seeOther(inLocale(url, '/admin/stock/replenishment'))
-          : seeOther(inLocale(url, '/admin/stock/replenishment/new?invalid=1'))
-      }
-      if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-      const [points, data, templates] = (await Promise.all([
-        ctx.call('stock.listOrderpoints', {}, url, req),
-        common(ctx, url, req),
-        ctx.call('stock.listStorableProducts', {}, url, req),
-      ])) as [AnyRow[], Awaited<ReturnType<typeof common>>, AnyRow[]]
-      const products = templates.flatMap((template) =>
-        (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : [])
-          .filter((variant) => variant.active !== false)
-          .map((variant) => ({
-            value: String(variant.id),
-            label: variant.defaultCode
-              ? `${String(template.name)} · ${String(variant.defaultCode)}`
-              : String(template.name),
-          })),
-      )
-      const forecasts = (await Promise.all(
-        points.map((point) =>
-          ctx.call('stock.forecast', { productId: point.productId, locationId: point.locationId }, url, req),
-        ),
-      )) as AnyRow[]
-      const productUomById = new Map(
-        templates.flatMap((template) =>
-          (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : []).map(
-            (variant) => [String(variant.id), String(template.uomId ?? '')] as const,
-          ),
-        ),
-      )
-      const productById = new Map(products.map((product) => [product.value, product.label]))
-      const warehouseById = new Map(data.warehouses.map((row) => [String(row.id), String(row.name)]))
-      const locationById = new Map(data.locations.map((row) => [String(row.id), String(row.name)]))
-      const unitById = new Map(data.units.map((row) => [String(row.id), String(row.name)]))
-      const unitRecordById = new Map(data.units.map((row) => [String(row.id), row]))
-      return adminPage(ctx, url, req, {
-        title: 'stock_backend.replenishment',
-        body: async (_, frame) => {
-          const search = await rowListSearch(ctx, url, req, {
-            spec: replenishmentListSearch,
-            frame,
-            rows: points.map((row, index) => {
-              const forecasted = String(forecasts[index]?.forecasted ?? '0')
-              const baseUom = unitRecordById.get(productUomById.get(String(row.productId)) ?? '')
-              const replenishmentUom = unitRecordById.get(
-                String(row.replenishmentUomId ?? productUomById.get(String(row.productId)) ?? ''),
-              )
-              const baseQuantity = Math.max(0, Number(row.maxQuantity) - Number(forecasted))
-              const rawQuantity =
-                baseUom && replenishmentUom
-                  ? (baseQuantity * Number(baseUom.absoluteFactor)) / Number(replenishmentUom.absoluteFactor)
-                  : baseQuantity
-              const rounding = Math.max(Number(replenishmentUom?.rounding ?? 1), 1e-12)
-              const quantity =
-                Number(forecasted) < Number(row.minQuantity)
-                  ? Math.ceil(rawQuantity / rounding - 1e-12) * rounding
-                  : 0
-              return {
-                id: String(row.id),
-                product: productById.get(String(row.productId)) ?? String(row.productId),
-                warehouse: warehouseById.get(String(row.warehouseId)) ?? String(row.warehouseId),
-                location: locationById.get(String(row.locationId)) ?? String(row.locationId),
-                trigger: String(row.trigger),
-                triggerLabel: selectionLabel(_, 'trigger', row.trigger),
-                minQuantity: String(row.minQuantity),
-                maxQuantity: String(row.maxQuantity),
-                forecasted,
-                toOrder: String(quantity),
-                replenishmentUom:
-                  unitById.get(String(row.replenishmentUomId)) ?? String(row.replenishmentUomId ?? '—'),
-                runAction: canRun ? inLocale(url, `/admin/stock/replenishment/${String(row.id)}/run`) : null,
-              }
-            }),
-            name: 'stock-replenishment-filter',
-            bodyId: 'stock-replenishment-list',
-            functions: stockSearchFunctions,
-            labels: { searchPlaceholder: _('stock_backend.replenishment') },
-            groupLabel: (key, value) => stockGroupLabel(_, key, value),
-          })
-          return replenishmentListScreen(
-            _,
-            {
-              rows: search.rows,
-              table: {
-                ...(search.groups ? { groups: search.groups } : {}),
-                rowHref: (row) => recordModalHref(url, { kind: 'stock.replenishment', id: String(row.id) }),
-              },
-              createHref: (await ctx.allows('stock.saveOrderpoint', url, req))
-                ? recordModalCreateHref(url, { kind: 'stock.replenishment' })
-                : null,
-            },
-            search.frame,
-          )
-        },
-      })
-    },
-
-  '/admin/stock/replenishment/new':
-    (ctx): Route =>
-    async (url, req) => {
-      const lang = ctx.localeOf(url, req)
-      const _ = ctx.translate(lang)
-      if (req.method === 'POST') {
-        if (crossSite(req)) return text('Forbidden', { status: 403 })
-        const form = await readForm(req)
-        const result = await ctx.call(
-          'stock.saveOrderpoint',
-          {
-            id: randomUUID(),
-            productId: form.productId ?? '',
-            warehouseId: form.warehouseId ?? '',
-            locationId: form.locationId ?? '',
-            trigger: form.trigger || 'auto',
-            minQuantity: form.minQuantity || '0',
-            maxQuantity: form.maxQuantity || '0',
-            ...(form.replenishmentUomId ? { replenishmentUomId: form.replenishmentUomId } : {}),
-            ...(form.routeId ? { routeId: form.routeId } : {}),
-          },
-          url,
-          req,
-        )
-        return (result as { ok?: boolean }).ok
-          ? seeOther(inLocale(url, '/admin/stock/replenishment'))
-          : seeOther(inLocale(url, '/admin/stock/replenishment/new?invalid=1'))
-      }
-      if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-      const [data, templates] = (await Promise.all([
-        common(ctx, url, req),
-        ctx.call('stock.listStorableProducts', {}, url, req),
-      ])) as [Awaited<ReturnType<typeof common>>, AnyRow[]]
-      const products = templates.flatMap((template) =>
-        (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : [])
-          .filter((variant) => variant.active !== false)
-          .map((variant) => ({
-            value: String(variant.id),
-            label: variant.defaultCode
-              ? `${String(template.name)} · ${String(variant.defaultCode)}`
-              : String(template.name),
-          })),
-      )
-      return adminPage(ctx, url, req, {
-        title: 'stock_backend.replenishment.create.title',
-        body: (_, frame) =>
-          replenishmentCreateScreen(
-            _,
-            {
-              products,
-              warehouses: options(data.warehouses),
-              locations: options(data.locations),
-              units: options(data.units),
-              routes: data.routes.map((row) => ({
-                value: String(row.id),
-                label: localizedGeneratedRouteName(_, row),
-              })),
-              action: inLocale(url, '/admin/stock/replenishment/new'),
-              cancelHref: inLocale(url, '/admin/stock/replenishment'),
-              errors: invalid(url, _),
-            },
-            frame,
-          ),
-      })
-    },
+  '/admin/stock/valuation': valuationRoute,
+  '/admin/stock/accounting': accountingRoute,
+  '/admin/stock/valuation/data': valuationDataRoute,
+  '/admin/stock/analysis': moveAnalysisRoute,
+  '/admin/stock/analysis/data': moveAnalysisDataRoute,
+  '/admin/stock/moves': moveHistoryRoute,
+  '/admin/stock/moves/data': moveHistoryDataRoute,
+  '/admin/stock/aging': agingRoute,
+  '/admin/stock/aging/data': agingDataRoute,
+  '/admin/stock/scraps': scrapsRoute,
+  '/admin/stock/scraps/data': scrapsDataRoute,
+  '/admin/stock/scrap/{id}/context': scrapContext,
+  '/admin/stock/landed-costs': landedCostsRoute,
+  '/admin/stock/landed-costs/data': landedCostsDataRoute,
+  '/admin/stock/landed-costs/{id}': landedCostPageRoute,
+  '/admin/stock/landed-cost/{id}/context': landedCostContext,
+  // K45–K48: shipping on the books.
+  '/admin/stock/delivery': deliveryOverviewRoute,
+  '/admin/stock/delivery/dispatch': deliveryListRoute('dispatch'),
+  '/admin/stock/delivery/dispatch/data': deliveryDataRoute('dispatch'),
+  '/admin/stock/shipments': deliveryListRoute('shipments'),
+  '/admin/stock/shipments/data': deliveryDataRoute('shipments'),
+  '/admin/stock/shipments/{id}': deliveryRecordRoute('shipment'),
+  '/admin/stock/shipment/{id}/context': shipmentContext,
+  '/admin/stock/delivery-statements': deliveryListRoute('statements'),
+  '/admin/stock/delivery-statements/data': deliveryDataRoute('statements'),
+  '/admin/stock/delivery-statements/{id}': deliveryRecordRoute('statement'),
+  '/admin/stock/delivery-statement/{id}/context': deliveryStatementContext,
+  '/admin/stock/carriers': deliveryListRoute('carriers'),
+  '/admin/stock/carriers/data': deliveryDataRoute('carriers'),
+  '/admin/stock/counts': countsRoute,
+  '/admin/stock/counts/data': countsDataRoute,
+  '/admin/stock/count-session/{id}/context': countSessionContext,
+  '/admin/stock/replenishment': replenishmentCollectionRoute,
+  '/admin/stock/replenishment/data': replenishmentDataRoute,
+  '/admin/stock/replenishment/new': replenishmentRecordRoute,
+  '/admin/stock/replenishment/{id}': replenishmentRecordRoute,
 
   '/admin/stock/replenishment/{id}/run':
     (ctx): Route =>
@@ -1673,90 +1626,18 @@ export const routes: Record<string, RouteEntry> = {
       return resultRedirect(result, inLocale(url, '/admin/stock/replenishment'))
     },
 
+  // K40: the forecast list, its paged read and the forecast of one product in one warehouse.
   '/admin/stock/forecast':
     (ctx): Route =>
     async (url, req) => {
       if (req.method !== 'GET') return text('GET', { status: 405 })
-      const lang = ctx.localeOf(url, req)
-      const _ = ctx.translate(lang)
-      const productId = url.searchParams.get('productId') ?? ''
-      const locationId = url.searchParams.get('locationId') ?? ''
-      const warehouseId = url.searchParams.get('warehouseId') ?? ''
-      const [data, templates] = await Promise.all([
-        common(ctx, url, req),
-        ctx.call('stock.listStorableProducts', {}, url, req) as Promise<AnyRow[]>,
-      ])
-      const products = templates.flatMap((template) =>
-        (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : [])
-          .filter((variant) => variant.active !== false)
-          .map((variant) => ({
-            value: String(variant.id),
-            label: variant.defaultCode
-              ? `${String(template.name)} · ${String(variant.defaultCode)}`
-              : String(template.name),
-          })),
-      )
-      const productById = new Map(products.map((product) => [product.value, product.label]))
-      const productUomById = new Map(
-        templates.flatMap((template) =>
-          (Array.isArray(template.variants) ? (template.variants as AnyRow[]) : []).map(
-            (variant) => [String(variant.id), String(template.uomId ?? '')] as const,
-          ),
-        ),
-      )
-      const warehouseById = new Map(data.warehouses.map((row) => [String(row.id), String(row.name)]))
-      const locationById = new Map(data.locations.map((row) => [String(row.id), String(row.name)]))
-      const unitById = new Map(data.units.map((row) => [String(row.id), String(row.name)]))
-      const forecast = productId
-        ? ((await ctx.call(
-            'stock.forecast',
-            { productId, ...(locationId ? { locationId } : warehouseId ? { warehouseId } : {}) },
-            url,
-            req,
-          )) as AnyRow)
-        : null
-      const scopeLabel = locationId
-        ? _('stock_backend.forecast.scope.location', {
-            name: locationById.get(locationId) ?? locationId,
-          })
-        : warehouseId
-          ? _('stock_backend.forecast.scope.warehouse', {
-              name: warehouseById.get(warehouseId) ?? warehouseId,
-            })
-          : _('stock_backend.forecast.scope.all')
+      if (!(await ctx.allows('stock.getForecastCollection', url, req)))
+        return text('Forbidden', { status: 403 })
       return adminPage(ctx, url, req, {
         title: 'stock_backend.forecast',
-        body: (_, frame) =>
-          forecastScreen(
-            _,
-            {
-              products,
-              warehouses: options(data.warehouses),
-              locations: options(data.locations),
-              productId,
-              warehouseId,
-              locationId,
-              productLabel: productById.get(productId),
-              scopeLabel,
-              ...(forecast
-                ? {
-                    row: {
-                      id: productId,
-                      onHand: String(forecast.onHand),
-                      reserved: String(forecast.reserved),
-                      available: String(forecast.available),
-                      incoming: String(forecast.incoming),
-                      outgoing: String(forecast.outgoing),
-                      forecasted: String(forecast.forecasted),
-                      uom: unitById.get(productUomById.get(productId) ?? '') ?? '—',
-                    },
-                  }
-                : {}),
-              action: inLocale(url, '/admin/stock/forecast'),
-              lang,
-            },
-            frame,
-          ),
+        body: (_, frame) => forecastCollectionScreen(_, frame, url),
       })
     },
+  '/admin/stock/forecast/data': forecastDataRoute,
+  '/admin/stock/forecast/{warehouseId}/{productId}': forecastDetailRoute,
 }

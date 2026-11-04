@@ -1,14 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { renderToStaticString, signal } from '@ketvietlab/ketjs-view'
+import { effect, renderToStaticString, signal } from '@ketvietlab/ketjs-view'
 import { setFlowLocale } from '@ketvietlab/flow-client/i18n.mjs'
 import { createFlowWorkspace } from '@ketvietlab/flow-client/workspace.mjs'
-import { createFnClient } from '@ketvietlab/flow-client/api.mjs'
+import { createFnClient, FlowApiError, flowSessionEnded } from '@ketvietlab/flow-client/api.mjs'
 import { projectCode, parseInvites, createFirstRun } from '@ketvietlab/flow-client/first-run.mjs'
 import { createWorkspaceOverview } from '@ketvietlab/flow-client/workspace-overview.mjs'
 import { gettingStarted } from '@ketvietlab/flow-client/getting-started.mjs'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
 import { BLANK_OWNER } from '../atlas/blank-organization.mjs'
+import { createFixtureAuth } from '../atlas/fixture-auth.mjs'
 setFlowLocale('en')
 
 // No browser: the controller only needs a lifetime, a root and the history calls it makes when switching workspace.
@@ -76,6 +77,42 @@ test('a project code comes from the initials of the name, without Vietnamese mar
   assert.equal(projectCode('Ứng dụng'), 'UD')
   assert.equal(projectCode('x'), '', 'one letter is too short')
   assert.equal(projectCode('2026 plan'), '', 'a code starts with a letter')
+})
+
+test('typing a manual onboarding project code immediately updates the visible example', async () => {
+  const initial = {
+    company: { name: 'Example' },
+    user: { id: 'owner' },
+    capabilities: { manageOrganization: true },
+    organizationRevision: 0,
+    workspaces: [],
+  }
+  const data = signal(initial)
+  const controller = createFirstRun({
+    data,
+    call: async () => ({ id: 'workspace' }),
+    reload: async () => data.set({ ...initial, organizationRevision: 1, workspaces: [{ id: 'workspace' }] }),
+    finish: async () => {},
+  })
+  let visible = ''
+  const dispose = effect(() => {
+    visible = renderToStaticString(controller.page(null))
+  })
+  const type = (id, value) => handlers(controller.page(null), 'id=' + id, 'input')[0]({ target: { value } })
+  try {
+    type('workspace-title', 'Product')
+    handlers(controller.page(null), '<form', 'submit')[0]({ preventDefault() {} })
+    await tick()
+    type('project-title', 'Website khách hàng')
+    await tick()
+    assert.match(visible, /like WKH-1/)
+    type('project-code', 'c02')
+    await tick()
+    assert.match(visible, /id="project-code"[^>]*value="C02"/)
+    assert.match(visible, /like C02-1/, 'the subscribed UI updates without another keystroke elsewhere')
+  } finally {
+    dispose()
+  }
 })
 
 test('invite addresses split on lines, commas and spaces, deduplicate, and keep what is not an address', () => {
@@ -307,7 +344,7 @@ test('the owner signs in, replaces the password, sets up a workspace and project
       screen: 'workspace-overview',
       signInDemo: { email: BLANK_OWNER.email, password: BLANK_OWNER.password },
     },
-    { call: transport },
+    { call: transport, fixtureAuth: createFixtureAuth },
   )
   island.mount({ root: root(), lifetime: lifetime.signal })
   await tick()
@@ -597,6 +634,32 @@ test('onboarding is only for people who can manage the organization, and never r
   assert.equal(signedOut.page(null), null)
 })
 
+test('an expired product session links to the deployment login and returns to the same Flow page', () => {
+  const calls = []
+  const product = createFirstRun({
+    data: () => null,
+    call: async (name) => calls.push(name),
+    reload: async () => {},
+    finish: async () => {},
+  })
+  globalThis.location = { pathname: '/flow/project-issues', search: '?project=core&status=open' }
+  try {
+    const page = renderToStaticString(product.page({ code: 'unauthenticated' }))
+    assert.match(page, /<h1>Your session has ended<\/h1>/)
+    assert.match(page, /href="\/login\?next=%2Fflow%2Fproject-issues%3Fproject%3Dcore%26status%3Dopen"/)
+    assert.match(page, /data-ket-reload/, 'the login page loads in full, outside Flow navigation')
+    assert.doesNotMatch(page, /type="password"|sign-in-email|Atlas mock account/)
+  } finally {
+    delete globalThis.location
+  }
+  assert.equal(
+    product.page({ code: 'password_change' }),
+    null,
+    'the deployment, not Flow, asks for a new password',
+  )
+  assert.deepEqual(calls, [], 'Flow never sends credentials of its own')
+})
+
 test('first-run local field refusal focuses the invalid control and preserves its draft without a command', async () => {
   let commands = 0,
     focused = 0
@@ -633,6 +696,7 @@ test('first-run asynchronous credential refusal returns focus to its bound field
     },
     reload: async () => {},
     finish: async () => {},
+    fixtureAuth: createFixtureAuth,
   })
   const form = { querySelector: () => ({ focus: () => focused++ }) }
   const state = { code: 'unauthenticated' }
@@ -732,4 +796,50 @@ test('Overview checklist consumes scoped existence independently of preview wind
     false,
     'explicit absence overrides stale local rows',
   )
+})
+
+test('a refused product read asks the deployment whether the session ended before offering to sign in again', async () => {
+  const asked = []
+  const probe = (status) => async (url, request) => {
+    asked.push([url, request.credentials])
+    if (status instanceof Error) throw status
+    return new Response('{}', { status })
+  }
+  assert.equal(await flowSessionEnded({ fetch: probe(401) }), true)
+  assert.equal(await flowSessionEnded({ fetch: probe(200) }), false)
+  assert.equal(
+    await flowSessionEnded({ fetch: probe(new TypeError('offline')) }),
+    false,
+    'being offline is not signing out',
+  )
+  assert.deepEqual(asked[0], ['/flow/session', 'same-origin'])
+
+  const refused = async () => {
+    throw new FlowApiError('Access denied', 'forbidden')
+  }
+  globalThis.location = { pathname: '/flow/my-work', search: '', href: 'http://flow.local/flow/my-work' }
+  try {
+    for (const [ended, expected] of [
+      [true, /href="\/login\?next=%2Fflow%2Fmy-work"/],
+      [false, /Access denied/],
+    ]) {
+      const lifetime = new AbortController()
+      const island = createFlowWorkspace(
+        { screen: 'my-work' },
+        { call: refused, sessionEnded: async () => ended },
+      )
+      island.mount({ root: root(), lifetime: lifetime.signal })
+      await tick()
+      try {
+        const page = renderToStaticString(island.view())
+        assert.match(page, expected, String(ended))
+        if (!ended) assert.doesNotMatch(page, /\/login\?next=/, 'a missing permission is not sent to sign in')
+      } finally {
+        lifetime.abort()
+        island.dispose()
+      }
+    }
+  } finally {
+    delete globalThis.location
+  }
 })

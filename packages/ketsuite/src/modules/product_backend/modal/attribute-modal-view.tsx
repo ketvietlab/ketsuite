@@ -1,3 +1,4 @@
+import { AttributeHelp } from '../screens/attribute-help.tsx'
 import { ATTRIBUTE_RECORD_MODAL_LABELS } from '../../product/attribute-modal-labels.ts'
 import { Button, Field, Grid, RecordActions, ReorderList, Section } from '@ketvietlab/design-system'
 import type { FieldProps } from '@ketvietlab/design-system'
@@ -6,22 +7,31 @@ import { createRecordModal } from '../../../ui/client/record-modal.tsx'
 import type { RecordModalContext, RecordModalDefinition } from '../../../ui/client/record-modal.tsx'
 import {
   RecordCloseTrigger,
+  RecordDialogTrigger,
   RecordModalForm,
   recordStateSelectControl,
 } from '../../../ui/client/record-modal-form.tsx'
 
-export type AttributeValueDraft = { id: string; name: string; htmlColor: string | null; sequence: number }
+export type AttributeValueDraft = {
+  id: string
+  name: string
+  htmlColor: string | null
+  sequence: number
+  defaultPriceExtra?: string
+}
 export type AttributeRecord = {
   id: string
   name: string
   displayType: string
   createVariant: string
   sequence: number
+  active?: boolean
   values: AttributeValueDraft[]
 }
 export type AttributeModalData = {
   record: AttributeRecord
-  permissions: { save: boolean }
+  permissions: { save: boolean; archive?: boolean }
+  usageCount?: number
   lang: 'vi' | 'en'
 }
 type Context = RecordModalContext<AttributeModalData>
@@ -51,6 +61,7 @@ const valuesOf = (c: Context): AttributeValueDraft[] => {
           value?.htmlColor ??
             (c.draft('displayType', c.data.record.displayType) === 'color' ? '#000000' : ''),
         ) || null,
+      defaultPriceExtra: c.draft(valueField(id, 'defaultPriceExtra'), value?.defaultPriceExtra ?? '0'),
       sequence: index,
     }
   })
@@ -69,6 +80,7 @@ const dirty = (c: Context, draft: AttributeRecord): boolean => {
       id: value.id,
       name: value.name,
       htmlColor: value.htmlColor || (c.data.record.displayType === 'color' ? '#000000' : null),
+      defaultPriceExtra: value.defaultPriceExtra ?? '0',
       sequence: index,
     })),
   }
@@ -77,7 +89,7 @@ const dirty = (c: Context, draft: AttributeRecord): boolean => {
 const field = (c: Context, props: Omit<FieldProps, 'id'>): FieldProps => ({
   ...props,
   id: `${formId}-${props.name}`,
-  disabled: !c.data.permissions.save || c.busy,
+  disabled: props.disabled || !c.data.permissions.save || c.busy,
   error: c.fieldError(props.name),
   value: c.draft(props.name, String(props.value ?? '')),
 })
@@ -86,99 +98,118 @@ const body = (c: Context): JSXChild => {
   const choices = (group: string, values: string[]) =>
     values.map((value) => ({ value, label: t(c, `${group}.${value}`) }))
   return (
-    <RecordModalForm
-      kind={c.kind}
-      id={formId}
-      command="save"
-      dirty={dirty(c, draft)}
-      fields={[
-        field(c, {
-          name: 'name',
-          label: t(c, 'field.name'),
-          value: draft.name,
-          required: true,
-          span: 'full',
-        }),
-        {
-          ...field(c, {
-            name: 'displayType',
-            label: t(c, 'attributes.displayType'),
-            value: draft.displayType,
+    <>
+      <AttributeHelp lang={c.data.lang} id="product-attribute-record-help" />
+      <RecordModalForm
+        kind={c.kind}
+        id={formId}
+        command="save"
+        dirty={dirty(c, draft)}
+        fields={[
+          field(c, {
+            name: 'name',
+            label: t(c, 'field.name'),
+            value: draft.name,
+            required: true,
+            span: 'full',
           }),
-          control: recordStateSelectControl({
-            id: `${formId}-displayType`,
-            name: 'displayType',
-            state: 'displayType',
-            value: draft.displayType,
-            disabled: !c.data.permissions.save || c.busy,
-            options: choices('displayType', ['radio', 'pills', 'select', 'color', 'multi']),
+          {
+            ...field(c, {
+              name: 'displayType',
+              label: t(c, 'attributes.displayType'),
+              value: draft.displayType,
+            }),
+            control: recordStateSelectControl({
+              id: `${formId}-displayType`,
+              name: 'displayType',
+              state: 'displayType',
+              value: draft.displayType,
+              disabled: !c.data.permissions.save || c.busy,
+              options: choices('displayType', ['radio', 'pills', 'select', 'color', 'multi']),
+            }),
+          },
+          field(c, {
+            name: 'createVariant',
+            label: t(c, 'attributes.createVariant'),
+            type: 'select',
+            value: draft.createVariant,
+            options: choices('createVariant', ['always', 'no_variant']),
+            disabled: !c.data.permissions.save || c.busy || (c.data.usageCount ?? 0) > 0,
+            help:
+              (c.data.usageCount ?? 0) > 0
+                ? c.t('product.error.attribute.policyInUse')
+                : c.t('product.error.attribute.multiPolicy'),
           }),
-        },
-        field(c, {
-          name: 'createVariant',
-          label: t(c, 'attributes.createVariant'),
-          type: 'select',
-          value: draft.createVariant,
-          options: choices('createVariant', ['always', 'no_variant']),
-        }),
-      ]}
-      body={
-        <Section
-          title={t(c, 'attributes.values')}
-          description={c.fieldError(orderField)}
-          body={
-            <ReorderList
-              id="product-attribute-values"
-              name={orderField}
-              label={t(c, 'attributes.values')}
-              disabled={!c.data.permissions.save || c.busy}
-              labels={{
-                add: t(c, 'attributes.addValue'),
-                remove: t(c, 'attributes.removeValue'),
-                up: t(c, 'attributes.moveUp'),
-                down: t(c, 'attributes.moveDown'),
-                drag: t(c, 'attributes.dragValue'),
-                empty: t(c, 'attributes.emptyValues'),
-              }}
-              items={draft.values.map((value) => {
-                const name = (
-                  <Field
-                    {...field(c, {
-                      name: valueField(value.id, 'name'),
-                      label: t(c, 'attributes.valueName'),
-                      required: true,
-                      value: value.name,
-                    })}
-                  />
-                )
-                return {
-                  id: value.id,
-                  content:
-                    draft.displayType === 'color' ? (
+        ]}
+        body={
+          <Section
+            title={t(c, 'attributes.values')}
+            description={c.fieldError(orderField)}
+            body={
+              <ReorderList
+                id="product-attribute-values"
+                name={orderField}
+                label={t(c, 'attributes.values')}
+                disabled={!c.data.permissions.save || c.busy}
+                labels={{
+                  add: t(c, 'attributes.addValue'),
+                  remove: t(c, 'attributes.removeValue'),
+                  up: t(c, 'attributes.moveUp'),
+                  down: t(c, 'attributes.moveDown'),
+                  drag: t(c, 'attributes.dragValue'),
+                  empty: t(c, 'attributes.emptyValues'),
+                }}
+                items={draft.values.map((value) => {
+                  const name = (
+                    <Field
+                      {...field(c, {
+                        name: valueField(value.id, 'name'),
+                        label: t(c, 'attributes.valueName'),
+                        required: true,
+                        value: value.name,
+                      })}
+                    />
+                  )
+                  return {
+                    id: value.id,
+                    content: (
                       <Grid
                         columns={2}
                         items={[
                           name,
                           <Field
                             {...field(c, {
-                              name: valueField(value.id, 'htmlColor'),
-                              label: t(c, 'attributes.color'),
-                              type: 'color',
-                              value: value.htmlColor || '#000000',
+                              name: valueField(value.id, 'defaultPriceExtra'),
+                              label: t(c, 'attributes.defaultPriceExtra'),
+                              type: 'decimal',
+                              value: value.defaultPriceExtra ?? '0',
+                              align: 'end',
                             })}
                           />,
+                          ...(draft.displayType === 'color'
+                            ? [
+                                <Field
+                                  {...field(c, {
+                                    name: valueField(value.id, 'htmlColor'),
+                                    label: t(c, 'attributes.color'),
+                                    type: 'color',
+                                    value: value.htmlColor || '#000000',
+                                    span: 'full',
+                                  })}
+                                />,
+                              ]
+                            : []),
                         ]}
                       />
-                    ) : (
-                      name
                     ),
-                }
-              })}
-            />
-          }
-        />
-      }
-    />
+                  }
+                })}
+              />
+            }
+          />
+        }
+      />
+    </>
   )
 }
 export const attributeModalDefinition: RecordModalDefinition<AttributeModalData> = {
@@ -197,6 +228,23 @@ export const attributeModalDefinition: RecordModalDefinition<AttributeModalData>
   actions: (c) => (
     <RecordActions
       actions={[
+        <Button
+          name="screen-help"
+          type="button"
+          label={c.data.lang === 'vi' ? 'Hướng dẫn' : 'Help'}
+          variant="secondary"
+        />,
+        ...(!c.creating && c.data.permissions.archive
+          ? [
+              <RecordDialogTrigger dialog="state">
+                <Button
+                  variant="secondary"
+                  label={t(c, c.data.record.active === false ? 'attributes.restore' : 'attributes.archive')}
+                  disabled={c.busy || (c.data.record.active !== false && (c.data.usageCount ?? 0) > 0)}
+                />
+              </RecordDialogTrigger>,
+            ]
+          : []),
         ...(c.data.permissions.save
           ? [
               <Button
@@ -214,12 +262,36 @@ export const attributeModalDefinition: RecordModalDefinition<AttributeModalData>
       ]}
     />
   ),
+  dialogs: {
+    state: {
+      title: (c) => t(c, c.data.record.active === false ? 'attributes.restore' : 'attributes.archive'),
+      view: (c) => <RecordModalForm id="attribute-state-form" kind={c.kind} command="state" fields={[]} />,
+      confirmation: {
+        message: (c) =>
+          t(c, c.data.record.active === false ? 'attributes.restoreConfirm' : 'attributes.archiveConfirm'),
+        label: (c) => t(c, c.data.record.active === false ? 'attributes.restore' : 'attributes.archive'),
+        cancelLabel: (c) => c.t('recordModal.close'),
+        form: () => 'attribute-state-form',
+        command: 'state',
+        variant: 'destructive',
+        disabled: (c) =>
+          c.busy ||
+          !c.data.permissions.archive ||
+          (c.data.record.active !== false && (c.data.usageCount ?? 0) > 0),
+      },
+    },
+  },
   commands: {
+    state: {
+      fn: 'product.saveAttribute',
+      input: (_form, c) => ({ id: c.id, name: c.data.record.name, active: c.data.record.active === false }),
+      after: 'reload',
+    },
     save: {
       fn: 'product.saveAttributeDraft',
       issueField: (path, form, c) => {
         if (path === 'values') return orderField
-        const matched = /^values\.(\d+)\.(name|htmlColor|id)$/.exec(path)
+        const matched = /^values\.(\d+)\.(name|htmlColor|defaultPriceExtra|id)$/.exec(path)
         if (!matched) return path
         let ids = valuesOf(c).map((value) => value.id)
         try {
@@ -242,6 +314,9 @@ export const attributeModalDefinition: RecordModalDefinition<AttributeModalData>
           name: String(form.get(valueField(value.id, 'name')) ?? value.name).trim(),
           htmlColor:
             String(form.get(valueField(value.id, 'htmlColor')) ?? value.htmlColor ?? '').trim() || null,
+          defaultPriceExtra: String(
+            form.get(valueField(value.id, 'defaultPriceExtra')) ?? value.defaultPriceExtra ?? '0',
+          ).trim(),
           sequence: index,
         })),
       }),

@@ -1,3 +1,5 @@
+import type { PackagingGridData } from './packaging-grid.tsx'
+import type { ProductSuppliers } from './supplier-grid.tsx'
 // The product page's read: the template record (`product.templateModalContext`) with
 // what other modules know about it, composed here because `product` depends on none
 // of them. Each fact is its module's own function, read only when that module is
@@ -42,6 +44,7 @@ type SalesFacts = {
   revenue: number | null
   orders: number
   lastAt: string | null
+  variants?: unknown
 }
 type VendorRow = {
   id: string
@@ -168,9 +171,11 @@ export const productCompleteness = (base: Base['data'], money: boolean): Product
       base.hasVariants ? selling.every((variant) => variant.defaultCode) : Boolean(record.defaultCode),
     ],
     ['barcode', base.hasVariants ? selling.every((variant) => variant.barcode) : Boolean(record.barcode)],
-    ['categoryId', Boolean(record.categoryId)],
+    ...(record.type === 'combo'
+      ? [['comboIds', Array.isArray(record.comboIds) && record.comboIds.length > 0] as [string, boolean]]
+      : [['categoryId', Boolean(record.categoryId)] as [string, boolean]]),
     // Cost is a fact only money readers can see, so it only counts for them.
-    ...(money
+    ...(money && record.type !== 'combo'
       ? [
           [
             'costPrice',
@@ -188,7 +193,8 @@ export const productCompleteness = (base: Base['data'], money: boolean): Product
   }
 }
 
-export const productWorkspaceContext =
+export const productWorkspaceContextWith =
+  (options: { combinedInventoryTracking?: boolean; variantPackagings?: boolean } = {}) =>
   (ctx: ServeContext): Route =>
   async (url, req, params) => {
     if (req.method !== 'GET') return text('GET', { status: 405 })
@@ -201,7 +207,9 @@ export const productWorkspaceContext =
       return text('Forbidden', { status: 403 })
     const base = (await ctx.call(
       'product.templateModalContext',
-      creating ? { locale: lang } : { id: params.id, locale: lang },
+      creating
+        ? { locale: lang, sourceId: url.searchParams.get('duplicate') ?? undefined }
+        : { id: params.id, locale: lang },
       url,
       req,
     )) as Base | null
@@ -213,17 +221,35 @@ export const productWorkspaceContext =
     const read = async <T>(fn: string, input: Record<string, unknown>): Promise<T | null> =>
       (await usable(fn)) ? ((await ctx.call(fn, input, url, req)) as T | null) : null
     const templateId = base.data.record.id
+    // A copy starts with the accounts its source names, as the rest of its fields (P22).
+    const source = creating ? url.searchParams.get('duplicate') : null
+    const accounts = await read<Record<string, unknown>>(
+      'account.getProductAccounts',
+      source
+        ? { templateId: source }
+        : creating
+          ? { type: base.data.record.type, categoryId: base.data.record.categoryId ?? undefined }
+          : { templateId },
+    )
+    const setAccounts = accounts !== null && (await usable('account.setProductAccounts'))
     const units = await usable('uom.listUnits')
-    const [stock, sales, vendors, orderpoints] = creating
-      ? [null, null, null, false]
+    const [stock, sales, vendors, orderpoints, suppliers, invoicePolicy] = creating
+      ? [null, null, null, false, null, null]
       : await Promise.all([
           read<StockFacts>('stock.productWorkspace', { templateId }),
           read<SalesFacts>('sale.productSales', { templateId, days: SALES_DAYS }),
           read<VendorRow[]>('purchase.listProductVendors', { templateId }),
           usable('stock.saveProductOrderpoints'),
+          read<ProductSuppliers>('purchase.getProductSuppliers', { templateId }),
+          read<{ invoicePolicy: string }>('sale.getProductInvoicePolicy', { templateId }),
         ])
+    const packagingGrid =
+      options.variantPackagings && !creating
+        ? await read<PackagingGridData>('product.getPackagingGrid', { templateId })
+        : null
+    const warningSettings = await read<{ enabled: boolean }>('sale.getWarningSettings', {})
     const money = base.data.permissions.money === true
-    const margin = creating || !money ? null : productMargin(base.data)
+    const margin = creating || !money || base.data.record.type === 'combo' ? null : productMargin(base.data)
     const variants = base.data.variants.map((variant) => ({
       ...variant,
       available: stock?.tracked ? (stock.variants[variant.id] ?? 0) : null,
@@ -233,13 +259,30 @@ export const productWorkspaceContext =
     return json({
       data: {
         ...base.data,
+        saleWarningsOn: warningSettings?.enabled === true,
+        ...(options.combinedInventoryTracking ? { inventoryTracking: 'combined' } : {}),
+        ...(options.variantPackagings ? { packagingGrid } : {}),
         variants,
         stock,
+        accounts,
+        invoicePolicy: invoicePolicy?.invoicePolicy ?? null,
         // Revenue is money: a reader without costs and prices sees how many, not how much.
-        sales: sales ? { ...sales, revenue: money ? sales.revenue : null } : null,
+        // The per-variant rows belong to the analysis the card opens (P32), which applies
+        // the same rule; the card shows the totals only.
+        sales: sales
+          ? {
+              days: sales.days,
+              quantity: sales.quantity,
+              revenue: money ? sales.revenue : null,
+              orders: sales.orders,
+              lastAt: sales.lastAt,
+            }
+          : null,
         vendors: vendors ? vendors.map((row) => ({ ...row, price: money ? row.price : null })) : null,
         margin,
-        uomLocked: !creating && stock?.inUse === true,
+        suppliers,
+        // P18: the unit is chosen when the product is created and fixed after.
+        uomLocked: !creating,
         issues: creating
           ? []
           : productIssues({
@@ -252,6 +295,7 @@ export const productWorkspaceContext =
         completeness: creating ? null : productCompleteness(base.data, money),
         permissions: {
           ...base.data.permissions,
+          setAccounts,
           orderpoints: orderpoints === true && stock?.tracked === true,
         },
         links: {
@@ -261,7 +305,13 @@ export const productWorkspaceContext =
               : stock
                 ? inLocale(url, '/admin/stock/forecast')
                 : null,
-          orders: sales ? inLocale(url, `/admin/sales/orders?q=${encodeURIComponent(name)}`) : null,
+          // The Sold card opens what sold, a row per variant (P32); a deployment without
+          // that analysis keeps the order list.
+          orders: !sales
+            ? null
+            : manifest.routes['/admin/sales/analysis']
+              ? inLocale(url, `/admin/sales/analysis?templateId=${encodeURIComponent(String(templateId))}`)
+              : inLocale(url, `/admin/sales/orders?q=${encodeURIComponent(name)}`),
           vendorPricelists: vendors
             ? inLocale(url, `/admin/purchase/vendor-pricelists?q=${encodeURIComponent(name)}`)
             : null,
@@ -273,9 +323,16 @@ export const productWorkspaceContext =
         ...base.messages,
         ...Object.fromEntries(
           Object.entries(manifest.messages?.[lang] ?? {})
-            .filter(([key]) => key.startsWith('stock.error.orderpoint.'))
+            .filter(
+              ([key]) =>
+                key.startsWith('stock.error.') ||
+                key.startsWith('account.error.') ||
+                key.startsWith('purchase.error.'),
+            )
             .map(([key, value]) => [key, String(value)]),
         ),
       },
     })
   }
+
+export const productWorkspaceContext = productWorkspaceContextWith()

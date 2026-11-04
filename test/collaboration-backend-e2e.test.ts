@@ -86,7 +86,7 @@ test('Chatter backend E2E: Partner bridge renders and persists its timeline', as
   })
   assert.equal(partnerPage.status, 200)
   const html = await partnerPage.text()
-  assert.match(html, /data-ui="form-page-aside"/)
+  assert.match(html, /data-ui="record-page-aside"/)
   assert.match(html, /data-island="mail\.chatter"/)
   assert.match(html, /&quot;resModel&quot;:&quot;partner\.Partner&quot;/)
   assert.doesNotMatch(html, /Quick information/)
@@ -284,12 +284,12 @@ test('Product Variant form keeps its own Chatter, activities and partial-save wo
     path,
     new URLSearchParams({
       defaultCode: 'COLLAB-UPDATED',
-      barcode: '8938500000001',
+      barcode: '8938500000003',
       weight: '1.25',
       volume: '0.5',
       standardPrice: '80',
       uomId: 'unit',
-      uomBarcode: '8938500000002',
+      uomBarcode: '8938500000010',
     }),
     { headers: { accept: 'text/html', 'x-ket-partial': 'product-variant' } },
   )
@@ -333,26 +333,26 @@ test('Chatter backend E2E: Stock bridge is company-scoped and owns the transfer 
   })
   assert.equal(transferPage.status, 200)
   const html = await transferPage.text()
-  assert.match(html, /data-island="mail\.chatter"/)
-  assert.match(html, /&quot;resModel&quot;:&quot;stock\.Picking&quot;/)
+  // The page is the record runtime's island; its rail comes from the record's context.
+  assert.match(html, /data-ui="record-page"/)
+  assert.match(html, /data-island="stock\.transfer-page"/)
   assert.match(html, /WH\/OUT\/COLLAB/)
-  assert.match(html, /data-ui="form-page"/)
-  assert.match(html, /data-ui="form-page-aside"/)
-  assert.match(html, /data-island="stock\.editor"/)
-  assert.match(html, /data-scope="stock-transfer"/)
-
-  const partial = await e2e.client.post(
-    '/admin/stock/transfers/pick-collab?lang=vi',
-    new URLSearchParams({ action: 'confirm' }),
-    { headers: { accept: 'text/html', 'x-ket-partial': 'stock-transfer' } },
+  assert.doesNotMatch(html, /data-island="mail\.chatter"/)
+  const context = await e2e.client.get('/admin/stock/transfer/pick-collab/context?lang=vi', {
+    headers: { accept: 'application/json' },
+  })
+  assert.equal(context.status, 200)
+  const { data } = (await context.json()) as {
+    data: { collaboration: Array<{ island: string }>; editor: Array<{ island: string }> }
+  }
+  assert.deepEqual(
+    data.collaboration.map((entry) => entry.island),
+    ['mail.chatter', 'activity.record'],
   )
-  assert.equal(partial.status, 200)
-  assert.match(partial.headers.get('content-type') ?? '', /^text\/vnd\.ket\.fragments\+html/)
-  const partialHtml = await partial.text()
-  assert.match(partialHtml, /data-ket-slot="stock\.transfer-header"/)
-  assert.match(partialHtml, /data-ket-slot="stock\.transfer-body"/)
-  assert.match(partialHtml, /Đã xác nhận/)
-  assert.doesNotMatch(partialHtml, /data-island="(?:stock\.editor|mail\.chatter|activity\.record)"/)
+  assert.deepEqual(
+    data.editor.map((entry) => entry.island),
+    ['stock.editor'],
+  )
 
   await member.call('stock_mail_backend.follow', { targetId: 'pick-collab' })
   await call('stock_mail_backend.post', {

@@ -12,7 +12,9 @@ export const entryProjection = (entry: Row, revision: Row | undefined, locale = 
     revisionId: entry.currentRevisionId,
     layout: revision?.layout ?? [],
     fields,
-    locale: fields.locale ?? locale,
+    // The entry's own language wins; rows saved before translations still carry it in fields.
+    locale: entry.locale ?? fields.locale ?? locale,
+    translationGroupId: entry.translationGroupId ?? entry.id,
     trashed: entry.status === 'trash',
     revision: revision?.version ?? 0,
     state:

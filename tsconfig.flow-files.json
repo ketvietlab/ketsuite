@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": [
+    "test/flow-native-file-policy.test.ts",
+    "test/livedoc-snapshot-cleanup.test.ts",
+    "test/flow-native-upload-expiry.test.ts",
+    "test/live-doc-tail.test.ts"
+  ]
+}

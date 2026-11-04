@@ -350,7 +350,7 @@ export const FlowDialog = (p) =>
     ${p.feedback ? html`<div data-flow="dialog-feedback">${p.feedback}</div>` : null}
   </dialog>`
 
-/** A small centred question, including on mobile; consumers own the action. Details explain prerequisites without replacing the associated question. @param {{id:string,title:string,message:string,details?:Child,confirmLabel:string,cancelLabel:string,onConfirm:()=>void,onCancel:()=>void,tone?:'danger'|'primary',confirmDisabled?:boolean,loading?:boolean,autoOpen?:boolean,feedback?:Child}} p */
+/** A centred desktop question, full viewport below768px; consumers own the action. Details explain prerequisites without replacing the associated question. @param {{id:string,title:string,message:string,details?:Child,confirmLabel:string,cancelLabel:string,onConfirm:()=>void,onCancel:()=>void,tone?:'danger'|'primary',confirmDisabled?:boolean,loading?:boolean,autoOpen?:boolean,feedback?:Child}} p */
 export const FlowConfirmDialog = (p) =>
   FlowDialog({
     id: p.id,

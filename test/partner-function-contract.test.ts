@@ -11,6 +11,7 @@ test('partner functions: split registry preserves all fourteen inputs, effects a
         search: 'text?',
         ids: 'json?',
         includeArchived: 'bool?',
+        customers: 'bool?',
         sortField: 'text?',
         sortDirection: 'text?',
         limit: 'int?',

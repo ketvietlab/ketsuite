@@ -483,8 +483,15 @@ test('productivity task relocation is atomic, scoped, loss-aware and replay-safe
     })
     assert.equal(stream.status, 200)
     const frames = stream.body!.getReader()
-    const initialFrame = await frames.read()
-    assert.match(new TextDecoder().decode(initialFrame.value), /"index":1/)
+    // SSE chunks may split/coalesce initial document and presence events.
+    const decoder = new TextDecoder()
+    let initialFrames = ''
+    for (let n = 0; n < 10 && !/"index":1/.test(initialFrames); n++) {
+      const frame = await frames.read()
+      assert.equal(frame.done, false)
+      initialFrames += decoder.decode(frame.value, { stream: true })
+    }
+    assert.match(initialFrames, /"index":1/)
     const captured = new Promise<void>((resolve) => {
       lookupHeld = resolve
     })

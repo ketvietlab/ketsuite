@@ -6,6 +6,7 @@ import {
   FilterBar,
   Grid,
   LinkButton,
+  ListChrome,
   Notice,
   SearchBar,
   Select,
@@ -20,7 +21,7 @@ import type { PageTemplate } from './builder-types.ts'
 import type { Entry, Screen, StudioContext, TaxonomyTerm } from '../types.ts'
 
 /** `website.listEntries`: one page of rows and the count of each status tab. */
-type EntryList = { rows: Entry[]; total?: number; counts?: Record<string, number> }
+type EntryList = { rows: Entry[]; total?: number; page?: number; pageSize?: number }
 
 const FILTERS = ['all', 'published', 'changed', 'draft', 'trash']
 
@@ -28,17 +29,44 @@ export function createEntryList(ctx: StudioContext, type: 'page' | 'post') {
   const key = type === 'page' ? 'pages' : 'posts'
   const tr = ctx.tr
   return {
-    readKey: (route) => [route.query.status ?? 'all', route.query.q ?? ''],
+    readKey: (route) => [
+      route.query.status ?? 'all',
+      route.query.q ?? '',
+      route.query.locale ?? '',
+      route.query.page ?? '1',
+    ],
     read: (route, signal) =>
       ctx.call<EntryList>(
         'website.listEntries',
-        { siteId: ctx.site().id, type, status: route.query.status ?? 'all', search: route.query.q ?? '' },
+        {
+          siteId: ctx.site().id,
+          type,
+          status: route.query.status ?? 'all',
+          search: route.query.q ?? '',
+          locale: route.query.locale ?? '',
+          page: Number(route.query.page) || 1,
+        },
         { signal },
       ),
     view: (value, route) => {
       const status = FILTERS.includes(route.query.status) ? route.query.status : 'all'
       const canWrite = ctx.can('website.content.write')
       const q = route.query.q ?? ''
+      const locales = ctx.site().locales
+      const locale = locales.includes(route.query.locale) ? route.query.locale : ''
+      // Filters live in the address, so a reload or a shared link opens the same rows.
+      const listHref = (query: Record<string, string | null>) =>
+        ctx.href(
+          key,
+          {},
+          { status: status === 'all' ? null : status, q: q || null, locale: locale || null, ...query },
+        )
+      const total = value.total ?? value.rows.length
+      const page = value.page ?? 1
+      const pageSize = value.pageSize ?? Math.max(value.rows.length, 1)
+      const pages = Math.max(Math.ceil(total / pageSize), 1)
+      const first = total ? (page - 1) * pageSize + 1 : 0
+      const filtered = Boolean(q) || status !== 'all' || Boolean(locale)
       return (
         <ListPage
           variant="operational"
@@ -61,10 +89,30 @@ export function createEntryList(ctx: StudioContext, type: 'page' | 'post') {
                   items={FILTERS.map((filter) => ({
                     id: filter,
                     label: tr(`website.entry.filter.${filter}`),
-                    href: ctx.href(key, {}, { status: filter === 'all' ? null : filter, q }),
+                    href: ctx.href(
+                      key,
+                      {},
+                      { status: filter === 'all' ? null : filter, q, locale: locale || null },
+                    ),
                     active: filter === status,
                   }))}
                 />,
+                // Only a site written in several languages has anything to tell apart.
+                locales.length > 1 ? (
+                  <Tabs
+                    label={tr('website.entry.localeFilter')}
+                    items={['', ...locales].map((value) => ({
+                      id: value || 'all',
+                      label: value ? tr(`website.locale.${value}`) : tr('website.entry.allLocales'),
+                      href: ctx.href(
+                        key,
+                        {},
+                        { status: status === 'all' ? null : status, q, locale: value || null },
+                      ),
+                      active: value === locale,
+                    }))}
+                  />
+                ) : null,
                 <FilterBar
                   label={tr(`website.${type}.search`)}
                   filters={[
@@ -75,14 +123,38 @@ export function createEntryList(ctx: StudioContext, type: 'page' | 'post') {
                       label={tr(`website.${type}.search`)}
                       placeholder={tr('website.search.placeholder')}
                       submitLabel={tr('website.search.submit')}
-                      hidden={status === 'all' ? undefined : { status }}
+                      hidden={
+                        status === 'all' && !locale
+                          ? undefined
+                          : { ...(status === 'all' ? {} : { status }), ...(locale ? { locale } : {}) }
+                      }
                     />,
                   ]}
                 />,
               ]}
             />
           }
-          footer={tr('website.list.results', { count: value.rows.length })}
+          footer={
+            pages > 1 ? (
+              // The DS styles its pager inside the list chrome, so the pager comes in one.
+              <ListChrome
+                pager={{
+                  label: tr('website.list.pager'),
+                  summary: tr('website.list.range', {
+                    from: first,
+                    to: first + value.rows.length - 1,
+                    total,
+                  }),
+                  previousHref: page > 1 ? listHref({ page: page === 2 ? null : String(page - 1) }) : null,
+                  nextHref: page < pages ? listHref({ page: String(page + 1) }) : null,
+                  previousLabel: tr('website.list.previous'),
+                  nextLabel: tr('website.list.next'),
+                }}
+              />
+            ) : (
+              tr('website.list.results', { count: total })
+            )
+          }
           body={
             <DataTable
               columns={[
@@ -141,10 +213,13 @@ export function createEntryList(ctx: StudioContext, type: 'page' | 'post') {
                   },
                 )
               }
-              emptyTitle={tr(`website.${type}.emptyTitle`)}
-              emptyMessage={tr(`website.${type}.emptyMessage`)}
+              // Empty after a filter is not an empty site: say so, and offer the way back.
+              emptyTitle={tr(filtered ? 'website.list.noMatchTitle' : `website.${type}.emptyTitle`)}
+              emptyMessage={tr(filtered ? 'website.list.noMatchMessage' : `website.${type}.emptyMessage`)}
               emptyActions={
-                canWrite ? (
+                filtered ? (
+                  <LinkButton label={tr('website.list.clearFilters')} href={ctx.href(key)} />
+                ) : canWrite ? (
                   <LinkButton
                     label={tr(`website.${type}.create`)}
                     href={ctx.href(type === 'page' ? 'page-new' : 'post-new')}

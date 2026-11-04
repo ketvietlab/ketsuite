@@ -36,6 +36,8 @@ export type PartnerStatementScreenOptions = {
   errors?: readonly string[]
   accountLabel?: (id: unknown) => string
   /** The document behind a balance, so a partner's ledger is not a dead end. */
+  /** The numbered form this book follows under the company's standard, when it names one. */
+  form?: string | null
   entryHref?: (row: PartnerStatementRow) => string
 }
 
@@ -125,7 +127,7 @@ export const partnerLedgerScreen = (
         <RecordWorkspace
           kicker={_('account_backend.partnerLedger.kicker')}
           title={_('account_backend.partnerStatement.title')}
-          subtitle={_('account_backend.partnerLedger.subtitle')}
+          subtitle={options.form ? _('account_backend.books.form', { form: options.form }) : null}
           imageFallback={icon('credit-card')}
           summary={[
             {

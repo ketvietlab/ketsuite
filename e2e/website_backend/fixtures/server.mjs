@@ -66,12 +66,13 @@ const seedIdentity = async () => {
   })
 }
 
-const seedSite = async ({ id, title, locale, theme, host, entryId, layout }) => {
+const seedSite = async ({ id, title, locale, locales, theme, host, entryId, layout }) => {
   await call('website.saveSite', {
     id,
     name: title,
     title,
     defaultLocale: locale,
+    ...(locales ? { locales } : {}),
     theme,
     active: true,
   })
@@ -110,6 +111,8 @@ const seed = async () => {
     id: 'hospitality-site',
     title: 'Mây Retreat',
     locale: 'vi',
+    // Two languages, so the Studio offers a translation of the home page.
+    locales: ['vi', 'en'],
     theme: 'theme_hospitality',
     host: '127.0.0.1',
     entryId: 'home-hospitality',

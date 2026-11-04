@@ -6,6 +6,7 @@ import {
   FormCluster,
   FormPage,
   linkButton,
+  modalForm,
   RecordForm,
   shell,
   stack,
@@ -22,6 +23,32 @@ export type TaxFormScreenOptions = {
   cancelHref: string
   editing?: TaxFormRow | null
   errors?: string[]
+}
+
+/** A tax is a short single-column form, so it opens in the small sheet over the tax list (D9). */
+export const taxFormModal = (_: Translator, options: TaxFormScreenOptions): TemplateResult => {
+  const editing = options.editing ?? null
+  const title = editing ? _('account_backend.tax.edit.title') : _('account_backend.tax.create.title')
+  return modalForm({
+    id: 'account-tax-form',
+    title,
+    description: editing ? String(editing.name) : undefined,
+    closeHref: options.cancelHref,
+    closeLabel: _('account_backend.action.cancelEdit'),
+    presentation: 'dialog',
+    size: 'small',
+    form: {
+      id: 'tax-create-form',
+      scope: 'account-tax',
+      action: options.action,
+      submit: editing ? _('account_backend.action.save') : _('account_backend.action.create'),
+      submitVariant: 'primary',
+      cancelHref: options.cancelHref,
+      cancelLabel: _('account_backend.action.cancelEdit'),
+      fields: options.fields,
+      errors: options.errors,
+    },
+  })
 }
 
 export const taxFormScreen = (_: Translator, options: TaxFormScreenOptions): TemplateResult => {

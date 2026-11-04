@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": [
+    "test/stock-counts-http.test.ts",
+    "test/stock-counts-ui.test.tsx",
+    "test/stock-count-grid-ui.test.tsx",
+    "test/staff-inventory-channel.test.ts",
+    "test/stock-scraps-http.test.ts",
+    "test/stock-function-contracts.test.ts",
+    "test/stock-count-print-ui.test.tsx",
+    "test/design-system-ket-grid.test.ts"
+  ]
+}

@@ -1,3 +1,5 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the #1044 collection runtime shared by the collection books, which draw their own result region and filter triggers — needs kit primitives that take handlers
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — the #1044 collection runtime shared by the collection books, which draw their own result region and filter triggers — needs kit primitives that take handlers
 import { effect, html, signal } from '@ketvietlab/ketjs-view'
 import type { IslandMountContext, TemplateResult } from '@ketvietlab/ketjs-view'
 import {

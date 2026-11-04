@@ -336,6 +336,31 @@ test('index: one entry published, withdrawn or moved is enough to make it stale'
   )
 })
 
+test('index: a draft saved over a published entry leaves it current, and publishing that draft does not', async () => {
+  const db = await boot()
+  await site(db)
+  await write(db, 'one', 'Trà một')
+  await call(db, 'website_search.reindexSite', { siteId: 'site1', passes: 10 })
+  const current = async () =>
+    ((await call(db, 'website_search.indexStatus', { siteId: 'site1' })) as { current: boolean }).current
+  assert.equal(await current(), true)
+
+  // Visitors still read the published revision, so the index still describes the site.
+  await write(db, 'one', 'Trà một bản nháp', false)
+  assert.equal(await current(), true, 'a draft at the same address')
+  assert.deepEqual(
+    (await search(db, 'trà')).hits.map((h) => h.title),
+    ['Trà một'],
+  )
+
+  await call(db, 'website.publishEntry', { id: 'one' })
+  assert.equal(await current(), false, 'publishing the draft')
+  assert.deepEqual(
+    (await search(db, 'trà')).hits.map((h) => h.title),
+    ['Trà một bản nháp'],
+  )
+})
+
 test('index: the body and the sections are searched, and describe a result with no excerpt', async () => {
   const db = await boot()
   await site(db)

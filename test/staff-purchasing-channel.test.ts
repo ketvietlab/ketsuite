@@ -63,6 +63,8 @@ const seedOrdersAndBills = async (e2e: Awaited<ReturnType<typeof boot>>) => {
     defaultCode: 'BAN-01',
     combinationKey: '',
   })
+  // A desk is stocked: a receipt moves it into the warehouse (only stored goods do since R3).
+  await fixture('stock.configureProduct', { templateId: 'goods', isStorable: true, tracking: 'none' })
   await fixture('stock.saveLocation', {
     id: 'supplier-location',
     name: 'Nhà cung cấp',

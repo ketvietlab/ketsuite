@@ -45,14 +45,20 @@ for (const viewport of [
       await expect(page.locator('[data-ui="kt-row"]')).toHaveCount(1)
       await page.locator('a[href*="record=stock.count%3Anew"]').click()
       const adjustment = page.getByRole('dialog')
-      await expect(adjustment.locator('select[name="productId"]')).toBeVisible()
+      await expect(adjustment.locator('[id="inventory-count-productId"]')).toBeVisible()
 
       const metrics = await page.evaluate(() => ({
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
+        // A relation field shows its trigger; its native select only carries the value
+        // the form posts, so it is measured through the trigger instead.
         visibleControls: [
           ...document.querySelectorAll<HTMLElement>(
-            '[role="dialog"] input:not([type="hidden"]), [role="dialog"] select',
+            [
+              '[role="dialog"] input:not([type="hidden"])',
+              '[role="dialog"] select:not([data-ui="relation-native"])',
+              '[role="dialog"] [data-ui="relation-trigger"]',
+            ].join(', '),
           ),
         ]
           .filter((control) => control.getBoundingClientRect().height > 0)
@@ -72,18 +78,34 @@ for (const viewport of [
   }
 }
 
-test('applies an inventory count and refreshes the balance', async ({ page }) => {
+test('opens a single-product blind count without changing the balance', async ({ page }) => {
   await open(page, '/admin/stock/inventory?lang=vi')
-  await page.getByRole('link', { name: 'Điều chỉnh tồn kho' }).click()
+  const row = page.locator('[data-ui="kt-row"]').first()
+  const before = await row.textContent()
+  await row.click()
   const adjustment = page.getByRole('dialog')
-  await adjustment.locator('select[name="productId"]').selectOption('stock-template:default')
-  await adjustment.locator('select[name="locationId"]').selectOption('wh:stock')
-  await adjustment.locator('input[name="countedQuantity"]').fill('15')
-  await adjustment.locator('select[name="inventoryLocationId"]').selectOption('inventory')
-  await adjustment.getByRole('button', { name: 'Xem chênh lệch' }).click()
-  await expect(adjustment.locator('[data-ui="notice"]')).toContainText('Chưa ghi nhận thay đổi')
+  await adjustment.getByRole('button', { name: 'Mở phiên kiểm kê', exact: true }).click()
+  await expect(page).toHaveURL(/record=stock.countSession/)
+  await expect(page.getByRole('dialog').getByText('Đang đếm', { exact: true })).toBeVisible()
+  await open(page, '/admin/stock/inventory?lang=vi')
+  await expect(page.locator('[data-ui="kt-row"]').first()).toHaveText(before ?? '')
+})
 
-  await adjustment.getByRole('button', { name: 'Áp dụng kiểm kê' }).click()
-  await expect(adjustment).toHaveCount(0)
-  await expect(page.locator('[data-ui="kt-row"]')).toContainText('15')
+test('a row says when its goods came in and opens their history and replenishment', async ({ page }) => {
+  await open(page, '/admin/stock/inventory?lang=vi')
+  const row = page.locator('[data-ui="kt-row"]').first()
+  // The seed counts the goods in when the server starts, today in Hà Nội.
+  const today = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh' }).format(
+    new Date(),
+  )
+  await expect(row.locator('[data-col="inDate"]')).toHaveText(today)
+
+  await row.getByRole('link', { name: 'Lịch sử' }).click()
+  await expect(page).toHaveURL(/\/admin\/stock\/moves\?q=STOCK-JACKET/)
+  await expect(page.getByRole('button', { name: 'Bỏ: STOCK-JACKET' })).toBeVisible()
+
+  await open(page, '/admin/stock/inventory?lang=vi')
+  await page.locator('[data-ui="kt-row"]').first().getByRole('link', { name: 'Bổ sung' }).click()
+  await expect(page).toHaveURL(/\/admin\/stock\/replenishment\?q=STOCK-JACKET/)
+  await expect(page.getByRole('button', { name: 'Bỏ: STOCK-JACKET' })).toBeVisible()
 })

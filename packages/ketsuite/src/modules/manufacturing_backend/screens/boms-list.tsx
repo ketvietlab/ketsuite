@@ -1,4 +1,5 @@
 import {
+  badge,
   code,
   collectionActions,
   collectionControls,
@@ -18,6 +19,10 @@ export type BomListRow = {
   code: string
   product: string
   quantity: string
+  version?: string
+  state?: string
+  /** Locale-aware page of this version. */
+  href?: string
 }
 
 export type BomsListScreenOptions = {
@@ -49,6 +54,23 @@ export const bomListColumns = (_: Translator): Array<Column<BomListRow>> => [
     cell: (row) => row.quantity,
     align: 'end',
   },
+  {
+    key: 'version',
+    label: _('manufacturing_backend.field.version'),
+    cell: (row) => `v${row.version ?? '1'}`,
+    align: 'end',
+  },
+  {
+    key: 'state',
+    label: _('manufacturing_backend.field.state'),
+    cell: (row) =>
+      badge(
+        _(`manufacturing_backend.bomState.${row.state ?? 'active'}`),
+        row.state === 'review' ? 'warning' : row.state === 'active' || !row.state ? 'positive' : 'neutral',
+        row.state ?? 'active',
+      ),
+    kind: 'status',
+  },
 ]
 
 /** List-only BOM collection. Creation is a URL-owned modal layered by the route. */
@@ -63,6 +85,7 @@ export const bomsListScreen = (
     {
       rows: options.rows,
       id: (row) => row.id,
+      rowHref: (row) => row.href ?? '',
       columns: bomListColumns(_),
       ...options.table,
     },

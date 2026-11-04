@@ -1,6 +1,6 @@
 {
   "name": "@ketvietlab/ketsuite",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "description": "KetSuite — business modules built on Ket, using only the contract a third-party module has.",
   "type": "module",
   "license": "MIT",
@@ -32,6 +32,14 @@
     "prepack": "npm run build --prefix ../.."
   },
   "exports": {
+    "./product/company-migration": {
+      "types": "./dist/modules/product/company-migration.d.ts",
+      "default": "./dist/modules/product/company-migration.js"
+    },
+    "./company-migration": {
+      "types": "./dist/company-migration.d.ts",
+      "default": "./dist/company-migration.js"
+    },
     "./flow/server": {
       "types": "./dist/modules/flow/server.d.ts",
       "default": "./dist/modules/flow/server.js"
@@ -86,12 +94,12 @@
     }
   },
   "dependencies": {
-    "@ketvietlab/flow-client": "0.1.43",
-    "@ketvietlab/flow-ui": "0.1.43",
-    "@ketvietlab/design-system": "0.1.43",
+    "@ketvietlab/flow-client": "0.1.44",
+    "@ketvietlab/flow-ui": "0.1.44",
+    "@ketvietlab/design-system": "0.1.44",
     "@ketvietlab/ketjs": "0.6.1",
     "@ketvietlab/ketjs-view": "0.6.1",
-    "@ketvietlab/website-client": "0.1.43",
+    "@ketvietlab/website-client": "0.1.44",
     "chart.js": "4.5.1",
     "ioredis": "^6.0.0",
     "marked": "18.1.0",

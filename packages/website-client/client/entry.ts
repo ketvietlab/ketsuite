@@ -42,7 +42,7 @@ if (documentRoot && root) {
         ...options,
         endpoint: options.resModel?.startsWith('website_catalog.')
           ? `/website/catalog/images/${encodeURIComponent(options.resModel.split('.')[1]!)}/${encodeURIComponent(options.id)}/${encodeURIComponent(options.field)}?site=${encodeURIComponent(options.siteId)}`
-          : `/website/images/${encodeURIComponent(options.id)}/${encodeURIComponent(options.field)}?site=${encodeURIComponent(options.siteId)}`,
+          : `/website/images/${encodeURIComponent(options.id)}/${encodeURIComponent(options.field)}?site=${encodeURIComponent(options.siteId)}${(options.resModel ?? 'website.TaxonomyTerm') === 'website.TaxonomyTerm' ? '&owner=term' : ''}`,
       }),
     async frame(href, signal) {
       const document = await readFrame(href, signal)

@@ -1,0 +1,11 @@
+// A file that answers an /admin path serves backend screens, and those go through
+// the shell's adminPage(). page({...}) there renders a whole document, so a
+// fragment request gets one too. page() is fine in a file with no /admin route.
+language js
+
+`page($argument)` as $call where {
+  $argument <: JsObjectExpression(),
+  $call <: within JsModule() as $module ,
+  $module <: contains JsPropertyObjectMember(name=$key) where { $key <: r"['\"]/admin(?:/[^'\"]*)?['\"]" },
+  register_diagnostic(span=$call, message="[ketsuite/admin-route-uses-shell] An /admin route answered with page(): use adminPage() from modules/backend/screen.ts, or a fragment request gets a whole document.")
+}

@@ -203,7 +203,8 @@ test('product-stock-e2e: UoM, variants, media and pricing cross real HTTP', asyn
     attributeId: 'color',
     valueIds: ['red', 'blue'],
   })
-  assert.equal((await call<Row>('product.generateVariants', { templateId: 'tpl' })).value.created, 2)
+  // P27: the product's one SKU (p1) takes the first combination; only the second is new.
+  assert.equal((await call<Row>('product.generateVariants', { templateId: 'tpl' })).value.created, 1)
   assert.equal((await call<Row>('product.generateVariants', { templateId: 'tpl' })).value.created, 0)
 
   for (const [id, name] of [
@@ -479,12 +480,12 @@ test('product-stock-e2e: UoM, variants, media and pricing cross real HTTP', asyn
     '/admin/product/templates/tpl/variants/p1?tab=general&lang=vi',
     new URLSearchParams({
       defaultCode: 'AO-UPDATED',
-      barcode: '8938500000100',
+      barcode: '8938500000102',
       weight: '0.25',
       volume: '0.1',
       standardPrice: '61.50',
       uomId: 'unit',
-      uomBarcode: '8938500000101',
+      uomBarcode: '8938500000119',
     }),
     { headers: { accept: 'text/html', 'x-ket-partial': 'product-variant' } },
   )
@@ -560,9 +561,13 @@ test('product-stock-e2e: UoM, variants, media and pricing cross real HTTP', asyn
     headers: { accept: 'text/html' },
   })
   assert.equal(pricingPage.status, 200)
-  const pricingHtml = await pricingPage.text()
-  assert.match(pricingHtml, /Bán lẻ/)
-  assert.match(pricingHtml, /action="\/admin\/pricing\/pricelists\/retail\?lang=vi"/)
+  // The pricelist is a record page (#1269): the server sends the page island, its context the record.
+  assert.match(await pricingPage.text(), /pricing\.pricelist-page/)
+  const pricingContext = await e2e.client.get('/admin/pricing/pricelists/retail/context?lang=vi', {
+    headers: { accept: 'application/json' },
+  })
+  assert.equal(pricingContext.status, 200)
+  assert.match(await pricingContext.text(), /Bán lẻ/)
 })
 
 test('product-stock-e2e: inventory, reservation, partial completion and backorder cross HTTP', async (t) => {
@@ -727,17 +732,35 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     countedQuantity: '6',
     productUomId: 'unit',
   })
-  const appliedInventoryPage = await e2e.client.get('/admin/stock/inventory?applied=1&lang=vi', {
-    headers: { accept: 'text/html' },
-  })
-  assert.match(await appliedInventoryPage.text(), /Đã áp dụng kiểm kê/)
+  // The form only opens a count for independent approval (#2014): the shelf keeps its five.
+  const requested = (await call<Row[]>('stock.listCountSessions')).value
+  assert.deepEqual(
+    requested.map((session) => session.state),
+    ['counting'],
+  )
+  const shelf = (await call<Row[]>('stock.listQuants', { productId: 'p1', locationId: 'wh:stock' })).value[0]!
+  assert.equal(shelf.quantity, '5')
+  // The rest of this flow starts from the counted six, applied directly as the opening stock was.
+  assert.equal(
+    (
+      await call<Row>('stock.adjustInventory', {
+        id: 'adjust:2',
+        productId: 'p1',
+        locationId: 'wh:stock',
+        inventoryLocationId: 'inventory',
+        countedQuantity: '6',
+        productUomId: 'unit',
+      })
+    ).value.ok,
+    true,
+  )
 
   const transfersPage = await e2e.client.get('/admin/stock/transfers?lang=vi', {
     headers: { accept: 'text/html' },
   })
   const transfersHtml = await transfersPage.text()
   assert.match(transfersHtml, /data-ui="list-page"/)
-  assert.match(transfersHtml, /record=stock.transfer%3Anew/)
+  assert.match(transfersHtml, /href="\/admin\/stock\/transfers\/new\?lang=vi"/)
   assert.match(transfersHtml, /Phiếu chuyển kho/)
   assert.match(transfersHtml, />Từ</)
   assert.match(transfersHtml, />Đến</)
@@ -746,29 +769,18 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
   assert.doesNotMatch(transfersHtml, /id="transfer-create-form"|data-scope="transfer-create"/)
   assert.doesNotMatch(transfersHtml, /data-island="mail\.chatter"/)
 
+  // Creating a transfer opens its page, which the record runtime renders.
   const transferCreatePage = await e2e.client.get('/admin/stock/transfers/new?lang=vi', {
     headers: { accept: 'text/html' },
   })
   const transferCreateHtml = await transferCreatePage.text()
   assert.equal(transferCreatePage.status, 200)
-  assert.match(transferCreateHtml, /data-ui="form-page"/)
-  assert.match(transferCreateHtml, /id="transfer-create-form"/)
-  assert.match(transferCreateHtml, /data-scope="transfer-create"/)
-  assert.match(transferCreateHtml, /name="pickingTypeId"/)
-  assert.match(transferCreateHtml, /value="wh:internal"/)
+  assert.match(transferCreateHtml, /data-ui="record-page"/)
+  assert.match(transferCreateHtml, /data-island="stock\.transfer-page"/)
+  assert.match(transferCreateHtml, /Tạo phiếu chuyển kho/)
   assert.doesNotMatch(transferCreateHtml, /data-island="mail\.chatter"/)
-  await e2e.client.form<string>('/admin/stock/transfers/new?lang=vi', {
-    name: 'WH/INT/FORM',
-    pickingTypeId: 'wh:internal',
-    scheduledDate: '2026-08-22T09:00',
-  })
-  assert.equal(
-    (await call<Row[]>('stock.listPickings', {})).value.some((row) => row.name === 'WH/INT/FORM'),
-    true,
-  )
 
-  // Exercise the same partial flow through the rendered backend form, including
-  // the domain contract `ask` backorder choice rather than bypassing it with a direct call.
+  // A partial completion with the domain contract `ask` backorder choice, as the page sends it.
   await call('stock.createPicking', {
     id: 'ui-pick',
     name: 'WH/OUT/UI',
@@ -790,24 +802,21 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     headers: { accept: 'text/html' },
   })
   const uiHtml = await uiPage.text()
-  assert.match(uiHtml, /data-ui="form-page"/)
-  assert.match(uiHtml, /data-ui="form-page-aside"/)
-  assert.match(uiHtml, /data-island="stock\.editor"/)
-  assert.match(uiHtml, /data-scope="stock-transfer"/)
-  assert.match(uiHtml, /<select[^>]*name="productId"/)
-  assert.match(uiHtml, /<option value="p1"/)
-  assert.match(uiHtml, /Áo thun · AO/)
-  assert.match(uiHtml, /name="operationId"/)
-  assert.match(uiHtml, /name="backorder" value="create" autocomplete="off"/)
-  await e2e.client.form<string>('/admin/stock/transfers/ui-pick?lang=vi', {
-    action: 'pick',
-    operationId: `line:${String(uiLine.id)}`,
-    quantity: '2',
+  assert.match(uiHtml, /data-island="stock\.transfer-page"/)
+  assert.match(uiHtml, /WH\/OUT\/UI/)
+  const uiContext = await e2e.client.get('/admin/stock/transfer/ui-pick/context?lang=vi', {
+    headers: { accept: 'application/json' },
   })
-  await e2e.client.form<string>('/admin/stock/transfers/ui-pick?lang=vi', {
-    action: 'validate',
-    backorder: 'create',
-  })
+  const { data: uiData } = (await uiContext.json()) as {
+    data: { choices: { products: Row[] }; collaboration: Row[] }
+  }
+  assert.ok(uiData.choices.products.some((row) => row.id === 'p1' && row.name === 'Áo thun · AO'))
+  assert.deepEqual(
+    uiData.collaboration.map((entry) => entry.island),
+    ['mail.chatter', 'activity.record'],
+  )
+  await call('stock.saveMoveLine', { id: uiLine.id, moveId: 'ui-move', quantity: '2', picked: true })
+  await call('stock.validatePicking', { id: 'ui-pick', backorder: 'create' })
   const uiDone = (await call<Row>('stock.getPicking', { id: 'ui-pick' })).value
   assert.equal(uiDone.state, 'done')
   assert.equal(
@@ -957,18 +966,17 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
   const replenishmentHtml = await replenishmentPage.text()
   assert.match(replenishmentHtml, /data-ui="list-page"/)
   assert.doesNotMatch(replenishmentHtml, /id="replenishment-create-form"/)
-  assert.match(replenishmentHtml, /record=stock.replenishment%3Anew/)
+  // P50: Create opens the rule's own page, not a record modal over the list.
+  assert.match(replenishmentHtml, /href="\/admin\/stock\/replenishment\/new\?lang=vi"/)
+  assert.doesNotMatch(replenishmentHtml, /record=stock.replenishment%3Anew/)
   assert.doesNotMatch(replenishmentHtml, /data-island="mail\.chatter"/)
   const replenishmentCreatePage = await e2e.client.get('/admin/stock/replenishment/new?lang=vi', {
     headers: { accept: 'text/html' },
   })
   const replenishmentCreateHtml = await replenishmentCreatePage.text()
-  assert.match(replenishmentCreateHtml, /data-ui="form-page"/)
-  assert.match(replenishmentCreateHtml, /id="replenishment-create-form"/)
-  assert.match(replenishmentCreateHtml, /data-scope="stock-replenishment-create"/)
-  assert.match(replenishmentCreateHtml, /<select[^>]*name="productId"/)
-  assert.match(replenishmentCreateHtml, /Áo thun · AO/)
-  assert.doesNotMatch(replenishmentCreateHtml, /Dịch vụ tư vấn|data-island="mail\.chatter"/)
+  // The rule is a record page (P50): the server sends its island; the legacy form POST below still works.
+  assert.match(replenishmentCreateHtml, /stock_backend:replenishment\.page|stock\.replenishment-page/)
+  assert.doesNotMatch(replenishmentCreateHtml, /id="replenishment-create-form"|data-island="mail\.chatter"/)
   const replenishmentWithRule = await e2e.client.form<string>('/admin/stock/replenishment/new?lang=vi', {
     productId: 'p1',
     warehouseId: 'wh',
@@ -979,21 +987,40 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     replenishmentUomId: 'dozen',
     routeId: 'wh:receipt-route',
   })
-  assert.match(replenishmentWithRule, /Cần đặt/)
-  assert.match(replenishmentWithRule, /Áo thun · AO/)
-  assert.match(replenishmentWithRule, /data-ui="badge" data-tone="warning"[\s\S]{0,80}1/)
-  assert.match(replenishmentWithRule, /Dozen/)
-  assert.match(replenishmentWithRule, /Thủ công/)
+  // The POST lands on the list; its rows load on the client, so read them where the island does.
+  assert.match(replenishmentWithRule, /data-ui="list-page"/)
+  const replenishmentRows = await e2e.client.post(
+    '/admin/stock/replenishment/data?lang=vi',
+    JSON.stringify({ href: '/admin/stock/replenishment?lang=vi', pageSize: 20 }),
+    { headers: { 'content-type': 'application/json' } },
+  )
+  const replenishmentRule = ((await replenishmentRows.json()).value.rows as Row[]).find(
+    (row) => row.product === 'Áo thun · AO',
+  )
+  assert.ok(replenishmentRule)
+  assert.equal(replenishmentRule.toOrder, '1')
+  assert.equal(replenishmentRule.replenishmentUom, 'Dozen')
+  assert.equal(replenishmentRule.triggerLabel, 'Thủ công')
 
+  // A lot holds stock only for a product tracked by lot (K27); the shirt is tracked by nothing.
+  await call('product.saveTemplate', {
+    id: 'serum-lots',
+    name: 'Serum theo lô',
+    type: 'goods',
+    uomId: 'unit',
+    listPrice: '200.00',
+    defaultCode: 'SR-LOT',
+  })
+  await call('stock.configureProduct', { templateId: 'serum-lots', isStorable: true, tracking: 'lot' })
   await call('stock.createLot', {
     id: 'lot-list-http',
-    productId: 'p1',
+    productId: 'serum-lots:default',
     name: 'LOT/LIST/001',
     ref: 'LIST-REF',
   })
   await call('stock.adjustInventory', {
     id: 'lot-list-adjustment',
-    productId: 'p1',
+    productId: 'serum-lots:default',
     locationId: 'wh:stock',
     inventoryLocationId: 'inventory',
     countedQuantity: '3',
@@ -1018,12 +1045,10 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     headers: { accept: 'text/html' },
   })
   const lotCreateHtml = await lotCreatePage.text()
+  // The create page is the lots list opening the lot record modal (`stock.lot`), not a page of its own.
   assert.equal(lotCreatePage.status, 200)
-  assert.match(lotCreateHtml, /data-ui="modal-layer" data-route-modal="true"/)
-  assert.match(lotCreateHtml, /id="lot-create-form"/)
-  assert.match(lotCreateHtml, /data-scope="lot-create"/)
-  assert.match(lotCreateHtml, /<select[^>]*name="productId"/)
-  assert.match(lotCreateHtml, /Áo thun · AO/)
+  assert.match(lotCreatePage.url, /\/admin\/stock\/lots\?.*record=stock\.lot%3Anew/)
+  assert.match(lotCreateHtml, /data-ui="list-page"/)
   assert.doesNotMatch(lotCreateHtml, /Dịch vụ tư vấn|service-variant/)
   assert.doesNotMatch(lotCreateHtml, /data-island="mail\.chatter"/)
 
@@ -1057,7 +1082,7 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
 
   await call('stock.createLot', {
     id: 'lot-http',
-    productId: 'p1',
+    productId: 'serum-lots:default',
     name: 'LOT/HTTP/001',
     ref: 'HTTP-REF',
   })
@@ -1065,32 +1090,14 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     headers: { accept: 'text/html' },
   })
   const lotHtml = await lotPage.text()
-  assert.match(lotHtml, /data-ui="form-page"/)
-  assert.match(lotHtml, /data-ui="form-page-aside"/)
-  assert.match(lotHtml, /id="lot-detail-form"/)
-  assert.match(lotHtml, /data-scope="stock-lot"/)
+  // A lot opens as a record page (K27), its island saving through the lot functions, with the
+  // conversation and activities beside it.
+  assert.match(lotHtml, /data-island="stock\.lot-page"/)
+  assert.match(lotHtml, /data-ui="record-page"/)
   assert.match(lotHtml, /data-island="mail\.chatter"/)
   assert.match(lotHtml, /data-island="activity\.record"/)
-  assert.match(lotHtml, /Lô \/ Sê-ri/)
-  const partialLotSave = await e2e.client.post(
-    '/admin/stock/lots/lot-http?lang=vi',
-    new URLSearchParams({
-      productId: 'p1',
-      name: 'LOT/HTTP/001',
-      ref: 'HTTP-REF-PARTIAL',
-      note: 'Cập nhật một phần qua HTTP.',
-    }),
-    { headers: { accept: 'text/html', 'x-ket-partial': 'stock-lot' } },
-  )
-  assert.equal(partialLotSave.status, 200)
-  assert.match(partialLotSave.headers.get('content-type') ?? '', /^text\/vnd\.ket\.fragments\+html/)
-  const partialLotHtml = await partialLotSave.text()
-  assert.match(partialLotHtml, /data-ket-slot="stock\.lot-header"/)
-  assert.match(partialLotHtml, /data-ket-slot="stock\.lot-body"/)
-  assert.doesNotMatch(partialLotHtml, /data-ui="sidebar"|<!doctype/)
-  assert.doesNotMatch(partialLotHtml, /data-island="(?:stock\.editor|mail\.chatter|activity\.record)"/)
   await e2e.client.form<string>('/admin/stock/lots/lot-http?lang=vi', {
-    productId: 'p1',
+    productId: 'serum-lots:default',
     name: 'LOT/HTTP/001',
     ref: 'HTTP-REF-UPDATED',
     note: 'Cập nhật qua HTTP.',
@@ -1101,7 +1108,7 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
   )
   await call('stock.saveLot', {
     id: 'lot-http',
-    productId: 'p1',
+    productId: 'serum-lots:default',
     name: 'LOT/HTTP/001',
     ref: 'HTTP-REF-UPDATED',
     note: 'Lô đã lưu trữ.',
@@ -1111,10 +1118,11 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     headers: { accept: 'text/html' },
   })
   const archivedLotHtml = await archivedLotPage.text()
-  assert.match(archivedLotHtml, /Đã lưu trữ/)
+  // The archived lot still opens; its state is read by the island and checked through listLots below.
+  assert.match(archivedLotHtml, /data-island="stock\.lot-page"/)
   assert.match(archivedLotHtml, /data-island="mail\.chatter"/)
   await e2e.client.form<string>('/admin/stock/lots/lot-http?lang=vi', {
-    productId: 'p1',
+    productId: 'serum-lots:default',
     name: 'LOT/HTTP/001',
     ref: 'HTTP-REF-ARCHIVED',
     note: 'Cập nhật nhưng vẫn lưu trữ.',
@@ -1131,7 +1139,7 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
   })
   await call('stock.adjustInventory', {
     id: 'lot-guard-adjustment',
-    productId: 'p1',
+    productId: 'serum-lots:default',
     locationId: 'wh:stock',
     inventoryLocationId: 'inventory',
     countedQuantity: '1',
@@ -1149,32 +1157,12 @@ test('product-stock-e2e: inventory, reservation, partial completion and backorde
     false,
   )
 
-  const forecastPage = await e2e.client.get('/admin/stock/forecast?lang=vi', {
-    headers: { accept: 'text/html' },
-  })
-  const forecastHtml = await forecastPage.text()
-  assert.match(forecastHtml, /data-pattern="workspace"/)
-  assert.match(forecastHtml, /id="forecast-filter-form"/)
-  assert.match(forecastHtml, /data-scope="stock-forecast"/)
-  assert.match(forecastHtml, /<select[^>]*name="productId"/)
-  assert.match(forecastHtml, /<option value="p1"/)
-  assert.match(forecastHtml, /name="lang" value="vi"/)
-  assert.match(forecastHtml, /Chưa chọn sản phẩm/)
+  // The forecast is a list of products; stock-forecast-http.test.ts covers its rows and each product's detail.
+  const forecastHtml = await (
+    await e2e.client.get('/admin/stock/forecast?lang=vi', { headers: { accept: 'text/html' } })
+  ).text()
+  assert.match(forecastHtml, /data-ui="list-page"/)
   assert.doesNotMatch(forecastHtml, /data-island="mail\.chatter"/)
-
-  const scopedForecastPage = await e2e.client.get(
-    '/admin/stock/forecast?productId=p1&warehouseId=wh&locationId=wh:stock&lang=vi',
-    { headers: { accept: 'text/html' } },
-  )
-  const scopedForecastHtml = await scopedForecastPage.text()
-  assert.match(scopedForecastHtml, /Áo thun · AO/)
-  assert.match(scopedForecastHtml, /Vị trí:/)
-  assert.match(scopedForecastHtml, /Tồn thực tế/)
-  assert.match(scopedForecastHtml, /Đã giữ chỗ/)
-  assert.match(scopedForecastHtml, /Có thể sử dụng/)
-  assert.match(scopedForecastHtml, /Tồn thực tế \+ sắp nhận − sắp xuất = tồn dự báo/)
-  assert.match(scopedForecastHtml, /data-ui="table"/)
-  assert.doesNotMatch(scopedForecastHtml, /data-island="mail\.chatter"/)
 
   for (const path of ['/admin/stock/inventory', '/admin/stock/transfers/pick1', '/admin/stock/forecast']) {
     const page = await e2e.client.get(path, { headers: { accept: 'text/html' } })

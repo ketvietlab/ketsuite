@@ -59,6 +59,7 @@ export default defineModule({
     'backend:relation.select': `{% island "backend.relation-select" %}`,
     'backend:screen.chart': `{% island "backend.chart" %}`,
     'backend:table.grid': `{% island "backend.ket-table" %}`,
+    'backend:edit.grid': `{% island "backend.ket-grid" %}`,
     'backend:search.filter': `{% island "backend.search-filter" %}`,
   },
   messages,
@@ -96,6 +97,7 @@ export {
 } from './screen.ts'
 export type { AnyRow, FrameOptions, Req, ScreenOptions } from './screen.ts'
 export { relationControl, relationLabels } from './relation-select.ts'
+export { editGridControl, postedGridRows } from './edit-grid.ts'
 export type {
   RelationEditorField,
   RelationManager,

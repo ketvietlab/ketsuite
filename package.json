@@ -1,7 +1,7 @@
 {
   "name": "ketsuite-monorepo",
   "private": true,
-  "version": "0.1.43",
+  "version": "0.1.44",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -66,6 +66,7 @@
     "format": "biome format --write",
     "format:check": "biome format",
     "lint": "biome lint",
+    "precommit": "node tools/precommit.mjs",
     "verify": "node tools/ci-task-cache.mjs run format && node tools/ci-task-cache.mjs run lint && npm run design:inventory:check && npm run design:governance:check && npm run design:release:check && npm run audit:terminology && npm run build && node .build/tools/zero-dep-audit.js && node .build/tools/ui-audit.js && npm run audit:staff-channel && npm run check:api && node tools/ci-task-cache.mjs run types && npm run test:built && node .build/tools/type-proof.js",
     "design": "npm run build --silent && node .build/apps/admin/serve.js",
     "design:inventory": "node tools/design-system-inventory.mjs",

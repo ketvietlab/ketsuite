@@ -4,6 +4,7 @@ import { createThemeLogo } from '../theme-logo.tsx'
 import { BuilderRecords } from './builder-records.tsx'
 import { blockPicker } from './builder-library.tsx'
 import { templateLayout } from './template-layout.ts'
+import { revisionLabel } from './format.ts'
 import { postFields, readPostFields } from './post-fields.tsx'
 import {
   Surface,
@@ -508,7 +509,7 @@ export function createBuilderWorkspace(ctx: StudioContext, editor: BuilderEditor
                   value={before?.revisionId}
                   options={(history?.revisions ?? []).map((r) => ({
                     value: r.revisionId,
-                    label: `${r.revisionId} · ${r.updatedBy}`,
+                    label: revisionLabel(r),
                   }))}
                 />
                 {command(t('compare'), 'workspace.compare', {}, 'revision-compare')}

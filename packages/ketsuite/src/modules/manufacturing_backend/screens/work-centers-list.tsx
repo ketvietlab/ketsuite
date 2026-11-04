@@ -14,11 +14,15 @@ import {
   shell,
 } from '../../../ui/index.ts'
 import type { Column, DataTable, Frame } from '../../../ui/index.ts'
+import { WorkCenterHelp } from './work-center-help.tsx'
+
+const lang = (_: Translator) => (_.locale === 'en' ? 'en' : 'vi')
 
 export type WorkCenterListRow = {
   id: string
   code: string
   name: string
+  skill?: string
   capacity: string
   timeEfficiency: string
   costPerHour: string
@@ -30,13 +34,16 @@ export type WorkCentersListScreenOptions = {
   /** Grouped rows the search-filter bar decided on, when the reader grouped. */
   table?: Partial<DataTable<WorkCenterListRow>>
   rows: WorkCenterListRow[]
-  /** Locale-aware URL that opens the create modal. */
-  createHref: string
-  /** Locale-aware collection endpoint for archive and restore commands. */
-  action: string
+  /** Locale-aware URL that opens the create modal; null when the reader cannot configure. */
+  createHref: string | null
+  /** Locale-aware collection endpoint for archive and restore; null hides them. */
+  action: string | null
 }
 
-export const workCenterListColumns = (_: Translator, action: string): Array<Column<WorkCenterListRow>> => [
+export const workCenterListColumns = (
+  _: Translator,
+  action: string | null,
+): Array<Column<WorkCenterListRow>> => [
   {
     key: 'code',
     label: _('manufacturing_backend.field.code'),
@@ -50,6 +57,11 @@ export const workCenterListColumns = (_: Translator, action: string): Array<Colu
     cell: (row) => row.name,
     priority: 'secondary',
     width: 'wide',
+  },
+  {
+    key: 'skill',
+    label: _('manufacturing_backend.field.skill'),
+    cell: (row) => (row.skill ? _(`manufacturing_backend.skill.${row.skill}`) : '—'),
   },
   {
     key: 'capacity',
@@ -78,23 +90,29 @@ export const workCenterListColumns = (_: Translator, action: string): Array<Colu
         : badge(_('manufacturing_backend.state.archived'), 'neutral', 'archived'),
     kind: 'status',
   },
-  {
-    key: 'actions',
-    label: _('manufacturing_backend.field.actions'),
-    cell: (row) => (
-      <RecordForm
-        action={action}
-        layout="inline"
-        hidden={{ id: row.id, action: row.active ? 'archive' : 'restore' }}
-        fields={[]}
-        submit={
-          row.active ? _('manufacturing_backend.action.archive') : _('manufacturing_backend.action.restore')
-        }
-        submitVariant={row.active ? 'tertiary' : 'secondary'}
-        submitSize="compact"
-      />
-    ),
-  },
+  ...(action === null
+    ? []
+    : [
+        {
+          key: 'actions',
+          label: _('manufacturing_backend.field.actions'),
+          cell: (row: WorkCenterListRow) => (
+            <RecordForm
+              action={action}
+              layout="inline"
+              hidden={{ id: row.id, action: row.active ? 'archive' : 'restore' }}
+              fields={[]}
+              submit={
+                row.active
+                  ? _('manufacturing_backend.action.archive')
+                  : _('manufacturing_backend.action.restore')
+              }
+              submitVariant={row.active ? 'tertiary' : 'secondary'}
+              submitSize="compact"
+            />
+          ),
+        },
+      ]),
 ]
 
 export const workCentersListScreen = (
@@ -117,29 +135,56 @@ export const workCentersListScreen = (
   return shell(
     _,
     _('manufacturing_backend.workCenters.title'),
-    <ListPage
-      variant="operational"
-      frame={collection.frame}
-      title={_('manufacturing_backend.workCenters.title')}
-      controls={collectionControls(_, _('manufacturing_backend.workCenters.title'), collection.frame)}
-      headerActions={
-        <LinkButton
-          label={_('manufacturing_backend.workCenters.create')}
-          href={options.createHref}
-          variant="primary"
-        />
-      }
-      actions={collectionActions(_, collection.frame)}
-      footer={`${_('manufacturing_backend.workCenters.title')}: ${String(collection.total)}`}
-      body={
-        options.rows.length || options.table?.groups?.length
-          ? collectionTable(_, collection.table)
-          : emptyState(
-              _('manufacturing_backend.empty.workCenters'),
-              _('manufacturing_backend.empty.workCentersHint'),
-            )
-      }
-    />,
+    <>
+      <ListPage
+        variant="operational"
+        frame={collection.frame}
+        title={_('manufacturing_backend.workCenters.title')}
+        controls={collectionControls(_, _('manufacturing_backend.workCenters.title'), collection.frame)}
+        headerActions={
+          options.createHref ? (
+            <LinkButton
+              label={_('manufacturing_backend.workCenters.create')}
+              href={options.createHref}
+              variant="primary"
+            />
+          ) : undefined
+        }
+        actions={collectionActions(_, collection.frame)}
+        footer={`${_('manufacturing_backend.workCenters.title')}: ${String(collection.total)}`}
+        body={
+          options.rows.length || options.table?.groups?.length
+            ? collectionTable(_, collection.table)
+            : emptyState(
+                _('manufacturing_backend.empty.workCenters'),
+                _('manufacturing_backend.empty.workCentersHint'),
+              )
+        }
+      />
+      <WorkCenterHelp lang={lang(_)} />
+    </>,
     { ...collection.frame, chrome: null, topbar: false },
   )
 }
+
+/** What a reader without the work-center read grant sees in place of the list. */
+export const workCentersLockedScreen = (_: Translator, frame: Frame = {}): TemplateResult =>
+  shell(
+    _,
+    _('manufacturing_backend.workCenters.title'),
+    <>
+      <ListPage
+        variant="operational"
+        frame={{ ...frame, chrome: {} }}
+        context={null}
+        title={_('manufacturing_backend.workCenters.title')}
+        body={emptyState(
+          _('manufacturing_backend.workCenters.locked'),
+          _('manufacturing_backend.workCenters.lockedHint'),
+          { visual: 'locked' },
+        )}
+      />
+      <WorkCenterHelp lang={lang(_)} />
+    </>,
+    { ...frame, chrome: null, topbar: false },
+  )
