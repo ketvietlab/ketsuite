@@ -1,11 +1,6 @@
 import { vendorPricelistContext } from './modal/pricelist-context.ts'
 import { defineRecordModalIsland, recordModalCreateHref, recordModalHref } from '../../ui/record-modal.tsx'
 import { purchaseOrderContext } from './modal/context.ts'
-import {
-  purchaseConfigurationContext,
-  purchaseConfigurationIsland,
-  purchaseConfigurationRoute,
-} from './screens/configuration.tsx'
 import { optionalRead } from '../backend/optional-read.ts'
 import { loadCollectionRows } from '../backend/collection-search.ts'
 import { rowListSearch } from '../backend/row-list.ts'
@@ -253,8 +248,6 @@ const detailHandler =
         result = await ctx.call('purchase.confirmOrder', { id: params.id, requiresApproval: true }, url, req)
       else if (form.action === 'approve')
         result = await ctx.call('purchase.approveOrder', { id: params.id }, url, req)
-      else if (form.action === 'final-approve')
-        result = await ctx.call('purchase.finalApproveOrder', { id: params.id }, url, req)
       else if (form.action === 'reset')
         result = await ctx.call('purchase.resetToDraft', { id: params.id }, url, req)
       else if (form.action === 'sync')
@@ -384,11 +377,6 @@ const detailHandler =
 const vi = {
   'dashboard.approvalQueue': 'Đơn mua chờ phê duyệt',
   'dashboard.queueEmpty': 'Không có đơn mua chờ phê duyệt.',
-  'dashboard.replenishment': 'Nhu cầu bổ sung từ kho',
-  'dashboard.replenishmentEmpty': 'Không có nhu cầu bổ sung đang chờ.',
-  'dashboard.replenishmentHint':
-    'Quy tắc bổ sung lấy hàng từ nhà cung cấp tạo yêu cầu báo giá nháp, hiện ở đây tới khi được xác nhận.',
-  'dashboard.warehouse': 'Kho nhận',
   'modal.info': 'Thông tin chung',
   'modal.lines': 'Sản phẩm',
   'modal.help': 'Hướng dẫn',
@@ -433,30 +421,6 @@ const vi = {
   'action.confirm': 'Xác nhận đơn',
   'action.requestApproval': 'Gửi duyệt',
   'action.approve': 'Phê duyệt',
-  'action.finalApprove': 'Duyệt cấp cuối',
-  'configuration.title': 'Cấu hình mua hàng',
-  'configuration.approval': 'Ngưỡng duyệt đơn mua',
-  'configuration.approvalAmount': 'Ngưỡng duyệt cấp 1',
-  'configuration.approvalAmountHint':
-    'Đơn có tổng tiền từ mức này phải được quản lý mua hàng duyệt. Để trống: không đơn nào phải duyệt.',
-  'configuration.finalApprovalAmount': 'Ngưỡng duyệt cấp cuối',
-  'configuration.finalApprovalAmountHint':
-    'Đơn từ mức này cần thêm người duyệt cấp cuối. Phải lớn hơn ngưỡng cấp 1; để trống nếu chỉ duyệt một cấp.',
-  'configuration.matching': 'Đối chiếu hoá đơn nhà cung cấp',
-  'configuration.priceTolerance': 'Dung sai giá (%)',
-  'configuration.priceToleranceHint':
-    'Hoá đơn có đơn giá sau chiết khấu lệch quá mức này so với đơn mua thì không ghi sổ được. Để trống: không so đơn giá. Số lượng luôn đối chiếu với hàng đã nhận.',
-  'approval.title': 'Phê duyệt',
-  'approval.required': 'Cần duyệt',
-  'approval.levels.0': 'Không cần duyệt',
-  'approval.levels.1': 'Một cấp: quản lý mua hàng',
-  'approval.levels.2': 'Hai cấp: quản lý mua hàng, rồi người duyệt cấp cuối',
-  'approval.given': 'Đã duyệt',
-  'approval.pending': 'Còn chờ',
-  'approval.level.manager': 'Quản lý mua hàng',
-  'approval.level.owner': 'Người duyệt cấp cuối',
-  'approval.ownLabel': 'Người lập đơn',
-  'approval.own': 'Bạn lập đơn này nên người khác phải duyệt.',
   'action.syncReceipts': 'Đồng bộ nhập hàng',
   'action.lock': 'Khoá đơn',
   'action.unlock': 'Mở khoá',
@@ -514,13 +478,6 @@ const vi = {
   'field.minQty': 'Số lượng tối thiểu',
   'filter.tiered': 'Theo bậc số lượng',
   'filter.discounted': 'Có chiết khấu',
-  'field.validity': 'Hiệu lực',
-  'validity.current': 'Đang hiệu lực',
-  'validity.upcoming': 'Sắp hiệu lực',
-  'validity.expired': 'Hết hạn',
-  'validity.always': 'Không giới hạn',
-  'validity.from': 'Từ',
-  'validity.until': 'Đến',
   'field.delay': 'Thời gian giao (ngày)',
   'field.template': 'Mẫu sản phẩm',
   'field.variant': 'Biến thể',
@@ -549,11 +506,6 @@ const vi = {
 const en = {
   'dashboard.approvalQueue': 'Purchase orders awaiting approval',
   'dashboard.queueEmpty': 'No purchase orders are awaiting approval.',
-  'dashboard.replenishment': 'Stock replenishment demands',
-  'dashboard.replenishmentEmpty': 'No replenishment demands are waiting.',
-  'dashboard.replenishmentHint':
-    'Reorder rules that buy from a vendor draft requests for quotation, listed here until they are confirmed.',
-  'dashboard.warehouse': 'Receiving Warehouse',
   'modal.info': 'Overview',
   'modal.lines': 'Products',
   'modal.help': 'Help',
@@ -598,30 +550,6 @@ const en = {
   'action.confirm': 'Confirm Order',
   'action.requestApproval': 'Request Approval',
   'action.approve': 'Approve',
-  'action.finalApprove': 'Final approval',
-  'configuration.title': 'Purchasing settings',
-  'configuration.approval': 'Purchase approval thresholds',
-  'configuration.approvalAmount': 'Level 1 approval threshold',
-  'configuration.approvalAmountHint':
-    'Orders totalling this amount or more need a purchasing manager. Leave empty and no order needs approval.',
-  'configuration.finalApprovalAmount': 'Final approval threshold',
-  'configuration.finalApprovalAmountHint':
-    'Orders from this amount also need a final approver. Must exceed level 1; leave empty for one level.',
-  'configuration.matching': 'Vendor bill matching',
-  'configuration.priceTolerance': 'Price tolerance (%)',
-  'configuration.priceToleranceHint':
-    'A bill whose unit price after discount differs from the order by more than this cannot be posted. Leave empty and prices are not compared. Quantities are always matched against received goods.',
-  'approval.title': 'Approval',
-  'approval.required': 'Approval needed',
-  'approval.levels.0': 'No approval needed',
-  'approval.levels.1': 'One level: a purchasing manager',
-  'approval.levels.2': 'Two levels: a purchasing manager, then a final approver',
-  'approval.given': 'Approved by',
-  'approval.pending': 'Still waiting for',
-  'approval.level.manager': 'Purchasing manager',
-  'approval.level.owner': 'Final approver',
-  'approval.ownLabel': 'Drafted by',
-  'approval.own': 'You drafted this order, so someone else approves it.',
   'action.syncReceipts': 'Sync Receipts',
   'action.lock': 'Lock',
   'action.unlock': 'Unlock',
@@ -679,13 +607,6 @@ const en = {
   'field.minQty': 'Minimum Quantity',
   'filter.tiered': 'Quantity tiers',
   'filter.discounted': 'Discounted',
-  'field.validity': 'Validity',
-  'validity.current': 'In force',
-  'validity.upcoming': 'Not yet in force',
-  'validity.expired': 'Expired',
-  'validity.always': 'No limit',
-  'validity.from': 'From',
-  'validity.until': 'Until',
   'field.delay': 'Delivery Lead Time',
   'field.template': 'Product Template',
   'field.variant': 'Variant',
@@ -729,7 +650,6 @@ export default defineModule({
       client: 'purchase-order-modal.mjs',
       export: 'purchaseOrderModal',
     }),
-    'purchase.configuration-page': purchaseConfigurationIsland,
   },
   fills: {
     'backend:runtime': `{% island "purchase.order-modal" %}{% island "purchase.vendor-price-modal" %}`,
@@ -767,22 +687,10 @@ export default defineModule({
       needs: 'purchase.listSupplierInfo',
       sequence: 2010,
     },
-    // Settings are behind the rail's gear, in Purchasing's own block beside Sales and Stock.
-    'admin.purchase': { parent: 'admin', label: 'menu.app', icon: 'shopping-cart', sequence: 24 },
-    'purchase.configuration': {
-      parent: 'admin.purchase',
-      label: 'configuration.title',
-      path: '/admin/purchase/configuration',
-      needs: 'purchase.getConfiguration',
-      for: ['purchase.saveConfiguration'],
-      sequence: 2000,
-    },
   },
   routes: {
     '/admin/purchase/vendor-price/{id}/context': vendorPricelistContext,
     '/admin/purchase/record/{id}/context': purchaseOrderContext,
-    '/admin/purchase/configuration': purchaseConfigurationRoute,
-    '/admin/purchase/configuration/context': purchaseConfigurationContext,
     '/admin/purchase':
       (ctx): Route =>
       async (url, req) =>
@@ -790,23 +698,16 @@ export default defineModule({
           ? adminPage(ctx, url, req, {
               title: 'purchase_backend.dashboard.title',
               body: async (_, shell) => {
-                const [orders, data, warehouses] = await Promise.all([
+                const [orders, data] = await Promise.all([
                   ctx.call('purchase.listOrders', {}, url, req) as Promise<AnyRow[]>,
                   common(ctx, url, req),
-                  optionalRead<AnyRow[]>(ctx, 'stock.listWarehouses', {}, url, req, []) as Promise<AnyRow[]>,
                 ])
-                // The warehouse a request's receipt delivers to, through its receipt type.
-                const warehouseOf = (row: AnyRow) => {
-                  const type = data.pickingTypes.find((entry) => entry.id === row.pickingTypeId)
-                  return warehouses.find((entry) => entry.id === type?.warehouseId)?.name ?? type?.name
-                }
                 return purchaseOverviewScreen(
                   _,
                   orders.map((row) => ({
                     ...row,
                     partnerName:
                       data.partners.find((partner) => partner.id === row.partnerId)?.name ?? row.partnerId,
-                    warehouseName: row.replenishmentGroup ? warehouseOf(row) : undefined,
                   })),
                   shell,
                   localeQuery(url),

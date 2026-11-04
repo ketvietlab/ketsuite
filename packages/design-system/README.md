@@ -99,11 +99,6 @@ Peer sections on one surface use `Stack({ divided: true })`. The stack owns one
 Disclosure or Surface removes that child's frame, preserving the parent's divider,
 including in flat presentation. See catalogue specimen `peer-section-dividers`.
 
-A `Disclosure` line may start with `leading`, a small image or icon of the item (a
-`Thumbnail` of size `small` for a product variant), before its label and `meta`.
-The slot keeps its own size on the line's centre; without it the summary's markup is
-unchanged.
-
 A table's scroll region (`kt-scroll` of KetTable, `table-scroll` of DataTable) is the
 boundary of its width: it contains its inline size (`contain: inline-size`), so the table
 scrolls inside the region and never widens a parent Stack, a wrapping client island or the
@@ -1017,36 +1012,6 @@ selection as a trailing mark on the label's own line, never on a line of its own
 below a description. The dialog's "more" action is a full-width row like the
 options above it, not a chip-sized button; a consumer overriding the footer should
 widen it to match, not narrow it to its label's content.
-
-#### Tags presentation
-
-A multiple picker set to `presentation: 'tags'` is a combobox. Its chips sit
-inside the control box before a text input (`relation-input`, `role="combobox"`,
-the Field's ID via `triggerId`) that searches as it is typed. Chosen records leave
-the list. The control box draws the field stroke, focus ring, invalid and disabled
-states; the input draws none of its own. Arrow keys move the active option
-(`aria-activedescendant`), Enter picks it and never submits the form, Backspace in
-an empty input takes the last chip off, the trailing clear button takes them all,
-and Escape closes the list. A choice closes the list and keeps focus in the input,
-including when the host answers the change by mounting the picker anew. The
-native select still posts the choices joined by a comma.
-
-With a `manager` that has `saveFunction` and `fields`, the footer offers
-`labels.createNamed` (`{query}` is what was typed) and Enter with no match does the
-same: the manager dialog opens small, on the editor alone, its label field filled
-with the typed name, its actions in the dialog footer (`labels.createTitle` names
-it). Without a manager, `callbacks.onCreate` receives the name. The editor's fields
-are the design system's own `Field`. A save function that answers with the record
-it made (`{ [idField]: ... }`) gives the picker that id; otherwise the client id
-stands. A record created in the dialog bubbles `ket:relation-created`
-(`detail: { name, option }`) from the picker before the choice reaches the form,
-so a host can read its own data again: the KetSuite record runtime re-reads the
-record quietly, keeping drafts, tab and view state. Created and learned records
-are keyed by `listFunction` and `listInput`, so the values of one attribute never
-join another's picker.
-
-Inside a `Field` with an `action` (a remove button, say), a tag picker takes the
-row's full width instead of the compact width a short entry keeps.
 
 Its inline dropdown is not a `<details>`, so the shared outside-click delegator
 does not own it. With native Popover support the island places its inline menu

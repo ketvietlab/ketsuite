@@ -162,7 +162,7 @@ function summary(c: Context) {
           ? item('operation', 'scrap.operation', link(c.data.links.operation, record.name))
           : null,
         c.data.value ? item('value', 'scrap.value', c.data.value) : null,
-        record.replenishmentPickingId || record.replenishmentOrderId
+        record.replenishmentPickingId
           ? item(
               'replenishment',
               'scrap.replenishment',
@@ -201,8 +201,7 @@ export const scrapModalDefinition: RecordModalDefinition<Data> = {
         !c.creating &&
         c.data.record.state === 'done' &&
         c.data.record.replenish &&
-        !c.data.record.replenishmentPickingId &&
-        !c.data.record.replenishmentOrderId ? (
+        !c.data.record.replenishmentPickingId ? (
           <Notice
             tone="warning"
             title={t(c, 'scrap.replenishMissing')}

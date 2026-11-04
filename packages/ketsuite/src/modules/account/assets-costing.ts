@@ -140,48 +140,6 @@ const createScheduleMove = async (ctx: Ctx, line: Row): Promise<Record<string, u
   return { ok: true, id: moveId, existing: false }
 }
 
-/** Posted debit lines on an active category's acquisition account that no asset has recorded yet. */
-const assetSourceLines = async (ctx: Ctx): Promise<Row[]> => {
-  const categories = new Map<string, Row>()
-  for (const category of await ctx.db.select('account.AssetCategory'))
-    if (category.active === true && !categories.has(String(category.acquisitionAccountId)))
-      categories.set(String(category.acquisitionAccountId), category)
-  const moves = new Map(
-    (await ctx.db.select('account.Move', { state: 'posted' })).map((move) => [String(move.id), move]),
-  )
-  const recorded = new Set((await ctx.db.select('account.Asset')).map((asset) => String(asset.sourceKey)))
-  const { scale } = await ledgerOf(ctx)
-  return (await ctx.db.select('account.MoveLine'))
-    .filter(
-      (line) =>
-        moves.has(String(line.moveId)) &&
-        categories.has(String(line.accountId)) &&
-        moneyMinor(line.debit, scale) > 0n &&
-        !recorded.has(checksum({ sourceType: 'move', sourceId: line.moveId, sourceLineId: line.id ?? null })),
-    )
-    .map((line) => {
-      const move = moves.get(String(line.moveId))!
-      const category = categories.get(String(line.accountId))!
-      return {
-        id: line.id,
-        moveId: line.moveId,
-        moveName: move.name,
-        accountingDate: move.accountingDate,
-        name: line.name,
-        accountId: line.accountId,
-        amount: line.debit,
-        categoryId: category.id,
-        categoryName: category.name,
-        kind: category.kind,
-      } as Row
-    })
-    .sort(
-      (left, right) =>
-        String(left.accountingDate).localeCompare(String(right.accountingDate)) ||
-        String(left.moveName).localeCompare(String(right.moveName)),
-    )
-}
-
 export const assetCostingFunctions: Record<string, FnSpec> = {
   listAssetCategories: defineFn({
     input: { active: 'bool?' },
@@ -312,7 +270,7 @@ export const assetCostingFunctions: Record<string, FnSpec> = {
       const category = (await ctx.db.select('account.AssetCategory', { id: args.categoryId }))[0]
       if (category?.active !== true)
         return failure('categoryId', 'assetCategoryMissing', 'active asset category does not exist')
-      if (!['invoice', 'move', 'migration', 'manual'].includes(String(args.sourceType)))
+      if (!['invoice', 'migration', 'manual'].includes(String(args.sourceType)))
         return failure('sourceType', 'assetSourceInvalid', 'unsupported asset source')
       const { scale } = await ledgerOf(ctx)
       let cost: bigint
@@ -364,61 +322,6 @@ export const assetCostingFunctions: Record<string, FnSpec> = {
       }
       await auditAsset(ctx, row, 'created', {}, snapshotOf(row), args)
       return { ok: true, id: args.id, duplicate: false }
-    },
-  }),
-  listAssetSourceLines: defineFn({
-    input: {},
-    effects: [
-      'read:account.AssetCategory',
-      'read:account.Move',
-      'read:account.MoveLine',
-      'read:account.Asset',
-      'read:company.Company',
-    ],
-    agent: true,
-    handler: async (ctx) => assetSourceLines(ctx),
-  }),
-  createAssetFromMoveLine: defineFn({
-    input: { id: 'id', moveLineId: 'id', name: 'text?', custodianId: 'text?', actorId: 'text?' },
-    effects: [
-      'read:account.AssetCategory',
-      'read:account.Asset',
-      'read:account.Move',
-      'read:account.MoveLine',
-      'read:company.Company',
-      'write:account.Asset',
-      'write:account.AssetEvent',
-    ],
-    idempotent: true,
-    agent: true,
-    handler: async (ctx, args) => {
-      const line = (await assetSourceLines(ctx)).find((row) => row.id === args.moveLineId)
-      if (!line) {
-        const held = (await ctx.db.select('account.MoveLine', { id: args.moveLineId }))[0]
-        const sourceKey = held
-          ? checksum({ sourceType: 'move', sourceId: held.moveId, sourceLineId: held.id })
-          : null
-        const existing = sourceKey ? (await ctx.db.select('account.Asset', { sourceKey }))[0] : null
-        if (existing) return { ok: true, id: existing.id, duplicate: true }
-        return failure(
-          'moveLineId',
-          'assetSourceLineInvalid',
-          'asset source must be a posted debit line on an asset category acquisition account',
-        )
-      }
-      const name = String(args.name ?? '').trim() || String(line.name ?? '').trim() || String(line.moveName)
-      return assetCostingFunctions.createAsset!.handler(ctx, {
-        id: args.id,
-        name,
-        categoryId: line.categoryId,
-        sourceType: 'move',
-        sourceId: line.moveId,
-        sourceLineId: line.id,
-        originalCost: line.amount,
-        startDate: line.accountingDate,
-        custodianId: args.custodianId ?? null,
-        actorId: args.actorId ?? ctx.actor ?? null,
-      })
     },
   }),
   transitionAsset: defineFn({

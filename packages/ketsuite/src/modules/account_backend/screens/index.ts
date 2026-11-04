@@ -64,12 +64,6 @@ export {
   type JournalEntriesListScreenOptions,
 } from './journal-entries-list.tsx'
 export {
-  billMatchSection,
-  type BillMatchLineView,
-  type BillMatchSectionOptions,
-  type BillMatchView,
-} from './bill-match.tsx'
-export {
   type MoveDetailRejection,
   type MoveDetailRow,
   moveDetailScreen,
@@ -112,7 +106,6 @@ export {
   vendorBillListColumns,
   type VendorBillListRow,
   type VendorBillListSummary,
-  type VendorBillMatchState,
   vendorBillsListScreen,
   type VendorBillsListScreenOptions,
 } from './vendor-bills-list.tsx'

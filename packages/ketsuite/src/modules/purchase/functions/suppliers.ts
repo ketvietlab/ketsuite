@@ -10,30 +10,12 @@ import { defineFn, type Ctx, type FnSpec } from '@ketvietlab/ketjs'
 import { compareDecimals } from '../../account/money.ts'
 import { PURCHASE_METHODS } from '../types.ts'
 import { invalid, n, inUnit } from './shared.ts'
-import {
-  companyCalendar,
-  SUPPLIER_VALIDITY_EFFECTS,
-  supplierValidity,
-  validityDay,
-} from '../supplier-validity.ts'
 
-/**
- * Each price also carries its validity in the company's calendar: `validFrom` and `validUntil`
- * (inclusive days, null when open) and `validity`, whether it applies now.
- */
-export async function listSupplierInfoHandler(ctx: Ctx, args: Record<string, unknown>) {
-  const calendar = await companyCalendar(ctx)
-  const now = new Date()
-  const rows = await ctx.db.select('purchase.SupplierInfo', {
+export function listSupplierInfoHandler(ctx: Ctx, args: Record<string, unknown>) {
+  return ctx.db.select('purchase.SupplierInfo', {
     ...(args.partnerId ? { partnerId: args.partnerId } : {}),
     ...(args.productId ? { productId: args.productId } : {}),
   })
-  return rows.map((row) => ({
-    ...row,
-    validFrom: validityDay(row.dateStart, calendar),
-    validUntil: validityDay(row.dateEnd, calendar),
-    validity: supplierValidity(row, now, calendar),
-  }))
 }
 
 export async function saveSupplierInfoHandler(ctx: Ctx, args: Record<string, unknown>) {
@@ -127,7 +109,7 @@ export async function setPurchaseMethodHandler(ctx: Ctx, args: Record<string, un
 export const suppliersFunctions: Record<string, FnSpec> = {
   listSupplierInfo: defineFn({
     input: { partnerId: 'id?', productId: 'id?' },
-    effects: ['read:purchase.SupplierInfo', ...SUPPLIER_VALIDITY_EFFECTS],
+    effects: ['read:purchase.SupplierInfo'],
     agent: true,
     handler: listSupplierInfoHandler,
   }),

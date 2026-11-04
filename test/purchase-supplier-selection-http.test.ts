@@ -117,54 +117,6 @@ test('P49 excludes expired, future, foreign-company and inactive supplier rows w
   assert.equal((await r.line('inactive')).priceUnit, '0')
 })
 
-test('P49 a price saved for a day applies for that whole day in the company calendar', async (t) => {
-  const r = await seed(t)
-  // The price form saves days, which the datetime fields keep as their UTC midnight.
-  await r.supplier('one-day', { price: '70', dateStart: '2026-10-31', dateEnd: '2026-10-31' })
-  const priceAt = async (id: string, dateOrder: string) => {
-    await r.save('purchase.createOrder', { id, partnerId: 'vendor', pickingTypeId: 'incoming', dateOrder })
-    await r.save('purchase.addLine', {
-      id: `${id}-line`,
-      orderId: id,
-      productId: 'goods:default',
-      productUomId: 'each',
-      productQty: '1',
-    })
-    return ((await r.call('purchase.getOrder', { id })).lines as Row[])[0]!.priceUnit
-  }
-  // Asia/Ho_Chi_Minh is UTC+7: 31/10 runs from 30/10 17:00Z to 31/10 17:00Z.
-  assert.equal(await priceAt('day-before', '2026-10-30T16:59:00.000Z'), '0')
-  assert.equal(await priceAt('first-hour', '2026-10-30T17:00:00.000Z'), '70')
-  assert.equal(await priceAt('afternoon', '2026-10-31T08:00:00.000Z'), '70')
-  assert.equal(await priceAt('last-minute', '2026-10-31T16:59:00.000Z'), '70')
-  assert.equal(await priceAt('day-after', '2026-10-31T17:00:00.000Z'), '0')
-  await r.app.adapter!.exec(`UPDATE company_company SET "accountingTimezone" = 'UTC' WHERE id = 'acme'`)
-  assert.equal(await priceAt('utc-day-before', '2026-10-30T23:59:00.000Z'), '0')
-  assert.equal(await priceAt('utc-last-minute', '2026-10-31T23:59:00.000Z'), '70')
-  // An instant an API caller sends stays that instant, in any timezone.
-  await r.supplier('one-day', { price: '70', dateStart: '2026-10-30T18:00:00.000Z' })
-  assert.equal(await priceAt('instant-before', '2026-10-30T17:59:00.000Z'), '0')
-  assert.equal(await priceAt('instant-from', '2026-10-30T18:00:00.000Z'), '70')
-})
-
-test('P49 listed prices say whether they apply today', async (t) => {
-  const r = await seed(t)
-  await r.supplier('always', { price: '10' })
-  await r.supplier('past', { price: '11', dateStart: '2020-01-01', dateEnd: '2020-12-31' })
-  await r.supplier('later', { price: '12', dateStart: '2099-01-01' })
-  await r.supplier('open-end', { price: '13', dateStart: '2020-01-01' })
-  const rows = (await r.call('purchase.listSupplierInfo', {})) as unknown as Row[]
-  const validity = Object.fromEntries(
-    rows.map((row) => [row.id, [row.validity, row.validFrom, row.validUntil]]),
-  )
-  assert.deepEqual(validity, {
-    always: ['current', null, null],
-    past: ['expired', '2020-01-01', '2020-12-31'],
-    later: ['upcoming', '2099-01-01', null],
-    'open-end': ['current', '2020-01-01', null],
-  })
-})
-
 test('P49 shared selection applies variant membership and active-company fallback across vendors', async () => {
   const rows: Row[] = [
     { id: 'foreign', companyId: 'other', partnerId: 'v1', sequence: 0, minQty: '0' },
@@ -181,7 +133,6 @@ test('P49 shared selection applies variant membership and active-company fallbac
         if (model === 'product.Template') return [{ id: 'template' }]
         if (model === 'purchase.SupplierInfo') return rows
         if (model === 'partner.Partner') return [{ id: query.id, active: query.id !== 'retired' }]
-        if (model === 'company.Company') return [{ id: 'acme', accountingTimezone: 'Asia/Ho_Chi_Minh' }]
         throw new Error(model)
       },
     },

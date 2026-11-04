@@ -8,8 +8,6 @@ import { lifecycleFunctions } from './lifecycle.ts'
 import { receiptsFunctions } from './receipts.ts'
 import { billsFunctions } from './bills.ts'
 import { productSuppliersFunctions } from './product-suppliers.ts'
-import { configurationFunctions } from './configuration.ts'
-import { billMatchingFunctions } from './bill-matching.ts'
 
 export function assemblePurchaseFunctions(groups: Record<string, FnSpec>[]): Record<string, FnSpec> {
   const functions: Record<string, FnSpec> = {}
@@ -30,7 +28,5 @@ export const functions = assemblePurchaseFunctions([
   lifecycleFunctions,
   receiptsFunctions,
   billsFunctions,
-  billMatchingFunctions,
-  configurationFunctions,
   productSuppliersFunctions,
 ])

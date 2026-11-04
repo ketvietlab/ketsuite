@@ -41,11 +41,8 @@ const modules = companyCatalogueModules([
   suite.saleTemplatesWithLoyalty(),
   suite.saleTemplatesBackend,
   suite.pricingBackend,
-  // A cancelled or reversed sales invoice gives the order its quantity back (D10); a vendor bill
-  // is compared with its purchase orders before it is posted (#1737).
-  suite.moduleWithPurchaseBillMatching(
-    suite.moduleWithSaleInvoices(suite.account, ['cancelMove', 'reverseMove']),
-  ),
+  // A cancelled or reversed sales invoice gives the order its quantity back (D10).
+  suite.moduleWithSaleInvoices(suite.account, ['cancelMove', 'reverseMove']),
   suite.businessReportStaffChannel,
   suite.quality,
   suite.qualityStaffChannel,

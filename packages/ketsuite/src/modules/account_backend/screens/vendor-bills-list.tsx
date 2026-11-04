@@ -1,5 +1,4 @@
 import type { Translator } from '@ketvietlab/ketjs'
-import { Badge } from '@ketvietlab/design-system'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import {
   badge,
@@ -17,8 +16,6 @@ import {
 } from '../../../ui/index.ts'
 import type { DataTable, Frame } from '../../../ui/index.ts'
 import { labelOf, moveTitle } from './shared.tsx'
-import { HELP } from '../../product_backend/screens/help-words.ts'
-import { VendorBillHelp } from './vendor-bill-help.tsx'
 
 export type VendorBillListRow = Record<string, unknown>
 
@@ -36,23 +33,8 @@ export type VendorBillsListScreenOptions = {
   rowHref: (row: VendorBillListRow) => string
   partnerLabel: (row: VendorBillListRow) => string
   summary: VendorBillListSummary
-  /** Each shown bill's purchase order matching, when Purchasing is composed and readable (#1737). */
-  matches?: ReadonlyMap<string, VendorBillMatchState>
   table?: Partial<DataTable<VendorBillListRow>>
 }
-
-export type VendorBillMatchState = { status: 'none' | 'ok' | 'mismatch'; held: boolean }
-
-const matchCell = (_: Translator, state: VendorBillMatchState | undefined) =>
-  state?.held ? (
-    <Badge label={_('account_backend.billMatch.held')} tone="warning" value="held" />
-  ) : state?.status === 'mismatch' ? (
-    <Badge label={_('account_backend.billMatch.mismatch')} tone="danger" value="mismatch" />
-  ) : state?.status === 'ok' ? (
-    <Badge label={_('account_backend.billMatch.matched')} tone="positive" value="ok" />
-  ) : (
-    '—'
-  )
 
 const paymentTone = (state: unknown) => {
   if (state === 'paid') return 'positive' as const
@@ -60,11 +42,7 @@ const paymentTone = (state: unknown) => {
   return 'neutral' as const
 }
 
-export const vendorBillListColumns = (
-  _: Translator,
-  partnerLabel: (row: VendorBillListRow) => string,
-  matches?: ReadonlyMap<string, VendorBillMatchState>,
-) => [
+export const vendorBillListColumns = (_: Translator, partnerLabel: (row: VendorBillListRow) => string) => [
   {
     key: 'name',
     label: _('account_backend.field.name'),
@@ -110,16 +88,6 @@ export const vendorBillListColumns = (
         String(row.paymentState),
       ),
   },
-  ...(matches
-    ? [
-        {
-          key: 'matching',
-          label: _('account_backend.billMatch.column'),
-          kind: 'status' as const,
-          cell: (row: VendorBillListRow) => matchCell(_, matches.get(String(row.id))),
-        },
-      ]
-    : []),
   {
     key: 'total',
     label: _('account_backend.field.amountTotal'),
@@ -143,7 +111,7 @@ export const vendorBillsListScreen = (
     rows: options.rows,
     id: (row) => String(row.id),
     rowHref: options.rowHref,
-    columns: vendorBillListColumns(_, options.partnerLabel, options.matches),
+    columns: vendorBillListColumns(_, options.partnerLabel),
     ...options.table,
   })
   const table =
@@ -158,36 +126,21 @@ export const vendorBillsListScreen = (
       />
     )
 
-  const lang = _.locale === 'en' ? 'en' : 'vi'
   return shell(
     _,
     _('account_backend.vendorBills.title'),
-    <>
-      <ListPage
-        variant="operational"
-        frame={collection.frame}
-        title={_('account_backend.vendorBills.title')}
-        headerActions={
-          <LinkButton
-            label={_('account_backend.action.create')}
-            href={options.createHref}
-            variant="primary"
-          />
-        }
-        actions={collectionActions(_, collection.frame)}
-        controls={collectionControls(_, _('account_backend.vendorBills.title'), collection.frame)}
-        footer={status}
-        body={table}
-      />
-      <VendorBillHelp lang={lang} />
-    </>,
-    {
-      ...collection.frame,
-      chrome: null,
-      topbar: false,
-      ...(collection.frame.applications
-        ? { applications: { ...collection.frame.applications, helpLabel: HELP[lang].trigger } }
-        : {}),
-    },
+    <ListPage
+      variant="operational"
+      frame={collection.frame}
+      title={_('account_backend.vendorBills.title')}
+      headerActions={
+        <LinkButton label={_('account_backend.action.create')} href={options.createHref} variant="primary" />
+      }
+      actions={collectionActions(_, collection.frame)}
+      controls={collectionControls(_, _('account_backend.vendorBills.title'), collection.frame)}
+      footer={status}
+      body={table}
+    />,
+    { ...collection.frame, chrome: null, topbar: false },
   )
 }

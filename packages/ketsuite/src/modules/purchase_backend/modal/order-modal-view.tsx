@@ -95,63 +95,6 @@ const create = (c: Context) => (
     actions={[<Button type="submit" label={t(c, 'action.createRfq')} variant="primary" disabled={c.busy} />]}
   />
 )
-type Approval = {
-  required: number
-  given: { level: string; approverName?: string | null; approvedBy?: string | null; approvedAt?: string }[]
-  pending: string[]
-  draftedByCaller: boolean
-}
-/** The order's approval facts; an order read without them waits for one manager, as it always did. */
-const approvalOf = (c: Context): Approval =>
-  (c.data.record.approval as Approval | undefined) ?? {
-    required: c.data.record.state === 'to approve' ? 1 : 0,
-    given: [],
-    pending: c.data.record.state === 'to approve' ? ['manager'] : [],
-    draftedByCaller: false,
-  }
-/** Who approves the order and who already did; shown once the order needs approval at all. */
-const approval = (c: Context) => {
-  const state = approvalOf(c)
-  if (!state.required && !state.given.length) return null
-  const level = (name: string) => t(c, `approval.level.${name}`)
-  return (
-    <Section
-      title={t(c, 'approval.title')}
-      body={
-        <DescriptionList
-          items={[
-            {
-              id: 'required',
-              label: t(c, 'approval.required'),
-              value: t(c, `approval.levels.${Math.min(2, state.required)}`),
-            },
-            {
-              id: 'given',
-              label: t(c, 'approval.given'),
-              value: state.given.length
-                ? state.given
-                    .map((row) => `${level(row.level)}: ${row.approverName || row.approvedBy || '—'}`)
-                    .join(' · ')
-                : '—',
-            },
-            ...(c.data.record.state === 'to approve'
-              ? [
-                  {
-                    id: 'pending',
-                    label: t(c, 'approval.pending'),
-                    value: state.pending.map(level).join(' · ') || '—',
-                  },
-                ]
-              : []),
-            ...(c.data.record.state === 'to approve' && state.draftedByCaller
-              ? [{ id: 'own', label: t(c, 'approval.ownLabel'), value: t(c, 'approval.own') }]
-              : []),
-          ]}
-        />
-      }
-    />
-  )
-}
 const summary = (c: Context) => (
   <Stack
     items={[
@@ -165,7 +108,6 @@ const summary = (c: Context) => (
           }),
         )}
       />,
-      approval(c),
       <Section
         title={t(c, 'modal.lines')}
         body={
@@ -313,25 +255,14 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
           ...(c.data.record.state === 'draft' && c.data.permissions.sendRfq
             ? [action(c, 'send', 'send', false, c.recordChanged)]
             : []),
-          // From a threshold, confirming sends the order for approval, so that is the only
-          // command; below it a buyer may still ask for a manager's approval.
           ...(['draft', 'sent'].includes(String(c.data.record.state)) && c.data.permissions.confirmOrder
-            ? approvalOf(c).required > 0
-              ? [action(c, 'confirm', 'requestApproval', true, c.recordChanged)]
-              : [
-                  action(c, 'confirm', 'confirm', true, c.recordChanged),
-                  action(c, 'requestApproval', 'requestApproval', false, c.recordChanged),
-                ]
-            : []),
-          ...(c.data.record.state === 'to approve' && !approvalOf(c).draftedByCaller
             ? [
-                ...(approvalOf(c).pending.includes('manager') && c.data.permissions.approveOrder
-                  ? [action(c, 'approve', 'approve', !c.data.permissions.finalApproveOrder)]
-                  : []),
-                ...(approvalOf(c).pending.length && c.data.permissions.finalApproveOrder
-                  ? [action(c, 'finalApprove', 'finalApprove', true)]
-                  : []),
+                action(c, 'confirm', 'confirm', true, c.recordChanged),
+                action(c, 'requestApproval', 'requestApproval', false, c.recordChanged),
               ]
+            : []),
+          ...(c.data.record.state === 'to approve' && c.data.permissions.approveOrder
+            ? [action(c, 'approve', 'approve', true)]
             : []),
           ...(c.data.record.state === 'purchase' && c.data.permissions.syncReceipts
             ? [action(c, 'sync', 'syncReceipts')]
@@ -408,19 +339,10 @@ export const purchaseOrderModalDefinition: RecordModalDefinition<PurchaseOrderMo
       }),
       after: 'reload',
     },
-    finalApprove: {
-      fn: 'purchase.finalApproveOrder',
-      input: (_form, c) => ({ id: c.id, expectedRevision: Number(c.data.record.revision) }),
-      after: 'reload',
-      // Someone may have approved or sent it back meanwhile.
-      refreshOnRefusal: true,
-    },
     approve: {
       fn: 'purchase.approveOrder',
       input: (_form, c) => ({ id: c.id, expectedRevision: Number(c.data.record.revision) }),
       after: 'reload',
-      // Someone may have approved or sent it back meanwhile.
-      refreshOnRefusal: true,
     },
     reset: { fn: 'purchase.resetToDraft', input: (_form, c) => ({ id: c.id }), after: 'reload' },
     sync: { fn: 'purchase.syncReceipts', input: (_form, c) => ({ id: c.id }), after: 'reload' },

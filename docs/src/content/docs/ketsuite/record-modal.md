@@ -238,13 +238,6 @@ and successful command `clearRecordDrafts: [name]` clear all checkbox/radio valu
 that exact field, keeping similarly named fields and parent/child layers independent.
 The server must still validate every selected record and enforce permissions.
 
-A design-system `RelationSelect` that creates a record in its own dialog (a new attribute value
-from a tag picker, say) bubbles `ket:relation-created` before its choice reaches the form. The
-runtime then reads the record again quietly, so the view's own data names the new record (the
-variants it makes, its label beside other fields) while drafts, the tab, view state and an open
-dialog stay. The picker's change still feeds view state under the field's `name`. The record's
-read must therefore include what pickers can create; it is not a second save of the record.
-
 Desktop `fixedHeight` is carried by `--kv-modal-fixed-height`; it never overrides the mobile full-screen height. Avoid inline `height: … !important` on a ModalSheet.
 
 ## Record pages

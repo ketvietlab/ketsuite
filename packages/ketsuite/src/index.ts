@@ -598,10 +598,6 @@ export { hospitalityScreenHelp } from './modules/hospitality_core/screens/screen
 export { hospitalityRecordBack } from './modules/hospitality_core/screens/scoped-href.ts'
 
 export { stockWithProductSuppliers } from './modules/purchase/stock-suppliers.ts'
-export {
-  moduleWithPurchaseBillMatching,
-  withPurchaseBillMatching,
-} from './modules/purchase/bill-matching.ts'
 export { moduleWithSaleDeliveries, withSaleDeliveries } from './modules/sale/stock-deliveries.ts'
 export { moduleWithSaleInvoices, withSaleInvoices } from './modules/sale/invoice-settlement.ts'
 

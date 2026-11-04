@@ -37,13 +37,6 @@ const messages: Record<string, string> = {
   'purchase_backend.field.vendor': 'Nhà cung cấp',
   'purchase_backend.method.title': 'Chính sách lập hoá đơn sản phẩm',
   'purchase_backend.pricelists.title': 'Bảng giá nhà cung cấp',
-  'purchase_backend.field.validity': 'Hiệu lực',
-  'purchase_backend.validity.current': 'Đang hiệu lực',
-  'purchase_backend.validity.upcoming': 'Sắp hiệu lực',
-  'purchase_backend.validity.expired': 'Hết hạn',
-  'purchase_backend.validity.always': 'Không giới hạn',
-  'purchase_backend.validity.from': 'Từ',
-  'purchase_backend.validity.until': 'Đến',
 }
 
 const translate = ((key: string, params?: Record<string, unknown>) => {
@@ -149,61 +142,6 @@ test('purchase vendor pricelists list: hides the policy form without purchase.se
   assert.match(html, /data-ui="list-page"/)
   assert.doesNotMatch(html, /name="action" value="method"|name="purchaseMethod"/)
   assert.doesNotMatch(html, /vendor-pricelists\/new|record=purchase\.vendorPrice/)
-})
-
-test('purchase vendor pricelists list: shows each price validity as a state and its days', () => {
-  const row = {
-    partnerId: 'vendor',
-    productTemplateId: 'desk',
-    minQty: '0',
-    price: '1',
-    discount: '0',
-    delay: '1',
-  }
-  const html = renderToString(
-    vendorPricelistsListScreen(translate, {
-      frame: {},
-      action: '/vi/admin/purchase/vendor-pricelists',
-      createHref: null,
-      methodFields: [],
-      rows: [
-        { ...row, id: 'always', validity: 'current' },
-        {
-          ...row,
-          id: 'range',
-          validity: 'current',
-          validFrom: '2026-10-01',
-          validUntil: '2026-11-15',
-        },
-        { ...row, id: 'later', validity: 'upcoming', validFrom: '2026-12-01' },
-        { ...row, id: 'past', validity: 'expired', validUntil: '2026-09-30' },
-      ],
-    }),
-  )
-  // Without the renderer's hydration markers, so a cell reads as its text.
-  const cell = (id: string) => {
-    const start = html.indexOf(`data-row="${id}"`)
-    const from = html.indexOf('data-col="validity"', start)
-    return html.slice(from, html.indexOf('</td>', from)).replace(/<!--k\[?-->/g, '')
-  }
-  assert.match(
-    cell('always'),
-    /data-pattern="badge" data-tone="positive"[^>]*data-value="current"[^>]*>(?:<span[^>]*>)?Đang hiệu lực<[\s\S]*?Không giới hạn/,
-  )
-  assert.match(cell('range'), /Đang hiệu lực<[\s\S]*?1\/10\/26 – 15\/11\/26/)
-  assert.match(
-    cell('later'),
-    /data-pattern="badge" data-tone="info"[^>]*data-value="upcoming"[^>]*>(?:<span[^>]*>)?Sắp hiệu lực<[\s\S]*?Từ 1\/12\/26/,
-  )
-  assert.match(
-    cell('past'),
-    /data-pattern="badge" data-tone="danger"[^>]*data-value="expired"[^>]*>(?:<span[^>]*>)?Hết hạn<[\s\S]*?Đến 30\/9\/26/,
-  )
-  // The list's Help drawer explains the columns, the filters and how a request picks a price.
-  assert.match(
-    html,
-    /id="purchase-vendor-pricelist-help"[\s\S]*?Hiệu lực[\s\S]*?Yêu cầu báo giá chọn giá thế nào/,
-  )
 })
 
 test('purchase vendor pricelist create: keeps all fields, defaults, scope, locale and company currency context', () => {

@@ -323,15 +323,13 @@ test('K59 replenishing orders the scrapped quantity again by the product rule, a
   })
   assert.equal((await r.scrap('ask')).ruleReady, true)
   assert.deepEqual(await r.call('stock.validateScrap', { id: 'ask' }), { ok: true, id: 'ask' })
-  // #1737: the supplier rule asks the vendor for a quotation, which the scrap keeps.
   const replenished = await r.scrap('ask')
-  assert.equal(replenished.replenishmentPickingId, null)
-  assert.ok(replenished.replenishmentOrderId)
-  const rfq = await r.call('purchase.getOrder', { id: replenished.replenishmentOrderId })
-  assert.deepEqual([rfq.state, rfq.partnerId, (rfq.lines as Row[])[0]!.productQty], ['draft', 'east', '3'])
-  const links = async (client = r.app.client) =>
-    (await (await client.request('/admin/stock/scrap/ask/context?lang=en')).json()).data.links
-  assert.match((await links()).replenishment, /^\/admin\/purchase\/rfqs\/[^?]+\?/)
+  assert.ok(replenished.replenishmentPickingId)
+  const receipt = await r.call('stock.getPicking', { id: replenished.replenishmentPickingId })
+  assert.deepEqual(
+    [receipt.state, receipt.partnerId, (receipt.moves as Row[])[0]!.productUomQty],
+    ['draft', 'east', '3'],
+  )
 
   await r.fixture('user.saveRole', { id: 'keeper', name: 'Keeper' })
   await r.fixture('user.createUser', {
@@ -347,8 +345,6 @@ test('K59 replenishing orders the scrapped quantity again by the product rule, a
     await r.fixture('user.grantFunction', { id: fnKey, roleId: 'keeper', fnKey })
   const keeper = r.app.client.anonymous()
   await keeper.login({ login: 'keeper', password: 'test-password' })
-  // A keeper who may not read purchase orders sees that it was replenished, but no link into Purchase.
-  assert.equal((await links(keeper)).replenishment, null)
   const post = (fn: string, body: Row) =>
     keeper.request(`/_ket/fn/${fn}`, {
       method: 'POST',

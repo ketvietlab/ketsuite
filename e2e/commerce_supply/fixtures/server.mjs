@@ -171,40 +171,6 @@ const seed = async () => {
         sequence,
       })
   }
-  // Vendor prices over time (#1737): one in force for today alone, saved as the price form saves
-  // days, one that has ended and one that has not started.
-  await call('product.saveTemplate', {
-    id: 'swab',
-    name: 'Tăm bông hộp 200',
-    type: 'goods',
-    uomId: 'pack',
-    defaultCode: 'SWAB-200',
-    listPrice: '30000',
-    saleOk: true,
-    purchaseOk: true,
-  })
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date())
-  for (const [suffix, price, dateStart, dateEnd] of [
-    ['today', '12000', today, today],
-    ['ended', '11000', '2025-01-01', '2025-12-31'],
-    ['later', '10500', '2099-01-01', null],
-  ])
-    await call('purchase.saveSupplierInfo', {
-      id: `swab-${suffix}`,
-      partnerId: 'vendor-east',
-      productTemplateId: 'swab',
-      productUomId: 'pack',
-      price,
-      delay: 3,
-      sequence: 1,
-      dateStart,
-      ...(dateEnd ? { dateEnd } : {}),
-    })
   // A storable product nobody supplies yet: its supplier rule needs a lead time of its own.
   await call('product.saveTemplate', {
     id: 'towel',
@@ -849,84 +815,6 @@ const seed = async () => {
     productUomId: 'pack',
     priceUnit: '17200',
   })
-  // Approval by amount (#1737): from 50.000.000 ₫ a purchasing manager approves, from 200.000.000 ₫ a final
-  // approver too. The RFQ from Đông Á totals 250.000.000 ₫ and needs both. It is drafted without an actor,
-  // so the administrator, who approves, is not its drafter.
-  // Its own product, so the receipts these orders make leave every other spec's stock and forecasts alone.
-  await call('product.saveTemplate', {
-    id: 'display-shelf',
-    name: 'Kệ trưng bày',
-    type: 'goods',
-    uomId: 'pack',
-    defaultCode: 'KE-001',
-    purchaseOk: true,
-  })
-  await call('purchase.saveConfiguration', {
-    approvalAmount: '50000000',
-    finalApprovalAmount: '200000000',
-    expectedRevision: 0,
-  })
-  await call(
-    'purchase.createOrder',
-    { id: 'rfq-approval', partnerId: 'vendor-east', pickingTypeId: 'wh:incoming' },
-    null,
-  )
-  await call('purchase.addLine', {
-    id: 'rfq-approval-shelf',
-    orderId: 'rfq-approval',
-    productId: 'display-shelf:default',
-    productQty: '10000',
-    productUomId: 'pack',
-    priceUnit: '25000',
-  })
-  // ...and one of 60.000.000 ₫, approved in its record modal by one purchasing manager.
-  await call(
-    'purchase.createOrder',
-    { id: 'rfq-approval-one', partnerId: 'vendor-east', pickingTypeId: 'wh:incoming' },
-    null,
-  )
-  await call('purchase.addLine', {
-    id: 'rfq-approval-one-shelf',
-    orderId: 'rfq-approval-one',
-    productId: 'display-shelf:default',
-    productQty: '2400',
-    productUomId: 'pack',
-    priceUnit: '25000',
-  })
-  // Vendor bill matching (#1737): bills may differ from their order by 2% in price. Two orders of 40 Kệ
-  // trưng bày at 25.000 ₫, below the approval threshold, received and billed: one bill matches; the
-  // other carries the vendor's 27.000 ₫, 8% above, as a draft would once bill lines can be edited (#1842).
-  await call('account.saveJournal', { id: 'journal-pur', name: 'Sổ mua hàng', code: 'PUR', type: 'purchase' })
-  await call('purchase.saveConfiguration', { priceTolerance: '2', expectedRevision: 1 })
-  for (const [id, billId] of [
-    ['po-bill', 'bill-match'],
-    ['po-bill-off', 'bill-off'],
-  ]) {
-    await call('purchase.createOrder', { id, partnerId: 'vendor-east', pickingTypeId: 'wh:incoming' }, null)
-    await call('purchase.addLine', {
-      id: `${id}-shelf`,
-      orderId: id,
-      productId: 'display-shelf:default',
-      productQty: '40',
-      productUomId: 'pack',
-      priceUnit: '25000',
-    })
-    await call('purchase.confirmOrder', { id })
-    await call('stock.confirmPicking', { id: `${id}:receipt` })
-    await call('stock.saveMoveLine', { id: `${id}-line`, moveId: `${id}-shelf:receipt`, quantity: '40' })
-    await call('stock.completePicking', { id: `${id}:receipt`, createBackorder: false })
-    await call('purchase.syncReceipts', { id })
-    await call('purchase.createVendorBill', {
-      id: billId,
-      orderId: id,
-      journalId: 'journal-pur',
-      expenseAccountId: 'acc-642',
-      payableAccountId: 'acc-331',
-    })
-  }
-  await adapter.exec(
-    `UPDATE account_move_line SET "priceUnit" = '27000' WHERE "moveId" = 'bill-off' AND "productId" IS NOT NULL`,
-  )
   // M15 (#1431, K7 K45–K49): shipping with the company's own carriers. The shipping accounts, GHN (the
   // default: 20.000 ₫ the first kilogram, 5.000 ₫ each one after, 1,5% of COD) and Viettel Post, a seller,
   // and deliveries of 2 GH-15 (300.000 ₫, paid on delivery), each to its own customer: Khách giao A to send

@@ -70,15 +70,6 @@ cheaper prices do not override the user's order. Purchase pricing restricts sele
 vendor and preserves explicit prices. The shared selector also accepts no vendor constraint for
 product-driven replenishment; the replenishment consumer is a separate implementation slice.
 
-Validity is read by `purchase/supplier-validity.ts` in the active company's accounting timezone, for
-purchase pricing, supplier replenishment choices, the product's Vendors card and
-`purchase.listSupplierInfo` alike. The price form saves days, which KetJS keeps as their UTC
-midnight; such a bound covers that whole day in the company calendar, so a price still applies in
-the last minute of its end day. Any other instant, as an API caller may send, is that instant. Both
-bounds are inclusive. `purchase.listSupplierInfo` adds `validFrom` and `validUntil` (the bounds'
-company days, null when open) and `validity` (`current`, `upcoming` or `expired`, now); the vendor
-price list shows them in its Validity column and filters on them.
-
 A KetSuite deployment has one state: every module in its `modules` array participates in composition,
 schema migration, HTTP behavior, and worker behavior. There is no bootstrap list or per-database module
 lifecycle. Product variants are separate deployment declarations with explicit module lists.

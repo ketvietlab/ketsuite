@@ -12,7 +12,6 @@ import {
 } from '@ketvietlab/ketjs'
 import { quantityText, wildcard, productContext } from './shared.ts'
 import { billedQuantity, receivedQuantity, invoiceStatus } from '../order-amounts.ts'
-import { approvalSummary } from '../approval.ts'
 
 export function listOrdersHandler(ctx: Ctx, args: Record<string, unknown>) {
   const O = ctx.table('purchase.Order')
@@ -116,7 +115,6 @@ export async function getOrderHandler(ctx: Ctx, args: Record<string, unknown>) {
   return {
     ...order,
     invoiceStatus: await invoiceStatus(ctx, args.id),
-    approval: await approvalSummary(ctx, order),
     lines,
     moves: detailedMoves,
     pickings,
@@ -149,9 +147,6 @@ export const queriesFunctions: Record<string, FnSpec> = {
     effects: [
       'read:purchase.Order',
       'read:purchase.OrderLine',
-      'read:purchase.OrderApproval',
-      'read:purchase.Configuration',
-      'read:user.User',
       'read:stock.Move',
       'read:stock.MoveLine',
       'read:stock.Picking',

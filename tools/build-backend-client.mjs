@@ -193,13 +193,6 @@ const entries = [
     output: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/client/purchase-order-modal.mjs'),
   },
   {
-    source: join(ROOT, 'packages/ketsuite/src/modules/purchase_backend/modal/configuration-view.tsx'),
-    output: join(
-      ROOT,
-      'packages/ketsuite/src/modules/purchase_backend/client/purchase-configuration-page.mjs',
-    ),
-  },
-  {
     source: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/modal/order-modal-view.tsx'),
     output: join(ROOT, 'packages/ketsuite/src/modules/sale_backend/client/sale-order-modal.mjs'),
   },
