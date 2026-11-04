@@ -1,4 +1,15 @@
 const DAY = 86400000
+// Only timestamp values enter Intl; business dates remain literal calendar days.
+export function displayTime(value, locale, timezone) {
+  if (!value?.includes('T')) return value
+  const date = new Date(value)
+  if (!Number.isFinite(+date)) return value
+  try {
+    return date.toLocaleString(locale, { timeZone: timezone })
+  } catch {
+    return date.toLocaleString(locale)
+  }
+}
 export function parseDay(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? '')) return null
   const date = new Date(`${value}T00:00:00Z`)

@@ -130,9 +130,9 @@ test('Studio categories and tags: create, edit, conflict and archive on the real
       kind: 'taxonomy',
       id: 'cat-green',
       expectedRevisionId: current,
-      values: values({ cover: '/anh.jpg' }),
+      values: values({ cover: '/anh.jpg', coverAlt: 'Ảnh' }),
     },
-    'Ảnh của chuyên mục và thẻ chưa được hỗ trợ trên hệ thống này.',
+    'Ảnh không hợp lệ, đã hết hạn hoặc không thuộc chuyên mục/thẻ này. Hãy tải lại ảnh.',
   )
   await refused(
     'website_studio.saveResource',

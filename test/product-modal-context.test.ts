@@ -316,8 +316,11 @@ test('variant setup: one save writes lines, price extras and variants, and gener
     variants: [variant('red', 's', { defaultCode: 'TEE-RS' }), variant('red', 'l'), variant('black', 's')],
   })
   assert.equal(saved.ok, true, JSON.stringify(saved.errors))
-  assert.equal(saved.created, 3)
+  // P27: the product's one SKU takes the first combination (keeping its id, stock and history);
+  // the other two are new.
+  assert.equal(saved.created, 2)
   const setup = saved.setup!
+  assert.equal(setup.variants.find((row) => row.defaultCode === 'TEE-RS')?.id, 'tee:default')
   const large = (setup.lines[1]!.values as Row[]).find((value) => value.valueId === 'l')
   assert.equal(large?.priceExtra, '20000')
   assert.equal(setup.variants.filter((row) => row.active).length, 3)
@@ -394,7 +397,7 @@ test('variant setup: the combination key follows the stored line ids, so generat
   )
 })
 
-test('variant setup: a variant left out is archived, never deleted, and the default variant sells again once none remain', async (t) => {
+test('variant setup: a variant left out that something may still name is archived, and the original SKU sells alone again once none remain', async (t) => {
   const { run } = await boot(t)
   await teeCatalogue(run)
   const first = await run<SaveResult>('product.saveVariantSetup', {
@@ -421,9 +424,17 @@ test('variant setup: a variant left out is archived, never deleted, and the defa
     variants: [],
   })
   assert.equal(dropped.ok, true, JSON.stringify(dropped.errors))
-  assert.equal(dropped.archived, 2)
-  assert.equal(dropped.setup!.variants.length, 2, 'archived, still there')
-  assert.ok(dropped.setup!.variants.every((row) => row.active === false))
+  // The original SKU (red·S, then black·L after the swap) goes back to being the product's
+  // only SKU. The other is archived, not deleted: this composition declares no reader for
+  // every model that may name a variant, so its use cannot be ruled out (P27).
+  assert.equal(redS!.id, 'tee:default')
+  assert.equal(dropped.archived, 1)
+  assert.equal((dropped as Row).deleted, 0)
+  assert.deepEqual(
+    dropped.setup!.variants.map((row) => [row.id, row.active]),
+    [[blackL!.id, false]],
+    'archived, still there',
+  )
   const context = await run<Context>('product.templateModalContext', { id: 'tee' })
   assert.equal(context!.data.hasVariants, false, 'General shows the default variant again')
 })
@@ -482,7 +493,7 @@ test('product page: packagings are the units linked to the product, with their b
     type: 'goods',
     uomId: 'unit',
     listPrice: '10000',
-    barcode: '8930000000017',
+    barcode: '8930000000019',
   })
   const read = () => run<PackagingContext>('product.templateModalContext', { id: 'tpl' })
   let c = await read()
@@ -512,18 +523,17 @@ test('product page: packagings are the units linked to the product, with their b
   const barcodes = (entries: Array<{ uomId: string; barcode: string | null }>) =>
     run<Row>('product.setPackagingBarcodes', { productId: variant, barcodes: entries })
   const refused = (result: Row) => (result.errors as Array<{ field: string; code: string }>)[0]
-  assert.deepEqual(refused(await barcodes([{ uomId: 'box', barcode: '8930000000017' }])), {
+  assert.deepEqual(refused(await barcodes([{ uomId: 'box', barcode: '8930000000019' }])), {
     field: 'barcodes.0.barcode',
     code: 'product.error.packaging.barcodeTaken',
-    message: 'barcode đã được dùng',
   })
   assert.equal(
-    refused(await barcodes([{ uomId: 'carton', barcode: '8930000000031' }])).code,
+    refused(await barcodes([{ uomId: 'carton', barcode: '8930000000033' }])).code,
     'product.error.packaging.notLinked',
   )
-  assert.equal((await barcodes([{ uomId: 'box', barcode: '8930000000024' }])).ok, true)
+  assert.equal((await barcodes([{ uomId: 'box', barcode: '8930000000026' }])).ok, true)
   c = await read()
-  assert.equal(c.data.packagings[0]!.barcode, '8930000000024')
+  assert.equal(c.data.packagings[0]!.barcode, '8930000000026')
   assert.deepEqual(c.data.variants, [], 'a product without variants keeps the barcode on its packaging row')
 
   assert.equal((await run<Row>('product.removeTemplateUom', { templateId: 'tpl', uomId: 'box' })).ok, true)

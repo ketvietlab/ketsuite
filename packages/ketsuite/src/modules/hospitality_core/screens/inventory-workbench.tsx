@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form
 import { randomUUID } from 'node:crypto'
 import type { JSXChild } from '@ketvietlab/ketjs-view'
 import type { Translator } from '@ketvietlab/ketjs'

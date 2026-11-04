@@ -3,16 +3,26 @@ export type ConfigurationField = {
   name: string
   label: string
   required?: boolean
+  span?: 'half' | 'full'
   defaultValue?: string
   choices?: readonly string[]
   choiceLabel?: string
-  lookup?: 'locations' | 'warehouses' | 'products' | 'units' | 'routes' | 'pickingTypes'
-  type?: 'text' | 'textarea' | 'number' | 'decimal'
+  lookup?: 'locations' | 'warehouses' | 'products' | 'units' | 'routes' | 'pickingTypes' | 'people'
+  /** Several values, picked in the design system's relation picker and saved as a list. */
+  multiple?: boolean
+  type?: 'text' | 'textarea' | 'number' | 'decimal' | 'date'
+  help?: string
+  /** What an emptied number posts (null clears it); without it an empty number is left out. */
+  emptyValue?: number | null
+  /** Set on create only: shown, not posted, once the record exists. */
+  fixed?: boolean
 }
 export type Configuration = {
   kind: string
   title: string
   read: string
+  /** What the read takes to list every record the modal may open, archived ones included. */
+  readInput?: Record<string, unknown>
   save: string
   fields: ConfigurationField[]
 }
@@ -39,6 +49,45 @@ export const stockConfigurations: Record<string, Configuration> = {
         choices: ['ship_only', 'pick_ship', 'pick_pack_ship'],
         choiceLabel: 'deliverySteps',
       },
+      {
+        name: 'countFrequencyDays',
+        label: 'warehouse.field.countFrequencyDays',
+        type: 'number',
+        help: 'warehouse.countFrequencyHelp',
+        emptyValue: 0,
+      },
+      // K60: how delivery and internal transfers take goods.
+      {
+        name: 'reservationMethod',
+        label: 'warehouse.field.reservationMethod',
+        defaultValue: 'manual',
+        choices: ['at_confirm', 'manual', 'by_date'],
+        choiceLabel: 'reservationMethod',
+        help: 'warehouse.reservationMethodHelp',
+      },
+      {
+        name: 'reservationDaysBefore',
+        label: 'warehouse.field.reservationDaysBefore',
+        type: 'number',
+        help: 'warehouse.reservationDaysBeforeHelp',
+        emptyValue: 0,
+      },
+      {
+        name: 'reservationDaysBeforePriority',
+        label: 'warehouse.field.reservationDaysBeforePriority',
+        type: 'number',
+        help: 'warehouse.reservationDaysBeforePriorityHelp',
+        emptyValue: null,
+      },
+      // K15 (#1428): someone assigned to one warehouse only has it chosen on a new quotation, count or scrap.
+      {
+        name: 'userIds',
+        label: 'warehouse.field.userIds',
+        lookup: 'people',
+        multiple: true,
+        span: 'full',
+        help: 'warehouse.userIdsHelp',
+      },
     ],
   },
   location: {
@@ -53,7 +102,7 @@ export const stockConfigurations: Record<string, Configuration> = {
         label: 'field.usage',
         required: true,
         defaultValue: 'internal',
-        choices: ['internal', 'view', 'supplier', 'customer', 'inventory', 'production', 'transit'],
+        choices: ['internal', 'view', 'supplier', 'customer', 'inventory', 'production', 'transit', 'scrap'],
         choiceLabel: 'usage',
       },
       { name: 'parentId', label: 'field.parentLocation', lookup: 'locations' },
@@ -95,8 +144,21 @@ export const stockConfigurations: Record<string, Configuration> = {
     fields: [
       { name: 'productId', label: 'lot.field.product', lookup: 'products', required: true },
       { name: 'name', label: 'field.lotSerial', required: true },
-      { name: 'ref', label: 'lot.field.reference' },
-      { name: 'note', label: 'lot.field.description', type: 'textarea' },
+      { name: 'ref', label: 'lot.field.reference', span: 'full' },
+      { name: 'note', label: 'lot.field.description', type: 'textarea', span: 'full' },
+      { name: 'manufacturingDate', label: 'lot.field.manufacturingDate', type: 'date' },
+      { name: 'expirationDate', label: 'lot.field.expirationDate', type: 'date' },
+      { name: 'bestBeforeDate', label: 'lot.field.bestBeforeDate', type: 'date' },
+      { name: 'removalDate', label: 'lot.field.removalDate', type: 'date' },
+      { name: 'alertDate', label: 'lot.field.alertDate', type: 'date' },
+      {
+        name: 'quarantined',
+        label: 'lot.field.quarantined',
+        choices: ['false', 'true'],
+        choiceLabel: 'lot.quarantined',
+        defaultValue: 'false',
+      },
+      { name: 'reason', label: 'lot.field.reason', type: 'textarea', span: 'full' },
     ],
   },
   route: {
@@ -107,6 +169,43 @@ export const stockConfigurations: Record<string, Configuration> = {
     fields: [
       { name: 'name', label: 'stockRoute.field.name', required: true },
       { name: 'sequence', label: 'field.sequence', type: 'number', defaultValue: '10' },
+    ],
+  },
+  // K45: a carrier the company ships with: its fixed code, its name, its tariff and whether it is the default.
+  carrier: {
+    kind: 'stock.carrier',
+    title: 'carrier.create.title',
+    read: 'stock.listCarriers',
+    readInput: { includeArchived: true },
+    save: 'stock.saveCarrier',
+    fields: [
+      { name: 'code', label: 'carrier.code', required: true, fixed: true, help: 'carrier.codeHelp' },
+      { name: 'name', label: 'carrier.name', required: true },
+      { name: 'baseFee', label: 'carrier.baseFee', type: 'decimal', required: true, defaultValue: '0' },
+      {
+        name: 'extraKgFee',
+        label: 'carrier.extraKgFee',
+        type: 'decimal',
+        required: true,
+        defaultValue: '0',
+        help: 'carrier.tariffHelp',
+      },
+      {
+        name: 'codFeeRate',
+        label: 'carrier.codFeeRate',
+        type: 'decimal',
+        required: true,
+        defaultValue: '0',
+        help: 'carrier.codFeeRateHelp',
+      },
+      {
+        name: 'isDefault',
+        label: 'carrier.isDefault',
+        choices: ['false', 'true'],
+        choiceLabel: 'carrier.default',
+        defaultValue: 'false',
+        help: 'carrier.isDefaultHelp',
+      },
     ],
   },
   replenishment: {

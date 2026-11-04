@@ -81,8 +81,10 @@ const companyAdministratorBundles = [
   'company.view',
   'partner.configure',
   'partner.view',
+  'product.accounting',
   'product.configure',
   'product.cost',
+  'product.stock-setup',
   'product.view',
   'uom.configure',
   'uom.view',
@@ -123,9 +125,28 @@ export const commerceRoleTemplates = {
     'Quản trị công ty',
     'Maintain company and shared master data without identity, posting, or business approval authority.',
     'Quản lý công ty và dữ liệu danh mục dùng chung; không quản trị định danh, ghi sổ hoặc duyệt nghiệp vụ.',
-    [...companyAdministratorBundles, ...productBackendBundles],
+    [
+      'sale.customer-warning',
+      'loyalty_sale.view',
+      'loyalty_sale.configure',
+      'sale_template.view',
+      'sale_template.configure',
+      'sale.tags',
+      'sale.teams',
+      'sale.configure',
+      'sale.invoice-policies',
+      ...companyAdministratorBundles,
+      ...productBackendBundles,
+      'purchase.supplier-view',
+      'purchase.supplier-operate',
+    ],
     // 3: reading the product record's activity moved to product_mail_backend.view.
-    3,
+    // 4: product field groups: stock setup and accounting left product.configure.
+    // 9: keep the sales tags (D15).
+    // 10: keep the sales teams (D16).
+    // 11: keep the sales settings (D20).
+    // 12: set products' invoicing policies (D21).
+    12,
   ),
   'commerce.tenant-auditor': role(
     'Tenant Auditor',
@@ -133,6 +154,10 @@ export const commerceRoleTemplates = {
     'Inspect authorization and commerce evidence without mutation.',
     'Kiểm tra bằng chứng phân quyền và thương mại mà không thay đổi dữ liệu.',
     [
+      'loyalty_sale.view',
+      'sale_template.view',
+      'pricing.view',
+      'pricing_backend.view',
       ...coreAuditorBundles,
       'account.sensitive',
       'pos.sensitive',
@@ -140,22 +165,47 @@ export const commerceRoleTemplates = {
       'purchase.report',
       'purchase.sensitive',
       'purchase.view',
+      'sale.cost',
       'sale.report',
       'sale.view',
       'stock.report',
       'stock.sensitive',
+      'stock.valuation',
       'stock.view',
+      'purchase.supplier-view',
+      'uom.view',
     ],
-    2,
+    // 3: read protected selling-unit cost snapshots.
+    // 4: read pricing rules without configuration authority.
+    // 9: read stock value and unit costs (K25).
+    // 10: read units of measure, which every accounting document screen loads.
+    10,
   ),
   'commerce.sales-representative': role(
     'Sales Representative',
     'Nhân viên kinh doanh',
     'Create and maintain quotations without confirmation, cancellation, invoicing, or administration.',
     'Tạo và cập nhật báo giá, không có quyền xác nhận, hủy, lập hóa đơn hoặc quản trị.',
-    salesRepresentativeBundles,
+    [
+      'sale.customer',
+      'sale.customer-warning',
+      'loyalty_sale.view',
+      'loyalty_sale.operate',
+      'sale_template.view',
+      'sale_template.operate',
+      ...salesRepresentativeBundles,
+      'pricing_backend.view',
+      'product.cost',
+      'sale.cost',
+      'purchase.supplier-view',
+    ],
     // 3: reading the product record's activity moved to product_mail_backend.view.
-    3,
+    // 4: every product reader but the warehouse operator sees cost and margin (P16).
+    // 5: read protected selling-unit cost snapshots.
+    // 6: read the native pricelist screen.
+    // Delivery planning is part of quotation operations (P51).
+    // 13: keep customers' contact, salesperson and pricelist (D11).
+    13,
   ),
   'commerce.sales-manager': role(
     'Sales Manager',
@@ -163,15 +213,47 @@ export const commerceRoleTemplates = {
     'Supervise quotation lifecycle and sales reporting without identity or accounting administration.',
     'Quản lý vòng đời báo giá và báo cáo bán hàng, không quản trị định danh hoặc kế toán.',
     [
+      'sale.customer',
+      'sale.credit',
+      'sale.tags',
+      'sale.teams',
+      'sale.configure',
+      'sale.invoice-policies',
+      'sale.customer-warning',
+      'loyalty_sale.view',
+      'loyalty_sale.operate',
+      'loyalty_sale.configure',
+      'sale_template.view',
+      'sale_template.operate',
+      'sale_template.configure',
       ...salesRepresentativeBundles,
+      'account.category-accounting',
+      'pricing.configure',
+      'pricing_backend.view',
+      'product.accounting',
+      'product.configure',
       'product.cost',
+      'product.stock-setup',
       'sale.cancel',
       'sale.confirm',
       'sale.fulfillment-sync',
+      'sale.cost',
       'sale.report',
+      'purchase.supplier-view',
+      'purchase.supplier-operate',
     ],
     // 3: reading the product record's activity moved to product_mail_backend.view.
-    3,
+    // 4: product field groups: stock setup and accounting left product.configure.
+    // 5: read protected selling-unit cost snapshots.
+    // 6: configure packaging-specific pricing rules (P37).
+    // Category account fields have a narrow configuration grant (P39).
+    // Delivery planning is part of quotation operations (P51).
+    // 14: keep customers, their payment terms and credit limits (D11).
+    // 15: keep the sales tags (D15).
+    // 16: keep the sales teams (D16).
+    // 17: keep the sales settings (D20).
+    // 18: set products' invoicing policies (D21).
+    18,
   ),
   'commerce.purchasing-operator': role(
     'Purchasing Operator',
@@ -189,9 +271,10 @@ export const commerceRoleTemplates = {
       'purchase_backend.view',
       'stock.view',
       'uom.view',
+      'purchase.supplier-view',
     ],
     // 3: reading the product record's activity moved to product_mail_backend.view.
-    3,
+    5,
   ),
   'commerce.purchasing-manager': role(
     'Purchasing Manager',
@@ -212,19 +295,32 @@ export const commerceRoleTemplates = {
       'uom.view',
       'purchase.report',
       'purchase.view',
+      'purchase.supplier-view',
     ],
     // 3: reading the product record's activity moved to product_mail_backend.view.
-    3,
+    5,
   ),
   'commerce.warehouse-operator': role(
     'Warehouse Operator',
     'Nhân viên kho',
     'Perform ordinary stock movements inside the assigned scope.',
     'Thực hiện nghiệp vụ kho thông thường trong phạm vi được giao.',
-    ['company.view', 'product.view', ...productBackendBundles, 'stock.operate', 'stock.view', 'uom.view'],
+    [
+      'company.view',
+      'product.view',
+      ...productBackendBundles,
+      'stock.operate',
+      'stock.sensitive',
+      'stock.transfer',
+      'stock.view',
+      'uom.view',
+      'purchase.supplier-view',
+    ],
     // 3: the product record's images and activity (productBackendBundles).
     // 4: reading the product record's activity moved to product_mail_backend.view.
-    4,
+    // 7: print receipt, delivery and transfer notes, which the storekeeper signs (K65).
+    // 8: confirm, complete and cancel transfers (K21, owner 26/10/2026).
+    8,
   ),
   'commerce.warehouse-manager': role(
     'Warehouse Manager',
@@ -234,17 +330,31 @@ export const commerceRoleTemplates = {
     [
       'company.view',
       'product.view',
+      'product.cost',
+      'product.stock-setup',
       'stock.approve',
       'stock.configure',
+      'stock.cost',
       'stock.operate',
+      'stock.transfer',
       ...productBackendBundles,
       'uom.view',
       'stock.report',
+      'stock.sensitive',
+      'stock.valuation',
       'stock.view',
+      'purchase.supplier-view',
+      'purchase.supplier-operate',
     ],
     // 3: the product record's images and activity (productBackendBundles).
     // 4: reading the product record's activity moved to product_mail_backend.view.
-    4,
+    // 5: product field groups: stock setup and accounting left product.configure.
+    // 6: every product reader but the warehouse operator sees cost and margin (P16).
+    // 9: read stock value and set receipt unit costs (K24, K25).
+    // 10: print receipt, delivery and transfer notes, with values once done (K65).
+    // 11: confirming, completing and cancelling transfers moved to stock.transfer (K21).
+    // 12: draft landed costs (K64).
+    12,
   ),
   'commerce.pos-cashier': role(
     'POS Cashier',
@@ -265,7 +375,42 @@ export const commerceRoleTemplates = {
     'Kế toán viên',
     'Prepare and post accounting documents and issue invoices under domain policy.',
     'Chuẩn bị, ghi sổ chứng từ và lập hóa đơn theo chính sách nghiệp vụ.',
-    ['account.approve', 'account.operate', 'account.sensitive', 'sale.invoice'],
+    [
+      'loyalty_sale.view',
+      'pricing.view',
+      'pricing_backend.view',
+      'account.approve',
+      'account.operate',
+      'account.product-accounting',
+      'account.category-accounting',
+      'account.sensitive',
+      'product.accounting',
+      'product.cost',
+      'product.view',
+      ...productBackendBundles,
+      'company.view',
+      'partner.view',
+      'sale.credit',
+      'sale.invoice',
+      'sale.invoice-policies',
+      'sale.view',
+      'stock.accounting',
+      'stock.cost',
+      'stock.valuation',
+      'stock.view',
+      'purchase.supplier-view',
+      'uom.view',
+    ],
+    // 3: product account overrides have their own accounting capability.
+    // 4: read pricing rules without configuration authority.
+    // Category account fields have a narrow configuration grant (P39).
+    // 8: stock value and the stock-journal accounts (K23, K25).
+    // 9: open the sales orders and customers they invoice (D8).
+    // 10: keep customers' payment terms and credit limits (D11).
+    // 11: set products' invoicing policies (D21).
+    // 12: draft and post landed costs (K64).
+    // 13: read units of measure, which every accounting document screen loads.
+    13,
   ),
   'commerce.tenant-security-administrator': role(
     'Tenant Security Administrator',
@@ -283,7 +428,8 @@ export const hospitalityRoleTemplates = {
     'Maintain company and shared master data without identity, billing post, or stay approval authority.',
     'Quản lý công ty và dữ liệu danh mục dùng chung; không quản trị định danh, ghi sổ hoặc duyệt lưu trú.',
     companyAdministratorBundles,
-    2,
+    // 3: product field groups: stock setup and accounting left product.configure.
+    3,
   ),
   'hospitality.front-desk-operator': role(
     'Front Desk Operator',
@@ -425,7 +571,8 @@ export const officeRoleTemplates = {
     'Quản lý công ty và dữ liệu danh mục dùng chung; không có quyền định danh hoặc kế toán.',
     [...companyAdministratorBundles, ...productBackendBundles],
     // 3: reading the product record's activity moved to product_mail_backend.view.
-    3,
+    // 4: product field groups: stock setup and accounting left product.configure.
+    4,
   ),
   'office.tenant-auditor': role(
     'Tenant Auditor',

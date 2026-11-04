@@ -68,6 +68,10 @@
     display: flex;
     flex: none;
   }
+  /* The typed single date sits in the native field's place in the row. */
+  :where([data-kv-design-system]) [data-ui="date-entry"]:not([hidden]) {
+    display: contents;
+  }
   /* DatePicker owns this native-control slot; enhancement supplies its calendar launcher. */
   :where([data-kv-design-system])
     [data-date-enhanced="true"]

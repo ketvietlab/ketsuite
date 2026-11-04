@@ -83,3 +83,40 @@ npm --workspace @ketvietlab/flow-ui run demo
 
 The demo serves the component library and a sample workspace on `http://127.0.0.1:4190/`, with
 fixtures kept in browser storage only.
+
+
+## Daily work view state
+
+The native Flow client preserves an allowlisted saved-view destination and its
+query, status, sort and grouping in URL parameters. Project views retain their
+workspace context; personal My Work views remain personal. The directory uses
+`flow.view.list` keyset pages rather than filtering a truncated candidate list.
+Sharing a view requires project write access; editing a private view requires
+ownership and the platform view-save permission. Search uses the same
+authorization and omits private views owned by others.
+
+Existing deployments add the nullable visibility mirror and workspace reference
+through the non-destructive schema migration, then run the explicit Company
+native upgrade with writers stopped. The upgrade validates references and source
+metadata, rolls back on invalid rows and is idempotent. It does not import legacy
+application records or grant access.
+
+
+## Authenticated intake forms
+
+The native form designer keeps stable field IDs across reorder/rename. Each
+explicit publish creates an immutable schema revision; drafts cannot accept
+submissions. The preview submits the record and schema revisions it rendered.
+A response ledger entry keeps both the accepted answers and its exact published
+schema snapshot. Task creation and response insertion share one transaction and
+idempotency receipt. Required/type validation, membership, project access and
+assignee access are rechecked on submission. The response list displays its
+accepted schema version. Existing schema changes are additive; legacy responses
+without a snapshot are not presented as reconstructed historical facts.
+
+
+Private preference extensions may compose the personal settings slot and declare
+finite `readOnlyCommands`. Callers opt in per command with `allowReadOnly:true`.
+This is a presenter capability only; native functions keep their authentication,
+platform permissions and business checks. General Task writes remain behind the
+Core write gate.

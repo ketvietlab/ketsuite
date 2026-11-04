@@ -56,7 +56,7 @@ export async function listPartnersHandler(ctx: Ctx, a: Row) {
     if (!a.ids.length) return []
     q = q.where(inArray(P.id, a.ids.slice(0, 2_000).map(String)))
   }
-  if (!a.role) {
+  if (!a.role && a.customers !== true) {
     if (typeof a.limit === 'number') q = q.limit(a.limit)
     if (typeof a.offset === 'number') q = q.offset(a.offset)
     return ctx.db.all(q)
@@ -68,6 +68,19 @@ export async function listPartnersHandler(ctx: Ctx, a: Row) {
       (await ctx.db.all(from(R).select(R.partnerId).where(eq(R.role, a.role)))).map((row) => row.partnerId),
     )
     rows = rows.filter((row) => holders.has(row.id))
+  }
+  if (a.customers === true) {
+    // A supplier the company also sells to holds both roles; one holding no role is a contact
+    // that may become a customer. Only a supplier and nothing else is left out (P48).
+    const R = ctx.table('partner.Role')
+    const roles = await ctx.db.all(
+      from(R)
+        .select(R.partnerId, R.role)
+        .where(inArray(R.role, ['customer', 'supplier'])),
+    )
+    const customers = new Set(roles.filter((row) => row.role === 'customer').map((row) => row.partnerId))
+    const suppliers = new Set(roles.filter((row) => row.role === 'supplier').map((row) => row.partnerId))
+    rows = rows.filter((row) => customers.has(row.id) || !suppliers.has(row.id))
   }
   const offset = typeof a.offset === 'number' ? a.offset : 0
   const end = typeof a.limit === 'number' ? offset + a.limit : undefined
@@ -219,6 +232,8 @@ export const partnersFunctions: Record<string, FnSpec> = {
   listPartners: defineFn({
     input: {
       role: 'text?',
+      // Who a sale may name as its customer: every partner but those that only supply.
+      customers: 'bool?',
       kind: 'text?',
       search: 'text?',
       // Exactly these partners, for screens that already know who they need.

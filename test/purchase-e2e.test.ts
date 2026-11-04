@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import type { Row } from '@ketvietlab/ketjs'
-import { createTestDeployment } from '@ketvietlab/ketjs/testing'
+import { createCommerceTestDeployment as createTestDeployment } from './commerce-test-deployment.ts'
 
 /** A `purchase_backend.*` key where the reader would see it, rather than in props. */
 const VISIBLE_KEY = /(?:>|placeholder="|aria-label="|title=")[^<"]*purchase_backend\.[A-Za-z]/u
-import { ketsuite } from '../apps/ketsuite/deployment.ts'
+import { createCommerceDeployment } from '../packages/ketsuite/src/deployment.ts'
+import { openStore } from '../apps/ketsuite/config.ts'
+const ketsuite = createCommerceDeployment(openStore)
 
 async function bootPurchase(t: TestContext) {
   const e2e = await createTestDeployment(ketsuite, { worker: false })

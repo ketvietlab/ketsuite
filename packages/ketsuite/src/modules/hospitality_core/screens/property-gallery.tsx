@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — the #1044 gallery posts a multipart upload and shows its images by hand — needs a kit upload field and image tile
 import { randomUUID } from 'node:crypto'
 import type { Translator } from '@ketvietlab/ketjs'
 import {

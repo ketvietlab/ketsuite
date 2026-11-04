@@ -1,5 +1,5 @@
 import { defineModule } from '@ketvietlab/ketjs'
-import { functions } from './functions.ts'
+import { functions } from './functions/index.ts'
 import { islands } from './islands.ts'
 
 export { documentRoutes } from './routes.ts'

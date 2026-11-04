@@ -1,3 +1,4 @@
+import { deleteLineCosts, LINE_COST_EFFECTS } from '../sale/line-cost.ts'
 import { asc, defineFn, deleteFrom, desc, eq, from, inArray } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import {
@@ -10,11 +11,14 @@ import {
   normalized,
   now,
 } from '../crm/index.ts'
+import { VARIANT_NAME_EFFECTS } from '../product/functions/variants.ts'
 import { functions as saleFunctions } from '../sale/functions.ts'
 import { ours } from '../sale/scope.ts'
+import { ORDER_SALES_EFFECTS } from '../sale/teams.ts'
 import { AUTHORIZATION_READ_EFFECTS } from '../user/authorization.ts'
 
 export const quotationEffects = [
+  ...LINE_COST_EFFECTS,
   'read:crm.Case',
   'read:crm.Team',
   'read:crm.TeamMember',
@@ -33,6 +37,12 @@ export const quotationEffects = [
   'read:partner.Partner',
   'read:stock.Warehouse',
   'read:pricing.Pricelist',
+  // A quotation opened from a case takes the customer's pricelist (D14).
+  'read:sale.CustomerTerms',
+  // ...sold by the customer's salesperson or the person writing it, in their team (D16).
+  ...ORDER_SALES_EFFECTS,
+  // ...and valid for the company's default number of days (D20).
+  'read:sale.Configuration',
   'read:pricing.PricelistItem',
   'read:account.PaymentTerm',
   'read:account.Tax',
@@ -44,6 +54,8 @@ export const quotationEffects = [
   'read:product.ProductUom',
   'read:product.Category',
   'read:product.Cost',
+  // Lines added without a name are named after the variant (P29).
+  ...VARIANT_NAME_EFFECTS,
   'read:uom.Unit',
 ] as const
 
@@ -261,6 +273,7 @@ export async function reviseQuotationForCase(
         throw new QuotationRefused(
           invalid(issue('version', 'crm.error.stageConflict', { current: revision })) as Row,
         )
+      await deleteLineCosts(tx, 'orderId', input.orderId)
       const L = tx.table('sale.OrderLine')
       await tx.db.del(deleteFrom(L).where(eq(L.orderId, input.orderId)))
       for (const [index, product] of products.entries()) {

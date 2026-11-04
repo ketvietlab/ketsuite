@@ -20,7 +20,7 @@ deployment, deleting documents, or rewriting unrelated screens.
 
 The outcome is an operational interface whose component choice determines its
 typography, spacing, surface/border level and responsive behavior. Keep Két colours,
-KÉT Sans (Inter fills in missing characters) and Lucide. Desktop is dense. Read [the visual contract](references/visual-contract.md)
+the `--kv-font-sans` family (Inter in the public package; KÉT Sans where a Két Việt product registers it) and Lucide. Desktop is dense. Read [the visual contract](references/visual-contract.md)
 for every UI task. Read [KetSuite composition](references/ketsuite.md) for Suite screens,
 and [Flow compatibility](references/flow.md) only when touching Flow.
 When touching shell, navigation, app switching or screen help, read the
@@ -42,8 +42,8 @@ When touching shell, navigation, app switching or screen help, read the
    A working region on the canvas uses Surface; a group inside it
    uses Section. An independently actionable object uses ContentCard/KanbanCard.
    Asking before a hard-to-undo action (delete, archive, remove, discard, reset)
-   uses ConfirmDialog: a small centred dialog on desktop and a fullscreen modal
-   below 768px. Side sheets are for record and picker content, not for a question.
+   uses ConfirmDialog: a small centred dialog on desktop and mobile.
+   Side sheets are for record and picker content, not for a question.
 3. A component owns DOM, data-ui hooks, labels and associations, state attributes,
    inside spacing, type and responsive behavior. A parent layout owns gaps between
    siblings. Product modules supply translated content, data, permissions, URLs and
@@ -138,3 +138,18 @@ and mobile. `--kv-page-padding-x`, `--kv-gap-section` and compatibility aliases
 must reference it; never give these roles independent numeric values. Only `--kv-layout-gap` changes at the mobile breakpoint. Parent page/layout owns this gap exactly once. Do not add child margins
 or empty blocks that accumulate it. Internal field/control padding remains owned
 by its component. Measure both shell-to-content edges and card-to-card edges.
+
+## Editable data grids
+
+Use public `KetGrid` for a spreadsheet-style line editor. Any screen where people enter
+figures on many rows (order lines, stock counts, receipts, price lists) is a KetGrid: do
+not put inputs in `DataTable`/`KetTable` cells, and do not open one dialog per row to edit
+a figure. `DataTable`/`KetTable` read; a dialog is for one record's own action (a reason,
+a confirmation, adding a found item). The host owns authorization,
+atomic persistence and revision checks. Bind dependent option searches with
+`search.listInputFields`, clear incompatible cells with `resets`, and retain the posted
+structural draft on refusal. Show server refusals in visible form feedback when the
+posted field is hidden. Use a text column for exact monetary strings that must not
+round-trip through a JavaScript Number. See DS README **KetGrid** for the public API.
+
+Native `Field type="select" layout="inline"` keeps its chevron in the control grid cell at every width. Shared Field styles own this alignment; consumers must not position a separate arrow. See the Field specimen and README Field contract.

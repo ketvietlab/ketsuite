@@ -16,16 +16,25 @@ export const imageRoutes: Record<string, RouteEntry> = {
       }
     }
     const siteId = url.searchParams.get('site')
+    // A category's or tag's images belong to the term, uploaded by whoever may save it.
+    const term = url.searchParams.get('owner') === 'term'
     // The site's logo belongs to the site, so it is uploaded against the site id by whoever may style it.
-    const allowed =
-      params.field === 'logo'
+    const allowed = term
+      ? ['thumbnail', 'cover'].includes(params.field) && (await ctx.allows('website.saveTerm', url, req))
+      : params.field === 'logo'
         ? params.entryId === siteId && (await ctx.allows('website.saveStudioStyle', url, req))
         : ['image', 'cover'].includes(params.field) && (await ctx.allows('website.saveEntry', url, req))
     if (!allowed) return json({ ok: false }, { status: 403 })
-    const found = (await ctx.call('website.getEntry', { id: params.entryId }, url, req)) as {
-      entry: Row | null
-    }
-    if (!siteId || (found?.entry && (found.entry.status === 'trash' || found.entry.siteId !== siteId)))
+    const found = term
+      ? {
+          entry: (await ctx.call('website.getTaxonomyTerm', { id: params.entryId }, url, req)) as Row | null,
+        }
+      : ((await ctx.call('website.getEntry', { id: params.entryId }, url, req)) as { entry: Row | null })
+    if (
+      !siteId ||
+      (found?.entry &&
+        (found.entry.status === 'trash' || found.entry.archivedAt || found.entry.siteId !== siteId))
+    )
       return json({ ok: false }, { status: 404 })
     if (!found?.entry) {
       const context = (await ctx.call('website_backend.studioContext', { siteId }, url, req)) as {
@@ -56,7 +65,12 @@ export const imageRoutes: Record<string, RouteEntry> = {
             await picture.stats()
           },
           prepare: (input) =>
-            ctx.callUnchecked('website.stageImage', { ...input, entryId: params.entryId, siteId }, url, req),
+            ctx.callUnchecked(
+              'website.stageImage',
+              { ...input, entryId: params.entryId, siteId, ...(term ? { owner: 'term' } : {}) },
+              url,
+              req,
+            ),
           complete: async (id) =>
             (await ctx.callUnchecked('website.completeImage', { id }, url, req)) as Attachment,
         },

@@ -77,10 +77,11 @@ test('filters by type and by status, and clears the filters', async ({ page }) =
   await expect(productRow(page, 'Serum B5 phục hồi 30ml')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Xoá bộ lọc' }).click()
-  await pickFromMenu(page, /^Trạng thái:/, 'Có thể bán')
+  // What a product is for has its own menu (P56).
+  await pickFromMenu(page, /^Công dụng:/, 'Có thể bán')
   await listReady(page)
   await expect(productRow(page, 'Niacinamide nguyên liệu')).toHaveCount(0)
-  await expect(productRow(page, 'Serum B5 phục hồi 30ml')).toHaveCount(1)
+  await expect(productRow(page, 'Bông tẩy trang 120 miếng')).toHaveCount(1)
 
   // Archived products stay out of the list until asked for.
   await page.getByRole('button', { name: 'Xoá bộ lọc' }).click()
@@ -103,7 +104,7 @@ test('sorts from the column headers', async ({ page }) => {
 })
 
 test('groups by category', async ({ page }, info) => {
-  await pickFromMenu(page, /^Nhóm:/, 'Danh mục')
+  await pickFromMenu(page, /^Nhóm:/, 'Nhóm sản phẩm')
   await expect(page).toHaveURL(/group=/)
   await listReady(page)
   const groups = page.locator('[data-product-list="true"] [data-ui="kt-group-row"]')
@@ -130,7 +131,7 @@ test('switches to cards and back to the table', async ({ page }, info) => {
   await expect(page).toHaveURL(/view=kanban/)
   await expect(page.getByRole('link', { name: 'Dạng thẻ' })).toHaveAttribute('aria-current', 'page')
   await expect(page.locator('[data-product-list="true"] table')).toHaveCount(0)
-  await expect(page.locator('[data-product-list="true"]')).toContainText('Serum B5 phục hồi 30ml')
+  await expect(page.locator('[data-product-list="true"]')).toContainText('Bông tẩy trang 120 miếng')
   await evidence(page, info, 'list-cards')
   await page.getByRole('link', { name: 'Dạng bảng' }).click()
   await listReady(page)
@@ -151,7 +152,7 @@ test('opens a product on its page and comes back to the same search', async ({ p
 })
 
 test('ticking the checkbox cell selects the row without opening it', async ({ page }) => {
-  const row = productRow(page, 'Serum B5 phục hồi 30ml')
+  const row = productRow(page, 'Bông tẩy trang 120 miếng')
   await row.getByRole('checkbox').check()
   await expect(page).toHaveURL(/\/admin\/product\/templates(?:\?|$)/)
   await expect(page.getByRole('checkbox', { name: 'Chọn tất cả dòng' })).toHaveJSProperty(
@@ -174,6 +175,8 @@ test('archives the selected products after a confirmation', async ({ page }, inf
   const confirm = page.getByRole('dialog')
   await expect(confirm).toBeVisible()
   await evidence(page, info, 'bulk-archive-confirm')
+  // Archiving needs a reason, kept in the product history.
+  await confirm.getByRole('textbox', { name: 'Lý do lưu trữ' }).fill('Ngừng bán dòng lotion')
   await confirm.getByRole('button', { name: 'Lưu trữ' }).click()
   await listReady(page)
   await expect(productRow(page, 'Lotion hàng loạt')).toHaveCount(0)
@@ -183,18 +186,18 @@ test('archives the selected products after a confirmation', async ({ page }, inf
 })
 
 test('saves the current filter, reopens it, makes it the default and deletes it', async ({ page }) => {
-  const search = page.getByRole('search', { name: 'Tìm và lọc sản phẩm' })
-  const saved = search.getByRole('button', { name: /^Đã lưu/ })
+  // The Saved menu sits beside the filter menus (P56).
+  const saved = page.getByRole('button', { name: /^Đã lưu/ })
   await pickFromMenu(page, /^Loại:/, 'Dịch vụ')
   await listReady(page)
   await saved.click()
-  await search.getByRole('link', { name: 'Lưu bộ lọc này' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Lưu tìm kiếm hiện tại' })
-  await dialog.getByRole('textbox', { name: 'Tên' }).fill('Dịch vụ của tôi')
-  await dialog.getByRole('button', { name: 'Lưu yêu thích' }).click()
+  await page.getByRole('menuitem', { name: 'Lưu bộ lọc này' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Lưu bộ lọc' })
+  await dialog.getByRole('textbox', { name: 'Tên bộ lọc' }).fill('Dịch vụ của tôi')
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
   await listReady(page)
-  await expect(search.getByRole('button', { name: 'Đã lưu: Dịch vụ của tôi' })).toBeVisible()
-  await expect(search.getByRole('button', { name: 'Loại: Dịch vụ' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Đã lưu: Dịch vụ của tôi' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Loại: Dịch vụ' })).toBeVisible()
   expect(await rowNames(page)).toEqual(['Dịch vụ soi da'])
 
   // A fresh list is unfiltered until the saved filter is picked again.
@@ -202,32 +205,40 @@ test('saves the current filter, reopens it, makes it the default and deletes it'
   await listReady(page)
   await expect(page.locator('[data-product-list="true"] tbody tr')).toHaveCount(30)
   await saved.click()
-  await search.getByRole('button', { name: 'Dịch vụ của tôi', exact: true }).click()
+  await page.getByRole('menuitemcheckbox', { name: 'Dịch vụ của tôi' }).click()
   await listReady(page)
-  await expect(search.getByRole('button', { name: 'Loại: Dịch vụ' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Loại: Dịch vụ' })).toBeVisible()
   expect(await rowNames(page)).toEqual(['Dịch vụ soi da'])
 
   // As the default, it is where the list opens.
-  await saved.click()
-  const makeDefault = search.getByRole('button', { name: 'Đặt làm mặc định' })
-  await makeDefault.click()
-  // The star fills only once the server has accepted the change.
-  await expect(makeDefault).toHaveAttribute('data-default', 'true')
-  await expect(search.getByRole('alert')).toHaveCount(0)
+  const edit = async () => {
+    await saved.click()
+    await page.getByRole('menuitem', { name: 'Sửa bộ lọc "Dịch vụ của tôi"' }).click()
+    return page.getByRole('dialog', { name: 'Sửa bộ lọc đã lưu' })
+  }
+  let editing = await edit()
+  await editing.getByRole('checkbox', { name: 'Dùng mặc định cho danh sách' }).check()
+  await editing.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(editing).toBeHidden()
   await page.goto('/admin/product/templates')
   await expect(page).toHaveURL(/favorite=/)
   await listReady(page)
   expect(await rowNames(page)).toEqual(['Dịch vụ soi da'])
 
   // Deleted, the list opens unfiltered again for the specs that follow.
-  await saved.click()
-  await search.getByRole('button', { name: 'Xóa: Dịch vụ của tôi' }).click()
-  await expect(search.getByRole('button', { name: 'Dịch vụ của tôi', exact: true })).toHaveCount(0)
-  await expect(search.getByRole('alert')).toHaveCount(0)
+  editing = await edit()
+  await editing.getByRole('button', { name: 'Xóa bộ lọc' }).click()
+  // Asked once more: the products themselves do not change.
+  const confirm = page
+    .getByRole('dialog', { name: 'Xóa bộ lọc' })
+    .filter({ hasText: 'Dữ liệu sản phẩm không thay đổi.' })
+  await confirm.getByRole('button', { name: 'Xóa bộ lọc' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.goto('/admin/product/templates')
   await expect(page).not.toHaveURL(/favorite=/)
   await listReady(page)
-  await expect(page.locator('[data-product-list="true"] tbody tr')).toHaveCount(30)
+  await saved.click()
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Dịch vụ của tôi' })).toHaveCount(0)
 })
 
 test('reads in English', async ({ page }) => {
@@ -246,7 +257,7 @@ test.describe('on a phone', () => {
 
   test('keeps the search and the rows in the width of the screen', async ({ page }, info) => {
     await expect(page.getByRole('searchbox', { name: 'Tìm và lọc sản phẩm' })).toBeVisible()
-    await expect(productRow(page, 'Serum B5 phục hồi 30ml')).toBeVisible()
+    await expect(productRow(page, 'Bông tẩy trang 120 miếng')).toBeVisible()
     await fitsWidth(page)
     await evidence(page, info, 'list-mobile')
   })

@@ -1,3 +1,5 @@
+import { searchIslands } from './search/islands.ts'
+import { importIslands } from './imports/islands.ts'
 import { defineIsland, html, signal } from '@ketvietlab/ketjs-view'
 import { createProductEditorStatusView } from './client/editor-view.mjs'
 import { createProductMediaUploadView } from './client/media-upload-view.mjs'
@@ -12,8 +14,18 @@ import {
 } from './list/island.tsx'
 import { UNIT_LIST_KEY, unitList } from './units/island.tsx'
 import type { UnitListProps } from './units/island.tsx'
+import { VARIANT_LIST_KEY, variantList } from './variants/island.tsx'
+import type { VariantListProps } from './variants/island.tsx'
+import { comboIslands } from './combos/islands.ts'
+import { tagIslands } from './tags/islands.ts'
+import { categoryIslands } from './categories/islands.ts'
 
 const runtime = { html, signal }
+const templateRecordPage = defineRecordPageIsland({
+  kind: 'product.template',
+  client: 'product-modal.mjs',
+  export: 'templatePage',
+})
 
 const PRODUCT_LIST_PROPS = {
   read: 'text',
@@ -32,6 +44,41 @@ type ProductEditorProps = { identity: string; templateId?: string; productId?: s
 type MediaUploadProps = { identity: string; action: string; label: string }
 
 export const islands = {
+  ...categoryIslands,
+  ...tagIslands,
+  ...comboIslands,
+  ...importIslands,
+  ...searchIslands,
+  'product.filter-modal': defineRecordModalIsland({
+    kind: 'product.savedFilter',
+    client: 'filter-modal.mjs',
+    export: 'filterModal',
+  }),
+  'product.bulk-modal': defineRecordModalIsland({
+    kind: 'product.bulkEdit',
+    client: 'bulk-modal.mjs',
+    export: 'bulkModal',
+  }),
+  'product.import-modal': defineRecordModalIsland({
+    kind: 'product.import',
+    client: 'import-modal.mjs',
+    export: 'importModal',
+  }),
+  'product.combo-modal': defineRecordModalIsland({
+    kind: 'product.combo',
+    client: 'combo-modal.mjs',
+    export: 'comboModal',
+  }),
+  'product.tag-modal': defineRecordModalIsland({
+    kind: 'product.tag',
+    client: 'tag-modal.mjs',
+    export: 'tagModal',
+  }),
+  'product.category-modal': defineRecordModalIsland({
+    kind: 'product.category',
+    client: 'category-modal.mjs',
+    export: 'categoryModal',
+  }),
   'product.editor': defineIsland<ProductEditorProps>()({
     props: { identity: 'text', templateId: 'id?', productId: 'id?', lang: 'text?' },
     key: ['identity'],
@@ -48,11 +95,11 @@ export const islands = {
   // the server renders the RecordPage in its loading state and the client
   // renders the record — General and Variants tabs only; Media stays on the
   // server-rendered `?tab=media` page for now (see modal/product-modal-view.tsx).
-  'product.template-page': defineRecordPageIsland({
-    kind: 'product.template',
-    client: 'product-modal.mjs',
-    export: 'templatePage',
-  }),
+  'product.template-page': {
+    ...templateRecordPage,
+    props: { ...templateRecordPage.props, sourceId: 'text' },
+    key: ['id', 'sourceId'],
+  },
   // The catalogue (`/admin/product/templates`): three islands over one paged read and one
   // store, which the server renders in its loading state (list/island.tsx, list/read.ts).
   'product.template-list-controls': defineIsland<ProductListProps>()({
@@ -90,6 +137,15 @@ export const islands = {
     client: 'uom-list.mjs',
     export: 'unitList',
     view: unitList,
+  }),
+  // The Variants list (`/admin/product/variants`) — see variants/island.tsx.
+  'product.variant-list': defineIsland<VariantListProps>()({
+    props: { href: 'text', lang: 'text', pageSize: 'int', read: 'text', labels: 'json' },
+    // A new URL from the shell is a new list; the same one keeps the island and its rows.
+    key: VARIANT_LIST_KEY,
+    client: 'variant-list.mjs',
+    export: 'variantList',
+    view: variantList,
   }),
   'product.uom-modal': defineRecordModalIsland({
     kind: 'product.uom',

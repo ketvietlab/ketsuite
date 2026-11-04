@@ -1,0 +1,12 @@
+// A trusted html`...` template outside the kit may carry text and expressions, not
+// tags or data-ui hooks: those are the kit's contract. Only the literal parts are
+// read; an expression inside ${...} is code, and a nested template is its own match.
+language js
+
+JsTemplateExpression(tag=$tag, elements=$elements) where {
+  $tag <: `html`,
+  $elements <: contains JsTemplateChunkElement() as $chunk where {
+    $chunk <: r"(?s).*(?:</?[a-z][a-z0-9-]*[\s>/]|data-ui\s*=).*"
+  },
+  register_diagnostic(span=$tag, message="[ketsuite/no-markup-in-html] Markup belongs to the kit: no tag or data-ui hook in an html template outside packages/ketsuite/src/ui.")
+}

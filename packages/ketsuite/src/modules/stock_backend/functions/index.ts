@@ -6,11 +6,22 @@ import {
   lotListSearch,
   pickingTypeListSearch,
   replenishmentListSearch,
+  scrapListSearch,
+  landedCostListSearch,
+  dispatchListSearch,
+  shipmentListSearch,
+  deliveryStatementListSearch,
+  carrierListSearch,
+  countListSearch,
   stockRouteListSearch,
   transferListSearch,
+  valuationListSearch,
   warehouseListSearch,
+  moveAnalysisListSearch,
+  agingListSearch,
 } from '../search.ts'
 import { productListFunctions } from './product-list.ts'
+import { searchFunctions } from './search.ts'
 
 /**
  * The search-filter bar's functions, once for every stock list.
@@ -31,8 +42,19 @@ export const functions: Record<string, FnSpec> = {
         [lotListSearch, '/admin/stock/lots'],
         [stockRouteListSearch, '/admin/stock/routes'],
         [replenishmentListSearch, '/admin/stock/replenishment'],
+        [valuationListSearch, '/admin/stock/valuation'],
+        [scrapListSearch, '/admin/stock/scraps'],
+        [landedCostListSearch, '/admin/stock/landed-costs'],
+        [dispatchListSearch, '/admin/stock/delivery/dispatch'],
+        [shipmentListSearch, '/admin/stock/shipments'],
+        [deliveryStatementListSearch, '/admin/stock/delivery-statements'],
+        [carrierListSearch, '/admin/stock/carriers'],
+        [countListSearch, '/admin/stock/counts'],
+        [moveAnalysisListSearch, '/admin/stock/analysis'],
+        [agingListSearch, '/admin/stock/aging'],
       ] as const
     ).map(([spec, path]) => ({ key: spec.key, path, spec: () => spec })),
   ),
   ...productListFunctions,
+  ...searchFunctions,
 }

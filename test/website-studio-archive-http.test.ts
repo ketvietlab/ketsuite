@@ -122,6 +122,21 @@ test('Studio archives: category and tag pages, Open Graph and the sitemap', asyn
   assert.doesNotMatch(category.body, /name="robots"/)
   assert.match((await get('/bai-1')).body, /<meta property="og:type" content="article">/)
 
+  // A shared link is read by a crawler that does not resolve a path: the image goes out absolute.
+  const seo = (image: string) => ({
+    seo: { title: '', description: '', canonical: '', indexing: 'index', image },
+  })
+  await post('bai-anh', { title: 'Có ảnh', fields: seo('/anh/tra.jpg') })
+  await post('bai-cdn', { title: 'Ảnh ngoài', fields: seo('https://cdn.example/tra.jpg') })
+  assert.match(
+    (await get('/bai-anh')).body,
+    /<meta property="og:image" content="https:\/\/127\.0\.0\.1\/anh\/tra\.jpg">/,
+  )
+  assert.match(
+    (await get('/bai-cdn')).body,
+    /<meta property="og:image" content="https:\/\/cdn\.example\/tra\.jpg">/,
+  )
+
   const hidden = await get('/tag/an')
   assert.equal(hidden.status, 200)
   assert.match(hidden.body, /<meta name="robots" content="noindex">/)

@@ -89,6 +89,24 @@ export function ConfirmAction(
   )
 }
 
+/**
+ * The capability archiving an entry needs. A live or scheduled entry leaves the site with it, which is
+ * unpublishing; a draft or an archived one is the author's to move.
+ */
+export const archiveCapability = (entry: {
+  state?: string
+  status?: string
+  trashed?: boolean
+  publishedRevisionId?: string | null
+  scheduledRevisionId?: string | null
+}) =>
+  !entry.trashed &&
+  (entry.publishedRevisionId ||
+    entry.scheduledRevisionId ||
+    ['published', 'changed', 'scheduled'].includes(String(entry.state ?? entry.status)))
+    ? 'website.publish'
+    : 'website.content.write'
+
 // Opening/cancelling is DOM-local: it must not refresh the screen or discard unsaved form inputs.
 export function ArchiveActions(
   ctx: StudioContext,

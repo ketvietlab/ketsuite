@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { defineModule, text } from '@ketvietlab/ketjs'
+import { defineModule, encodeListState, parseListState, text } from '@ketvietlab/ketjs'
 import { rowListSearch } from '../backend/row-list.ts'
 import { searchFilterFunctions } from './search-functions.ts'
 import {
   accountListSearch,
+  auditEventListSearch,
   closePeriodListSearch,
   customerInvoiceListSearch,
   generalLedgerLineSearch,
@@ -18,10 +19,15 @@ import {
 } from './search.ts'
 import type { Route, ServeContext } from '@ketvietlab/ketjs'
 import type { FormField, Frame } from '../../ui/index.ts'
-import { formatMoney, modalWorkspace } from '../../ui/index.ts'
+import { formatDateTime, formatMoney, modalWorkspace } from '../../ui/index.ts'
 import { readForm, seeOther } from '../backend/forms.ts'
-import { accountOptions, accountRelationControl } from './relation-control.ts'
+import { editGridControl, postedGridRows } from '../backend/edit-grid.ts'
+import { ketGridLocale } from '../../ui/ket-grid-locale.ts'
+import { accountOptions, accountRelationControl, taxRelationControl } from './relation-control.ts'
+import { timezoneOf } from '../backend/screen.ts'
+import { optionalRead } from '../backend/optional-read.ts'
 import { partnerRelationControl } from '../partner_backend/relation-control.ts'
+import { relationControl, relationLabels } from '../backend/relation-select.ts'
 import {
   ACCOUNT_TYPES,
   JOURNAL_TYPES,
@@ -34,6 +40,11 @@ import {
 } from '../account/functions.ts'
 import { addDecimals } from '../account/money.ts'
 import {
+  type AuditChange,
+  type AuditDetail,
+  type AuditEventRow,
+  auditEventModal,
+  auditLogScreen,
   accountDefaultsScreen,
   accountingBooksScreen,
   accountFormModal,
@@ -54,12 +65,14 @@ import {
   paymentsListScreen,
   partnerLedgerScreen,
   openingBalanceDetailScreen,
+  nettingScreen,
+  type NettingPlan,
   openingBalanceImportScreen,
   openingBalancesListScreen,
   paymentTermFormModal,
   paymentTermLineFormModal,
   paymentTermsListScreen,
-  taxFormScreen,
+  taxFormModal,
   taxesListScreen,
   trialBalanceScreen,
   periodCloseDetailScreen,
@@ -68,8 +81,23 @@ import {
   vendorBillsListScreen,
 } from './screens/index.ts'
 import { adminPage, choices, localeQuery, optional, printGroup, selectionLabel } from '../backend/screen.ts'
+
+/** Every accounting screen opens in the Accounting app: the rail lights it and the sidebar is its own. */
+// Every accounting screen lights Accounting on the rail and carries its own guide in the
+// content slot, so the guide follows fragment navigation.
+const accountingPage: typeof adminPage = (ctx, url, req, options) =>
+  adminPage(ctx, url, req, {
+    app: 'accounting',
+    ...options,
+    body: async (_, frame) => {
+      const help = accountingScreenHelp(url, ctx.localeOf(url, req))
+      return options.body(_, { ...frame, extras: { ...frame.extras, 'screen.help': help ?? undefined } })
+    },
+  })
 import { PAGE_SIZE, pageOf, pager, searchOf } from '../backend/paging.ts'
+import { accountingScreenHelp } from './screens/help.tsx'
 import { overviewCharts, periodOf, yearsOf } from './overview.ts'
+import { bookCsv } from './books-csv.ts'
 
 const crossSite = (req: Parameters<Route>[1]): boolean => {
   const origin = req.headers.origin as string | undefined
@@ -97,6 +125,18 @@ const PAYMENT_PICKER_LIMIT = 200
 const succeeded = (result: unknown): boolean => (result as { ok?: boolean }).ok === true
 
 /**
+ * Ask every installed accounting standard to restate its close evidence for one period. A
+ * standard offers it as `<module>.syncCloseEvidence({ closeId })`; one the reader may not run
+ * is left as it stands, and the checklist then reports what is missing.
+ */
+const syncLocalEvidence = async (ctx: ServeContext, closeId: string, url: URL, req: Parameters<Route>[1]) => {
+  for (const name of Object.keys(ctx.manifest.functions ?? {})
+    .filter((fn) => fn.endsWith('.syncCloseEvidence'))
+    .sort())
+    if (await ctx.allows(name, url, req)) await ctx.call(name, { closeId }, url, req)
+}
+
+/**
  * What a rejected submission has to carry back to its own screen.
  *
  * A redirect to `?invalid=1` used to be the whole answer: it named no field, gave
@@ -108,6 +148,12 @@ type Rejection = { messages: string[]; fields: Record<string, string>; values: R
 
 /** What the domain answers with when it refuses: a field, a code the screen translates. */
 type Issue = { field?: string; code?: string; message?: string; params?: Record<string, unknown> }
+
+/** The numbered form a book follows under the company's accounting standard, when it names one. */
+const bookFormOf = (setup: AnyRow | null, book: string): string | null => {
+  const form = (setup?.bookForms as Record<string, unknown> | null | undefined)?.[book]
+  return typeof form === 'string' ? form : null
+}
 
 const rejection = (result: unknown, _: Translator, form: Record<string, string>): Rejection => {
   const errors = ((result as { errors?: Issue[] } | null)?.errors ?? []).map((error) => ({
@@ -190,6 +236,35 @@ const paymentTermLineModalPath = (url: URL, edit?: unknown): string => {
   return `${target.pathname}${target.search}`
 }
 
+/**
+ * A document list opened on the drafts dated inside a period, for the close
+ * checklist to send the accountant to. The empty query keeps a saved default
+ * search from replacing the filter on arrival.
+ */
+const draftsInPeriodHref = (
+  spec: Parameters<typeof parseListState>[0],
+  path: string,
+  url: URL,
+  from: string,
+  to: string,
+): string => {
+  const base = new URL(`${path}${localeQuery(url)}`, url)
+  const { state } = parseListState(spec, base)
+  const href = new URL(
+    encodeListState(
+      {
+        ...state,
+        presets: ['draft'],
+        filters: [{ kind: 'rule', field: 'accountingDate', operator: 'between', value: [from, to] }],
+      },
+      base,
+    ),
+    base,
+  )
+  href.searchParams.set('q', '')
+  return `${href.pathname}${href.search}`
+}
+
 const journalEntryListPath = (url: URL): string => {
   const target = new URL(url)
   target.pathname = '/admin/accounting/entries'
@@ -201,6 +276,14 @@ const journalEntryModalPath = (url: URL): string => {
   const target = new URL(journalEntryListPath(url), 'http://ket.local')
   target.searchParams.set('create', '1')
   return `${target.pathname}${target.search}`
+}
+
+/** The selection group each enumerated configuration field is labelled by. */
+const EDIT_SELECTIONS: Record<string, string> = {
+  accountType: 'accountType',
+  type: 'journalType',
+  typeTaxUse: 'taxUse',
+  amountType: 'taxAmountType',
 }
 
 const CUSTOMER_INVOICE_TYPES = ['out_invoice', 'out_refund', 'out_receipt'] as const
@@ -368,13 +451,17 @@ const accountGroupLabel = (_: Translator, key: string, value: unknown): string =
   if (key === 'active') return raw === 'false' ? _('account_backend.archived') : _('account_backend.active')
   if (!raw) return _('backend.chrome.groupEmpty')
   const selection =
-    key === 'state' || key === 'moveType'
-      ? 'moveState'
-      : key === 'paymentState'
-        ? 'paymentState'
-        : key === 'type'
-          ? 'journalType'
-          : key
+    key === 'action'
+      ? 'auditAction'
+      : key === 'subjectType'
+        ? 'auditSubject'
+        : key === 'state' || key === 'moveType'
+          ? 'moveState'
+          : key === 'paymentState'
+            ? 'paymentState'
+            : key === 'type'
+              ? 'journalType'
+              : key
   const label = labelOf(_, selection, raw)
   return label === raw && key === 'moveType' ? labelOf(_, 'moveType', raw) : label
 }
@@ -541,7 +628,7 @@ const journalFields = async (
 const taxListPath = (url: URL): string => {
   const target = new URL(url)
   target.pathname = '/admin/accounting/taxes'
-  for (const key of ['edit', 'invalid', 'returnTo']) target.searchParams.delete(key)
+  for (const key of ['create', 'edit', 'invalid', 'returnTo']) target.searchParams.delete(key)
   return `${target.pathname}${target.search}`
 }
 
@@ -555,13 +642,11 @@ const safeTaxReturnTo = (url: URL): string => {
     : fallback
 }
 
-const taxFormPath = (url: URL, returnTo: string, edit?: unknown): string => {
-  const target = new URL('/admin/accounting/taxes/new', url)
-  target.search = ''
-  const lang = url.searchParams.get('lang')
-  if (lang) target.searchParams.set('lang', lang)
-  target.searchParams.set('returnTo', returnTo)
+const taxModalPath = (url: URL, edit?: unknown, invalid = false): string => {
+  const target = new URL(taxListPath(url), 'http://ket.local')
   if (edit) target.searchParams.set('edit', String(edit))
+  else target.searchParams.set('create', '1')
+  if (invalid) target.searchParams.set('invalid', '1')
   return `${target.pathname}${target.search}`
 }
 
@@ -593,6 +678,9 @@ const saveTax = async (
       ...optional(form, 'accountId'),
       sequence: Number(form.sequence || 10),
       active: form.active === '1',
+      // An emptied date is open-ended, so it is sent as null rather than left out.
+      validFrom: form.validFrom || null,
+      validTo: form.validTo || null,
     },
     url,
     req,
@@ -657,6 +745,13 @@ const taxFields = async (
         value: 10,
         help: _('account_backend.field.sequenceHint'),
       },
+      { name: 'validFrom', label: _('account_backend.field.validFrom'), type: 'date' },
+      {
+        name: 'validTo',
+        label: _('account_backend.field.validTo'),
+        type: 'date',
+        help: _('account_backend.field.validToHint'),
+      },
       {
         name: 'active',
         label: _('account_backend.field.active'),
@@ -718,8 +813,14 @@ const CONTROL_TYPES = ['asset_receivable', 'liability_payable']
 const controlAccounts = (rows: AnyRow[]): AnyRow[] =>
   rows.filter((row) => CONTROL_TYPES.includes(String(row.accountType)))
 
+// Opening an accounting screen sets up the company's books for someone who may; a reader only reads.
+const initializeBooks = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) => {
+  if (await ctx.allows('account.initializeCompany', url, req))
+    await ctx.call('account.initializeCompany', {}, url, req)
+}
+
 const common = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) => {
-  await ctx.call('account.initializeCompany', {}, url, req)
+  await initializeBooks(ctx, url, req)
   const [accounts, journals, taxes, terms, partners, companies, templates, units] = (await Promise.all([
     ctx.call('account.listAccounts', {}, url, req),
     ctx.call('account.listJournals', {}, url, req),
@@ -922,7 +1023,24 @@ const invoiceFields = async (
   const counterpartAccounts = data.accounts.filter(
     (account) => account.accountType === (customer ? 'asset_receivable' : 'liability_payable'),
   )
-  const taxes = data.taxes.filter((tax) => tax.typeTaxUse === (customer ? 'sale' : 'purchase'))
+  const typeTaxUse = customer ? 'sale' : 'purchase'
+  // The tax pickers offer the rates in effect on the invoice date, which starts at today in the
+  // viewer's time zone; changing the date reloads them.
+  const invoiceDate =
+    values?.invoiceDate ||
+    new Intl.DateTimeFormat('en-CA', { timeZone: await timezoneOf(ctx, url, req) }).format(new Date())
+  const taxes = (await ctx.call('account.listTaxes', { typeTaxUse, on: invoiceDate }, url, req)) as AnyRow[]
+  const taxControl = (name: 'taxId' | 'secondTaxId', label: string) =>
+    taxRelationControl(ctx, url, req, _, {
+      id: `invoice-${name}:${types.join('-')}`,
+      name,
+      label,
+      taxes: taxes.map((tax) => ({ value: String(tax.id), label: String(tax.name) })),
+      allowEmpty: true,
+      typeTaxUse,
+      dateField: 'invoiceDate',
+      value: values?.[name],
+    })
   const variants = data.templates.flatMap((template) =>
     ((template.variants as AnyRow[] | undefined) ?? []).map((variant) => ({
       value: String(variant.id),
@@ -958,12 +1076,18 @@ const invoiceFields = async (
       }),
       required: true,
     },
-    { name: 'invoiceDate', label: _('account_backend.field.invoiceDate'), type: 'date' },
+    { name: 'invoiceDate', label: _('account_backend.field.invoiceDate'), type: 'date', value: invoiceDate },
     {
       name: 'paymentTermId',
       label: _('account_backend.field.paymentTermId'),
       type: 'select',
       options: choices(data.terms, true),
+    },
+    {
+      name: 'invoiceDateDue',
+      label: _('account_backend.field.invoiceDateDue'),
+      type: 'date',
+      help: _('account_backend.field.invoiceDateDueHint'),
     },
     { name: 'ref', label: _('account_backend.field.ref') },
     { name: 'description', label: _('account_backend.field.description'), required: true },
@@ -1030,7 +1154,13 @@ const invoiceFields = async (
         value: values?.counterpartAccountId,
       }),
     },
-    { name: 'taxId', label: _('account_backend.field.taxId'), type: 'select', options: choices(taxes, true) },
+    {
+      name: 'taxId',
+      label: _('account_backend.field.taxId'),
+      type: 'select',
+      options: choices(taxes, true),
+      control: await taxControl('taxId', _('account_backend.field.taxId')),
+    },
     {
       // Import duty and import VAT are two taxes on one line: the duty carries
       // `includeBaseAmount`, so the VAT is computed on the base plus the duty.
@@ -1039,6 +1169,7 @@ const invoiceFields = async (
       type: 'select',
       options: choices(taxes, true),
       help: _('account_backend.field.secondTaxIdHint'),
+      control: await taxControl('secondTaxId', _('account_backend.field.secondTaxId')),
     },
     {
       name: 'taxAccountId',
@@ -1080,6 +1211,8 @@ const createInvoice = async (
       ...optional(form, 'invoiceDate'),
       ...(form.invoiceDate ? { accountingDate: form.invoiceDate, documentDate: form.invoiceDate } : {}),
       ...optional(form, 'paymentTermId'),
+      // A term computes the due date; only a document without one sends its own.
+      ...(form.paymentTermId ? {} : optional(form, 'invoiceDateDue')),
       ...optional(form, 'ref'),
       description: form.description ?? '',
       ...optional(form, 'productId'),
@@ -1205,7 +1338,8 @@ const accountMoveRoute =
               )
             : form.action === 'reverse'
               ? await ctx.call(
-                  'account.reverseMove',
+                  // A netting reopens the documents it settled; any other entry reverses as before.
+                  family === 'entry' ? 'account.reverseNetting' : 'account.reverseMove',
                   { id: params.id, reversalId: form.reversalId || randomUUID() },
                   url,
                   req,
@@ -1254,7 +1388,19 @@ const accountMoveRoute =
           ? 'account.vendorBill'
           : null
     const printable = (await ctx.reportsOf(url, req, 'account.Move')).filter((report) => report.id === wanted)
-    return adminPage(ctx, url, req, {
+    // An entry a stock operation posted opens that transfer for whoever may read it (stock K25), as the
+    // transfer opens its entry. `allows` answers yes to a superuser even without stock composed.
+    const pickingId = move.sourceModule === 'stock' && String(move.id).match(/^stock-valuation:(.+)$/)?.[1]
+    const stockSource =
+      pickingId &&
+      (await ctx.live(req)).functions?.['stock.getPicking'] &&
+      (await ctx.allows('stock.getPicking', url, req))
+        ? {
+            name: String(move.ref ?? pickingId),
+            href: `/admin/stock/transfers/${encodeURIComponent(pickingId)}?${new URLSearchParams([...url.searchParams].filter(([key]) => ['lang', 'company', 'branch'].includes(key)))}`,
+          }
+        : undefined
+    return accountingPage(ctx, url, req, {
       // A draft has no journal number, so `name` is still its raw id — not a
       // browser-tab title.
       title: moveTitle(ctx.translate(lang), move),
@@ -1267,6 +1413,7 @@ const accountMoveRoute =
           accountOptions: accountChoices(_, accounts),
           action: `${url.pathname}${localeQuery(url)}`,
           collaboration,
+          stockSource,
           printActions: printGroup(_, printable, String(move.id), url.search),
           rejected,
           lineId: rejected?.values.lineId || randomUUID(),
@@ -1284,7 +1431,8 @@ export default defineModule({
   // 0.3.0: a refused form says which rule it broke and keeps what was typed;
   // pickers only offer values the ledger accepts; dashboard cards count the lists
   // they open; payment-term milestones are visible and editable.
-  version: '0.4.0',
+  // 0.4.1: the audit log has a screen behind the gear.
+  version: '0.4.1',
   depends: ['account', 'backend'],
   functions: searchFilterFunctions,
   joints: {
@@ -1302,114 +1450,151 @@ export default defineModule({
       parent: 'accounting',
       label: 'menu.dashboard',
       path: '/admin/accounting',
-      needs: 'account.listMoves',
+      // The overview reads ledger analytics, so a reader of documents alone opens the first document list.
+      needs: 'account.performance',
       sequence: 1,
     },
     'accounting.customerInvoices': {
-      parent: 'accounting',
+      parent: 'accounting.documents',
       label: 'menu.customerInvoices',
       path: '/admin/accounting/customer-invoices',
       needs: 'account.listMoves',
       sequence: 1010,
     },
     'accounting.vendorBills': {
-      parent: 'accounting',
+      parent: 'accounting.documents',
       label: 'menu.vendorBills',
       path: '/admin/accounting/vendor-bills',
       needs: 'account.listMoves',
       sequence: 2010,
     },
     'accounting.entries': {
-      parent: 'accounting',
+      parent: 'accounting.documents',
       label: 'menu.entries',
       path: '/admin/accounting/entries',
       needs: 'account.listMoves',
       sequence: 3010,
     },
+    'accounting.nettings': {
+      parent: 'accounting.documents',
+      label: 'menu.nettings',
+      path: '/admin/accounting/nettings',
+      needs: 'account.postNetting',
+      sequence: 3015,
+    },
     'accounting.payments': {
-      parent: 'accounting',
+      parent: 'accounting.treasury',
       label: 'menu.payments',
       path: '/admin/accounting/payments',
       needs: 'account.listPayments',
       sequence: 3020,
     },
     'accounting.trialBalance': {
-      parent: 'accounting',
+      parent: 'accounting.ledger',
       label: 'menu.trialBalance',
       path: '/admin/accounting/trial-balance',
       needs: 'account.trialBalance',
       sequence: 4010,
     },
     'accounting.generalLedger': {
-      parent: 'accounting',
+      parent: 'accounting.ledger',
       label: 'menu.generalLedger',
       path: '/admin/accounting/general-ledger',
       needs: 'account.generalLedger',
       sequence: 4020,
     },
     'accounting.partnerStatement': {
-      parent: 'accounting',
+      parent: 'accounting.ledger',
       label: 'menu.partnerStatement',
       path: '/admin/accounting/partner-statement',
       needs: 'account.partnerStatement',
       sequence: 4030,
     },
     'accounting.books': {
-      parent: 'accounting',
+      parent: 'accounting.ledger',
       label: 'menu.books',
       path: '/admin/accounting/books',
       needs: 'account.accountingBook',
       sequence: 4040,
     },
     'accounting.periodCloses': {
-      parent: 'accounting',
+      parent: 'accounting.ledger',
       label: 'menu.periodCloses',
       path: '/admin/accounting/period-closes',
       needs: 'account.listClosePeriods',
       sequence: 3030,
     },
     'accounting.openingBalances': {
-      parent: 'accounting.configuration',
+      parent: 'accounting.ledger',
       label: 'menu.openingBalances',
       path: '/admin/accounting/opening-balances',
       needs: 'account.listOpeningBatches',
       sequence: 5,
     },
-    'accounting.configuration': { parent: 'accounting', label: 'menu.configuration', sequence: 5000 },
+    // The sidebar follows the accountant's day (mock A11): the overview, then documents, money,
+    // books and periods. Vietnam's modules add e-invoices, assets, and reports and tax.
+    'accounting.documents': {
+      parent: 'accounting',
+      label: 'menu.group.documents',
+      icon: 'receipt-text',
+      sequence: 200,
+    },
+    'accounting.treasury': {
+      parent: 'accounting',
+      label: 'menu.group.treasury',
+      icon: 'wallet',
+      sequence: 400,
+    },
+    'accounting.ledger': {
+      parent: 'accounting',
+      label: 'menu.group.ledger',
+      icon: 'clipboard-list',
+      sequence: 500,
+    },
+    // Configuration is behind the gear: set up once, then rarely opened.
+    'admin.accounting': { parent: 'admin', label: 'menu.app', icon: 'banknote', sequence: 26 },
     'accounting.accounts': {
-      parent: 'accounting.configuration',
+      parent: 'admin.accounting',
       label: 'menu.accounts',
       path: '/admin/accounting/accounts',
       needs: 'account.listAccounts',
       sequence: 10,
     },
     'accounting.journals': {
-      parent: 'accounting.configuration',
+      parent: 'admin.accounting',
       label: 'menu.journals',
       path: '/admin/accounting/journals',
       needs: 'account.listJournals',
       sequence: 20,
     },
     'accounting.taxes': {
-      parent: 'accounting.configuration',
+      parent: 'admin.accounting',
       label: 'menu.taxes',
       path: '/admin/accounting/taxes',
       needs: 'account.listTaxes',
       sequence: 30,
     },
     'accounting.terms': {
-      parent: 'accounting.configuration',
+      parent: 'admin.accounting',
       label: 'menu.paymentTerms',
       path: '/admin/accounting/terms',
       needs: 'account.listPaymentTerms',
       sequence: 40,
     },
     'accounting.defaults': {
-      parent: 'accounting.configuration',
+      parent: 'admin.accounting',
       label: 'menu.defaults',
       path: '/admin/accounting/defaults',
       needs: 'account.getDefaults',
       sequence: 50,
+    },
+    // Control rather than setup, so it closes the gear's list.
+    'accounting.auditLog': {
+      parent: 'admin.accounting',
+      label: 'menu.auditLog',
+      path: '/admin/accounting/audit-log',
+      needs: 'account.listAuditEvents',
+      sequence: 95,
     },
   },
   routes: {
@@ -1417,7 +1602,7 @@ export default defineModule({
       (ctx): Route =>
       async (url, req) => {
         if (req.method !== 'GET') return text('GET', { status: 405 })
-        await ctx.call('account.initializeCompany', {}, url, req)
+        await initializeBooks(ctx, url, req)
         const [requestScope, companies] = await Promise.all([
           ctx.scopeOf(url, req),
           ctx.call('company.listCompanies', {}, url, req) as Promise<AnyRow[]>,
@@ -1460,7 +1645,7 @@ export default defineModule({
           dateTo: period.previousTo,
           granularity: String(timeline.granularity ?? 'day'),
         })
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.overview.title',
           body: async (_, frame) => {
             const currency = currencyOf(companies as AnyRow[], frame)
@@ -1524,6 +1709,16 @@ export default defineModule({
                 if (lang) target.searchParams.set('lang', lang)
                 return `${target.pathname}${target.search}`
               },
+              // Every headline card is a sum over accounts, and the trial balance
+              // for the same window is where those accounts stand side by side.
+              kpiHref: (() => {
+                const target = new URL('/admin/accounting/trial-balance', url)
+                target.searchParams.set('dateFrom', period.fromDay)
+                target.searchParams.set('dateTo', period.toDay)
+                const lang = url.searchParams.get('lang')
+                if (lang) target.searchParams.set('lang', lang)
+                return `${target.pathname}${target.search}`
+              })(),
             })
           },
         })
@@ -1552,7 +1747,7 @@ export default defineModule({
           ...row,
           displayName: accountName(ctx.translate(ctx.localeOf(url, req)), row),
         }))
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.accounts.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -1627,7 +1822,7 @@ export default defineModule({
         const modalOpen =
           req.method === 'POST' || url.searchParams.get('create') === '1' || Boolean(editingId(url))
         const formPath = journalModalPath(url, editing?.id ?? editingId(url))
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.journals.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -1699,23 +1894,10 @@ export default defineModule({
         const all = (await ctx.call('account.listTaxes', { includeArchived: true }, url, req)) as AnyRow[]
         const editing = editTarget(all, url)
         const returnTo = taxListPath(url)
-        const formPath = taxFormPath(url, returnTo, editing?.id ?? editingId(url))
-        if (req.method === 'POST' || editingId(url)) {
-          if (req.method === 'GET') return seeOther(formPath)
-          return adminPage(ctx, url, req, {
-            title: editing ? 'account_backend.tax.edit.title' : 'account_backend.tax.create.title',
-            body: async (_, frame) =>
-              taxFormScreen(_, {
-                frame,
-                action: formPath,
-                cancelHref: returnTo,
-                editing,
-                errors: rejected?.messages,
-                fields: await taxFields(ctx, url, req, _, data.accounts, editing, rejected),
-              }),
-          })
-        }
-        return adminPage(ctx, url, req, {
+        const modalOpen =
+          req.method === 'POST' || url.searchParams.get('create') === '1' || Boolean(editingId(url))
+        const formPath = taxModalPath(url, editing?.id ?? editingId(url))
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.taxes.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -1728,7 +1910,7 @@ export default defineModule({
               groupLabel: (key, value) => accountGroupLabel(_, key, value),
             })
             const shown = listPage(url, search.rows, Boolean(search.groups))
-            return taxesListScreen(_, {
+            const workspace = taxesListScreen(_, {
               frame: {
                 ...search.frame,
                 chrome: { ...search.frame.chrome, pager: shown.pager },
@@ -1737,41 +1919,41 @@ export default defineModule({
               ...(search.groups ? { table: { groups: search.groups } } : {}),
               accounts: data.accounts,
               currency: currencyOf(data.companies, frame),
-              createHref: taxFormPath(url, returnTo),
-              rowHref: (row) => taxFormPath(url, returnTo, row.id),
+              createHref: taxModalPath(url),
+              rowHref: (row) => taxModalPath(url, row.id),
               summary: taxSummary(all),
             })
+            if (!modalOpen) return workspace
+            return modalWorkspace(
+              workspace,
+              taxFormModal(_, {
+                frame,
+                action: formPath,
+                cancelHref: returnTo,
+                editing,
+                errors:
+                  rejected?.messages ??
+                  (url.searchParams.get('invalid') === '1'
+                    ? [_('account_backend.error.invalid')]
+                    : undefined),
+                fields: await taxFields(ctx, url, req, _, data.accounts, editing, rejected),
+              }),
+            )
           },
         })
       },
+    // The form used to be a page of its own; old links and posts land on the list's modal.
     '/admin/accounting/taxes/new':
       (ctx): Route =>
       async (url, req) => {
-        let rejected: Rejection | undefined
         if (req.method === 'POST') {
           if (crossSite(req)) return text('Forbidden', { status: 403 })
           const form = await readForm(req)
           const result = await saveTax(ctx, url, req, form)
           if (succeeded(result)) return seeOther(safeTaxReturnTo(url))
-          rejected = rejection(result, ctx.translate(ctx.localeOf(url, req)), form)
+          return seeOther(taxModalPath(url, editingId(url), true))
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-        const data = await common(ctx, url, req)
-        const taxes = (await ctx.call('account.listTaxes', { includeArchived: true }, url, req)) as AnyRow[]
-        const editing = editTarget(taxes, url)
-        const returnTo = safeTaxReturnTo(url)
-        const formPath = taxFormPath(url, returnTo, editing?.id ?? editingId(url))
-        return adminPage(ctx, url, req, {
-          title: editing ? 'account_backend.tax.edit.title' : 'account_backend.tax.create.title',
-          body: async (_, frame) =>
-            taxFormScreen(_, {
-              frame,
-              action: formPath,
-              cancelHref: returnTo,
-              editing,
-              errors: rejected?.messages,
-              fields: await taxFields(ctx, url, req, _, data.accounts, editing, rejected),
-            }),
-        })
+        return seeOther(taxModalPath(url, editingId(url), url.searchParams.get('invalid') === '1'))
       },
     '/admin/accounting/terms':
       (ctx): Route =>
@@ -1831,7 +2013,7 @@ export default defineModule({
         const termModalOpen =
           !lineModalOpen &&
           (req.method === 'POST' || url.searchParams.get('create') === '1' || Boolean(editingId(url)))
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.terms.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -2014,7 +2196,7 @@ export default defineModule({
           if (id) target.searchParams.set('editCategory', String(id))
           return `${target.pathname}${target.search}`
         }
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.defaults.title',
           body: async (_, frame) => {
             const defaultsFields = await accountRelationFields(
@@ -2067,6 +2249,21 @@ export default defineModule({
                 payableAccountId: { accounts: payable, accountTypes: ['liability_payable'] },
               },
             )
+            // What the standard fixes is read, not chosen: off the form, beside it with its account.
+            const pinnedAccounts = (defaults.pinned ?? {}) as Record<string, unknown>
+            const accountById = new Map(data.accounts.map((row) => [String(row.id), row]))
+            const pinned = defaultsFields
+              .filter((field) => field.name in pinnedAccounts)
+              .map((field) => {
+                const account = accountById.get(String(pinnedAccounts[field.name]))
+                return {
+                  id: field.name,
+                  label: field.label,
+                  value: account
+                    ? `${String(account.code)} · ${String(account.name)}`
+                    : String(pinnedAccounts[field.name]),
+                }
+              })
             const categoryFields = categories.length
               ? await accountRelationFields(
                   ctx,
@@ -2127,7 +2324,8 @@ export default defineModule({
               cancelHref: `/admin/accounting/defaults${localeQuery(url)}`,
               errors: rejected?.messages,
               categoryErrors: rejectedCategory?.messages,
-              defaultsFields,
+              defaultsFields: defaultsFields.filter((field) => !(field.name in pinnedAccounts)),
+              pinned,
               categoryFields,
             })
           },
@@ -2168,7 +2366,7 @@ export default defineModule({
         const returnTo = journalEntryListPath(url)
         const modalOpen = req.method === 'POST' || url.searchParams.get('create') === '1'
         if (modalOpen && !idempotencyKey) idempotencyKey = randomUUID()
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.entries.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -2227,7 +2425,7 @@ export default defineModule({
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const data = await common(ctx, url, req)
         if (rejected)
-          return adminPage(ctx, url, req, {
+          return accountingPage(ctx, url, req, {
             title: 'account_backend.customerInvoice.create.title',
             body: async (_, frame) =>
               customerInvoiceFormScreen(_, {
@@ -2258,7 +2456,7 @@ export default defineModule({
           partnerName: partnerLabels.get(String(row.partnerId)) ?? '',
         }))
         const returnTo = customerInvoiceListPath(url)
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.customerInvoices.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -2304,7 +2502,7 @@ export default defineModule({
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const data = await common(ctx, url, req)
         const returnTo = safeCustomerInvoiceReturnTo(url)
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.customerInvoice.create.title',
           body: async (_, frame) =>
             customerInvoiceFormScreen(_, {
@@ -2332,7 +2530,7 @@ export default defineModule({
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const data = await common(ctx, url, req)
         if (rejected)
-          return adminPage(ctx, url, req, {
+          return accountingPage(ctx, url, req, {
             title: 'account_backend.vendorBill.create.title',
             body: async (_, frame) =>
               vendorBillFormScreen(_, {
@@ -2363,7 +2561,7 @@ export default defineModule({
           partnerName: partnerLabels.get(String(row.partnerId)) ?? '',
         }))
         const returnTo = vendorBillListPath(url)
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.vendorBills.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -2409,7 +2607,7 @@ export default defineModule({
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const data = await common(ctx, url, req)
         const returnTo = safeVendorBillReturnTo(url)
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.vendorBill.create.title',
           body: async (_, frame) =>
             vendorBillFormScreen(_, {
@@ -2444,7 +2642,7 @@ export default defineModule({
         ])
         // Legacy collection POSTs still render the new full form when refused.
         if (rejected)
-          return adminPage(ctx, url, req, {
+          return accountingPage(ctx, url, req, {
             title: 'account_backend.payment.create.title',
             body: async (_, frame) =>
               paymentFormScreen(_, {
@@ -2468,7 +2666,7 @@ export default defineModule({
           .filter((row) => !partnerId || String(row.partnerId ?? '') === partnerId)
           .map((row) => ({ ...row, partnerName: partnerLabels.get(String(row.partnerId)) ?? '' }))
         const returnTo = paymentListPath(url)
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.payments.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -2517,7 +2715,7 @@ export default defineModule({
           ctx.call('account.listOpenItems', { limit: PAYMENT_PICKER_LIMIT }, url, req) as Promise<AnyRow[]>,
         ])
         const returnTo = safePaymentReturnTo(url)
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.payment.create.title',
           body: async (_, frame) =>
             paymentFormScreen(_, {
@@ -2530,6 +2728,382 @@ export default defineModule({
             }),
         })
       },
+    '/admin/accounting/audit-log':
+      (ctx): Route =>
+      async (url, req) => {
+        if (req.method !== 'GET') return text('GET', { status: 405 })
+        const lang = ctx.localeOf(url, req)
+        const t = ctx.translate(lang)
+        const timezone = await timezoneOf(ctx, url, req)
+        const events = (await ctx.call('account.listAuditEvents', {}, url, req)) as AnyRow[]
+        // Names are a courtesy: a reader allowed the log but not the users or the journals
+        // still sees every event, by id.
+        // A change of a period's locks names people too: the ones who may still post.
+        const controlsOf = (row: AnyRow) => (row.details ?? {}) as { before?: AnyRow; after?: AnyRow }
+        const posterIds = events
+          .filter((row) => row.action === 'controlsChanged')
+          .flatMap((row) => [
+            ...(((controlsOf(row).before?.softPosters as unknown[]) ?? []) as unknown[]),
+            ...(((controlsOf(row).after?.softPosters as unknown[]) ?? []) as unknown[]),
+          ])
+        // An edit to the configuration names the record it changed and any account it points at.
+        const edits = events.some((row) => row.action === 'updated')
+        const catalogue = (name: string) =>
+          edits
+            ? optionalRead<AnyRow[]>(ctx, name, { includeArchived: true }, url, req, [])
+            : Promise.resolve([])
+        const [moves, journals, closes, users, accounts, taxes, terms] = await Promise.all([
+          optionalRead<AnyRow[]>(ctx, 'account.listMoves', {}, url, req, []),
+          optionalRead<AnyRow[]>(ctx, 'account.listJournals', { includeArchived: true }, url, req, []),
+          optionalRead<AnyRow[]>(ctx, 'account.listClosePeriods', {}, url, req, []),
+          optionalRead<AnyRow[]>(
+            ctx,
+            'user.listUsers',
+            {
+              ids: [
+                ...new Set([...events.map((row) => row.actorId), ...posterIds].filter(Boolean).map(String)),
+              ],
+              includeArchived: true,
+            },
+            url,
+            req,
+            [],
+          ),
+          catalogue('account.listAccounts'),
+          catalogue('account.listTaxes'),
+          catalogue('account.listPaymentTerms'),
+        ])
+        const moveById = new Map(moves.map((row) => [String(row.id), row]))
+        const accountName = new Map(
+          accounts.map((row) => [String(row.id), `${String(row.code)} · ${String(row.name)}`]),
+        )
+        const catalogueName: Record<string, Map<string, string>> = {
+          account: accountName,
+          journal: new Map(journals.map((row) => [String(row.id), String(row.name ?? row.code)])),
+          tax: new Map(taxes.map((row) => [String(row.id), String(row.name ?? row.id)])),
+          paymentTerm: new Map(terms.map((row) => [String(row.id), String(row.name ?? row.id)])),
+        }
+        // Each catalogue edits a record in a modal over its own list.
+        const cataloguePath: Record<string, string> = {
+          account: '/admin/accounting/accounts',
+          journal: '/admin/accounting/journals',
+          tax: '/admin/accounting/taxes',
+          paymentTerm: '/admin/accounting/terms',
+        }
+        const catalogueHref = (type: string, id: unknown) => {
+          const target = new URL(cataloguePath[type]!, url)
+          const held = url.searchParams.get('lang')
+          if (held) target.searchParams.set('lang', held)
+          target.searchParams.set('edit', String(id))
+          return `${target.pathname}${target.search}`
+        }
+        const journalName = new Map(journals.map((row) => [String(row.id), String(row.name ?? row.code)]))
+        const userName = new Map(
+          users.map((row) => [String(row.id), String(row.name ?? row.login ?? row.id)]),
+        )
+        const moveName = (id: unknown) => {
+          const move = moveById.get(String(id))
+          return move ? String(move.name || move.id) : String(id)
+        }
+        const moveHref = (id: unknown) => {
+          const move = moveById.get(String(id))
+          return move ? canonicalMovePath(move, url) : null
+        }
+        const closeKey = new Map(closes.map((row) => [String(row.id), String(row.periodKey ?? row.id)]))
+        const subjectName = (row: AnyRow) =>
+          row.subjectType === 'move'
+            ? moveName(row.subjectId)
+            : row.subjectType === 'closePeriod'
+              ? `${t('account_backend.close.period')} ${closeKey.get(String(row.subjectId)) ?? String(row.subjectId)}`
+              : row.subjectType === 'defaults'
+                ? t('account_backend.menu.defaults')
+                : (catalogueName[String(row.subjectType)]?.get(String(row.subjectId)) ??
+                  String(row.subjectId))
+        const subjectHref = (row: AnyRow) =>
+          row.subjectType === 'move'
+            ? moveHref(row.subjectId)
+            : row.subjectType === 'closePeriod'
+              ? `/admin/accounting/period-closes/${encodeURIComponent(String(row.subjectId))}${localeQuery(url)}`
+              : row.subjectType === 'defaults'
+                ? `/admin/accounting/defaults${localeQuery(url)}`
+                : cataloguePath[String(row.subjectType)]
+                  ? catalogueHref(String(row.subjectType), row.subjectId)
+                  : null
+        const instant = (value: unknown) => String(value ?? '')
+        // A civil date is already the day; an instant is read in the company's time zone.
+        const dayOf = (value: unknown) =>
+          instant(value).length <= 10
+            ? instant(value)
+            : new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date(instant(value)))
+        const whenOf = (value: unknown) =>
+          instant(value).length <= 10
+            ? formatDateTime(lang, new Date(`${instant(value)}T00:00:00Z`), {
+                dateStyle: 'short',
+                timeZone: 'UTC',
+              })
+            : formatDateTime(lang, new Date(instant(value)), {
+                dateStyle: 'short',
+                timeStyle: 'short',
+                timeZone: timezone,
+              })
+        const rows: AuditEventRow[] = events
+          .map(
+            (row): AuditEventRow => ({
+              ...row,
+              actorName: row.actorId
+                ? (userName.get(String(row.actorId)) ?? String(row.actorId))
+                : t('account_backend.audit.system'),
+              subjectName: subjectName(row),
+              subjectHref: subjectHref(row),
+              relatedName: row.relatedId ? moveName(row.relatedId) : null,
+              relatedHref: row.relatedId ? moveHref(row.relatedId) : null,
+              when: whenOf(row.createdAt),
+              day: dayOf(row.createdAt),
+            }),
+          )
+          .sort(
+            (a, b) =>
+              instant(b.createdAt).localeCompare(instant(a.createdAt)) ||
+              String(b.id).localeCompare(String(a.id)),
+          )
+        const listPath = (target = new URL(url)) => {
+          target.searchParams.delete('event')
+          return `${target.pathname}${target.search}`
+        }
+        const eventPath = (row: AnyRow) => {
+          const target = new URL(url)
+          target.searchParams.set('event', String(row.id))
+          return `${target.pathname}${target.search}`
+        }
+        const opened = url.searchParams.get('event')
+        const event = opened ? rows.find((row) => String(row.id) === opened) : undefined
+        if (opened && !event) return text(t('account_backend.audit.notFound'), { status: 404 })
+        return accountingPage(ctx, url, req, {
+          title: 'account_backend.audit.title',
+          body: async (_, frame) => {
+            const search = await rowListSearch(ctx, url, req, {
+              spec: auditEventListSearch,
+              rows,
+              frame,
+              name: 'account-audit-filter',
+              bodyId: 'account-audit-list',
+              functions: accountSearchFunctions,
+              groupLabel: (key, value) => accountGroupLabel(_, key, value),
+            })
+            const shown = listPage(url, search.rows, Boolean(search.groups))
+            const workspace = auditLogScreen(_, {
+              frame: { ...search.frame, chrome: { ...search.frame.chrome, pager: shown.pager } },
+              rows: shown.rows,
+              ...(search.groups ? { table: { groups: search.groups } } : {}),
+              rowHref: eventPath,
+              summary: {
+                total: rows.length,
+                posted: rows.filter((row) => row.action === 'posted').length,
+                reversed: rows.filter((row) => row.action === 'reversed').length,
+              },
+            })
+            if (!event) return workspace
+            // A change of a period's locks reads as what it was and what it became.
+            const controls = controlsOf(event)
+            const kinds = (held: unknown) =>
+              Array.isArray(held) && held.length
+                ? held.map((kind) => _(`account_backend.close.kind.${String(kind)}`)).join(', ')
+                : _('account_backend.close.noControls')
+            const people = (held: unknown) =>
+              Array.isArray(held) && held.length
+                ? held.map((id) => userName.get(String(id)) ?? String(id)).join(', ')
+                : _('account_backend.close.noControls')
+            const controlDetails: AuditDetail[] =
+              event.action === 'controlsChanged'
+                ? [
+                    {
+                      id: 'lockedKinds',
+                      label: _('account_backend.close.lockedKinds'),
+                      value: `${kinds(controls.before?.lockedKinds)} → ${kinds(controls.after?.lockedKinds)}`,
+                    },
+                    {
+                      id: 'softPosters',
+                      label: _('account_backend.close.softPosters'),
+                      value: `${people(controls.before?.softPosters)} → ${people(controls.after?.softPosters)}`,
+                    },
+                  ]
+                : []
+            // An edit reads as each field it changed, what it held and what it holds now.
+            const readable = (key: string, value: unknown) => {
+              if (value === null || value === undefined || value === '') return '—'
+              if (typeof value === 'boolean') return _(value ? 'account_backend.yes' : 'account_backend.no')
+              if (/[aA]ccountId$/.test(key)) return accountName.get(String(value)) ?? String(value)
+              // An enumerated field reads by the label its picker shows.
+              const group = EDIT_SELECTIONS[key]
+              return group ? labelOf(_, group, value) : String(value)
+            }
+            const edit = event.action === 'updated' ? controlsOf(event) : {}
+            const changes: AuditChange[] = Object.keys(edit.after ?? {}).map((key) => ({
+              id: key,
+              label: _.resolves(`account_backend.field.${key}`) ? _(`account_backend.field.${key}`) : key,
+              before: readable(key, edit.before?.[key]),
+              after: readable(key, edit.after?.[key]),
+            }))
+            const details: AuditDetail[] = controlDetails.length
+              ? controlDetails
+              : Object.entries((event.details ?? {}) as AnyRow)
+                  // The subject and the related document are already named above; repeating them
+                  // under another label made one entry look like two.
+                  .filter(
+                    ([, value]) =>
+                      value != null &&
+                      value !== '' &&
+                      typeof value !== 'object' &&
+                      String(value) !== String(event.subjectId) &&
+                      String(value) !== String(event.relatedId ?? ''),
+                  )
+                  .map(([key, value]) => {
+                    const label = _.resolves(`account_backend.audit.detail.${key}`)
+                      ? _(`account_backend.audit.detail.${key}`)
+                      : key
+                    if (key === 'journalId')
+                      return { id: key, label, value: journalName.get(String(value)) ?? String(value) }
+                    if (moveById.has(String(value)))
+                      return { id: key, label, value: moveName(value), href: moveHref(value) }
+                    return { id: key, label, value: String(value) }
+                  })
+            return modalWorkspace(
+              workspace,
+              auditEventModal(_, { event, details, changes, closeHref: listPath() }),
+            )
+          },
+        })
+      },
+    '/admin/accounting/nettings':
+      (ctx): Route =>
+      async (url, req) => {
+        const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
+        const t = ctx.translate(lang)
+        let rejected: Rejection | undefined
+        if (req.method === 'POST') {
+          if (crossSite(req)) return text('Forbidden', { status: 403 })
+          const form = await readForm(req)
+          if (form.action !== 'post') return text('invalid action', { status: 400 })
+          const id = form.id || randomUUID()
+          const result = await ctx.call(
+            'account.postNetting',
+            {
+              id,
+              partnerId: form.partnerId ?? '',
+              ...optional(form, 'journalId'),
+              ...optional(form, 'amount'),
+              ...optional(form, 'accountingDate'),
+            },
+            url,
+            req,
+          )
+          // The netting is an entry of its own: the user lands on it, and reverses it from there.
+          if (succeeded(result))
+            return seeOther(`/admin/accounting/entries/${encodeURIComponent(id)}${localeQuery(url)}`)
+          rejected = rejection(result, t, form)
+        } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
+        const values: Record<string, string> = rejected?.values ?? {
+          partnerId: url.searchParams.get('partnerId') ?? '',
+          journalId: url.searchParams.get('journalId') ?? '',
+          accountingDate: url.searchParams.get('accountingDate') ?? '',
+          amount: url.searchParams.get('amount') ?? '',
+        }
+        const [partners, companies, journals] = (await Promise.all([
+          ctx.call('account.listNettablePartners', {}, url, req),
+          ctx.call('company.listCompanies', {}, url, req),
+          ctx.call('account.listJournals', {}, url, req),
+        ])) as [AnyRow[], AnyRow[], AnyRow[]]
+        // A company keeps several general journals (stock, closing, other); the accountant picks
+        // the one nettings belong to rather than the screen guessing. A single one is preselected.
+        const general = journals.filter((row) => row.type === 'general' && row.active !== false)
+        const journalId = general.some((row) => row.id === values.journalId)
+          ? values.journalId!
+          : general.length === 1
+            ? String(general[0]!.id)
+            : ''
+        const partnerId = partners.some((row) => row.id === values.partnerId) ? values.partnerId! : ''
+        const preview = partnerId
+          ? ((await ctx.call(
+              'account.previewNetting',
+              { partnerId, ...optional(values, 'amount') },
+              url,
+              req,
+            )) as AnyRow)
+          : null
+        const previewRefused = preview && !succeeded(preview) ? rejection(preview, t, values) : undefined
+        const refusal = rejected ?? previewRefused
+        const accountingDate =
+          values.accountingDate ||
+          new Intl.DateTimeFormat('en-CA', { timeZone: await timezoneOf(ctx, url, req) }).format(new Date())
+        const fields: FormField[] = [
+          {
+            name: 'partnerId',
+            label: t('account_backend.field.partnerId'),
+            type: 'select',
+            required: true,
+            value: partnerId,
+            options: choices(partners, false),
+            error: refusal?.fields.partnerId ?? null,
+            control: await relationControl(ctx, url, req, 'netting-partner', {
+              name: 'partnerId',
+              ariaLabel: t('account_backend.field.partnerId'),
+              value: partnerId,
+              required: true,
+              options: partners.map((row) => ({ value: String(row.id), label: String(row.name) })),
+              labels: relationLabels(t, t('account_backend.relation.partners')),
+            }),
+          },
+          {
+            name: 'journalId',
+            label: t('account_backend.field.journalId'),
+            type: 'select',
+            required: true,
+            value: journalId,
+            options: choices(general, true),
+            error: refusal?.fields.journalId ?? null,
+          },
+          {
+            name: 'accountingDate',
+            label: t('account_backend.field.accountingDate'),
+            type: 'date',
+            required: true,
+            value: accountingDate,
+            error: refusal?.fields.accountingDate ?? null,
+          },
+          {
+            name: 'amount',
+            label: t('account_backend.netting.amount'),
+            type: 'number',
+            value: values.amount ?? '',
+            help: t('account_backend.netting.amountHint'),
+            error: refusal?.fields.amount ?? null,
+          },
+        ]
+        const plan = preview && succeeded(preview) ? (preview as unknown as NettingPlan) : null
+        return accountingPage(ctx, url, req, {
+          title: 'account_backend.netting.title',
+          body: (_, frame) =>
+            nettingScreen(_, {
+              frame,
+              action: `/admin/accounting/nettings${localeQuery(url)}`,
+              currency: String(currencyOf(companies, frame) ?? ''),
+              partnerCount: partners.length,
+              fields,
+              plan,
+              post:
+                plan && plan.amount !== '0' && journalId
+                  ? {
+                      id: rejected?.values.id || randomUUID(),
+                      partnerId,
+                      journalId,
+                      accountingDate,
+                      amount: plan.amount,
+                    }
+                  : null,
+              errors: refusal?.messages,
+            }),
+        })
+      },
     '/admin/accounting/trial-balance':
       (ctx): Route =>
       async (url, req) => {
@@ -2537,24 +3111,30 @@ export default defineModule({
         const dateFrom = url.searchParams.get('dateFrom') ?? '',
           dateTo = url.searchParams.get('dateTo') ?? ''
         const inverted = Boolean(dateFrom && dateTo && dateFrom > dateTo)
-        const [rows, companies] = (await Promise.all([
+        const showingAll = url.searchParams.get('all') === '1'
+        const range = { ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) }
+        const [rows, everyAccount, companies] = (await Promise.all([
           inverted
             ? Promise.resolve([])
             : ctx.call(
                 'account.trialBalance',
-                {
-                  ...(dateFrom ? { dateFrom } : {}),
-                  ...(dateTo ? { dateTo } : {}),
-                },
+                { ...range, balances: true, includeEmpty: showingAll },
                 url,
                 req,
               ),
+          // How many accounts the table leaves out, so the button can say what it shows.
+          inverted
+            ? Promise.resolve([])
+            : ctx.call('account.trialBalance', { ...range, balances: true, includeEmpty: true }, url, req),
           ctx.call('company.listCompanies', {}, url, req),
-        ])) as [AnyRow[], AnyRow[]]
+        ])) as [AnyRow[], AnyRow[], AnyRow[]]
+        const toggle = new URL(url)
+        if (showingAll) toggle.searchParams.delete('all')
+        else toggle.searchParams.set('all', '1')
         rows.sort((a, b) =>
           String(a.code ?? '').localeCompare(String(b.code ?? ''), undefined, { numeric: true }),
         )
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.trialBalance.title',
           body: (_, frame) => {
             const currency = currencyOf(companies, frame)
@@ -2564,6 +3144,9 @@ export default defineModule({
               locale: url.searchParams.get('lang') ?? '',
               rows,
               currency,
+              hidden: everyAccount.length - rows.length,
+              showingAll,
+              toggleHref: `${toggle.pathname}${toggle.search}`,
               // The balance carries its own date window into the ledger, so the
               // rows opened are the ones that produced the number.
               ledgerHref: (row) => {
@@ -2603,10 +3186,12 @@ export default defineModule({
           dateTo = url.searchParams.get('dateTo') ?? '',
           search = searchOf(url) ?? '',
           inverted = Boolean(dateFrom && dateTo && dateFrom > dateTo)
-        await ctx.call('account.initializeCompany', {}, url, req)
-        const [accounts, companies, allRows] = (await Promise.all([
+        await initializeBooks(ctx, url, req)
+        const [accounts, companies, setup, allRows] = (await Promise.all([
           ctx.call('account.listAccounts', {}, url, req),
           ctx.call('company.listCompanies', {}, url, req),
+          // The form number is a caption: a reader without the setup grant still reads the book.
+          optionalRead<AnyRow | null>(ctx, 'account.getSetup', {}, url, req, null),
           inverted
             ? Promise.resolve([])
             : ctx.call(
@@ -2619,8 +3204,8 @@ export default defineModule({
                 url,
                 req,
               ),
-        ])) as [AnyRow[], AnyRow[], AnyRow[]]
-        return adminPage(ctx, url, req, {
+        ])) as [AnyRow[], AnyRow[], AnyRow | null, AnyRow[]]
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.generalLedger.title',
           body: async (_, frame) => {
             const unknownAccount = Boolean(
@@ -2667,6 +3252,7 @@ export default defineModule({
             }
             const currency = currencyOf(companies, frame)
             return generalLedgerScreen(_, {
+              form: bookFormOf(setup, 'general_ledger'),
               frame: frame,
               action: '/admin/accounting/general-ledger',
               rows: shown.rows,
@@ -2731,10 +3317,12 @@ export default defineModule({
           dateTo = url.searchParams.get('dateTo') ?? '',
           search = searchOf(url) ?? '',
           inverted = Boolean(dateFrom && dateTo && dateFrom > dateTo)
-        await ctx.call('account.initializeCompany', {}, url, req)
-        const [accounts, companies, initialPartners, selectedPartners, allRows] = (await Promise.all([
+        await initializeBooks(ctx, url, req)
+        const [accounts, companies, setup, initialPartners, selectedPartners, allRows] = (await Promise.all([
           ctx.call('account.listAccounts', {}, url, req),
           ctx.call('company.listCompanies', {}, url, req),
+          // The form number is a caption: a reader without the setup grant still reads the book.
+          optionalRead<AnyRow | null>(ctx, 'account.getSetup', {}, url, req, null),
           ctx.call('partner.listPartners', { limit: PAGE_SIZE }, url, req),
           partnerId
             ? ctx.call('partner.listPartners', { ids: [partnerId], includeArchived: true }, url, req)
@@ -2751,8 +3339,8 @@ export default defineModule({
                 req,
               )
             : Promise.resolve([]),
-        ])) as [AnyRow[], AnyRow[], AnyRow[], AnyRow[], AnyRow[]]
-        return adminPage(ctx, url, req, {
+        ])) as [AnyRow[], AnyRow[], AnyRow | null, AnyRow[], AnyRow[], AnyRow[]]
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.partnerStatement.title',
           body: async (_, frame) => {
             const companyPartners = new Set(companies.map((company) => String(company.partnerId)))
@@ -2804,6 +3392,7 @@ export default defineModule({
             }
             const currency = currencyOf(companies, frame)
             return partnerLedgerScreen(_, {
+              form: bookFormOf(setup, 'partner'),
               frame: frame,
               action: '/admin/accounting/partner-statement',
               rows: shown.rows,
@@ -2869,7 +3458,7 @@ export default defineModule({
       async (url, req) => {
         if (req.method !== 'GET') return text('GET', { status: 405 })
         const rows = (await ctx.call('account.listOpeningBatches', {}, url, req)) as AnyRow[]
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.opening.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -2899,10 +3488,15 @@ export default defineModule({
         if (req.method === 'POST') {
           if (crossSite(req)) return text('Forbidden', { status: 403 })
           const form = await readForm(req)
-          let lines: unknown = []
-          try {
-            lines = JSON.parse(form.lines || '[]')
-          } catch {
+          const rows = postedGridRows(form.lines)
+          const lines = (rows ?? []).map((row) => ({
+            sourceKey: String(row.sourceKey ?? '').trim(),
+            accountId: String(row.accountId ?? ''),
+            description: String(row.description ?? '').trim(),
+            debit: row.debit == null || row.debit === '' ? '0' : String(row.debit),
+            credit: row.credit == null || row.credit === '' ? '0' : String(row.credit),
+          }))
+          if (!rows) {
             rejected = {
               messages: [ctx.translate(ctx.localeOf(url, req))('account_backend.opening.linesInvalid')],
               fields: {
@@ -2914,7 +3508,7 @@ export default defineModule({
           if (!rejected) {
             const id = form.id || randomUUID()
             const sourceChecksum = createHash('sha256')
-              .update(`${form.sourceName || 'manual'}\n${form.lines || '[]'}`)
+              .update(`${form.sourceName || 'manual'}\n${JSON.stringify(lines)}`)
               .digest('hex')
             const result = await ctx.call(
               'account.prepareOpeningBatch',
@@ -2939,7 +3533,70 @@ export default defineModule({
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const journals = (await ctx.call('account.listJournals', {}, url, req)) as AnyRow[]
         const values = rejected?.values ?? {}
-        return adminPage(ctx, url, req, {
+        const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
+        const t = ctx.translate(lang)
+        const accounts = (await ctx.call('account.listAccounts', {}, url, req)) as AnyRow[]
+        // One row per source line, entered or pasted from a spreadsheet; a refused form keeps them.
+        const linesGrid = await editGridControl(ctx, url, req, 'opening-lines', {
+          name: 'lines',
+          label: t('account_backend.opening.sourceLines'),
+          ...ketGridLocale(lang),
+          rows: [],
+          carry: values.lines ?? null,
+          newRow: { sourceKey: '', accountId: '', description: '', debit: null, credit: null },
+          columns: [
+            {
+              key: 'sourceKey',
+              label: t('account_backend.opening.sourceKey'),
+              type: 'text',
+              editable: true,
+              required: true,
+              width: 104,
+            },
+            {
+              key: 'accountId',
+              label: t('account_backend.field.accountId'),
+              type: 'combobox',
+              editable: true,
+              required: true,
+              width: 176,
+              options: accountOptions(accounts),
+              search: { listFunction: 'account.listAccounts', labelField: 'code', descriptionField: 'name' },
+            },
+            {
+              key: 'description',
+              label: t('account_backend.field.name'),
+              type: 'text',
+              editable: true,
+              required: true,
+              grow: 1,
+              width: 160,
+            },
+            {
+              key: 'debit',
+              label: t('account_backend.field.debit'),
+              type: 'number',
+              editable: true,
+              min: 0,
+              fractionDigits: 2,
+              align: 'end',
+              footer: 'sum',
+              width: 112,
+            },
+            {
+              key: 'credit',
+              label: t('account_backend.field.credit'),
+              type: 'number',
+              editable: true,
+              min: 0,
+              fractionDigits: 2,
+              align: 'end',
+              footer: 'sum',
+              width: 112,
+            },
+          ],
+        })
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.opening.create',
           body: (_, frame) =>
             openingBalanceImportScreen(_, {
@@ -2990,15 +3647,11 @@ export default defineModule({
                 },
                 {
                   name: 'lines',
-                  label: _('account_backend.opening.linesJson'),
-                  type: 'textarea',
+                  label: _('account_backend.opening.sourceLines'),
                   span: 'full',
-                  value:
-                    values.lines ??
-                    '[\n  {"sourceKey":"1","accountId":"...","description":"Số dư đầu kỳ","debit":"0.00","credit":"0.00"}\n]',
-                  required: true,
+                  control: linesGrid,
                   error: rejected?.fields.lines,
-                  help: _('account_backend.opening.linesJsonHint'),
+                  help: _('account_backend.opening.linesHint'),
                 },
               ],
             }),
@@ -3015,18 +3668,20 @@ export default defineModule({
           if (succeeded(result)) return seeOther(`${url.pathname}${localeQuery(url)}`)
           errors = rejection(result, ctx.translate(ctx.localeOf(url, req)), form).messages
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
-        const [{ batch, lines }, companies] = (await Promise.all([
+        const [{ batch, lines }, companies, accounts] = (await Promise.all([
           ctx.call('account.getOpeningBatch', { id: params.id }, url, req),
           ctx.call('company.listCompanies', {}, url, req),
-        ])) as [{ batch: AnyRow | null; lines: AnyRow[] }, AnyRow[]]
+          ctx.call('account.listAccounts', {}, url, req),
+        ])) as [{ batch: AnyRow | null; lines: AnyRow[] }, AnyRow[], AnyRow[]]
         if (!batch) return text('Not found', { status: 404 })
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.opening.batch',
           body: (_, frame) =>
             openingBalanceDetailScreen(_, {
               frame,
               batch,
               lines,
+              accountLabel: (id) => accountLabel(_, accounts, id),
               action: `${url.pathname}${localeQuery(url)}`,
               currency: currencyOf(companies, frame),
               entryHref: batch.moveId
@@ -3058,7 +3713,7 @@ export default defineModule({
           errors = rejection(result, ctx.translate(ctx.localeOf(url, req)), form).messages
         } else if (req.method !== 'GET') return text('GET or POST', { status: 405 })
         const rows = (await ctx.call('account.listClosePeriods', {}, url, req)) as AnyRow[]
-        return adminPage(ctx, url, req, {
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.close.title',
           body: async (_, frame) => {
             const search = await rowListSearch(ctx, url, req, {
@@ -3104,23 +3759,40 @@ export default defineModule({
         if (req.method === 'POST') {
           if (crossSite(req)) return text('Forbidden', { status: 403 })
           const form = await readForm(req)
+          // Closing reads the evidence too, so both start from what the standard says now.
+          if (!['reopen', 'controls'].includes(String(form.action)))
+            await syncLocalEvidence(ctx, params.id!, url, req)
+          // Each ticked box posts its own name: kind.<kind> and poster.<user id>.
+          const ticked = (prefix: string) =>
+            Object.keys(form)
+              .filter((key) => key.startsWith(prefix) && form[key])
+              .map((key) => key.slice(prefix.length))
           const name =
-            form.action === 'refresh'
-              ? 'account.refreshClosePeriod'
-              : form.action === 'reopen'
-                ? 'account.reopenClosePeriod'
-                : 'account.closePeriod'
+            form.action === 'controls'
+              ? 'account.setClosePeriodControls'
+              : form.action === 'refresh'
+                ? 'account.refreshClosePeriod'
+                : form.action === 'reopen'
+                  ? 'account.reopenClosePeriod'
+                  : 'account.closePeriod'
           const args =
-            form.action === 'refresh'
-              ? { id: params.id }
-              : form.action === 'reopen'
-                ? { id: params.id, expectedRevision: Number(form.expectedRevision), reason: form.reason }
-                : {
-                    id: params.id,
-                    mode: form.mode || 'soft',
-                    expectedRevision: Number(form.expectedRevision),
-                    reason: form.reason,
-                  }
+            form.action === 'controls'
+              ? {
+                  id: params.id,
+                  lockedKinds: ticked('kind.'),
+                  softPosters: ticked('poster.'),
+                  expectedRevision: Number(form.expectedRevision),
+                }
+              : form.action === 'refresh'
+                ? { id: params.id }
+                : form.action === 'reopen'
+                  ? { id: params.id, expectedRevision: Number(form.expectedRevision), reason: form.reason }
+                  : {
+                      id: params.id,
+                      mode: form.mode || 'soft',
+                      expectedRevision: Number(form.expectedRevision),
+                      reason: form.reason,
+                    }
           const result = await ctx.call(name, args, url, req)
           if (succeeded(result)) return seeOther(`${url.pathname}${localeQuery(url)}`)
           errors = rejection(result, ctx.translate(ctx.localeOf(url, req)), form).messages
@@ -3128,17 +3800,96 @@ export default defineModule({
         const result = (await ctx.call('account.getClosePeriod', { id: params.id }, url, req)) as {
           period: AnyRow | null
           steps: AnyRow[]
+          evidence?: AnyRow[]
         }
         if (!result.period) return text('Not found', { status: 404 })
-        return adminPage(ctx, url, req, {
+        // Only whoever may set the controls gets the form; everyone reads the people it names.
+        const mayControl = await ctx.allows('account.setClosePeriodControls', url, req)
+        const named = Array.isArray(result.period.softPosters) ? result.period.softPosters.map(String) : []
+        const people =
+          mayControl || named.length
+            ? (
+                await optionalRead<AnyRow[]>(
+                  ctx,
+                  'user.listUsers',
+                  mayControl ? {} : { ids: named, includeArchived: true },
+                  url,
+                  req,
+                  [],
+                )
+              ).map((row) => ({ id: String(row.id), name: String(row.name ?? row.login ?? row.id) }))
+            : []
+        const controls = mayControl ? { users: people } : null
+        const countWarnings = await optionalRead<AnyRow[]>(
+          ctx,
+          'stock.getCountSettlementWarning',
+          { dateTo: result.period.dateTo },
+          url,
+          req,
+          [],
+        )
+        const countLinks = countWarnings.map((row) => {
+          const target = new URL('/admin/stock/counts', url)
+          for (const key of ['lang', 'company', 'branch'])
+            if (url.searchParams.has(key)) target.searchParams.set(key, url.searchParams.get(key)!)
+          target.searchParams.set('record', `stock.countSession:${String(row.id)}`)
+          return { name: String(row.name), href: `${target.pathname}${target.search}` }
+        })
+        const from = String(result.period.dateFrom).slice(0, 10)
+        const to = String(result.period.dateTo).slice(0, 10)
+        const trialBalance = new URL('/admin/accounting/trial-balance', url)
+        trialBalance.searchParams.set('dateFrom', from)
+        trialBalance.searchParams.set('dateTo', to)
+        const lang = url.searchParams.get('lang')
+        if (lang) trialBalance.searchParams.set('lang', lang)
+        const [listsMoves, readsTrialBalance] = await Promise.all([
+          ctx.allows('account.listMoves', url, req),
+          ctx.allows('account.trialBalance', url, req),
+        ])
+        const links = {
+          ...(listsMoves
+            ? {
+                drafts: {
+                  customerInvoices: draftsInPeriodHref(
+                    customerInvoiceListSearch,
+                    '/admin/accounting/customer-invoices',
+                    url,
+                    from,
+                    to,
+                  ),
+                  vendorBills: draftsInPeriodHref(
+                    vendorBillListSearch,
+                    '/admin/accounting/vendor-bills',
+                    url,
+                    from,
+                    to,
+                  ),
+                  entries: draftsInPeriodHref(
+                    journalEntryListSearch,
+                    '/admin/accounting/entries',
+                    url,
+                    from,
+                    to,
+                  ),
+                },
+              }
+            : {}),
+          ...(readsTrialBalance ? { trialBalance: `${trialBalance.pathname}${trialBalance.search}` } : {}),
+        }
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.close.title',
           body: (_, frame) =>
             periodCloseDetailScreen(_, {
               frame,
               period: result.period!,
+              countWarnings: countLinks,
               steps: result.steps,
+              evidence: result.evidence ?? [],
               action: `${url.pathname}${localeQuery(url)}`,
               errors,
+              controls,
+              people,
+              links,
             }),
         })
       },
@@ -3152,54 +3903,57 @@ export default defineModule({
         const accountId = url.searchParams.get('accountId') ?? ''
         const journalId = url.searchParams.get('journalId') ?? ''
         const partnerId = url.searchParams.get('partnerId') ?? ''
-        const [accounts, journals, companies, result] = (await Promise.all([
-          ctx.call('account.listAccounts', {}, url, req),
+        const read = (account: string) =>
+          ctx.call(
+            'account.accountingBook',
+            {
+              book,
+              dateFrom,
+              dateTo,
+              ...(account ? { accountId: account } : {}),
+              ...(journalId ? { journalId } : {}),
+              ...(partnerId ? { partnerId } : {}),
+            },
+            url,
+            req,
+          ) as Promise<AnyRow>
+        const [journals, companies, asked] = (await Promise.all([
           ctx.call('account.listJournals', {}, url, req),
           ctx.call('company.listCompanies', {}, url, req),
-          dateFrom && dateTo
-            ? ctx.call(
-                'account.accountingBook',
-                {
-                  book,
-                  dateFrom,
-                  dateTo,
-                  ...(accountId ? { accountId } : {}),
-                  ...(journalId ? { journalId } : {}),
-                  ...(partnerId ? { partnerId } : {}),
-                },
-                url,
-                req,
-              )
-            : Promise.resolve(null),
-        ])) as [AnyRow[], AnyRow[], AnyRow[], AnyRow | null]
-        return adminPage(ctx, url, req, {
+          dateFrom && dateTo ? read(accountId) : Promise.resolve(null),
+        ])) as [AnyRow[], AnyRow[], AnyRow | null]
+        // Switching from the cash book to the bank book carries the cash account
+        // along in the form. The book is not kept for it, so the book opens on its
+        // own first account instead of refusing a choice nobody made for it.
+        const outside = (asked?.errors as Issue[] | undefined)?.some(
+          (issue) => issue.code === 'account.error.accountBookAccountOutside',
+        )
+        const result = outside && accountId ? await read('') : asked
+        const failed = Boolean(result?.errors)
+        const rows = failed ? [] : ((result?.rows as AnyRow[] | undefined) ?? [])
+        if (url.searchParams.get('format') === 'csv' && result && !failed) {
+          return bookCsv(ctx.translate(ctx.localeOf(url, req)), result, rows)
+        }
+        const csv = new URL(url)
+        csv.searchParams.set('format', 'csv')
+        if (result?.accountId) csv.searchParams.set('accountId', String(result.accountId))
+        const accountChoices = (result?.accounts as AnyRow[] | undefined) ?? []
+        const partnerChoices = (result?.partners as AnyRow[] | undefined) ?? []
+        return accountingPage(ctx, url, req, {
           title: 'account_backend.books.title',
           body: (_, frame) =>
             accountingBooksScreen(_, {
               frame,
               action: url.pathname,
-              result: result?.errors ? undefined : (result ?? undefined),
+              result: failed ? undefined : (result ?? undefined),
               currency: currencyOf(companies, frame),
               errors: (result?.errors as Issue[] | undefined)?.map((issue) =>
                 issue.code ? _(issue.code) : String(issue.message),
               ),
               entryHref: (row) =>
                 `/admin/accounting/entries/${encodeURIComponent(String(row.moveId))}${localeQuery(url)}`,
+              csvHref: `${csv.pathname}${csv.search}`,
               fields: [
-                {
-                  name: 'book',
-                  label: _('account_backend.books.book'),
-                  type: 'select',
-                  value: book,
-                  options: [
-                    'general_journal',
-                    'general_ledger',
-                    'account_detail',
-                    'cash',
-                    'bank',
-                    'partner',
-                  ].map((value) => ({ value, label: _(`account_backend.books.${value}`) })),
-                },
                 {
                   name: 'dateFrom',
                   label: _('account_backend.field.dateFrom'),
@@ -3215,12 +3969,35 @@ export default defineModule({
                   required: true,
                 },
                 {
-                  name: 'accountId',
-                  label: _('account_backend.field.accountId'),
+                  name: 'book',
+                  label: _('account_backend.books.book'),
                   type: 'select',
-                  value: accountId,
-                  options: choices(accounts, true),
+                  value: book,
+                  options: [
+                    'general_journal',
+                    'general_ledger',
+                    'account_detail',
+                    'cash',
+                    'bank',
+                    'partner',
+                  ].map((value) => ({ value, label: _(`account_backend.books.${value}`) })),
                 },
+                // Only the accounts this book is kept for, once the book has been read.
+                ...(book !== 'general_journal' && accountChoices.length
+                  ? [
+                      {
+                        name: 'accountId',
+                        label: _('account_backend.field.accountId'),
+                        type: 'select' as const,
+                        value: String(result?.accountId ?? ''),
+                        help: _('account_backend.books.accountHint'),
+                        options: accountChoices.map((account) => ({
+                          value: String(account.id),
+                          label: `${account.code} · ${account.name}`,
+                        })),
+                      },
+                    ]
+                  : []),
                 {
                   name: 'journalId',
                   label: _('account_backend.field.journalId'),
@@ -3228,12 +4005,23 @@ export default defineModule({
                   value: journalId,
                   options: choices(journals, true),
                 },
-                {
-                  name: 'partnerId',
-                  label: _('account_backend.field.partnerId'),
-                  value: partnerId,
-                  help: _('account_backend.books.partnerHint'),
-                },
+                ...(book === 'partner' && result && !failed
+                  ? [
+                      {
+                        name: 'partnerId',
+                        label: _('account_backend.field.partnerId'),
+                        type: 'select' as const,
+                        value: partnerId,
+                        options: [
+                          { value: '', label: _('account_backend.books.allPartners') },
+                          ...partnerChoices.map((partner) => ({
+                            value: String(partner.id),
+                            label: String(partner.name),
+                          })),
+                        ],
+                      },
+                    ]
+                  : []),
               ],
             }),
         })
@@ -3256,10 +4044,13 @@ const vi: Record<string, string> = {
   'menu.entries': 'Bút toán',
   'menu.payments': 'Thanh toán',
   'menu.reporting': 'Báo cáo',
-  'menu.trialBalance': 'Bảng cân đối thử',
+  'menu.trialBalance': 'Bảng cân đối phát sinh',
   'menu.generalLedger': 'Sổ cái',
   'menu.partnerStatement': 'Sổ đối tác',
   'menu.configuration': 'Cấu hình',
+  'menu.group.documents': 'Chứng từ & công nợ',
+  'menu.group.treasury': 'Tiền & ngân hàng',
+  'menu.group.ledger': 'Sổ sách & kỳ kế toán',
   'menu.accounts': 'Hệ thống tài khoản',
   'menu.journals': 'Sổ nhật ký',
   'menu.taxes': 'Thuế',
@@ -3279,16 +4070,77 @@ const vi: Record<string, string> = {
   'opening.sourceName': 'Tên nguồn',
   'opening.controlDebit': 'Tổng Nợ kiểm soát',
   'opening.controlCredit': 'Tổng Có kiểm soát',
-  'opening.linesJson': 'Các dòng nguồn (JSON)',
-  'opening.linesJsonHint':
-    'Mỗi dòng cần sourceKey, accountId, description và đúng một số tiền debit hoặc credit.',
-  'opening.linesInvalid': 'JSON dòng nguồn không hợp lệ.',
+  'opening.sourceLines': 'Các dòng nguồn',
+  'opening.sourceKey': 'Mã dòng nguồn',
+  'opening.linesHint':
+    'Mỗi dòng một tài khoản: mã dòng nguồn, tài khoản, nội dung và đúng một số tiền Nợ hoặc Có. Dán được từ bảng tính.',
+  'opening.linesInvalid': 'Không đọc được các dòng nguồn. Tải lại trang rồi nhập lại.',
   'opening.validate': 'Kiểm tra dữ liệu',
   'opening.control': 'Đối chiếu số dư',
   'opening.controlHint': 'Mỗi dòng mở được về tài khoản và chứng từ nguồn.',
   'opening.openEntry': 'Mở bút toán',
   'opening.post': 'Ghi sổ số dư',
   'opening.postHint': 'Sau khi ghi sổ, mọi chỉnh sửa phải thực hiện bằng bút toán đảo.',
+  'menu.auditLog': 'Nhật ký kiểm toán',
+  'audit.title': 'Nhật ký kiểm toán',
+  'audit.when': 'Thời điểm',
+  'audit.day': 'Ngày thực hiện',
+  'audit.actor': 'Người thực hiện',
+  'audit.action': 'Thao tác',
+  'audit.subject': 'Đối tượng',
+  'audit.subjectType': 'Loại đối tượng',
+  'audit.reason': 'Lý do',
+  'audit.related': 'Chứng từ liên quan',
+  'audit.details': 'Chi tiết',
+  'audit.noDetails': 'Sự kiện này không ghi thêm chi tiết.',
+  'audit.changes': 'Trường thay đổi',
+  'audit.field': 'Trường',
+  'audit.before': 'Trước',
+  'audit.after': 'Sau',
+  'audit.system': 'Hệ thống',
+  'audit.close': 'Đóng',
+  'audit.notFound': 'Không tìm thấy sự kiện kiểm toán.',
+  'audit.empty': 'Chưa có sự kiện nào',
+  'audit.emptyHint': 'Mỗi lần ghi sổ hoặc đảo bút toán sẽ được ghi vào đây.',
+  'audit.summary.total': 'Tổng',
+  'audit.summary.posted': 'Ghi sổ',
+  'audit.summary.reversed': 'Đảo',
+  'audit.detail.journalId': 'Sổ nhật ký',
+  'audit.detail.name': 'Số chứng từ',
+  'audit.detail.moneyPolicyVersion': 'Phiên bản quy tắc làm tròn',
+  'audit.detail.originalId': 'Bút toán gốc',
+  'audit.detail.reversalId': 'Bút toán đảo',
+  'audit.detail.replacementId': 'Bút toán thay thế',
+  'auditAction.posted': 'Ghi sổ',
+  'auditAction.reversed': 'Đảo bút toán',
+  'auditAction.controlsChanged': 'Đổi khóa kỳ',
+  'auditAction.updated': 'Sửa',
+  'auditSubject.move': 'Chứng từ',
+  'auditSubject.closePeriod': 'Đóng kỳ',
+  'auditSubject.account': 'Tài khoản',
+  'auditSubject.journal': 'Sổ nhật ký',
+  'auditSubject.tax': 'Thuế',
+  'auditSubject.paymentTerm': 'Điều khoản thanh toán',
+  'auditSubject.defaults': 'Tài khoản mặc định',
+  'menu.nettings': 'Bù trừ công nợ',
+  'netting.title': 'Bù trừ công nợ',
+  'netting.choose': 'Đối tác và số tiền',
+  'netting.amount': 'Số tiền bù trừ',
+  'netting.amountHint': 'Để trống để bù hết bên nhỏ hơn.',
+  'netting.preview': 'Xem phân bổ',
+  'netting.receivables': 'Phải thu được bù',
+  'netting.payables': 'Phải trả được bù',
+  'netting.document': 'Chứng từ',
+  'netting.due': 'Hạn thanh toán',
+  'netting.open': 'Còn mở',
+  'netting.applied': 'Bù trừ',
+  'netting.post': 'Ghi sổ bù trừ',
+  'netting.chooseJournal': 'Chọn sổ nhật ký rồi bấm Xem phân bổ để ghi sổ.',
+  'netting.postHint':
+    'Bù {amount} (tối đa {available}): một bút toán Nợ phải trả / Có phải thu, đối trừ vào từng chứng từ trên.',
+  'netting.empty': 'Chưa có đối tác nào để bù trừ.',
+  'netting.emptyHint':
+    'Bù trừ chỉ dùng cho đối tác vừa còn nợ công ty vừa còn được công ty nợ trên chứng từ đã ghi sổ.',
   'close.title': 'Đóng kỳ kế toán',
   'close.summary': 'Số kỳ',
   'close.create': 'Tạo kỳ đóng sổ',
@@ -3304,9 +4156,25 @@ const vi: Record<string, string> = {
   'close.checklist': 'Checklist đóng kỳ',
   'close.checklistHint': 'Mỗi bước giữ checksum bằng chứng để có thể kiểm toán lại.',
   'close.refresh': 'Chạy lại kiểm tra',
+  'close.controls': 'Khóa theo loại và người còn được ghi sổ',
+  'close.controlsHint':
+    'Khi kỳ còn mở, loại chứng từ được chọn không ghi sổ được vào ngày của kỳ. Khi khóa mềm, chỉ những người được chọn còn ghi sổ được. Bút toán kết chuyển kết quả vẫn ghi được. Chỉ kế toán trưởng thay đổi được mục này.',
+  'close.lockedKinds': 'Khóa trước',
+  'close.softPosters': 'Còn được ghi sổ khi khóa mềm',
+  'close.softPostersHint': 'Thường là kế toán trưởng, để ghi các bút toán điều chỉnh cuối kỳ.',
+  'close.saveControls': 'Lưu khóa kỳ',
+  'close.noControls': 'Chưa đặt',
+  'close.kind.invoices': 'Hóa đơn bán',
+  'close.kind.bills': 'Hóa đơn mua',
+  'close.kind.payments': 'Thu chi',
+  'close.kind.entries': 'Bút toán và chứng từ khác',
   'close.check': 'Kiểm tra',
   'close.required': 'Bắt buộc',
   'close.evidence': 'Bằng chứng',
+  'close.drafts.customerInvoices': '{count} hoá đơn khách hàng còn nháp',
+  'close.drafts.vendorBills': '{count} hoá đơn nhà cung cấp còn nháp',
+  'close.drafts.entries': '{count} bút toán còn nháp',
+  'close.openTrialBalance': 'Mở bảng cân đối phát sinh cùng kỳ',
   'close.actions': 'Kiểm soát kỳ',
   'close.actionsHint': 'Khóa mềm có thể mở lại với lý do; khóa cứng là vĩnh viễn.',
   'close.soft': 'Khóa mềm',
@@ -3317,9 +4185,9 @@ const vi: Record<string, string> = {
   'close.check.localization_evidence': 'Bằng chứng chuẩn kế toán đang dùng',
   'close.check.bank_reconciled': 'Đối chiếu ngân hàng',
   'close.check.inventory_closed': 'Đóng kho',
+  'close.countWarning': '13811/33811 còn số dư từ kiểm kê',
   'close.check.assets_tied_out': 'Đối chiếu tài sản',
   'books.title': 'Sổ kế toán',
-  'books.subtitle': 'Sổ trung lập quốc gia với số đầu kỳ, phát sinh và số cuối kỳ chính xác.',
   'books.filter': 'Phạm vi sổ',
   'books.filterHint': 'Chọn loại sổ, kỳ và chiều phân tích cần thiết.',
   'books.result': 'Dòng sổ',
@@ -3328,7 +4196,16 @@ const vi: Record<string, string> = {
   'books.opening': 'Đầu kỳ',
   'books.closing': 'Cuối kỳ',
   'books.running': 'Số dư lũy kế',
-  'books.partnerHint': 'Mã đối tác là bắt buộc với sổ đối tác.',
+  'books.contra': 'TK đối ứng',
+  'books.accountHint':
+    'Sổ chỉ cho chọn tài khoản nó được mở cho. Chưa chọn thì sổ mở tài khoản đầu tiên có phát sinh trong kỳ.',
+  'books.allPartners': 'Mọi đối tác',
+  'books.form': 'Mẫu số {form}',
+  'books.csv': 'Tải CSV',
+  'books.documentNumber': 'Số chứng từ',
+  'books.documentDate': 'Ngày chứng từ',
+  'books.description': 'Diễn giải',
+  'books.total': 'Cộng số phát sinh',
   'books.general_journal': 'Sổ nhật ký chung',
   'books.general_ledger': 'Sổ cái',
   'books.account_detail': 'Sổ chi tiết tài khoản',
@@ -3344,6 +4221,11 @@ const vi: Record<string, string> = {
   'wave1.state.complete': 'Hoàn tất',
   'wave1.state.blocked': 'Bị chặn',
   'wave1.state.pending': 'Chờ xử lý',
+  'wave1.state.passed': 'Đã đạt',
+  'close.advised': 'Nên xử lý',
+  'close.localEvidence': 'Bằng chứng theo chuẩn kế toán',
+  'close.localEvidenceHint':
+    'Mỗi mục do chuẩn kế toán đang dùng cung cấp. Bấm Chạy lại kiểm tra để cập nhật.',
   'field.accountingDate': 'Ngày hạch toán',
   'field.reason': 'Lý do',
   'defaults.title': 'Tài khoản mặc định',
@@ -3352,6 +4234,9 @@ const vi: Record<string, string> = {
   'defaults.summary.categories': 'Nhóm đã cấu hình',
   'defaults.company.title': 'Mặc định của công ty',
   'defaults.company.hint': 'Dùng khi nhóm sản phẩm và đối tác không có cấu hình riêng.',
+  'defaults.pinned.title': 'Cố định theo chuẩn kế toán',
+  'defaults.pinned.hint':
+    'Chuẩn kế toán đang dùng quy định công nợ phải thu và phải trả ghi vào các tài khoản này, nên không đổi được. Muốn theo dõi riêng từng khách hàng hay nhà cung cấp, chọn đối tác trên chứng từ.',
   'defaults.category.title': 'Đặt tài khoản cho nhóm sản phẩm',
   'defaults.category.edit.title': 'Sửa tài khoản của nhóm sản phẩm',
   'defaults.category.hint': 'Nhóm sản phẩm quyết định tài khoản doanh thu và chi phí cho hàng thuộc nhóm đó.',
@@ -3550,9 +4435,21 @@ const vi: Record<string, string> = {
   'payment.list.hint': 'Theo dõi chiều thanh toán, giá trị và trạng thái ghi sổ.',
   'payment.empty': 'Chưa có thanh toán',
   'payment.emptyHint': 'Ghi nhận khoản thu hoặc chi đầu tiên để bắt đầu theo dõi dòng tiền.',
-  'trialBalance.title': 'Bảng cân đối thử',
+  'trialBalance.title': 'Bảng cân đối phát sinh',
+  'trial.column.openingDebit': 'Nợ đầu kỳ',
+  'trial.column.openingCredit': 'Có đầu kỳ',
+  'trial.column.debit': 'Phát sinh Nợ',
+  'trial.column.credit': 'Phát sinh Có',
+  'trial.column.closingDebit': 'Nợ cuối kỳ',
+  'trial.column.closingCredit': 'Có cuối kỳ',
+  'trial.summary.check': 'Kiểm tra Nợ = Có',
+  'trial.summary.balanced': 'Khớp ở cả ba cặp cột',
+  'trial.summary.unbalanced': 'Lệch',
+  'trial.result.hidden': 'Đang ẩn {count} tài khoản không có số dư và không phát sinh.',
+  'trial.result.all': 'Đang hiện mọi tài khoản, kể cả tài khoản không có số liệu.',
+  'trial.showAll': 'Hiện cả {count} tài khoản đang ẩn',
+  'trial.hideEmpty': 'Ẩn tài khoản không có số liệu',
   'trial.kicker': 'Báo cáo sổ cái',
-  'trial.subtitle': 'Đối chiếu tổng phát sinh Nợ và Có theo tài khoản trong kỳ.',
   'trial.summary.debit': 'Tổng Nợ',
   'trial.summary.credit': 'Tổng Có',
   'trial.summary.balance': 'Chênh lệch',
@@ -3565,7 +4462,6 @@ const vi: Record<string, string> = {
   'trial.emptyHint': 'Thay đổi khoảng ngày hoặc ghi sổ các bút toán trước khi tính lại.',
   'generalLedger.title': 'Sổ cái',
   'ledger.kicker': 'Chi tiết sổ cái',
-  'ledger.subtitle': 'Theo dõi phát sinh Nợ và Có của từng tài khoản theo kỳ.',
   'ledger.summary.lines': 'Dòng bút toán',
   'ledger.summary.debit': 'Tổng Nợ',
   'ledger.summary.credit': 'Tổng Có',
@@ -3575,12 +4471,11 @@ const vi: Record<string, string> = {
   'ledger.filter.accountError': 'Tài khoản đã chọn không còn khả dụng. Hãy xóa bộ lọc tài khoản.',
   'ledger.search': 'Tìm theo bút toán, tài khoản hoặc nội dung…',
   'ledger.result.title': 'Chi tiết phát sinh',
-  'ledger.result.hint': 'Mỗi dòng liên kết phát sinh với bút toán và ngày ghi sổ.',
+  'ledger.result.hint': 'Mỗi dòng liên kết phát sinh với bút toán và ngày hạch toán.',
   'ledger.empty': 'Không có phát sinh phù hợp',
   'ledger.emptyHint': 'Thay đổi tài khoản hoặc khoảng ngày để xem dữ liệu khác.',
   'partnerStatement.title': 'Sổ đối tác',
   'partnerLedger.kicker': 'Công nợ đối tác',
-  'partnerLedger.subtitle': 'Theo dõi phát sinh phải thu, phải trả và số còn lại theo đối tác.',
   'partnerLedger.summary.debit': 'Tổng Nợ',
   'partnerLedger.summary.credit': 'Tổng Có',
   'partnerLedger.summary.residual': 'Còn lại',
@@ -3602,6 +4497,7 @@ const vi: Record<string, string> = {
   'move.refused': 'Không thực hiện được',
   'move.draftTitle': 'Bút toán nháp',
   'move.collaboration': 'Trao đổi và hoạt động của chứng từ',
+  'move.fromStockPicking': 'Từ phiếu kho',
   'terms.lines': 'Số mốc thanh toán',
   'action.create': 'Tạo mới',
   'action.save': 'Lưu thay đổi',
@@ -3642,6 +4538,15 @@ const vi: Record<string, string> = {
   'field.includeBaseAmountHint':
     'Số thuế này được cộng vào cơ sở tính của các thuế đứng sau nó. Dùng cho thuế nhập khẩu, khi thuế GTGT hàng nhập khẩu tính trên giá đã gồm thuế nhập khẩu.',
   'field.sequenceHint': 'Thuế trên cùng một dòng được áp dụng theo thứ tự tăng dần của số này.',
+  'field.validFrom': 'Hiệu lực từ ngày',
+  'field.validTo': 'Hiệu lực đến ngày',
+  'field.validToHint':
+    'Chứng từ mới có ngày ngoài khoảng này không dùng được thuế. Hoá đơn giảm và bút toán đảo của kỳ cũ vẫn giữ thuế. Để trống nếu không giới hạn.',
+  'column.validity': 'Hiệu lực',
+  'validity.always': 'Không giới hạn',
+  'validity.from': 'Từ {from}',
+  'validity.to': 'Đến {to}',
+  'validity.range': '{from} – {to}',
   'field.note': 'Ghi chú',
   'field.journalId': 'Sổ nhật ký',
   'field.moveType': 'Loại chứng từ',
@@ -3656,8 +4561,11 @@ const vi: Record<string, string> = {
   'field.credit': 'Có',
   'field.residual': 'Còn lại',
   'field.invoiceDate': 'Ngày hoá đơn',
+  'field.invoiceDateDue': 'Hạn thanh toán',
+  'field.invoiceDateDueHint':
+    'Chỉ nhập khi không chọn điều khoản thanh toán, không trước ngày hoá đơn. Có điều khoản thì hạn tính theo điều khoản.',
   'field.paymentTermId': 'Điều khoản thanh toán',
-  'field.productId': 'ID biến thể',
+  'field.productId': 'Sản phẩm',
   'field.productUomId': 'ID đơn vị',
   'field.quantity': 'Số lượng',
   'field.priceUnit': 'Đơn giá',
@@ -3724,6 +4632,9 @@ const en: Record<string, string> = {
   'menu.generalLedger': 'General ledger',
   'menu.partnerStatement': 'Partner ledger',
   'menu.configuration': 'Configuration',
+  'menu.group.documents': 'Documents & balances',
+  'menu.group.treasury': 'Cash & bank',
+  'menu.group.ledger': 'Books & periods',
   'menu.accounts': 'Chart of accounts',
   'menu.journals': 'Journals',
   'menu.taxes': 'Taxes',
@@ -3813,16 +4724,77 @@ const en: Record<string, string> = {
   'opening.sourceName': 'Source name',
   'opening.controlDebit': 'Control debit',
   'opening.controlCredit': 'Control credit',
-  'opening.linesJson': 'Source rows (JSON)',
-  'opening.linesJsonHint':
-    'Each row needs sourceKey, accountId, description, and exactly one debit or credit amount.',
-  'opening.linesInvalid': 'The source-row JSON is invalid.',
+  'opening.sourceLines': 'Source rows',
+  'opening.sourceKey': 'Source key',
+  'opening.linesHint':
+    'One row per account: source key, account, label and exactly one debit or credit. Pasting from a spreadsheet works.',
+  'opening.linesInvalid': 'The source rows could not be read. Reload the page and enter them again.',
   'opening.validate': 'Validate data',
   'opening.control': 'Balance control',
   'opening.controlHint': 'Every row remains drillable to its account and source entry.',
   'opening.openEntry': 'Open journal entry',
   'opening.post': 'Post opening balances',
   'opening.postHint': 'After posting, corrections use a reversal entry.',
+  'menu.auditLog': 'Audit log',
+  'audit.title': 'Audit log',
+  'audit.when': 'When',
+  'audit.day': 'Day',
+  'audit.actor': 'By',
+  'audit.action': 'Action',
+  'audit.subject': 'Record',
+  'audit.subjectType': 'Record type',
+  'audit.reason': 'Reason',
+  'audit.related': 'Related document',
+  'audit.details': 'Details',
+  'audit.noDetails': 'This event records no further details.',
+  'audit.changes': 'Changed fields',
+  'audit.field': 'Field',
+  'audit.before': 'Before',
+  'audit.after': 'After',
+  'audit.system': 'System',
+  'audit.close': 'Close',
+  'audit.notFound': 'Audit event not found.',
+  'audit.empty': 'No events yet',
+  'audit.emptyHint': 'Every posting and every reversal is recorded here.',
+  'audit.summary.total': 'Total',
+  'audit.summary.posted': 'Posted',
+  'audit.summary.reversed': 'Reversed',
+  'audit.detail.journalId': 'Journal',
+  'audit.detail.name': 'Document number',
+  'audit.detail.moneyPolicyVersion': 'Rounding policy version',
+  'audit.detail.originalId': 'Original entry',
+  'audit.detail.reversalId': 'Reversal entry',
+  'audit.detail.replacementId': 'Replacement entry',
+  'auditAction.posted': 'Posted',
+  'auditAction.reversed': 'Reversed',
+  'auditAction.controlsChanged': 'Period locks changed',
+  'auditAction.updated': 'Edited',
+  'auditSubject.move': 'Document',
+  'auditSubject.closePeriod': 'Period close',
+  'auditSubject.account': 'Account',
+  'auditSubject.journal': 'Journal',
+  'auditSubject.tax': 'Tax',
+  'auditSubject.paymentTerm': 'Payment term',
+  'auditSubject.defaults': 'Default accounts',
+  'menu.nettings': 'Netting',
+  'netting.title': 'Netting',
+  'netting.choose': 'Partner and amount',
+  'netting.amount': 'Amount to net',
+  'netting.amountHint': 'Leave empty to net the whole smaller side.',
+  'netting.preview': 'Preview allocation',
+  'netting.receivables': 'Receivables netted',
+  'netting.payables': 'Payables netted',
+  'netting.document': 'Document',
+  'netting.due': 'Due date',
+  'netting.open': 'Open',
+  'netting.applied': 'Netted',
+  'netting.post': 'Post netting',
+  'netting.chooseJournal': 'Pick a journal, then click Preview allocation to post.',
+  'netting.postHint':
+    'Net {amount} (at most {available}): one entry debiting payables and crediting receivables, matched against each document above.',
+  'netting.empty': 'No partner to net yet.',
+  'netting.emptyHint':
+    'Netting is for a partner who both owes the company and is owed by it on posted documents.',
   'close.title': 'Accounting period close',
   'close.summary': 'Close periods',
   'close.create': 'Create close period',
@@ -3838,9 +4810,25 @@ const en: Record<string, string> = {
   'close.checklist': 'Close checklist',
   'close.checklistHint': 'Every step retains an evidence checksum for later audit.',
   'close.refresh': 'Refresh checks',
+  'close.controls': 'Locks by kind and who may still post',
+  'close.controlsHint':
+    'While the period is open, the kinds you pick cannot be posted on its dates. Once it is soft closed, only the people you pick may still post. The result transfer still posts. Only the chief accountant can change this.',
+  'close.lockedKinds': 'Locked ahead',
+  'close.softPosters': 'May still post once soft closed',
+  'close.softPostersHint': 'Usually the chief accountant, for the period-end adjustments.',
+  'close.saveControls': 'Save period locks',
+  'close.noControls': 'Not set',
+  'close.kind.invoices': 'Customer invoices',
+  'close.kind.bills': 'Vendor bills',
+  'close.kind.payments': 'Payments',
+  'close.kind.entries': 'Entries and other documents',
   'close.check': 'Check',
   'close.required': 'Required',
   'close.evidence': 'Evidence',
+  'close.drafts.customerInvoices': '{count} customer invoices still in draft',
+  'close.drafts.vendorBills': '{count} vendor bills still in draft',
+  'close.drafts.entries': '{count} journal entries still in draft',
+  'close.openTrialBalance': 'Open the trial balance for this period',
   'close.actions': 'Period control',
   'close.actionsHint': 'A soft lock can reopen with a reason; a hard lock is permanent.',
   'close.soft': 'Soft close',
@@ -3851,9 +4839,9 @@ const en: Record<string, string> = {
   'close.check.localization_evidence': 'Installed-standard evidence',
   'close.check.bank_reconciled': 'Bank reconciliation',
   'close.check.inventory_closed': 'Inventory close',
+  'close.countWarning': '13811/33811 still have balances from stock counts',
   'close.check.assets_tied_out': 'Asset tie-out',
   'books.title': 'Accounting books',
-  'books.subtitle': 'Jurisdiction-neutral books with exact opening, movement, and closing controls.',
   'books.filter': 'Book scope',
   'books.filterHint': 'Choose the book, period, and required analysis dimensions.',
   'books.result': 'Book rows',
@@ -3862,7 +4850,16 @@ const en: Record<string, string> = {
   'books.opening': 'Opening',
   'books.closing': 'Closing',
   'books.running': 'Running balance',
-  'books.partnerHint': 'A partner id is required for the partner book.',
+  'books.contra': 'Contra account',
+  'books.accountHint':
+    'A book offers only the accounts it is kept for. Left empty, it opens the first account with movement in the period.',
+  'books.allPartners': 'All partners',
+  'books.form': 'Form {form}',
+  'books.csv': 'Download CSV',
+  'books.documentNumber': 'Document number',
+  'books.documentDate': 'Document date',
+  'books.description': 'Description',
+  'books.total': 'Period totals',
   'books.general_journal': 'General journal',
   'books.general_ledger': 'General ledger',
   'books.account_detail': 'Account detail',
@@ -3878,6 +4875,11 @@ const en: Record<string, string> = {
   'wave1.state.complete': 'Complete',
   'wave1.state.blocked': 'Blocked',
   'wave1.state.pending': 'Pending',
+  'wave1.state.passed': 'Met',
+  'close.advised': 'Advised',
+  'close.localEvidence': 'Accounting standard evidence',
+  'close.localEvidenceHint':
+    'Each item comes from the accounting standard in use. Click Refresh checks to update it.',
   'field.accountingDate': 'Accounting date',
   'field.reason': 'Reason',
   'defaults.title': 'Default accounts',
@@ -3886,6 +4888,9 @@ const en: Record<string, string> = {
   'defaults.summary.categories': 'Configured categories',
   'defaults.company.title': 'Company defaults',
   'defaults.company.hint': 'Used when neither the product category nor the partner says otherwise.',
+  'defaults.pinned.title': 'Fixed by the accounting standard',
+  'defaults.pinned.hint':
+    'The accounting standard in use books receivables and payables to these accounts, so they cannot be changed. To follow each customer or supplier separately, pick the partner on the document.',
   'defaults.category.title': 'Set the accounts for a product category',
   'defaults.category.edit.title': 'Edit a product category',
   'defaults.category.hint': 'A category decides the revenue and expense accounts for what it holds.',
@@ -4015,8 +5020,20 @@ const en: Record<string, string> = {
   'payment.empty': 'No payments yet',
   'payment.emptyHint': 'Register the first receipt or disbursement to start tracking cash flow.',
   'trialBalance.title': 'Trial balance',
+  'trial.column.openingDebit': 'Opening debit',
+  'trial.column.openingCredit': 'Opening credit',
+  'trial.column.debit': 'Debits in period',
+  'trial.column.credit': 'Credits in period',
+  'trial.column.closingDebit': 'Closing debit',
+  'trial.column.closingCredit': 'Closing credit',
+  'trial.summary.check': 'Debits equal credits',
+  'trial.summary.balanced': 'Equal in all three pairs',
+  'trial.summary.unbalanced': 'Not equal',
+  'trial.result.hidden': '{count} accounts with no balance and no movement are hidden.',
+  'trial.result.all': 'Every account is shown, including those with nothing to report.',
+  'trial.showAll': 'Show the {count} hidden accounts',
+  'trial.hideEmpty': 'Hide accounts with nothing to report',
   'trial.kicker': 'General ledger report',
-  'trial.subtitle': 'Reconcile total debits and credits by account for the period.',
   'trial.summary.debit': 'Total debit',
   'trial.summary.credit': 'Total credit',
   'trial.summary.balance': 'Difference',
@@ -4029,7 +5046,6 @@ const en: Record<string, string> = {
   'trial.emptyHint': 'Change the dates or post journal entries before recalculating.',
   'generalLedger.title': 'General ledger',
   'ledger.kicker': 'Ledger detail',
-  'ledger.subtitle': 'Track debit and credit movements by account and period.',
   'ledger.summary.lines': 'Journal items',
   'ledger.summary.debit': 'Total debit',
   'ledger.summary.credit': 'Total credit',
@@ -4044,7 +5060,6 @@ const en: Record<string, string> = {
   'ledger.emptyHint': 'Change the account or date range to view other data.',
   'partnerStatement.title': 'Partner ledger',
   'partnerLedger.kicker': 'Partner receivables and payables',
-  'partnerLedger.subtitle': 'Track receivable, payable, and residual movements by partner.',
   'partnerLedger.summary.debit': 'Total debit',
   'partnerLedger.summary.credit': 'Total credit',
   'partnerLedger.summary.residual': 'Residual',
@@ -4067,6 +5082,7 @@ const en: Record<string, string> = {
   'move.refused': 'That did not go through',
   'move.draftTitle': 'Draft entry',
   'move.collaboration': 'Document conversation and activities',
+  'move.fromStockPicking': 'From stock transfer',
   'terms.lines': 'Due milestones',
   'action.create': 'Create',
   'action.save': 'Save changes',
@@ -4107,6 +5123,15 @@ const en: Record<string, string> = {
   'field.includeBaseAmountHint':
     'This tax is added to the base every later tax is computed on. Import duty uses it, so import VAT applies to the price plus the duty.',
   'field.sequenceHint': 'Taxes on one line apply in ascending order of this number.',
+  'field.validFrom': 'In effect from',
+  'field.validTo': 'In effect until',
+  'field.validToHint':
+    'New documents dated outside these dates cannot use the tax. Refunds and reversals of an earlier period keep it. Leave empty for no limit.',
+  'column.validity': 'In effect',
+  'validity.always': 'No limit',
+  'validity.from': 'From {from}',
+  'validity.to': 'Until {to}',
+  'validity.range': '{from} – {to}',
   'field.note': 'Note',
   'field.journalId': 'Journal',
   'field.moveType': 'Document type',
@@ -4121,8 +5146,11 @@ const en: Record<string, string> = {
   'field.credit': 'Credit',
   'field.residual': 'Residual',
   'field.invoiceDate': 'Invoice date',
+  'field.invoiceDateDue': 'Due date',
+  'field.invoiceDateDueHint':
+    'Only without a payment term, and not before the invoice date. With a term, the term sets the due date.',
   'field.paymentTermId': 'Payment term',
-  'field.productId': 'Variant ID',
+  'field.productId': 'Product',
   'field.productUomId': 'UoM ID',
   'field.quantity': 'Quantity',
   'field.priceUnit': 'Unit price',

@@ -199,6 +199,27 @@ async function removeRows(ctx: Ctx, model: string, column: string, ids: string[]
   return rows.length
 }
 
+async function removePresence(ctx: Ctx, kind: string, ids: string[]) {
+  const P = ctx.table('flow.DocumentPresence')
+  const leases = await ctx.db.all(
+    from(P)
+      .select(P.id)
+      .where(eq(P.companyId, ctx.scope.company), eq(P.ownerKind, kind), inArray(P.ownerId, ids))
+      .limit(WINDOW),
+  )
+  if (leases.length)
+    await ctx.db.del(
+      deleteFrom(P).where(
+        eq(P.companyId, ctx.scope.company),
+        inArray(
+          P.id,
+          leases.map((row) => row.id),
+        ),
+      ),
+    )
+  return leases.length
+}
+
 async function notificationOutboxes(ctx: Ctx, column: 'taskId' | 'projectId', ids: string[]) {
   const I = ctx.table('flow.Inbox')
   const rows = await ctx.db.all(
@@ -304,7 +325,7 @@ export function nativeDeletionJobs(
               const T = tx.table(model)
               const rows = await tx.db.all(
                 from(T)
-                  .select(T.id)
+                  .select(T.id, ...(model === 'flow.Task' ? [T.key!] : []))
                   .where(eq(T.companyId, tx.scope.company), eq(T.projectId, projectId))
                   .orderBy(asc(T.id))
                   .limit(WINDOW),
@@ -329,39 +350,25 @@ export function nativeDeletionJobs(
                 )
                 if (count) return checkpoint(child, count)
               }
-              if (model === 'flow.Task' || model === 'flow.Document') {
-                const P = tx.table('flow.DocumentPresence')
-                const leases = await tx.db.all(
-                  from(P)
-                    .select(P.id)
-                    .where(
-                      eq(P.companyId, tx.scope.company),
-                      eq(P.ownerKind, model === 'flow.Task' ? 'issue' : 'page'),
-                      inArray(P.ownerId, ids),
-                    )
-                    .limit(WINDOW),
-                )
-                if (leases.length) {
-                  await tx.db.del(
-                    deleteFrom(P).where(
-                      eq(P.companyId, tx.scope.company),
-                      inArray(
-                        P.id,
-                        leases.map((row) => row.id),
-                      ),
-                    ),
-                  )
-                  return checkpoint('flow.DocumentPresence', leases.length)
-                }
-              }
+              const presence = await removePresence(
+                tx,
+                model === 'flow.Task' ? 'issue' : model === 'flow.Document' ? 'page' : 'epic',
+                ids,
+              )
+              if (presence) return checkpoint('flow.DocumentPresence', presence)
               if (model === 'flow.Task') {
                 const incoming = await removeRows(tx, 'flow.TaskRelation', 'targetId', ids)
                 if (incoming) return checkpoint('flow.TaskRelation', incoming)
               }
               await tx.db.del(deleteFrom(T).where(eq(T.companyId, tx.scope.company), inArray(T.id, ids)))
-              for (const id of ids) forget({ company: string(tx.scope.company), kind: model, id })
+              for (const row of rows) {
+                forget({ company: string(tx.scope.company), kind: model, id: string(row.id) })
+                if (row.key) forget({ company: string(tx.scope.company), kind: model, id: string(row.key) })
+              }
               return checkpoint(model, ids.length)
             }
+            const presence = await removePresence(tx, 'project', [projectId])
+            if (presence) return checkpoint('flow.DocumentPresence', presence)
             await purge(tx, 'flow.ProjectRecord', [projectId], projectId)
             const files = await stageAttachments(tx, string(deletion.id), 'flow.ProjectRecord', [projectId])
             if (files.changed) return checkpoint('attachments', files.removed)
@@ -369,7 +376,7 @@ export function nativeDeletionJobs(
             // covers commitments referring to tasks transferred to another project.
             for (const [parent, children, column] of [
               ['flow.SprintRecord', ['flow.SprintCommitment', 'flow.SprintReport'], 'sprintId'],
-              ['flow.InternalForm', ['flow.FormResponse'], 'formId'],
+              ['flow.InternalForm', ['flow.FormResponse', 'flow.FormSchema'], 'formId'],
             ] as const) {
               const T = tx.table(parent)
               const rows = await tx.db.all(
@@ -442,6 +449,7 @@ export function nativeDeletionJobs(
                 eq(P.deletionId, deletion.id),
               ),
             )
+            forget({ company: string(tx.scope.company), kind: 'flow.ProjectRecord', id: projectId })
             const B = tx.table('flow.DeletionBlob')
             const pending = await tx.db.count(
               from(B).where(

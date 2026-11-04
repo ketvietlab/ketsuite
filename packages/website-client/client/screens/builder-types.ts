@@ -60,6 +60,8 @@ export type EntryHistory = {
   liveRevisionId?: string | null
   revisions: EntryRevision[]
   resources?: (SharedMenu | SharedTheme)[]
+  /** Menu items and other pages that link here; archiving leaves them pointing at nothing. */
+  usage?: { id: string; title: string; type: 'menu' | 'publication' | 'draft' }[]
 }
 
 /** One line of `website.diffRevisions`: a section added, removed or changed, and what changed. */

@@ -7,6 +7,7 @@ import type { NativeServerExtension } from './command.ts'
 import { owned, refuse, requireCapability, string } from './policy.ts'
 import { requiredTitle, timestamped } from './organization.ts'
 import { assignmentProjection } from './tasks.ts'
+import { requireDocumentTransport } from './rich-content.ts'
 
 const dates = (input: Row, current: Row | null) => {
   const start = input.start === undefined ? (current?.start ?? null) : input.start || null,
@@ -36,6 +37,7 @@ export async function savePlan(ctx: Ctx, input: Row, extensions: NativeServerExt
       const project = await owned(tx, 'flow.ProjectRecord', projectId)
       if (project.archived || (sprint && project.sprintCadence === null)) return refuse('archived')
       const current = old ? await owned(tx, model, old.id) : null
+      if (!sprint) requireDocumentTransport(current, input)
       if (input.projectId !== undefined && input.projectId !== projectId)
         return refuse('validation', { projectId: 'immutable' })
       if (sprint && current?.state !== undefined && current.state !== 'planned') return refuse('sprint_state')

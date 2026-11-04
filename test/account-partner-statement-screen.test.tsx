@@ -23,7 +23,6 @@ const messages: Record<string, string> = {
   'account_backend.partnerLedger.result.title': 'Partner movements',
   'account_backend.partnerLedger.select': 'No partner selected',
   'account_backend.partnerLedger.selectHint': 'Choose a partner.',
-  'account_backend.partnerLedger.subtitle': 'Track partner balances.',
   'account_backend.partnerLedger.summary.credit': 'Total credit',
   'account_backend.partnerLedger.summary.debit': 'Total debit',
   'account_backend.partnerLedger.summary.residual': 'Residual',
@@ -71,6 +70,8 @@ test('partner statement stays specialized and reports full-result totals above a
   )
 
   assert.match(html, /data-ui="record-workspace"/)
+  // A report's header carries no static lead text (design-system page header rule).
+  assert.doesNotMatch(html, /data-ui="record-subtitle"/)
   assert.doesNotMatch(
     withoutGlobalSearchDialog(html),
     /data-ui="form-page"|data-ui="modal-layer"|mail\.chatter/,

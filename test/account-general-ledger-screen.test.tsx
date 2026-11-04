@@ -21,7 +21,6 @@ const messages: Record<string, string> = {
   'account_backend.ledger.kicker': 'Ledger detail',
   'account_backend.ledger.result.hint': 'Posted journal items.',
   'account_backend.ledger.result.title': 'Account movements',
-  'account_backend.ledger.subtitle': 'Track debits and credits.',
   'account_backend.ledger.summary.credit': 'Total credit',
   'account_backend.ledger.summary.debit': 'Total debit',
   'account_backend.ledger.summary.lines': 'Journal items',
@@ -66,6 +65,8 @@ test('general ledger stays specialized and reports full-result totals above a pa
   )
 
   assert.match(html, /data-ui="record-workspace"/)
+  // A report's header carries no static lead text (design-system page header rule).
+  assert.doesNotMatch(html, /data-ui="record-subtitle"/)
   assert.match(html, /data-ui="list-page"[^>]*data-pattern="list"/)
   assert.doesNotMatch(html, /data-ui="list-page-context"|data-ui="breadcrumbs"/)
   assert.doesNotMatch(

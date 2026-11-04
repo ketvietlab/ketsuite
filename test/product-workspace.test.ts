@@ -18,6 +18,7 @@ import {
   sale,
   stock,
   uom,
+  user,
 } from '@ketvietlab/ketsuite'
 import { ketsuite } from '../apps/ketsuite/deployment.ts'
 import {
@@ -26,7 +27,7 @@ import {
   productMargin,
 } from '../packages/ketsuite/src/modules/product_backend/modal/product-workspace-context.ts'
 
-const modules = [address, partner, company, uom, product, pricing, stock, account, sale, purchase]
+const modules = [address, partner, company, user, uom, product, pricing, stock, account, sale, purchase]
 const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 const call = async <T = Row>(name: string, args: Record<string, unknown>, adapter: Adapter, at = scope) =>
@@ -258,6 +259,11 @@ test('product workspace: sales count confirmed orders of the window, in the prod
   const adapter = await boot(t)
   await adjust(adapter, 'count', '100')
   await order(adapter, 'so-units', [['2', 'unit', '100']])
+  // A line sells in the base unit or a packaging the product has (P36a).
+  assert.equal(
+    (await call<Row>('product.addTemplateUom', { templateId: 'goods', uomId: 'box' }, adapter)).ok,
+    true,
+  )
   await order(adapter, 'so-box', [['1', 'box', '540']])
   await order(adapter, 'so-draft', [['5', 'unit', '100']], false)
   await order(adapter, 'so-old', [['3', 'unit', '100']])
@@ -371,7 +377,9 @@ test('product workspace: configuring attributes writes attributes, values and va
   const active = async () => (await variants()).filter((row) => Boolean(row.active))
   assert.equal((await active()).length, 2)
   const own = (await variants()).find((row) => row.id === before[0]!.id)!
-  assert.equal(Boolean(own.active), false, 'the product\u2019s own variant rests while variants sell')
+  // The SKU that already owns stock, codes and history takes the first combination.
+  assert.equal(Boolean(own.active), true, 'the product\u2019s own SKU becomes the first combination')
+  assert.equal(own.combinationKey, small)
 
   // A value added to the line makes one more variant.
   const sizes = [
@@ -508,9 +516,16 @@ test('product workspace: duplicating copies the template’s information, never 
       description: 'Dưỡng ẩm',
       saleOk: true,
       defaultCode: 'SR-01',
-      barcode: '8930000000011',
+      barcode: '8930000000019',
     },
     adapter,
+  )
+  assert.equal(
+    Number(
+      (await adapter.all('SELECT "listPrice" FROM product_template WHERE id = ?', ['goods']))[0]?.listPrice,
+    ),
+    250,
+    'the source saved',
   )
   const copy = await call<Row>(
     'product.duplicateTemplate',
@@ -713,7 +728,7 @@ test('product workspace HTTP: the page reads what the viewer may see from the mo
     ['outOfStock', 'belowCost'],
   )
   assert.equal(admin.data.permissions.orderpoints, true)
-  assert.equal(admin.data.uomLocked, false, 'no stock yet, so the unit may still change')
+  assert.equal(admin.data.uomLocked, true, 'P18: the unit is fixed once the product exists, stock or not')
   assert.equal(admin.data.links.forecast, '/admin/stock/forecast?productId=goods%3Adefault&lang=vi')
   assert.ok(admin.messages['stock.error.orderpoint.range'], 'the min/max refusals are worded on the page')
 

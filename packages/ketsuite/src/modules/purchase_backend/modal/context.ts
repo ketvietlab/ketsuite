@@ -23,6 +23,7 @@ export const purchaseOrderContext =
       'addLine',
       'updateLine',
       'removeLine',
+      'saveLines',
       'sendRfq',
       'confirmOrder',
       'approveOrder',
@@ -38,10 +39,12 @@ export const purchaseOrderContext =
     )
     const lookup = (fn: string, input: Record<string, unknown> = {}) =>
       optionalRead<Row[]>(ctx, fn, input, url, req, [])
-    const [partners, templates, units, pickingTypes, journals, accounts, taxes] = await Promise.all([
+    const [partners, purchasable, units, pickingTypes, journals, accounts, taxes] = await Promise.all([
       lookup('partner.listPartners', { limit: 200 }),
-      permissions.addLine ? lookup('product.listTemplates', { withVariants: true, limit: 200 }) : [],
-      permissions.addLine ? lookup('uom.listUnits') : [],
+      // The line grid opens with these; it searches the rest of the catalogue as the reader types.
+      permissions.addLine ? lookup('product.listVariants', { purchaseOk: true, limit: 200 }) : [],
+      // Saved lines name their unit in the grid too.
+      permissions.addLine || permissions.saveLines ? lookup('uom.listUnits') : [],
       creating ? lookup('stock.listPickingTypes') : [],
       permissions.createVendorBill ? lookup('account.listJournals', { type: 'purchase' }) : [],
       permissions.createVendorBill ? lookup('account.listAccounts') : [],
@@ -49,14 +52,12 @@ export const purchaseOrderContext =
         ? lookup('account.listTaxes', { typeTaxUse: 'purchase' })
         : [],
     ])
-    const variants = templates
-      .filter((row) => row.purchaseOk)
-      .flatMap((template) =>
-        ((template.variants as Row[]) ?? []).map((variant) => ({
-          ...variant,
-          name: `${template.name}${variant.defaultCode ? ` · ${variant.defaultCode}` : ''}`,
-        })),
-      )
+    // A variant reads by its full name (the product's and its values), its code at the end; it
+    // carries the product's own unit, which a new line takes.
+    const variants = purchasable.map((variant) => ({
+      ...variant,
+      name: `${String(variant.displayName ?? variant.templateName)}${variant.defaultCode ? ` · ${variant.defaultCode}` : ''}`,
+    }))
     const lang = ctx.localeOf(url, req) === 'en' ? 'en' : 'vi'
     const timezone = await timezoneOf(ctx, url, req)
     const translator = ctx.translate(lang)

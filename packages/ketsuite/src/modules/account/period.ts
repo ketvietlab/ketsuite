@@ -12,6 +12,32 @@ const fieldOf: Record<PeriodLockScope, string> = {
   hard: 'hardThrough',
 }
 
+/** What a lock by kind covers; anything else that writes to the ledger is an entry. */
+export const PERIOD_LOCK_KINDS = ['invoices', 'bills', 'payments', 'entries'] as const
+export type PeriodLockKind = (typeof PERIOD_LOCK_KINDS)[number]
+
+export const lockKindOf = (moveType: unknown, journalType: unknown): PeriodLockKind => {
+  const type = String(moveType)
+  if (type.startsWith('out_')) return 'invoices'
+  if (type.startsWith('in_')) return 'bills'
+  return ['bank', 'cash'].includes(String(journalType)) ? 'payments' : 'entries'
+}
+
+/** One close period's controls, as the policy keeps them. */
+export type PeriodControl = {
+  closeId: string
+  dateFrom: string
+  dateTo: string
+  lockedKinds: PeriodLockKind[]
+  softPosters: string[]
+}
+
+export const periodControlsOf = (policy: Row): PeriodControl[] => {
+  const held = policy.periodControls
+  const list = typeof held === 'string' ? (JSON.parse(held) as unknown) : held
+  return Array.isArray(list) ? (list as PeriodControl[]) : []
+}
+
 const now = (): string => new Date().toISOString()
 const revisionOf = (row: Row): number => Number(row.revision ?? 0)
 const issue = (field: string, code: string, message: string, params?: Record<string, unknown>) => ({
@@ -22,7 +48,7 @@ const issue = (field: string, code: string, message: string, params?: Record<str
 })
 const failure = (...errors: ReturnType<typeof issue>[]) => ({ ok: false as const, errors })
 
-async function policyOf(ctx: Ctx): Promise<Row> {
+export async function policyOf(ctx: Ctx): Promise<Row> {
   await ctx.db.insertIfAbsent('account.PeriodPolicy', {
     id: 'policy',
     salesThrough: null,
@@ -48,8 +74,19 @@ async function policyOf(ctx: Ctx): Promise<Row> {
  */
 export async function claimPostingPeriod(
   ctx: Ctx,
-  input: { accountingDate: string; moveType: unknown; journalType: unknown; hasTax: boolean },
-): Promise<{ scope: PeriodLockScope; through: string } | null> {
+  input: {
+    accountingDate: string
+    moveType: unknown
+    journalType: unknown
+    hasTax: boolean
+    /** A period-end entry (the result transfer) is part of the close, not a kind of document. */
+    closingEntry?: boolean
+  },
+): Promise<
+  | { scope: PeriodLockScope; through: string }
+  | { scope: 'kind'; kind: PeriodLockKind; dateFrom: string; dateTo: string }
+  | null
+> {
   const policy = await policyOf(ctx)
   const revision = revisionOf(policy)
   const claimed = await ctx.db.compareAndSet(
@@ -66,11 +103,28 @@ export async function claimPostingPeriod(
   if (journalType === 'sale' || moveType.startsWith('out_')) scopes.push('sales')
   if (journalType === 'purchase' || moveType.startsWith('in_')) scopes.push('purchases')
   if (input.hasTax) scopes.push('tax')
+  const covering = periodControlsOf(policy).filter(
+    (control) => input.accountingDate >= control.dateFrom && input.accountingDate <= control.dateTo,
+  )
+  // A soft close names who may still post on its dates; a hard close stops everyone.
+  const namedPoster =
+    ctx.actor != null && covering.some((control) => control.softPosters.includes(String(ctx.actor)))
+  let softClosed = false
   for (const scope of scopes) {
     const through = policy[fieldOf[scope]]
-    if (through && input.accountingDate <= String(through)) return { scope, through: String(through) }
+    if (!through || input.accountingDate > String(through)) continue
+    if (scope === 'all' && namedPoster) {
+      softClosed = true
+      continue
+    }
+    return { scope, through: String(through) }
   }
-  return null
+  // Locks by kind hold while the period is open; once it is soft closed, the people it names
+  // post whatever the adjustments need.
+  if (input.closingEntry || softClosed) return null
+  const kind = lockKindOf(input.moveType, input.journalType)
+  const locked = covering.find((control) => control.lockedKinds.includes(kind))
+  return locked ? { scope: 'kind', kind, dateFrom: locked.dateFrom, dateTo: locked.dateTo } : null
 }
 
 export const periodFunctions: Record<string, FnSpec> = {

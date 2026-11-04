@@ -2,9 +2,12 @@ import { Icon } from '../icon/index.tsx'
 import { each } from '@ketvietlab/ketjs-view'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import type { FieldProps } from './index.tsx'
+import { formatLocaleNumber } from '../../runtime/number-entry.js'
 
 const NativeInput = (props: FieldProps, describedBy: string | null): TemplateResult => {
   if (props.control !== undefined) return <>{props.control}</>
+  // A localized number is text the reader types in their own marks; the runtime submits the plain decimal.
+  const localized = Boolean(props.numberLocale) && (props.type === 'number' || props.type === 'decimal')
   if (props.type === 'textarea')
     return (
       <textarea
@@ -84,16 +87,23 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
       data-ui="field-control"
       data-appearance={props.appearance === 'embedded' ? 'embedded' : null}
       id={props.id}
-      type={props.type === 'decimal' ? 'number' : (props.type ?? 'text')}
+      type={localized ? 'text' : props.type === 'decimal' ? 'number' : (props.type ?? 'text')}
       name={props.name}
-      value={props.type === 'checkbox' ? (props.submitValue ?? '1') : String(props.value ?? '')}
+      value={
+        props.type === 'checkbox'
+          ? (props.submitValue ?? '1')
+          : localized
+            ? formatLocaleNumber(props.value as string | number | null | undefined, props.numberLocale!)
+            : String(props.value ?? '')
+      }
+      data-number-locale={localized ? props.numberLocale : null}
       checked={
         props.type === 'checkbox' &&
         (props.checked === undefined ? props.value === true || props.value === '1' : props.checked === true)
       }
       data-indeterminate={props.type === 'checkbox' && props.checked === 'indeterminate' ? 'true' : null}
       aria-checked={props.type === 'checkbox' && props.checked === 'indeterminate' ? 'mixed' : null}
-      inputmode={props.inputMode ?? null}
+      inputmode={localized ? 'decimal' : (props.inputMode ?? null)}
       data-align={props.align ?? null}
       maxlength={props.maxLength}
       minlength={props.minLength}
@@ -102,12 +112,12 @@ const NativeInput = (props: FieldProps, describedBy: string | null): TemplateRes
       required={props.required === true}
       disabled={props.disabled === true}
       readonly={props.readOnly === true}
-      min={props.min}
-      max={props.max}
+      min={localized ? null : props.min}
+      max={localized ? null : props.max}
       aria-invalid={props.error ? 'true' : null}
       aria-describedby={describedBy}
       autocomplete={props.autocomplete ?? 'off'}
-      step={props.type === 'decimal' ? (props.step ?? 'any') : (props.step ?? null)}
+      step={localized ? null : props.type === 'decimal' ? (props.step ?? 'any') : (props.step ?? null)}
     />
   )
 }

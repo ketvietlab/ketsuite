@@ -36,8 +36,8 @@ export const journalFormModal = (_: Translator, options: JournalFormScreenOption
       : _('account_backend.journal.create.hint'),
     closeHref: options.cancelHref,
     closeLabel: _('account_backend.action.cancelEdit'),
-    presentation: 'sheet',
-    size: 'large',
+    presentation: 'dialog',
+    size: 'small',
     form: {
       id: 'journal-create-form',
       scope: 'account-journal',

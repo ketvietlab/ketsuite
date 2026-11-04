@@ -3,11 +3,11 @@ import { test } from 'node:test'
 import { callFn, compose, migrateOne, registerFunctions } from '@ketvietlab/ketjs'
 import type { Adapter, Row } from '@ketvietlab/ketjs'
 import { postgresAdapter } from '@ketvietlab/ketjs-postgres'
-import { company, loyalty, partner, pricing, product, stock, uom } from '@ketvietlab/ketsuite'
+import { company, loyalty, partner, pricing, product, stock, uom, user } from '@ketvietlab/ketsuite'
 import { address } from '@ketvietlab/ketsuite'
 import { adminUrl, live } from './postgres-live.ts'
 
-const modules = [address, partner, company, uom, product, pricing, stock, loyalty]
+const modules = [address, partner, company, user, uom, product, pricing, stock, loyalty]
 const manifest = compose(modules, { headless: true, companies: true })
 const scope = { company: 'acme', branches: null }
 

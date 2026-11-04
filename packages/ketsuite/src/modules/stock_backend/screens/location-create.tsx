@@ -28,10 +28,12 @@ const selectionLabel = (_: Translator, group: string, value: string): string => 
 }
 
 const usageOptions = (_: Translator): FormOption[] =>
-  ['internal', 'view', 'supplier', 'customer', 'inventory', 'production', 'transit'].map((value) => ({
-    value,
-    label: selectionLabel(_, 'usage', value),
-  }))
+  ['internal', 'view', 'supplier', 'customer', 'inventory', 'production', 'transit', 'scrap'].map(
+    (value) => ({
+      value,
+      label: selectionLabel(_, 'usage', value),
+    }),
+  )
 
 const locationFields = (_: Translator, options: LocationCreateScreenOptions): FormField[] => [
   {

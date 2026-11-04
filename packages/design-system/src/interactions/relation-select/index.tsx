@@ -8,6 +8,7 @@
 import { each, effect, signal } from '@ketvietlab/ketjs-view'
 import type { IslandController, IslandProps, TemplateResult } from '@ketvietlab/ketjs-view'
 import { relationMenuPlacement } from './placement.ts'
+import { searchText } from '../ket-grid/values.ts'
 import { restoreRelationSelectionFocus } from './focus.ts'
 
 export const HOOKS = [
@@ -248,10 +249,11 @@ export function createRelationSelectView(
     if (manager?.searchInDropdown && dropdownRows()?.query === query().trim())
       return dropdownRows()!.options.slice(0, 7)
     if (manager?.searchInDropdown && query().trim()) return []
-    const needle = query().trim().toLocaleLowerCase()
+    // Typed as people type, often without accents: "bong" finds "Bông", as the grid does.
+    const needle = searchText(query())
     const held = needle
       ? availableOptions().filter((entry) =>
-          `${string(entry.label)} ${string(entry.description)}`.toLocaleLowerCase().includes(needle),
+          searchText(`${string(entry.label)} ${string(entry.description)}`).includes(needle),
         )
       : availableOptions()
     // Only a manager can browse past the dropdown; a local picker lists every match.
@@ -934,12 +936,30 @@ export function createRelationSelectView(
         queueMicrotask(() => {
           if (disposed || lifetime.aborted) return
           const native = [...root.querySelectorAll('[data-ui="relation-native"]')][0]
+          // HTMLElement, not Element: the island root is always one, and every DOM the picker runs in has it.
+          const trigger =
+            root instanceof HTMLElement
+              ? root.querySelector<HTMLElement>('[data-ui="relation-trigger"]')
+              : null
+          const field = root instanceof HTMLElement ? root.parentElement : null
           if (native instanceof HTMLSelectElement)
             native.dispatchEvent(new Event('change', { bubbles: true }))
-          if (!multiple && !open() && !dialog()) {
-            const trigger = [...root.querySelectorAll('[data-ui="relation-trigger"]')][0]
-            if (trigger instanceof HTMLElement && !disabled())
-              restoreRelationSelectionFocus<Element>(trigger, document.activeElement, document.body, popup)
+          if (!multiple && !open() && !dialog() && !disabled()) {
+            const restore = () => {
+              // A native record may replace this island while reconciling its selected
+              // value. Resolve only inside the same connected field, never a new page.
+              const current = trigger?.isConnected
+                ? trigger
+                : field?.isConnected && trigger?.id
+                  ? [...field.querySelectorAll<HTMLElement>('[data-ui="relation-trigger"]')].find(
+                      (node) => node.id === trigger.id,
+                    )
+                  : null
+              if (current && !current.hasAttribute('disabled'))
+                restoreRelationSelectionFocus<Element>(current, document.activeElement, document.body, popup)
+            }
+            restore()
+            if (trigger && !trigger.isConnected) requestAnimationFrame(restore)
           }
         })
       })

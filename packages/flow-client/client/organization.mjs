@@ -864,7 +864,7 @@ export function createOrganization(ctx) {
                   id: m.id,
                   name: m.name,
                   role: roleLabel(m.role),
-                  sources: tr('flow.ui.team.members'),
+                  sources: m.status === 'revoked' ? tr('flow.ui.access.revoked') : tr('flow.ui.team.members'),
                   actions: manage()
                     ? button(tr('flow.ui.remove.from.team'), () =>
                         confirmRun(

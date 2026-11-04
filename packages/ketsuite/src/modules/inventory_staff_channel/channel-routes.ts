@@ -178,6 +178,11 @@ const versionBody = {
   properties: { expectedVersion: { type: 'string', pattern: '^ipv_[0-9a-f]{64}$' } },
   required: ['expectedVersion'],
 }
+const archiveBody = {
+  ...versionBody,
+  properties: { ...versionBody.properties, reason: { type: 'string', minLength: 1, maxLength: 500 } },
+  required: ['expectedVersion', 'reason'],
+}
 const adjustmentBody = {
   type: 'object',
   additionalProperties: false,
@@ -187,19 +192,18 @@ const adjustmentBody = {
     countedQuantity: decimal,
     expectedVersion: { type: 'string', pattern: '^sav_[0-9a-f]{64}$' },
     reason: { type: 'string', minLength: 3, maxLength: 200 },
+    reasonCode: {
+      type: 'string',
+      enum: ['previousCount', 'naturalLoss', 'damaged', 'lost', 'missingDocuments', 'other'],
+    },
   },
   required: ['locationId', 'lotId', 'countedQuantity', 'expectedVersion', 'reason'],
 }
 const adjustmentResult = {
   type: 'object',
   additionalProperties: false,
-  properties: {
-    outcome: { type: 'string', const: 'adjusted' },
-    previousQuantity: decimal,
-    currentQuantity: decimal,
-    version: { type: 'string', pattern: '^sav_[0-9a-f]{64}$' },
-  },
-  required: ['outcome', 'previousQuantity', 'currentQuantity', 'version'],
+  properties: { outcome: { type: 'string', const: 'counting' }, sessionId: string, href: string },
+  required: ['outcome', 'sessionId', 'href'],
 }
 
 const positive = (value: string | null, fallback: number, maximum: number): number => {
@@ -484,6 +488,7 @@ const projectDetail = async (
   const version = `ipv_${stableHash({
     ...content,
     inventoryRevision: Number(config.inventoryRevision ?? 0),
+    revisionId: config.revisionId ?? 'initial',
   })}`
   // `delete` is withheld until a product's references can be checked. The guard
   // behind it only sees stock history, so a product still named by a draft
@@ -491,12 +496,13 @@ const projectDetail = async (
   // nothing. Advertising the action would invite exactly that call.
   const availableActions = [
     'update',
-    base.active ? 'archive' : 'restore',
+    ...(template.active === false ? ['restore'] : base.active ? ['archive'] : []),
     ...(base.kind === 'storable' && base.active ? ['adjust_stock'] : []),
   ]
   return {
     data: { ...content, version, availableActions, readOnly: false },
     revision: Number(config.inventoryRevision ?? 0),
+    revisionId: String(config.revisionId ?? 'initial'),
     positions,
   }
 }
@@ -732,14 +738,15 @@ export const channelRoutes = routesOf(
       method: 'POST',
       path: `inventory/products/{id}/${action}`,
       operationId: `staff.inventory.products.${action}`,
-      summary: `${action === 'archive' ? 'Archive' : 'Restore'} one product aggregate under a strong version.`,
+      summary: `${action === 'archive' ? 'Archive with a reason' : 'Restore'} one product aggregate under a strong version.`,
       auth: 'required',
       capability: { key: 'inventory.products', action },
-      request: { params: idParams, body: versionBody },
+      request: { params: idParams, body: action === 'archive' ? archiveBody : versionBody },
       responses: {
         '200': envelope(detail),
         '404': envelope({ type: 'null' }),
         '409': envelope({ type: 'null' }),
+        '422': envelope({ type: 'null' }),
       },
       idempotent: true,
       rateLimit: { action: `staff.inventory.products.${action}`, limit: 60, windowMs: 60_000 },
@@ -754,7 +761,14 @@ export const channelRoutes = routesOf(
         const namespace = `staff:${companyId}:${request.identity!.userId}:stock.setInventoryProductActive.${action}`
         const result = (await ctx.call(
           'stock.setInventoryProductActive',
-          { id: params.id, active: action === 'restore', expectedRevision: current.revision },
+          {
+            id: params.id,
+            active: action === 'restore',
+            expectedRevision: current.revision,
+            expectedRevisionId: current.revisionId,
+            reason: (request.body as Row).reason,
+            locale: url.searchParams.get('lang') ?? undefined,
+          },
           url,
           req,
           { idempotencyKey: key, idempotencyNamespace: namespace },
@@ -769,7 +783,7 @@ export const channelRoutes = routesOf(
     method: 'POST',
     path: 'inventory/products/{id}/stock-adjustments',
     operationId: 'staff.inventory.products.adjustStock',
-    summary: 'Apply one inventory count against fresh stock-position evidence.',
+    summary: 'Open a single-product count for independent approval; stock is unchanged.',
     auth: 'required',
     capability: { key: 'inventory.products', action: 'adjust_stock' },
     request: { params: idParams, body: adjustmentBody },
@@ -794,48 +808,29 @@ export const channelRoutes = routesOf(
           candidate.lotId === (body.lotId == null ? null : String(body.lotId)),
       )
       if (!position || position.version !== body.expectedVersion) return versionFailure(ctx, url, req, true)
-      const locations = (await ctx.call('stock.listLocations', {}, url, req)) as Row[]
-      const inventoryLocation = locations
-        .filter((location) => location.usage === 'inventory')
-        .sort((left, right) => String(left.id).localeCompare(String(right.id)))[0]
-      if (!inventoryLocation)
-        return domainFailure(
-          ctx,
-          url,
-          req,
-          invalidResult('locationId', 'inventory loss location is not configured'),
-        )
       const namespace = `staff:${companyId}:${request.identity!.userId}:stock.adjustInventory`
       const adjustmentId = commandId('staff_inv_adj', namespace, key)
       const result = (await ctx.call(
-        'stock.adjustInventory',
+        'stock.requestInventoryCount',
         {
           id: adjustmentId,
           productId: params.id,
           locationId: body.locationId,
-          inventoryLocationId: inventoryLocation.id,
           countedQuantity: body.countedQuantity,
           lotId: body.lotId,
-          productUomId: (current.data.uom as Row).id,
-          expectedQuantRevision: position.revision,
           reason: body.reason,
+          reasonCode: body.reasonCode,
         },
         url,
         req,
         { idempotencyKey: key, idempotencyNamespace: namespace },
       )) as Row
       if (result.ok !== true) return domainFailure(ctx, url, req, result)
-      const refreshed = await readDetail(ctx, params.id, companyId, url, req)
-      const changed = refreshed?.positions.find(
-        (candidate) => candidate.locationId === position.locationId && candidate.lotId === position.lotId,
-      )
-      if (!changed) return versionFailure(ctx, url, req, true)
       return {
         data: {
-          outcome: 'adjusted',
-          previousQuantity: position.quantity,
-          currentQuantity: changed.quantity,
-          version: changed.version,
+          outcome: 'counting',
+          sessionId: result.id,
+          href: `/admin/stock/counts?record=stock.countSession:${encodeURIComponent(String(result.id))}`,
         },
       }
     },

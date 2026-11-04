@@ -2629,7 +2629,7 @@ test('pos: lot and serial selections are revision-bound, exact and returned to t
       )
       await call(
         'product.saveVariant',
-        { id: productId, templateId, defaultCode: productId, combinationKey: '' },
+        { id: productId, templateId, defaultCode: productId.toUpperCase(), combinationKey: '' },
         adapter,
       )
       await call('stock.configureProduct', { templateId, isStorable: true, tracking }, adapter)

@@ -1,3 +1,4 @@
+import { listSavedViews } from './saved-views.ts'
 import { taskActivity } from './task-activity.ts'
 import { announceDocumentPresence, listDocumentPresence, expireDocumentPresence } from './presence.ts'
 import { readRiskTasks } from './risk-read.ts'
@@ -26,6 +27,7 @@ import { result } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
 import { bootstrap, listTasks, projectOptions, taskDetail } from './queries.ts'
 import { expireUpload } from './upload-jobs.ts'
+import { expireSnapshot } from './snapshot-jobs.ts'
 import { readMembers } from './member-read.ts'
 import { readCatalog } from './catalog-read.ts'
 import { readSprintReport } from './sprint-report.ts'
@@ -84,8 +86,11 @@ import {
 } from './attachments.ts'
 import { search } from './search.ts'
 import { commitLiveDocument, readLiveDocument } from './live-document.ts'
+import { DEFAULT_FLOW_UPLOAD_QUOTA_BYTES } from './file-policy.ts'
 
 export type NativeFlowOptions = {
+  /** Technical per-Company file ceiling; pending and archived uploads count. */
+  uploadQuotaBytes?: number
   /** Set false only when the host already mounts the public DS stylesheet. */
   designSystemStyles?: boolean
   extensions?: NativeServerExtension[]
@@ -115,6 +120,8 @@ const writeEffects = [
 
 /** Fresh Flow domain. Deployment composition opts in; legacy tables remain quarantined. */
 export function createFlowModule(options: NativeFlowOptions = {}) {
+  const quotaBytes = options.uploadQuotaBytes ?? DEFAULT_FLOW_UPLOAD_QUOTA_BYTES
+  if (!Number.isSafeInteger(quotaBytes) || quotaBytes < 0) throw new Error('Invalid Flow upload quota')
   const mailDelivery = options.invitationMail ? invitationDelivery(options.invitationMail) : null
   const notifications = nativeNotifications(options.notificationMail)
   const unconfiguredMail: NativeServerExtension = {
@@ -179,6 +186,7 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
       ...scope,
       route: 'text?',
       recordId: 'id?',
+      viewId: 'id?',
       query: 'text?',
       status: 'text?',
       sort: 'text?',
@@ -235,7 +243,7 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
   )
   add('project.statusOptions', { ...scope, projectId: 'id' }, false, statusOptions)
   add('project.taskOptions', { ...scope, projectId: 'id' }, false, taskOptions)
-  add('project.list', { ...scope, cursor: 'text?', limit: 'int?' }, false, (ctx, args) =>
+  add('project.list', { ...scope, archived: 'bool?', cursor: 'text?', limit: 'int?' }, false, (ctx, args) =>
     projectOptions(ctx, { ...args, directory: true }),
   )
   add(
@@ -441,10 +449,12 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
       (ctx, args) => archiveTask(ctx, args, extensions, archived),
     )
   }
-  add('project.deletion.preview', { id: 'id' }, false, previewProjectDeletion, 'configure')
+  add('project.deletion.preview', { ...scope, id: 'id' }, false, previewProjectDeletion, 'configure')
+  permissionFunctions['flow.project.deletion.preview']!.bundles!.push('flow.project-delete')
   add(
     'project.delete',
     {
+      ...scope,
       id: 'id',
       expectedVersion: 'int',
       confirmName: 'text',
@@ -459,14 +469,14 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
   permissionFunctions['flow.project.delete']!.risk = 'sensitive'
   add(
     'project.deletion.list',
-    { cursor: 'text?', limit: 'int?' },
+    { ...scope, cursor: 'text?', limit: 'int?' },
     false,
     listProjectDeletions,
     'project-delete',
   )
   add(
     'project.deletion.retry',
-    { id: 'id', idempotencyKey: 'text' },
+    { ...scope, id: 'id', idempotencyKey: 'text' },
     true,
     (ctx, args) => retryProjectDeletion(ctx, args, extensions),
     'project-delete',
@@ -757,8 +767,11 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
     (ctx, args) => saveForm(ctx, args, extensions),
     'configure',
   )
-  add('form.submit', { ...command, title: 'text', answers: 'json' }, true, (ctx, args) =>
-    submitForm(ctx, args, extensions),
+  add(
+    'form.submit',
+    { ...command, title: 'text', answers: 'json', expectedSchemaRevision: 'int?' },
+    true,
+    (ctx, args) => submitForm(ctx, args, extensions),
   )
   for (const archived of [true, false])
     add('view.' + (archived ? 'archive' : 'restore'), command, true, (ctx, args) =>
@@ -773,10 +786,19 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
       query: 'text?',
       status: 'text?',
       visibility: 'text?',
+      sourceRoute: 'text?',
+      sort: 'text?',
+      group: 'text?',
       archive: 'bool?',
     },
     true,
     (ctx, args) => saveView(ctx, args, extensions),
+  )
+  add(
+    'view.list',
+    { ...scope, includePersonal: 'bool?', query: 'text?', cursor: 'text?', limit: 'int?' },
+    false,
+    (ctx, args) => listSavedViews(ctx, args),
   )
   add('preferences.save', { ...command, timezone: 'text?', notifications: 'text?' }, true, (ctx, args) =>
     savePreferences(ctx, args, extensions),
@@ -804,7 +826,7 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
       idempotencyKey: 'text',
     },
     effects: [...writeEffects, ...extensionEffects, 'enqueue:flow.expireUpload'],
-    handler: (ctx, args) => prepareAttachment(ctx, args, extensions),
+    handler: (ctx, args) => prepareAttachment(ctx, args, extensions, quotaBytes),
   })
   functions['attachment.complete'] = defineFn({
     exposure: 'internal',
@@ -818,15 +840,15 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
     effects: readEffects,
     handler: readAttachment,
   })
-  for (const page of [true, false]) {
-    const domain = page ? 'page' : 'issue'
+  for (const domain of ['page', 'issue', 'project', 'epic'] as const) {
+    const page = domain === 'page'
     for (const write of [false, true]) {
       const name = `${domain}.document.${write ? 'write' : 'read'}`
       // A denial must throw, never become a truthy refusal envelope to LiveDoc.
       functions[name] = defineFn({
         input: { id: 'id' },
         effects: readEffects,
-        handler: (ctx, args) => readLiveDocument(ctx, args, page, write),
+        handler: (ctx, args) => readLiveDocument(ctx, args, domain, write),
       })
       permissionFunctions[`flow.${name}`] = {
         risk: write ? 'operate' : 'read',
@@ -839,13 +861,13 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
       exposure: 'internal',
       input: { id: 'id', index: 'int', gone: 'bool?' },
       effects: [...writeEffects, ...extensionEffects, 'enqueue:flow.expireDocumentPresence'],
-      handler: (ctx, args) => announceDocumentPresence(ctx, args, page, extensions),
+      handler: (ctx, args) => announceDocumentPresence(ctx, args, domain, extensions),
     })
     functions[`${domain}.document.presence.list`] = defineFn({
       exposure: 'internal',
       input: { id: 'id' },
       effects: readEffects,
-      handler: (ctx, args) => listDocumentPresence(ctx, args, page),
+      handler: (ctx, args) => listDocumentPresence(ctx, args, domain),
     })
     functions[`${domain}.document.commit`] = defineFn({
       exposure: 'internal',
@@ -858,8 +880,8 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
         ...(page ? { blocks: 'json' } : {}),
         expectedVersion: 'int',
       },
-      effects: [...writeEffects, ...extensionEffects],
-      handler: (ctx, args) => commitLiveDocument(ctx, args, page, extensions),
+      effects: [...writeEffects, ...extensionEffects, 'enqueue:flow.expireSnapshot'],
+      handler: (ctx, args) => commitLiveDocument(ctx, args, domain, extensions),
     })
   }
   const permissions: ModulePermissionsDef = {
@@ -884,15 +906,13 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
       'flow.attachment.complete': { reason: 'internal-route', authority: 'flow.native-upload-owner' },
       'flow.attachment.read': { reason: 'internal-route', authority: 'flow.native-attachment-read' },
       ...Object.fromEntries(
-        ['page', 'issue'].flatMap((domain) =>
-          ['presence', 'presence.list'].map((name) => [
+        ['page', 'issue', 'project', 'epic'].flatMap((domain) =>
+          ['presence', 'presence.list', 'commit'].map((name) => [
             `flow.${domain}.document.${name}`,
             { reason: 'internal-route' as const, authority: 'flow.native-document-owner' },
           ]),
         ),
       ),
-      'flow.page.document.commit': { reason: 'internal-route', authority: 'flow.native-document-owner' },
-      'flow.issue.document.commit': { reason: 'internal-route', authority: 'flow.native-document-owner' },
     },
   }
   return defineModule({
@@ -919,6 +939,7 @@ export function createFlowModule(options: NativeFlowOptions = {}) {
     functions,
     jobs: {
       expireUpload,
+      expireSnapshot,
       expireDocumentPresence,
       ...(mailDelivery || options.notificationMail
         ? { deliverMail: createMailTransportJobs([createFlowMailGuard()]).deliver! }

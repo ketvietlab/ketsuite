@@ -264,6 +264,24 @@ test('account cash: explainable match, partial reconciliation, aging, and undo k
     )
     assert.equal((restored.rows as Row[]).length, 1)
     assert.equal((restored.rows as Row[])[0]?.amount, '100.00')
+    assert.equal((restored.rows as Row[])[0]?.moveName !== undefined, true)
+    // Aging reads the books as they stood on the cutoff: the bank payment of 18/08 had not
+    // arrived on 17/08, and the undo booked on 01/09 had not happened on 31/08.
+    const before = await call(
+      'account.receivableAging',
+      { cutoff: '2026-08-17', partnerId: 'customer' },
+      adapter,
+    )
+    assert.deepEqual(
+      (before.rows as Row[]).map((row) => [row.moveId, row.amount]),
+      [['INV-1', '100.00']],
+    )
+    const settled = await call(
+      'account.receivableAging',
+      { cutoff: '2026-08-31', partnerId: 'customer' },
+      adapter,
+    )
+    assert.equal((settled.rows as Row[]).length, 0)
     const partial = (
       (await call(
         'account_wave2_probe.rows',

@@ -19,6 +19,10 @@ export type ManufacturingOrderListRow = {
   product: string
   quantity: string
   state: string
+  /** `ready`, `waiting` or `short` for an open order; empty once done or cancelled. */
+  material?: string
+  /** Position in the floor's queue, which the list is sorted by unless the reader sorts. */
+  queue?: number
   /** Locale-aware order-detail URL supplied by the route. */
   href: string
 }
@@ -63,7 +67,20 @@ export const manufacturingOrderListColumns = (_: Translator): Array<Column<Manuf
   {
     key: 'state',
     label: _('manufacturing_backend.field.state'),
-    cell: (row) => badge(row.state, stateTone(row.state), row.state),
+    cell: (row) => badge(_(`manufacturing_backend.state.${row.state}`), stateTone(row.state), row.state),
+    kind: 'status',
+  },
+  {
+    key: 'material',
+    label: _('manufacturing_backend.field.material'),
+    cell: (row) =>
+      row.material
+        ? badge(
+            _(`manufacturing_backend.material.${row.material}`),
+            row.material === 'ready' ? 'positive' : row.material === 'waiting' ? 'warning' : 'danger',
+            row.material,
+          )
+        : '—',
     kind: 'status',
   },
 ]

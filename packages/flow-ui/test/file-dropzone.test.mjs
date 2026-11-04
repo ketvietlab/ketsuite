@@ -189,6 +189,22 @@ test('attachments preview raster images and video, and download everything else'
   assert.match(svg, /Tải xuống c.svg/)
   const sample = renderToStaticString(FlowAttachment({ title: 'd.csv', meta: '48 KB', url: null }))
   assert.match(sample, /48 KB · tệp mẫu, không lưu nội dung/)
+  assert.match(
+    renderToStaticString(FlowAttachment({ title: 'native.txt', size: 17, url: '/flow/files/native' })),
+    /17 B/,
+  )
+  assert.match(
+    renderToStaticString(
+      FlowAttachment({
+        title: 'native.png',
+        size: 2048,
+        type: 'image/png',
+        url: '/flow/files/image',
+        onPreview: () => {},
+      }),
+    ),
+    /2 KB/,
+  )
   assert.doesNotMatch(sample, /download/)
   assert.match(
     renderToStaticString(FlowMediaPreview({ title: 'b.mp4', type: 'video/mp4', url: '/_ket/files/2' })),

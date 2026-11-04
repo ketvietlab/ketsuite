@@ -8,6 +8,8 @@ import {
   from,
   inArray,
   isNotNull,
+  isNull,
+  or,
   like,
   likeLiteral,
   diffPlacements,
@@ -30,11 +32,20 @@ import {
   canManageStructure,
   canPublishEntry,
 } from './access.ts'
-import { claimImages, imageClaimEffects } from './image-assets.ts'
+import { claimImages, claimTermImages, imageClaimEffects } from './image-assets.ts'
+import {
+  entryGroup,
+  entryLocale,
+  siteLocaleSettings,
+  siteLocales,
+  translationGroupFor,
+  translationsOf,
+} from './translations.ts'
 import { isSafeUrl, liveDocument, studioFields, termDescription } from './studio-content.ts'
 import { ensureCustomerRealm } from './customer.ts'
 import { isReservedPath, reservedPrefixes } from './paths.ts'
 import { usageOf } from './media-usage.ts'
+import { scheduleKey } from './jobs.ts'
 import { preflightEntry } from './renderable.ts'
 
 /** Content publication stays frozen; site-wide appearance is read at delivery. */
@@ -204,6 +215,15 @@ const siteById = async (ctx: Ctx, id: unknown): Promise<Row | null> => {
   return ctx.db.one(from(Site).where(eq(Site.id, id)))
 }
 
+/** Entries in one language; rows saved before translations count as the site's default. */
+const localeFilter = async (ctx: Ctx, siteId: unknown, locale: string) => {
+  const Entry = ctx.table('website.Entry')
+  const site = await siteById(ctx, siteId)
+  return locale === site?.defaultLocale
+    ? or(eq(Entry.locale, locale), isNull(Entry.locale))
+    : eq(Entry.locale, locale)
+}
+
 const entryById = async (ctx: Ctx, id: unknown): Promise<Row | null> => {
   const Entry = ctx.table('website.Entry')
   return ctx.db.one(from(Entry).where(eq(Entry.id, id)))
@@ -263,6 +283,34 @@ const termSeo = (raw: unknown): Row | false => {
     canonical,
     indexing: seo.indexing === 'noindex' ? 'noindex' : 'index',
   }
+}
+
+const TERM_IMAGE = /^\/website\/files\/[A-Za-z0-9-]+$/
+/**
+ * A term's thumbnail and cover: an uploaded image path each, or nothing. A cover is shown on the
+ * term's page, so like a post's cover it needs its alternative text; the thumbnail is only shared.
+ */
+const termImages = (raw: unknown): { value: Row | null } | { field: string; message: string } => {
+  const keys = ['thumbnail', 'thumbnailAlt', 'cover', 'coverAlt']
+  if (raw == null) return { value: null }
+  const images = raw as Row
+  if (
+    typeof raw !== 'object' ||
+    Array.isArray(raw) ||
+    Object.keys(images).some((key) => !keys.includes(key)) ||
+    Object.values(images).some((value) => typeof value !== 'string')
+  )
+    return { field: 'images', message: 'website.error.invalidTermImage' }
+  const value: Row = {}
+  for (const key of ['thumbnail', 'cover']) {
+    const src = String(images[key] ?? '').trim()
+    const alt = String(images[`${key}Alt`] ?? '').trim()
+    if (src && !TERM_IMAGE.test(src)) return { field: key, message: 'website.error.invalidTermImage' }
+    if (alt.length > 300) return { field: `${key}Alt`, message: 'website.error.invalidTermImage' }
+    if (src) Object.assign(value, { [key]: src, [`${key}Alt`]: alt })
+  }
+  if (value.cover && !value.coverAlt) return { field: 'coverAlt', message: 'website.error.coverAltRequired' }
+  return { value: Object.keys(value).length ? value : null }
 }
 
 /** Where a term is still named: child terms, and the draft or live revision of a post. */
@@ -454,6 +502,19 @@ const searchMatches = async (
 const ARCHIVE_PAGE_SIZE = 20
 const ARCHIVE_SCAN_LIMIT = 500
 
+/** Where a site is served: its primary domain over HTTPS, or null before it has one. */
+const primaryOrigin = async (ctx: Ctx, siteId: unknown): Promise<string | null> => {
+  const Domain = ctx.table('website.SiteDomain')
+  const primary = await ctx.db.one(from(Domain).where(eq(Domain.siteId, siteId), eq(Domain.primary, true)))
+  return primary?.host ? `https://${String(primary.host)}` : null
+}
+
+/** The page's head metadata, with the origin a crawler needs to read an image path by, when there is one. */
+const withOrigin = async (ctx: Ctx, siteId: unknown, meta: Record<string, unknown>) => {
+  const origin = await primaryOrigin(ctx, siteId)
+  return origin ? { ...meta, origin } : meta
+}
+
 /**
  * The public page of a category or tag: `/category/<slug>` or `/tag/<slug>`, then
  * `/page/<n>` past the first page.
@@ -538,6 +599,7 @@ const termArchive = async (ctx: Ctx, site: Row, path: string): Promise<Row | nul
     ? null
     : await ctx.db.one(from(Entry).where(eq(Entry.siteId, site.id), eq(Entry.path, '/')))
   const seo = (term.seo && typeof term.seo === 'object' ? term.seo : {}) as Row
+  const images = (term.images && typeof term.images === 'object' ? term.images : {}) as Row
   return {
     id: term.id,
     siteId: site.id,
@@ -554,6 +616,7 @@ const termArchive = async (ctx: Ctx, site: Row, path: string): Promise<Row | nul
       seo: {
         title: seo.title || term.name,
         description: seo.description || term.description || '',
+        image: images.thumbnail || images.cover || null,
         // Later pages are their own pages; only the first takes the editor's canonical.
         canonical: pageNo === 1 ? seo.canonical || base : path,
         indexing: seo.indexing === 'noindex' ? 'noindex' : 'index',
@@ -563,6 +626,7 @@ const termArchive = async (ctx: Ctx, site: Row, path: string): Promise<Row | nul
         title: term.name,
         descriptionDoc: term.descriptionDoc ?? null,
         description: term.description ?? '',
+        cover: images.cover ? { src: images.cover, alt: images.coverAlt ?? '' } : null,
         page: pageNo,
         pageCount,
         total: posts.length,
@@ -737,6 +801,9 @@ export const cmsFunctions: Record<string, FnSpec> = {
       name: 'text',
       title: 'text',
       defaultLocale: 'text',
+      /** Ordered languages; omitted keeps the saved list. The default is always one of them. */
+      locales: 'json?',
+      localeFallback: 'json?',
       theme: 'text',
       tokens: 'json?',
       googleTagManagerId: 'text?',
@@ -749,6 +816,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
     effects: [
       'read:website.Site',
       'read:website.SiteMember',
+      'read:website.Entry',
       'write:website.Site',
       'write:website.SiteMember',
       'read:website.CustomerRealm',
@@ -793,6 +861,19 @@ export const cmsFunctions: Record<string, FnSpec> = {
       if (!title || title.length > 200) return invalid('title', 'website.error.invalidTitle')
       if (!/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(locale))
         return invalid('defaultLocale', 'website.error.invalidLocale')
+      const languages = siteLocaleSettings(
+        locale,
+        args.locales === undefined ? (existing?.locales ?? null) : args.locales,
+        args.localeFallback === undefined ? (existing?.localeFallback ?? null) : args.localeFallback,
+      )
+      if (!languages) return invalid('locales', 'website.error.invalidLocales')
+      // A language that content is written in stays until that content moves or goes.
+      if (existing) {
+        const Entry = ctx.table('website.Entry')
+        const used = await ctx.db.all(from(Entry).where(eq(Entry.siteId, args.id), ne(Entry.status, 'trash')))
+        if (used.some((entry) => !languages.locales.includes(entryLocale(entry, { defaultLocale: locale }))))
+          return invalid('locales', 'website.error.localeInUse')
+      }
       if (jsonBytes(args.tokens ?? {}) > 64 * 1024) return invalid('tokens', 'website.error.payloadTooLarge')
       const tokens = args.tokens
       if (tokens != null && (typeof tokens !== 'object' || Array.isArray(tokens)))
@@ -813,6 +894,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
             name,
             title,
             defaultLocale: locale,
+            locales: languages.locales,
+            localeFallback: languages.localeFallback,
             googleTagManagerId,
             visitConsent,
             visitConsentNotice,
@@ -825,6 +908,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
           'name',
           'title',
           'defaultLocale',
+          'locales',
+          'localeFallback',
           'theme',
           'tokens',
           'siteGroup',
@@ -1014,7 +1099,15 @@ export const cmsFunctions: Record<string, FnSpec> = {
   }),
 
   listEntries: defineFn({
-    input: { siteId: 'id', type: 'text?', status: 'text?', search: 'text?', limit: 'int?', offset: 'int?' },
+    input: {
+      siteId: 'id',
+      type: 'text?',
+      status: 'text?',
+      search: 'text?',
+      locale: 'text?',
+      limit: 'int?',
+      offset: 'int?',
+    },
     output: {
       id: 'id',
       siteId: 'id',
@@ -1023,6 +1116,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
       path: 'text',
       title: 'text',
       status: 'text',
+      locale: 'text?',
+      translationGroupId: 'text?',
       updatedAt: 'datetime?',
     },
     effects: ['read:website.Entry', 'read:website.Site', 'read:website.SiteMember'],
@@ -1040,13 +1135,15 @@ export const cmsFunctions: Record<string, FnSpec> = {
       if (args.status) query = query.where(eq(Entry.status, args.status))
       else query = query.where(ne(Entry.status, 'trash'))
       if (args.search) query = query.where(like(Entry.title, titlePattern(args.search), true))
+      if (args.locale) query = query.where(await localeFilter(ctx, args.siteId, String(args.locale)))
       query = query.limit(paging.limit).offset(paging.offset)
-      return ctx.db.all(query)
+      const site = await siteById(ctx, args.siteId)
+      return (await ctx.db.all(query)).map((entry) => ({ ...entry, locale: entryLocale(entry, site) }))
     },
   }),
 
   countEntries: defineFn({
-    input: { siteId: 'id', type: 'text?', status: 'text?', search: 'text?' },
+    input: { siteId: 'id', type: 'text?', status: 'text?', search: 'text?', locale: 'text?' },
     output: { count: 'int' },
     effects: ['read:website.Entry', 'read:website.Site', 'read:website.SiteMember'],
     handler: async (ctx: Ctx, args) => {
@@ -1059,6 +1156,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
       if (args.status) query = query.where(eq(Entry.status, args.status))
       else query = query.where(ne(Entry.status, 'trash'))
       if (args.search) query = query.where(like(Entry.title, titlePattern(args.search), true))
+      if (args.locale) query = query.where(await localeFilter(ctx, args.siteId, String(args.locale)))
       return { count: await ctx.db.count(query) }
     },
   }),
@@ -1101,6 +1199,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
     },
     effects: [
       'read:website.Site',
+      'read:website.SiteDomain',
       'read:website.Publication',
       'read:website.Entry',
       'read:website.EntryRevision',
@@ -1141,10 +1240,12 @@ export const cmsFunctions: Record<string, FnSpec> = {
             // The head metadata travels with the page it describes. Without it
             // the storefront handed the theme an empty meta, so the fields
             // website_seo declares were stored and never rendered.
-            meta: await servedMeta(ctx, site, entry),
+            meta: await withOrigin(ctx, site.id, await servedMeta(ctx, site, entry)),
           }
       }
-      return termArchive(ctx, site, path)
+      // A category or tag page needs the origin too, or its image path never reaches og:image.
+      const archive = await termArchive(ctx, site, path)
+      return archive && { ...archive, meta: await withOrigin(ctx, site.id, {}) }
     },
   }),
 
@@ -1194,6 +1295,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
       layout: 'json',
       fields: 'json?',
       kind: 'text?',
+      /** One of the site's languages; omitted keeps the entry's own, or `fields.locale`, or the default. */
+      locale: 'text?',
       expectedRevisionId: 'id?',
     },
     output: {
@@ -1217,7 +1320,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
     idempotent: true,
     agent: true,
     handler: async (ctx: Ctx, args) => {
-      if (!(await siteById(ctx, args.siteId))) return invalid('siteId', 'website.error.siteNotFound')
+      const site = await siteById(ctx, args.siteId)
+      if (!site) return invalid('siteId', 'website.error.siteNotFound')
       const existing = await entryById(ctx, args.id)
       if (existing && (existing.siteId !== args.siteId || existing.type !== args.type))
         return invalid('id', 'website.error.immutableOwnership')
@@ -1321,6 +1425,26 @@ export const cmsFunctions: Record<string, FnSpec> = {
       }
       const layout = withPlacementIds(normalized, sha256)
       args.fields = studioFields(String(args.type), args.fields)
+      // Older callers still name the language in `fields.locale`.
+      const locale = String(
+        args.locale ?? (args.fields as Row | null)?.locale ?? existing?.locale ?? site.defaultLocale,
+      )
+      if (!siteLocales(site).includes(locale)) return invalid('locale', 'website.error.localeNotOnSite')
+      // The language is the entry's, not a revision's: a field copy would drift from it.
+      if (args.fields && typeof args.fields === 'object' && 'locale' in (args.fields as Row)) {
+        const { locale: _, ...rest } = args.fields as Row
+        args.fields = rest
+      }
+      const group = existing ? entryGroup(existing) : (translationGroupFor.get(ctx) ?? String(args.id))
+      const sibling = (
+        await translationsOf(ctx, {
+          ...(existing ?? {}),
+          id: args.id,
+          siteId: args.siteId,
+          translationGroupId: group,
+        })
+      ).find((row) => row.id !== args.id && entryLocale(row, site) === locale)
+      if (sibling) return invalid('locale', 'website.error.translationExists')
       const fieldErrors = validateFields(type.fields, args.fields)
       if (fieldErrors.length) return { ok: false, errors: fieldErrors }
       if (args.type === 'website.post') {
@@ -1343,10 +1467,13 @@ export const cmsFunctions: Record<string, FnSpec> = {
         from(Entry).where(eq(Entry.siteId, args.siteId), eq(Entry.path, path)),
       )
       if (pathOwner && pathOwner.id !== args.id) return invalid('path', 'website.error.duplicatePath')
-      const slugOwner = await ctx.db.one(
-        from(Entry).where(eq(Entry.siteId, args.siteId), eq(Entry.type, args.type), eq(Entry.slug, slug)),
-      )
-      if (slugOwner && slugOwner.id !== args.id) return invalid('slug', 'website.error.duplicateSlug')
+      // One slug per type and language: a translation may keep its source's slug.
+      const slugOwner = (
+        await ctx.db.all(
+          from(Entry).where(eq(Entry.siteId, args.siteId), eq(Entry.type, args.type), eq(Entry.slug, slug)),
+        )
+      ).find((row) => row.id !== args.id && entryLocale(row, site) === locale)
+      if (slugOwner) return invalid('slug', 'website.error.duplicateSlug')
       const revisions = await ctx.db.select('website.EntryRevision', { entryId: args.id })
       const version = revisions.reduce((max, row) => Math.max(max, Number(row.version)), 0) + 1
       const revisionId = randomUUID()
@@ -1366,6 +1493,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
           authorId: existing?.authorId ?? ctx.actor,
           publishAt: existing?.publishAt ?? null,
           publishedAt: existing?.publishedAt ?? null,
+          locale,
+          translationGroupId: group,
         }
         if (existing) {
           const changed = await tx.db.compareAndSet(
@@ -1458,7 +1587,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
         await ctx.jobs.enqueue(
           'website.publishScheduled',
           { id: args.id, revisionId },
-          { runAt: scheduled, uniqueKey: `${String(args.id)}:${revisionId}` },
+          { runAt: scheduled, uniqueKey: scheduleKey(args.id, revisionId, scheduled) },
         )
         return { ok: true, id: args.id, status: 'scheduled' }
       }
@@ -2042,6 +2171,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
       parentId: 'id?',
       descriptionDoc: 'text?',
       seo: 'json?',
+      images: 'json?',
       revisionId: 'text',
       archivedAt: 'datetime?',
     },
@@ -2071,6 +2201,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
       parentId: 'id?',
       descriptionDoc: 'text?',
       seo: 'json?',
+      images: 'json?',
       revisionId: 'text',
       archivedAt: 'datetime?',
     },
@@ -2092,6 +2223,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
       parentId: 'id?',
       descriptionDoc: 'text?',
       seo: 'json?',
+      /** Omitted keeps the saved images; `null` removes them. */
+      images: 'json?',
       expectedRevisionId: 'text?',
     },
     output: { ok: 'bool', id: 'id?', revisionId: 'text?', errors: 'json?' },
@@ -2100,6 +2233,7 @@ export const cmsFunctions: Record<string, FnSpec> = {
       'read:website.SiteMember',
       'read:website.TaxonomyTerm',
       'write:website.TaxonomyTerm',
+      ...imageClaimEffects,
     ],
     idempotent: true,
     agent: true,
@@ -2128,6 +2262,8 @@ export const cmsFunctions: Record<string, FnSpec> = {
       if (!name || name.length > 200) return invalid('name', 'website.error.invalidName')
       const seo = args.seo == null ? null : termSeo(args.seo)
       if (seo === false) return invalid('seo', 'website.error.invalidTermSeo')
+      const images = 'images' in args ? termImages(args.images) : { value: existing?.images ?? null }
+      if (!('value' in images)) return invalid(images.field, images.message)
       const Term = ctx.table('website.TaxonomyTerm')
       const duplicate = await ctx.db.one(
         from(Term).where(eq(Term.siteId, args.siteId), eq(Term.taxonomy, args.taxonomy), eq(Term.slug, slug)),
@@ -2162,21 +2298,32 @@ export const cmsFunctions: Record<string, FnSpec> = {
         descriptionDoc: description.doc,
         parentId: args.parentId ?? null,
         seo: seo ?? existing?.seo ?? null,
+        images: images.value,
         revisionId,
       }
-      if (existing) {
-        const changed = await ctx.db.compareAndSet(
-          'website.TaxonomyTerm',
-          { id: args.id },
-          { revisionId: existing.revisionId ?? null, archivedAt: null },
-          row,
-        )
-        if (!('dryRun' in changed) && !changed.matched)
-          return invalid('expectedRevisionId', 'website.error.editConflict')
-      } else {
-        const inserted = await ctx.db.insertIfAbsent('website.TaxonomyTerm', row)
-        if (!('dryRun' in inserted) && !inserted.inserted)
-          return invalid('expectedRevisionId', 'website.error.editConflict')
+      // The images are claimed with the save, so a refused image leaves the term unchanged.
+      const conflict = new Error('editConflict')
+      try {
+        await ctx.tx(async (tx) => {
+          if (existing) {
+            const changed = await tx.db.compareAndSet(
+              'website.TaxonomyTerm',
+              { id: args.id },
+              { revisionId: existing.revisionId ?? null, archivedAt: null },
+              row,
+            )
+            if (!('dryRun' in changed) && !changed.matched) throw conflict
+          } else {
+            const inserted = await tx.db.insertIfAbsent('website.TaxonomyTerm', row)
+            if (!('dryRun' in inserted) && !inserted.inserted) throw conflict
+          }
+          await claimTermImages(tx, args.id, args.siteId, images.value)
+        })
+      } catch (error) {
+        if (error === conflict) return invalid('expectedRevisionId', 'website.error.editConflict')
+        if ((error as { code?: string }).code === 'E_WEBSITE_IMAGE')
+          return invalid('images', 'website.error.invalidTermImage')
+        throw error
       }
       return { ok: true, id: args.id, revisionId }
     },

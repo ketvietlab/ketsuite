@@ -1,0 +1,9 @@
+{
+  "extends": "./e2e/tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true, "types": ["node"] },
+  "include": [
+    "e2e/stock_backend/inventory.spec.ts",
+    "e2e/commerce_supply/stack-m14.spec.ts",
+    "e2e/commerce_supply/count-adjustment.spec.ts"
+  ]
+}

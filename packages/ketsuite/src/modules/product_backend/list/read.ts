@@ -1,3 +1,9 @@
+import { savedFilters } from '../filters/read.ts'
+import { productFilterState, type SavedFilter } from '../filters/state.ts'
+import { catalogueTags } from '../tags/catalogue.ts'
+import { categoryPaths, compileCategoryListFilter, hasCategoryFilter } from '../../product/category-tree.ts'
+import { addDecimals } from '../../account/money.ts'
+import { validGtin } from '../../product/barcodes.ts'
 // The product list's one paged read (design system: "Collections are client islands").
 //
 // The browser sends the list's own URL; this reads it against the list's shape, applies
@@ -15,7 +21,6 @@ import {
   and,
   asc,
   bucketEq,
-  compileListFilter,
   desc,
   encodeListState,
   eq,
@@ -29,6 +34,8 @@ import {
 } from '@ketvietlab/ketjs'
 import type { Ctx, Expr, ListSearchSpec, ListState, Row, Table } from '@ketvietlab/ketjs'
 import { productListSearch } from '../../product/search.ts'
+import { fold } from '../units.ts'
+import { compareNames } from '../../product/text-fold.ts'
 import { AUTHORIZATION_EFFECTS, effectiveFunctionKeys } from '../../user/authorization.ts'
 import { COLLECTION_PAGE_SIZE } from '../../../ui/collection-state.ts'
 
@@ -53,13 +60,17 @@ export type ProductListRow = {
   id: string
   name: string
   type: string
-  /** The default variant's code, else the first variant's that has one. */
+  /** The default variant's code, else the product's code base a variant holds, else the first variant's. */
   code: string | null
   categoryId: string | null
   category: string | null
   uomId: string | null
   unit: string | null
   listPrice: string
+  /** The lowest price a selling variant has before pricelists: own price, or list price plus extras. */
+  fromPrice: string
+  /** The selling variants do not all sell for `fromPrice`. */
+  priceVaries: boolean
   saleOk: boolean
   purchaseOk: boolean
   active: boolean
@@ -89,7 +100,7 @@ export type ProductListGroup = {
   pager?: { from: number; to: number; total: number; previous: string | null; next: string | null }
 }
 
-export type ProductListFavorite = { id: string; name: string; isDefault: boolean }
+export type ProductListFavorite = SavedFilter
 
 export type ProductListAnswer = {
   /** The query as applied: unknown values dropped, the page clamped. */
@@ -110,6 +121,7 @@ export type ProductListAnswer = {
   sort: Record<string, string>
   previous: string | null
   next: string | null
+  tags?: Array<{ id: string; name: string; href: string; active: boolean }>
   favorites: ProductListFavorite[]
   money: boolean
   stock: boolean
@@ -122,7 +134,10 @@ export const PRODUCT_LIST_EFFECTS = [
   ...AUTHORIZATION_EFFECTS.filter((effect) => !effect.startsWith('write:')),
   'read:product.Template',
   'read:product.Product',
+  'read:product.ProductUom',
   'read:product.Category',
+  'read:product.Tag',
+  'read:product.TemplateTag',
   'read:product.Cost',
   'read:product.ProductValue',
   'read:product.TemplateAttributeValue',
@@ -147,6 +162,7 @@ export const PRODUCT_LIST_OUTPUT = {
   previous: 'text?',
   next: 'text?',
   favorites: 'json',
+  tags: 'json',
   money: 'bool',
   stock: 'bool',
 } as const
@@ -161,7 +177,14 @@ export const productListShape = (
   stock: boolean,
   outOfStock: readonly string[] = [],
 ): ListSearchSpec => {
-  const base = productListSearch(T)
+  const domain = productListSearch(T)
+  const base = {
+    ...domain,
+    filterable: [
+      ...(domain.filterable ?? []),
+      { key: 'tagId', label: 'Tags', col: T.id!, type: 'reference' as const },
+    ],
+  }
   if (!stock) return base
   return {
     ...base,
@@ -186,7 +209,8 @@ const text = (value: unknown): string | null => (value == null || value === '' ?
 const listUrl = (href: unknown): URL => {
   const url = new URL(typeof href === 'string' && href ? href : PRODUCT_LIST_PATH, 'http://ket.local')
   if (url.pathname !== PRODUCT_LIST_PATH) return new URL(PRODUCT_LIST_PATH, 'http://ket.local')
-  for (const key of ['modal', 'favoriteError', 'bulkError']) url.searchParams.delete(key)
+  for (const key of ['modal', 'favoriteError', 'bulkError', 'record', 'bulkProduct'])
+    url.searchParams.delete(key)
   url.hash = ''
   return url
 }
@@ -208,27 +232,21 @@ const favoritesOf = async (
   spec: ListSearchSpec,
   state: ListState,
 ): Promise<ProductListFavorite[]> => {
-  if (!ctx.actor) return []
-  const S = ctx.table('backend.SavedSearch')
-  const rows = await ctx.db.all(
-    from(S).where(eq(S.ownerId, ctx.actor), eq(S.listKey, spec.key), eq(S.active, true)).orderBy(asc(S.name)),
-  )
-  // A favourite naming a field the list no longer has is left out, as the bar leaves it out.
-  return rows.flatMap((row) => {
-    const saved = (row.state ?? {}) as Partial<ListState>
-    try {
-      validateListState(spec, {
-        ...state,
-        ...saved,
-        presets: [...(saved.presets ?? [])],
-        filters: [...(saved.filters ?? [])],
-        groupBy: [...(saved.groupBy ?? [])],
-        sort: [...(saved.sort ?? spec.defaultSort ?? [])],
-      })
-    } catch {
-      return []
-    }
-    return [{ id: String(row.id), name: String(row.name), isDefault: Boolean(row.defaultKey) }]
+  const canonical = (raw: Row) => {
+    const value = { ...state, ...raw, sort: raw.sort ?? spec.defaultSort ?? [] } as ListState
+    validateListState(spec, value)
+    return productFilterState(value)
+  }
+  return savedFilters(ctx, spec.key, productFilterState(state), canonical, (row) => {
+    const value = {
+      ...state,
+      ...canonical(row.state as Row),
+      page: 1,
+      openGroups: [],
+      groupPages: {},
+      favoriteId: String(row.id),
+    } as ListState
+    return encodeListState(value, new URL(PRODUCT_LIST_PATH, 'http://ket.local'))
   })
 }
 
@@ -248,6 +266,7 @@ export const readProductList = async (
     canSeeMoney(ctx),
     stock ? stock.availability(ctx) : Promise.resolve(null),
   ])
+  const categoryTree = hasCategoryFilter(state.filters) ? await ctx.db.select('product.Category') : []
   const outOfStock = availability ? [...availability].filter(([, value]) => value <= 0).map(([id]) => id) : []
   const spec = productListShape(T, Boolean(stock), outOfStock)
   const groupable = new Map((spec.groupable ?? []).map((field) => [field.key, field]))
@@ -255,14 +274,42 @@ export const readProductList = async (
 
   // Search covers the name and description, and the codes and barcodes of the variants.
   const q = state.q?.trim() ?? ''
+  // Names are matched with accents folded in memory: production databases use the C
+  // collation, where ilike folds ASCII only and "mat na" would miss "Mặt nạ".
+  const needle = fold(q)
+  const tags = await catalogueTags(ctx)
+  const tagMatches = tags.search(q)
+  const textMatches = q
+    ? (await ctx.db.all(from(T).select(T.id!, T.name!, T.description!))).flatMap((row) =>
+        fold(String(row.name ?? '')).includes(needle) || fold(String(row.description ?? '')).includes(needle)
+          ? [String(row.id)]
+          : [],
+      )
+    : []
   const codeMatches = q
     ? await (async () => {
         const P = ctx.table('product.Product')
         const pattern = `%${wildcard(q)}%`
+        const barcodePattern = validGtin(q) ? `%${q.replace(/^0+/, '') || q}%` : pattern
+        const U = ctx.table('product.ProductUom')
+        const packs = await ctx.db.all(
+          from(U)
+            .select(U.productId!)
+            .where(ilike(U.barcode!, barcodePattern, true)),
+        )
         const rows = await ctx.db.all(
           from(P)
             .select(P.templateId!)
-            .where(or(ilike(P.defaultCode!, pattern, true), ilike(P.barcode!, pattern, true))),
+            .where(
+              or(
+                ilike(P.defaultCode!, pattern, true),
+                ilike(P.barcode!, barcodePattern, true),
+                inArray(
+                  P.id!,
+                  packs.map((row) => String(row.productId)),
+                ),
+              ),
+            ),
         )
         return [...new Set(rows.map((row) => String(row.templateId)))]
       })()
@@ -271,14 +318,15 @@ export const readProductList = async (
   const conditions = (applied: ListState, path: unknown[] = []): Expr[] => {
     const parts: Expr[] = []
     if (!applied.includeArchived) parts.push(eq(T.active!, true))
-    const compiled = compileListFilter(spec, { ...applied, q: undefined }, { timezone })
+    const compiled = compileCategoryListFilter(
+      spec,
+      { ...applied, q: undefined },
+      categoryTree,
+      timezone,
+      (rule) => tags.filter(T.id!, rule),
+    )
     if (compiled) parts.push(compiled)
-    if (q) {
-      const pattern = `%${wildcard(q)}%`
-      parts.push(
-        or(ilike(T.name!, pattern, true), ilike(T.description!, pattern, true), inArray(T.id!, codeMatches)),
-      )
-    }
+    if (q) parts.push(inArray(T.id!, [...new Set([...textMatches, ...codeMatches, ...tagMatches])]))
     path.forEach((value, index) => {
       const selected = applied.groupBy[index]
       const field = selected ? groupable.get(selected.key) : undefined
@@ -309,7 +357,7 @@ export const readProductList = async (
         const [a, b] = [figure(left), figure(right)]
         // A product that keeps no stock has no figure to order by; it goes last either way.
         if (a === undefined || b === undefined) return a === b ? 0 : a === undefined ? 1 : -1
-        return (sort.dir === 'desc' ? b - a : a - b) || String(left.name).localeCompare(String(right.name))
+        return (sort.dir === 'desc' ? b - a : a - b) || compareNames(String(left.name), String(right.name))
       })
       const ids = ordered.slice(offset, offset + limit).map((row) => String(row.id))
       if (!ids.length) return []
@@ -318,7 +366,52 @@ export const readProductList = async (
       )
       return ids.flatMap((id) => (rows.has(id) ? [rows.get(id)!] : []))
     }
-    const col = sortable.get(sort.key) ?? T.name!
+    if (sort.key === 'listPrice') {
+      // The column shows the lowest price a selling variant has, which no column holds:
+      // order every match by it, as the page prices them, then cut the page.
+      const matches = await ctx.db.all(where(state, path))
+      const P = ctx.table('product.Product')
+      const ids = matches.map((row) => String(row.id))
+      const products = ids.length ? await ctx.db.all(from(P).where(inArray(P.templateId!, ids))) : []
+      const variantsOf = byTemplate(products)
+      const priced = await pricing(ctx, products, selling, false)
+      const figure = new Map(
+        matches.map((row) => [
+          String(row.id),
+          Number(sellingPrices(row, variantsOf.get(String(row.id)) ?? [], priced).lowest),
+        ]),
+      )
+      return matches
+        .sort((left, right) => {
+          const [a, b] = [figure.get(String(left.id))!, figure.get(String(right.id))!]
+          return (
+            (sort.dir === 'desc' ? b - a : a - b) ||
+            compareNames(String(left.name), String(right.name)) ||
+            String(left.id).localeCompare(String(right.id))
+          )
+        })
+        .slice(offset, offset + limit)
+    }
+    if (sort.key === 'name' || !sortable.has(sort.key)) {
+      // Databases order text by bytes (production runs the C collation), which puts Á, Đ or
+      // Ô after Z. Order the names as Vietnamese reads them, then read the page.
+      const matches = await ctx.db.all(where(state, path).select(T.id!, T.name!))
+      const ids = matches
+        .sort(
+          (left, right) =>
+            (sort.dir === 'desc' ? -1 : 1) *
+              compareNames(String(left.name ?? ''), String(right.name ?? '')) ||
+            String(left.id).localeCompare(String(right.id)),
+        )
+        .slice(offset, offset + limit)
+        .map((row) => String(row.id))
+      if (!ids.length) return []
+      const rows = new Map(
+        (await ctx.db.all(from(T).where(inArray(T.id!, ids)))).map((row) => [String(row.id), row]),
+      )
+      return ids.flatMap((id) => (rows.has(id) ? [rows.get(id)!] : []))
+    }
+    const col = sortable.get(sort.key)!
     return ctx.db.all(
       where(state, path)
         // The id breaks ties, so two pages never show the same template.
@@ -346,31 +439,26 @@ export const readProductList = async (
           .where(eq(M.primary!, true), inArray(M.templateId!, ids))
           .orderBy(asc(M.sequence!), asc(M.id!)),
       ),
-      categoryIds.length ? ctx.db.all(from(Category).where(inArray(Category.id!, categoryIds))) : [],
+      // The whole tree: a category reads by its full name, its parents' names first.
+      categoryIds.length ? ctx.db.all(from(Category)) : [],
       unitIds.length ? ctx.db.all(from(Unit).where(inArray(Unit.id!, unitIds))) : [],
     ])
     const names = (rows: Row[]) => new Map(rows.map((row) => [String(row.id), String(row.name)]))
-    const [categoryName, unitName] = [names(categories), names(units)]
+    const [categoryName, unitName] = [categoryPaths(categories), names(units)]
     const image = new Map<string, string>()
     for (const row of media)
       if (!image.has(String(row.templateId))) image.set(String(row.templateId), String(row.attachmentId))
-    const variantsOf = new Map<string, Row[]>()
-    for (const product of products) {
-      const list = variantsOf.get(String(product.templateId)) ?? []
-      list.push(product)
-      variantsOf.set(String(product.templateId), list)
-    }
-    // Archived combinations do not sell; once every one is archived the default variant sells again.
-    const selling = (variants: Row[]) =>
-      variants.filter((variant) => String(variant.combinationKey ?? '') !== '' && variant.active !== false)
-    const priced = money ? await pricing(ctx, products, selling) : null
+    const variantsOf = byTemplate(products)
+    const priced = await pricing(ctx, products, selling, money)
     return templates.map((template) => {
       const id = String(template.id)
       const variants = variantsOf.get(id) ?? []
-      const fallback = variants.find((variant) => String(variant.combinationKey ?? '') === '')
-      const sold = selling(variants)
+      const { fallback, sold, sellers, prices, lowest } = sellingPrices(template, variants, priced)
+      // The original SKU keeps the product's code when it becomes the first combination.
+      const base = text(template.variantCodeBase)
       const code =
         text(fallback?.defaultCode) ??
+        (base && variants.some((variant) => text(variant.defaultCode) === base) ? base : null) ??
         text(
           [...variants]
             .sort((a, b) => String(a.id).localeCompare(String(b.id)))
@@ -388,14 +476,14 @@ export const readProductList = async (
         uomId: text(template.uomId),
         unit: template.uomId ? (unitName.get(String(template.uomId)) ?? String(template.uomId)) : null,
         listPrice: String(template.listPrice ?? '0'),
+        fromPrice: lowest,
+        priceVaries: new Set(prices.map(Number)).size > 1,
         saleOk: template.saleOk !== false,
         purchaseOk: template.purchaseOk !== false,
         active: template.active !== false,
         variants: sold.length,
         image: image.get(id) ?? null,
-        margin: priced
-          ? marginOf(template, sold.length ? sold : fallback ? [fallback] : [], priced, sold.length > 0)
-          : null,
+        margin: money ? marginOf(template, sellers, priced, sold.length > 0) : null,
         available: availability?.has(id) ? round(availability.get(id)!) : null,
       }
     })
@@ -516,7 +604,23 @@ export const readProductList = async (
     next.page = target
     return href(next)
   }
+  const tagChoice = (id: string, name: string) => {
+    const next = cloneState(applied)
+    const current = next.filters.find(
+      (node) => node.kind === 'rule' && node.field === 'tagId' && node.operator === 'equals',
+    )
+    next.filters = next.filters.filter(
+      (node) => !(node.kind === 'rule' && node.field === 'tagId' && node.operator === 'equals'),
+    )
+    if (id) next.filters.push({ kind: 'rule', field: 'tagId', operator: 'equals', value: id })
+    next.page = 1
+    next.openGroups = []
+    next.groupPages = {}
+    next.favoriteId = undefined
+    return { id, name, href: href(next), active: current?.kind === 'rule' ? current.value === id : !id }
+  }
   return {
+    tags: [tagChoice('', ''), ...tags.choices.map((tag) => tagChoice(tag.id, tag.name))],
     query: applied,
     href: href(applied),
     total,
@@ -536,12 +640,51 @@ export const readProductList = async (
   }
 }
 
-type Pricing = { cost: Map<string, number>; extra: Map<string, number> }
+type Pricing = { cost: Map<string, number>; extra: Map<string, string> }
 
-/** Costs (this company's) and value surcharges of the variants on the page, in two reads. */
-const pricing = async (ctx: Ctx, products: Row[], selling: (variants: Row[]) => Row[]): Promise<Pricing> => {
+/** Variants by the template they belong to. */
+const byTemplate = (products: Row[]): Map<string, Row[]> => {
+  const variantsOf = new Map<string, Row[]>()
+  for (const product of products) {
+    const list = variantsOf.get(String(product.templateId)) ?? []
+    list.push(product)
+    variantsOf.set(String(product.templateId), list)
+  }
+  return variantsOf
+}
+
+// Archived combinations do not sell; once every one is archived the default variant sells again.
+const selling = (variants: Row[]): Row[] =>
+  variants.filter((variant) => String(variant.combinationKey ?? '') !== '' && variant.active !== false)
+
+/**
+ * What one product sells for: the variants that sell, each one's price and the lowest of
+ * them, the list's From price. The page and the sort by price read it the same way.
+ */
+const sellingPrices = (template: Row, variants: Row[], priced: Pricing) => {
+  const fallback = variants.find((variant) => String(variant.combinationKey ?? '') === '')
+  const sold = selling(variants)
+  const sellers = sold.length ? sold : fallback ? [fallback] : []
+  const prices = sellers.map((variant) => priceOf(template, variant, priced, sold.length > 0))
+  const lowest = prices.reduce<string | null>(
+    (low, price) => (low === null || Number(price) < Number(low) ? price : low),
+    null,
+  )
+  return { fallback, sold, sellers, prices, lowest: lowest ?? String(template.listPrice ?? '0') }
+}
+
+/**
+ * Value surcharges of the variants on the page and, for a viewer allowed money, their costs
+ * (this company's), in a few reads rather than one per variant.
+ */
+const pricing = async (
+  ctx: Ctx,
+  products: Row[],
+  selling: (variants: Row[]) => Row[],
+  money: boolean,
+): Promise<Pricing> => {
   const ids = products.map((product) => String(product.id))
-  const company = ctx.scope.company
+  const company = money ? ctx.scope.company : null
   const C = ctx.table('product.Cost')
   const V = ctx.table('product.ProductValue')
   const [costs, links] = await Promise.all([
@@ -562,12 +705,15 @@ const pricing = async (ctx: Ctx, products: Row[], selling: (variants: Row[]) => 
   const valueIds = [...new Set(links.map((link) => String(link.templateAttributeValueId)))]
   const A = ctx.table('product.TemplateAttributeValue')
   const values = valueIds.length ? await ctx.db.all(from(A).where(inArray(A.id!, valueIds))) : []
-  const surcharge = new Map(values.map((value) => [String(value.id), Number(value.priceExtra ?? 0)]))
-  const extra = new Map<string, number>()
+  const surcharge = new Map(values.map((value) => [String(value.id), String(value.priceExtra ?? '0')]))
+  const extra = new Map<string, string>()
   for (const link of links)
     extra.set(
       String(link.productId),
-      (extra.get(String(link.productId)) ?? 0) + (surcharge.get(String(link.templateAttributeValueId)) ?? 0),
+      addDecimals(
+        extra.get(String(link.productId)) ?? '0',
+        surcharge.get(String(link.templateAttributeValueId)) ?? '0',
+      ),
     )
   return {
     cost: new Map(
@@ -586,15 +732,26 @@ const pricing = async (ctx: Ctx, products: Row[], selling: (variants: Row[]) => 
  */
 const marginOf = (template: Row, variants: Row[], priced: Pricing, combinations: boolean): number | null => {
   if (template.saleOk === false) return null
-  const listPrice = Number(template.listPrice ?? 0)
   const pairs = variants.flatMap((variant) => {
     const cost = priced.cost.get(String(variant.id))
     if (cost === undefined) return []
-    const price = combinations ? listPrice + (priced.extra.get(String(variant.id)) ?? 0) : listPrice
+    const price = Number(priceOf(template, variant, priced, combinations))
     return price > 0 ? [[price, cost] as const] : []
   })
   if (!pairs.length) return null
   const price = pairs.reduce((sum, [value]) => sum + value, 0) / pairs.length
   const cost = pairs.reduce((sum, [, value]) => sum + value, 0) / pairs.length
   return round1(((price - cost) / price) * 100)
+}
+
+/**
+ * One variant's price before pricelists, as `variantSalePrice` reads it: its own price when
+ * set, otherwise the list price plus the extras of its values (none for the default variant).
+ */
+const priceOf = (template: Row, variant: Row, priced: Pricing, combinations: boolean): string => {
+  const own = variant.listPriceOverride
+  if (own != null && String(own).trim() !== '') return String(own)
+  const listPrice = String(template.listPrice ?? '0')
+  const extra = combinations ? (priced.extra.get(String(variant.id)) ?? '0') : '0'
+  return extra === '0' || Number(extra) === 0 ? listPrice : addDecimals(listPrice, extra)
 }

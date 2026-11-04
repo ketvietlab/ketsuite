@@ -6,6 +6,7 @@ export const retainedLedgers = new Set([
   'flow.TaskHistory',
   'flow.SprintReport',
   'flow.FormResponse',
+  'flow.FormSchema',
   'flow.CommandReceipt',
 ])
 

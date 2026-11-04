@@ -6,6 +6,7 @@ import { advanceRevision, cas, mutate, now } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
 import { authority, owned, refuse, string } from './policy.ts'
 import { projectCatalogs, remapProjectTags } from './project-catalogs.ts'
+import { requireDocumentTransport } from './rich-content.ts'
 
 export const timestamped = () => ({ version: 1, archived: false, createdAt: now(), updatedAt: now() })
 export const requiredTitle = (input: Row, field = 'title', maximum = 240) => {
@@ -157,6 +158,8 @@ export async function saveProject(ctx: Ctx, input: Row, extensions: NativeServer
     { name: 'flow.project.save', capability: existing ? 'project.manage' : 'workspace.manage', input: args },
     extensions,
     async (tx) => {
+      const existing = id ? await owned(tx, 'flow.ProjectRecord', id) : null
+      requireDocumentTransport(existing, input)
       const title = input.title === undefined && existing ? string(existing.title) : requiredTitle(input)
       const code = string(input.code ?? existing?.code).toUpperCase()
       if (!/^[A-Z][A-Z0-9]{1,11}$/.test(code)) return refuse('validation', { code: 'invalid' })

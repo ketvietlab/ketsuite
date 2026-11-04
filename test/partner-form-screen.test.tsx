@@ -107,13 +107,13 @@ test('partner edit: connects Chatter in the rail and keeps save beside the compa
     ),
   )
 
-  assert.match(html, /data-ui="form-page" data-has-aside="true"/)
-  assert.match(html, /data-ui="form-page-title"[^>]*>[\s\S]*?ACME Distribution/)
-  assert.match(html, /data-ui="form-page-status"[\s\S]*?Đang hoạt động/)
-  assert.match(html, /data-ui="form-page-actions"[\s\S]*?type="submit"[^>]*form="partner-identity-form"/)
+  assert.match(html, /data-ui="record-page" data-has-aside="true"/)
+  assert.match(html, /data-ui="record-page-title"[^>]*>[\s\S]*?ACME Distribution/)
+  assert.match(html, /data-ui="record-page-status"[\s\S]*?Đang hoạt động/)
+  assert.match(html, /data-ui="record-page-actions"[\s\S]*?type="submit"[^>]*form="partner-identity-form"/)
   assert.match(
     html,
-    /data-ui="form-page-actions"[\s\S]*?href="\/admin\/crm\/cases\/new\?partnerId=acme&amp;lang=vi"[\s\S]*?Tạo lead/,
+    /data-ui="record-page-actions"[\s\S]*?href="\/admin\/crm\/cases\/new\?partnerId=acme&amp;lang=vi"[\s\S]*?Tạo lead/,
   )
   assert.match(html, /id="partner-identity-form"/)
   assert.match(html, /data-scope="partner-identity"/)
@@ -122,13 +122,13 @@ test('partner edit: connects Chatter in the rail and keeps save beside the compa
   assert.match(html, /name="supplier"[^>]*checked/)
   assert.match(html, /name="employee"[\s\S]*?name="name"/)
   assert.doesNotMatch(html, /action="[^"]*\/roles/)
-  assert.match(html, /data-ui="form-page-aside"[^>]*aria-label="Trao đổi và hoạt động của đối tác"/)
+  assert.match(html, /data-ui="record-page-aside"[^>]*aria-label="Trao đổi và hoạt động của đối tác"/)
   assert.match(html, /data-ui="partner-chatter-fixture"[^>]*>[\s\S]*?Chatter/)
   assert.match(html, /data-ui="record-more-open"[^>]*aria-label="Thêm thao tác"/)
   assert.match(html, /data-ui="record-more-menu"[\s\S]*?mailto:hello@acme\.example/)
   assert.doesNotMatch(html, /Thông tin nhanh/)
   assert.doesNotMatch(html, /data-ui="record-workspace"/)
   assert.doesNotMatch(html, /data-ui="record-thumbnail"|data-ui="record-kicker"/)
-  assert.doesNotMatch(html, /data-ui="form-page-back"/)
-  assert.match(html, /data-ui="form-page-context"[\s\S]*?data-ui="breadcrumbs"/)
+  assert.doesNotMatch(html, /data-ui="record-page-back"/)
+  assert.match(html, /data-ui="record-page-context"[\s\S]*?data-ui="breadcrumbs"/)
 })

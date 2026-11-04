@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the design harness; its own chrome is not a product screen
 import { html, each } from '@ketvietlab/ketjs-view'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import { pagesScreen } from './screens.tsx'

@@ -1,4 +1,5 @@
 import { defineFn } from '@ketvietlab/ketjs'
+import { VARIANT_PRICE_EFFECTS } from '../product/variant-price.ts'
 import type { Ctx, FnSpec, Row, Route, ServeContext } from '@ketvietlab/ketjs'
 import { ledgerOf, quoteTaxLine } from '../account/functions.ts'
 import { functions as pricingFunctions } from '../pricing/functions.ts'
@@ -193,7 +194,7 @@ async function pageOf(
     const variant = held.variants[nextOffset++]!
     const resolved = await sellableProduct(ctx, variant.id)
     if (!resolved.ok) continue
-    const { product, template, uoms } = resolved.value
+    const { product, template, uoms, listPrice } = resolved.value
     const prices: Row[] = []
     for (const uom of uoms)
       for (const quantity of held.breakpoints) {
@@ -201,12 +202,12 @@ async function pageOf(
           const quote = await quoteTaxLine(ctx, {
             productId: product.id,
             quantity: String(quantity),
-            priceUnit: String(template.listPrice),
+            priceUnit: listPrice,
           })
           prices.push({
             uomId: uom.id,
             minQuantity: String(quantity),
-            price: String(template.listPrice),
+            price: listPrice,
             ruleId: null,
             ...(quote.ok === true
               ? {
@@ -262,7 +263,7 @@ async function pageOf(
       uomId: String(template.uomId),
       uomName: uoms.find((unit) => unit.id === String(template.uomId))?.name ?? '',
       uoms,
-      listPrice: Number(prices[0]?.price ?? template.listPrice),
+      listPrice: Number(prices[0]?.price ?? listPrice),
       prices,
     })
   }
@@ -278,6 +279,7 @@ export const catalogFunctions: Record<string, FnSpec> = {
       'read:pos.PaymentMethod',
       'read:pricing.Pricelist',
       'read:pricing.PricelistItem',
+      ...VARIANT_PRICE_EFFECTS,
       'read:product.Product',
       'read:product.Template',
       'read:product.TemplateUom',

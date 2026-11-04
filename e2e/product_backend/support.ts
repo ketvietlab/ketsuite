@@ -97,7 +97,14 @@ export const MOBILE = { width: 390, height: 844 }
 /** Signs in through the login form, the way a person does, and lands on `next`. */
 export const signIn = async (
   page: Page,
-  login: 'admin' | 'viewer' | 'reader' | 'outsider' = 'admin',
+  login:
+    | 'admin'
+    | 'viewer'
+    | 'reader'
+    | 'outsider'
+    | 'stockkeeper'
+    | 'bookkeeper'
+    | `role-${string}` = 'admin',
   next = '/admin/product/templates',
   lang: 'vi' | 'en' = 'vi',
 ) => {
@@ -152,6 +159,44 @@ export const pickFromMenu = async (page: Page, menu: RegExp, option: string) => 
   const search = page.getByRole('search', { name: 'Tìm và lọc sản phẩm' })
   await search.getByRole('button', { name: menu }).click()
   await search.getByRole('button', { name: option, exact: true }).click()
+}
+
+/** A quotation's or an order's lines grid on its page (D33b: draft, sent and confirmed alike). */
+export const quotationGrid = (page: Page) =>
+  page.locator('[data-ui="record-page"]').getByRole('grid', { name: 'Sản phẩm' })
+
+/** A row of the lines grid holding this text; a regex keeps "Cái" from also finding "Lốc 4 cái". */
+export const gridLine = (page: Page, text: string | RegExp) =>
+  quotationGrid(page).getByRole('row').filter({ hasText: text })
+
+/**
+ * Adds a line from the keyboard as a seller would: the product searched on the server (its option
+ * reads code then name), then, past the description, the unit if one is given, then the quantity.
+ */
+export const addGridLine = async (
+  page: Page,
+  line: { search: string; option: RegExp; unit?: RegExp; quantity?: string },
+) => {
+  await page.locator('[data-ui="record-page"]').getByRole('button', { name: 'Thêm dòng' }).click()
+  await page.keyboard.type(line.search)
+  await page.getByRole('option', { name: line.option }).click()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
+  if (line.unit) {
+    await page.keyboard.press('Enter')
+    await page.getByRole('listbox', { name: 'Đơn vị tính' }).getByRole('option', { name: line.unit }).click()
+  }
+  await page.keyboard.press('Tab')
+  if (line.quantity) {
+    await page.keyboard.type(line.quantity)
+    await page.keyboard.press('Enter')
+  }
+}
+
+/** Saves the grid's lines at once and waits for the page to read them back. */
+export const saveGridLines = async (page: Page) => {
+  await page.locator('[data-ui="record-page"]').getByRole('button', { name: 'Lưu các dòng' }).click()
+  await expect(quotationGrid(page).locator('[data-unsaved="true"]')).toHaveCount(0)
 }
 
 /** The page does not scroll sideways: nothing is wider than the viewport. */

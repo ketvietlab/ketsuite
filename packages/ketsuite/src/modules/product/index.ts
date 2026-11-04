@@ -4,16 +4,16 @@ import { defineModule } from '@ketvietlab/ketjs'
 import { models } from './models.ts'
 import { relations } from './relations.ts'
 import { views } from './views.ts'
-import { functions } from './functions.ts'
+import { functions } from './functions/index.ts'
 import { messages } from './messages.ts'
 
 export default defineModule({
   name: 'product',
-  version: '0.2.0',
+  version: '0.2.9',
   depends: ['uom'],
   // Modal contexts read the company, product images (product_media builds on this module)
   // and user grants where a deployment installs them.
-  optional: ['company', 'product_media', 'user'],
+  optional: ['company', 'product_media', 'user', 'account', 'pos', 'pricing', 'purchase', 'sale', 'stock'],
   title: 'Sản phẩm',
   summary: 'Danh mục, mẫu sản phẩm và biến thể.',
   category: 'Bán hàng',

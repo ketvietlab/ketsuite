@@ -308,6 +308,7 @@ export function createLiveDocView(props: LiveDocProps) {
   let composedAt: Point | null = null
   let renderOwed: Span | null | undefined
   let source: EventSource | null = null
+  const requests = new AbortController()
   /**
    * Where the caret goes after the next render, set by whichever structural
    * edit is about to run.
@@ -352,6 +353,8 @@ export function createLiveDocView(props: LiveDocProps) {
   // ---- document model -----------------------------------------------------
 
   const typeOf = (element: Y.XmlElement): StoredType => {
+    // Native pages written before the check vocabulary used this alias.
+    if (element.getAttribute('type') === 'task') return 'check'
     const value = element.getAttribute('type') as StoredType | undefined
     return value &&
       (value === 'table' || value === 'divider' || value === 'image' || BLOCK_TYPES.includes(value))
@@ -802,6 +805,7 @@ export function createLiveDocView(props: LiveDocProps) {
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ index, gone }),
+      signal: requests.signal,
     })
       .then((response) => (response.ok ? (response.json() as Promise<{ id?: string }>) : null))
       .catch(() => null)
@@ -1265,6 +1269,7 @@ export function createLiveDocView(props: LiveDocProps) {
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ update: bytesToBase64(update) }),
+        signal: requests.signal,
       })
       if (!response.ok) throw new Error('Document update refused')
       const result = (await response.json()) as { ok?: boolean; record?: Record<string, unknown> }
@@ -1289,18 +1294,21 @@ export function createLiveDocView(props: LiveDocProps) {
    */
   let ready = !!props.local
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let reconnectDelay = 500
   let resyncing: Promise<boolean> | null = null
   async function resync() {
     if (disposed) return false
     if (resyncing) return resyncing
     resyncing = (async () => {
       try {
-        const response = await fetch(`${base}/content`)
-        if (!response.ok) throw new Error('Document could not be read')
-        const { snapshot, topic, viewerId } = (await response.json()) as {
+        const response = await fetch(`${base}/content`, { signal: requests.signal })
+        if (!response.ok)
+          throw Object.assign(new Error('Document could not be read'), { status: response.status })
+        const { snapshot, topic, viewerId, record } = (await response.json()) as {
           snapshot: string
           topic: string
           viewerId?: string | null
+          record?: Record<string, unknown>
         }
         if (disposed) return false
         if (typeof snapshot !== 'string' || typeof topic !== 'string')
@@ -1310,6 +1318,8 @@ export function createLiveDocView(props: LiveDocProps) {
         Y.applyUpdate(doc, base64ToBytes(snapshot), REMOTE)
         if (initial && !props.readOnly) ensureBlocks()
         ready = true
+        reconnectDelay = 500
+        clearTimeout(reconnectTimer)
         container?.setAttribute('contenteditable', String(!props.readOnly))
         if (initial) render(null)
         connectLive(topic)
@@ -1320,14 +1330,38 @@ export function createLiveDocView(props: LiveDocProps) {
           }, HEARTBEAT_MS)
           window.addEventListener('pagehide', onPageHide)
         }
-        if (!transport.isPending()) props.onSync?.({ status: 'saved' })
+        if (!transport.isPending()) props.onSync?.({ status: 'saved', ...(record ? { record } : {}) })
         return true
-      } catch {
+      } catch (error) {
         if (!disposed) {
+          const denied = [401, 403].includes(Number((error as { status?: number }).status))
+          if (denied) {
+            source?.close()
+            props.readOnly = true
+            container?.setAttribute('contenteditable', 'false')
+            container?.replaceChildren()
+            toolbarElement()?.setAttribute('hidden', '')
+            transport.dispose()
+            if (heartbeat) clearInterval(heartbeat)
+            heartbeat = null
+          }
           props.onSync?.({
-            status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
+            status: denied
+              ? 'forbidden'
+              : typeof navigator !== 'undefined' && !navigator.onLine
+                ? 'offline'
+                : 'error',
           })
           if (!ready) container?.setAttribute('contenteditable', 'false')
+          // Initial reads can fail while the browser remains online (server
+          // restart). There is no EventSource yet to initiate recovery.
+          if (![401, 403].includes(Number((error as { status?: number }).status))) {
+            clearTimeout(reconnectTimer)
+            reconnectTimer = setTimeout(() => {
+              void resync()
+            }, reconnectDelay)
+            reconnectDelay = Math.min(reconnectDelay * 2, 5000)
+          }
         }
         return false
       }
@@ -1568,6 +1602,11 @@ export function createLiveDocView(props: LiveDocProps) {
       el.setAttribute('aria-readonly', 'true')
       shell?.querySelector('[role="toolbar"]')?.setAttribute('hidden', '')
       render(null)
+      if (!props.local) {
+        doc.on('update', () => render(null))
+        window.addEventListener('online', onOnline)
+        await resync()
+      }
       return
     }
     el.addEventListener('compositionstart', () => {
@@ -1791,7 +1830,12 @@ export function createLiveDocView(props: LiveDocProps) {
   }
 
   return {
-    flush: async () => (props.local ? true : !ready && !(await resync()) ? false : transport.flush()),
+    flush: async () => {
+      if (props.local) return true
+      if ((!ready && !(await resync())) || !(await transport.flush())) return false
+      if (resyncing) await resyncing
+      return resync()
+    },
     isPending: () => !props.local && transport.isPending(),
     prepareImageInsertion,
     updateImage,
@@ -1809,7 +1853,10 @@ export function createLiveDocView(props: LiveDocProps) {
       }) as TemplateResult,
     getValue: currentValue,
     dispose() {
+      if (disposed) return
+      if (heartbeat && !props.local && typeof navigator !== 'undefined') onPageHide()
       disposed = true
+      requests.abort()
       floatingEvents?.abort()
       if (floatingFrame) cancelAnimationFrame(floatingFrame)
       source?.close()

@@ -1,4 +1,4 @@
-import { asc, deleteFrom, desc, eq, from, gt, inArray, isNotNull, ne } from '@ketvietlab/ketjs'
+import { asc, deleteFrom, desc, eq, from, gt, gte, inArray, isNotNull, ne } from '@ketvietlab/ketjs'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
 import { isReservedPath, reservedPrefixes } from '../website/paths.ts'
 
@@ -50,14 +50,58 @@ const servedEntries = (ctx: Ctx, siteId: unknown) => {
 
 /**
  * What is public on a site, in two cheap reads: how many entries are served and
- * when one of them last changed. Publishing, unpublishing, trashing and moving an
- * entry each change one or the other. A draft saved over a published entry does
- * too, which costs a rebuild and says nothing wrong.
+ * when one was last published. Publishing, unpublishing and trashing an entry each
+ * change one or the other. A draft saved over a published entry changes neither,
+ * since the index reads the published revision; the one thing such a save does make
+ * public, a new address, is checked by `movedSince`.
  */
 export const publicSignature = async (ctx: Ctx, siteId: unknown): Promise<string> => {
   const { Entry, query } = servedEntries(ctx, siteId)
-  const latest = await ctx.db.one(query.select(Entry.updatedAt).orderBy(desc(Entry.updatedAt)).limit(1))
-  return `${await ctx.db.count(query)}:${String(latest?.updatedAt ?? '')}`
+  const latest = await ctx.db.one(query.select(Entry.publishedAt).orderBy(desc(Entry.publishedAt)).limit(1))
+  return `${await ctx.db.count(query)}:${String(latest?.publishedAt ?? '')}`
+}
+
+/** More entries saved since a build than this, and the index is rebuilt rather than checked. */
+const MOVE_CHECK = 50
+
+/**
+ * Whether a served entry saved since the build now answers at an address the index
+ * does not have. Reads only the entries saved since, so an unchanged site costs one
+ * empty read.
+ */
+const movedSince = async (ctx: Ctx, siteId: unknown, since: string): Promise<boolean> => {
+  const { Entry, query } = servedEntries(ctx, siteId)
+  const saved = await ctx.db.all(
+    query
+      .where(gte(Entry.updatedAt, since))
+      .select(Entry.id, Entry.path)
+      .limit(MOVE_CHECK + 1),
+  )
+  if (!saved.length) return false
+  if (saved.length > MOVE_CHECK) return true
+  const Document = ctx.table('website_search.SearchDocument')
+  const indexed = new Map(
+    (
+      await ctx.db.all(
+        from(Document)
+          .where(
+            eq(Document.siteId, siteId),
+            inArray(
+              Document.entryId,
+              saved.map((row) => row.id),
+            ),
+          )
+          .select(Document.entryId, Document.path),
+      )
+    ).map((row) => [String(row.entryId), String(row.path)]),
+  )
+  return saved.some((row) => {
+    const path = String(row.path)
+    // An address the index never takes leaves nothing to compare.
+    if (!indexed.has(String(row.id)))
+      return !isReservedPath(path, reservedPrefixes(Object.keys(ctx.manifest.routes ?? {})))
+    return indexed.get(String(row.id)) !== path
+  })
 }
 
 /**
@@ -67,7 +111,8 @@ export const publicSignature = async (ctx: Ctx, siteId: unknown): Promise<string
 export const isCurrent = async (ctx: Ctx, state: Row | null, site: Row): Promise<boolean> => {
   if (state?.state !== 'ready') return false
   if (String(state.publicationId ?? '') !== String(site.activePublicationId ?? '')) return false
-  return String(state.signature ?? '') === (await publicSignature(ctx, site.id))
+  if (String(state.signature ?? '') !== (await publicSignature(ctx, site.id))) return false
+  return !(await movedSince(ctx, site.id, String(state.startedAt ?? '')))
 }
 
 /** Enough body text to find a page by, without one long article outweighing the index. */

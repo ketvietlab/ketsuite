@@ -18,6 +18,7 @@ import {
 // refuses anything the enum omits, falling behind would turn a legitimate
 // filter into a 422.
 import { SALE_STATES } from '../sale/functions.ts'
+import { defaultWarehouseId } from '../stock/default-warehouse.ts'
 
 type Req = Parameters<Route>[1]
 type Row = Record<string, unknown>
@@ -378,8 +379,8 @@ const requestVersion = (req: Req, body: Row): string | null => {
 
 const warehouseForCreate = async (ctx: ServeContext, url: URL, req: Req, requested: unknown) => {
   if (requested != null && String(requested).trim()) return String(requested)
-  const warehouses = (await ctx.call('stock.listWarehouses', {}, url, req)) as Row[]
-  return warehouses.length === 1 ? String(warehouses[0]!.id) : null
+  // K15 (#1428): the seller's one warehouse, or the company's only one; otherwise the seller chooses.
+  return defaultWarehouseId((await ctx.call('stock.listWarehouses', {}, url, req)) as Row[])
 }
 
 const versionFailure = (ctx: ServeContext, url: URL, req: Req) => ({

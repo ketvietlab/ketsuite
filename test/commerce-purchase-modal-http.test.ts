@@ -4,7 +4,9 @@ import { test } from 'node:test'
 import { defineDeployment } from '@ketvietlab/ketjs'
 import type { Row } from '@ketvietlab/ketjs'
 import { TestHttpError } from '@ketvietlab/ketjs/testing'
-import { ketsuite } from '../apps/ketsuite/deployment.ts'
+import { createCommerceDeployment } from '../packages/ketsuite/src/deployment.ts'
+import { openStore } from '../apps/ketsuite/config.ts'
+const ketsuite = createCommerceDeployment(openStore)
 
 const deployment = defineDeployment({
   ...ketsuite,
@@ -121,7 +123,8 @@ test('Commerce purchase modal uses live managed grants and refuses cross-company
   assert.equal((await app.client.get('/admin/purchase/record/order-b/context')).status, 404)
   const salesPage = await app.client.get('/admin/sales/quotations?lang=vi&q=')
   assert.equal(salesPage.status, 200, await salesPage.clone().text())
-  assert.match(await salesPage.text(), /record=sale\.order%3Asale-a/)
+  // A sales order opens as its own page, not a record modal over the list.
+  assert.match(await salesPage.text(), /href="\/admin\/sales\/quotations\/sale-a\?/)
   const saleResponse = await app.client.get('/admin/sales/record/sale-a/context?lang=en')
   assert.equal(saleResponse.status, 200)
   const saleContext = (await saleResponse.json()) as typeof context

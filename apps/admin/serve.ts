@@ -1,3 +1,5 @@
+// biome-ignore-all lint/plugin/admin-route-uses-shell: not the backend — the design harness serves the catalogue, not a product screen
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the design harness page; its own chrome is not a product screen
 // The design entry point.
 //
 //   node apps/admin/serve.ts

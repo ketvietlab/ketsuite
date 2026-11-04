@@ -1111,7 +1111,8 @@ test('loyalty HTTP E2E: POS payment and refund finalize and reverse through the 
   })
   assert.equal(queued.ok, true)
   assert.equal((await call<Row>('pos.getOrder', { id: 'pos-reconcile' })).loyaltyState, 'pending_reconcile')
-  assert.equal(await e2e.drainJobs(), 1)
+  // The returns above queued stock.reserveFreedTransfers (K60); they drain with the reconcile job.
+  assert.ok((await e2e.drainJobs()) >= 1)
   assert.equal((await call<Row>('pos.getOrder', { id: 'pos-reconcile' })).loyaltyState, 'finalized')
 })
 
@@ -1135,8 +1136,18 @@ test('loyalty HTTP E2E: Sale UI adapter, portal actor and company scope stay iso
     priceUnit: '100',
   })
 
-  const detail = await (await e2e.client.get('/admin/sales/quotations/so-loyalty')).text()
-  assert.match(detail, /Mở ưu đãi Loyalty/)
+  // The quotation page links to the order's loyalty and confirms through it.
+  const detail = (
+    (await (
+      await e2e.client.get('/admin/sales/record/so-loyalty/context', {
+        headers: { accept: 'application/json' },
+      })
+    ).json()) as { data: Row }
+  ).data
+  assert.deepEqual(detail.loyalty, {
+    label: 'Mở ưu đãi Loyalty',
+    href: '/admin/loyalty/orders/sale/so-loyalty',
+  })
   await e2e.client.form('/admin/loyalty/orders/sale/so-loyalty', {
     action: 'reward',
     programId: 'sale-program',
@@ -1148,7 +1159,13 @@ test('loyalty HTTP E2E: Sale UI adapter, portal actor and company scope stay iso
     true,
   )
 
-  await e2e.client.form('/admin/sales/quotations/so-loyalty', { action: 'confirm' })
+  // The page confirms through the order-command route, which finalizes the order's loyalty.
+  const confirmed = await e2e.client.post(
+    '/admin/sales/order-command',
+    JSON.stringify({ command: 'confirmOrder', id: 'so-loyalty' }),
+    { headers: { 'content-type': 'application/json' } },
+  )
+  assert.equal(((await confirmed.json()) as { value: Row }).value.ok, true)
   order = await call<Row>('sale.getOrder', { id: 'so-loyalty' })
   assert.equal(order.state, 'sale')
   assert.equal(order.loyaltyState, 'finalized')

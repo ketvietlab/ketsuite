@@ -16,7 +16,7 @@ export const coreRoutes: Record<string, WebsiteRoute> = {
     title: 'website.route.pages',
     path: 'pages',
     nav: { group: 'content', icon: 'file-text' },
-    query: ['q', 'status'],
+    query: ['q', 'status', 'locale', 'page'],
   },
   catalog: {
     capability: 'website.catalog',
@@ -131,7 +131,7 @@ export const coreRoutes: Record<string, WebsiteRoute> = {
     title: 'website.route.posts',
     path: 'posts',
     nav: { group: 'content', icon: 'newspaper' },
-    query: ['q', 'status'],
+    query: ['q', 'status', 'locale', 'page'],
   },
   'post-new': {
     title: 'website.route.postNew',

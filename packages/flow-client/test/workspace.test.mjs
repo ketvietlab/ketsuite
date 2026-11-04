@@ -10,6 +10,7 @@ import { createFnClient, FlowApiError } from '@ketvietlab/flow-client/api.mjs'
 import { atlasFlowCommand, resolveFlowCommand } from '@ketvietlab/flow-client/command-contract.mjs'
 import { createFixtureSession } from '../atlas/store.mjs'
 import { createOrganizationSession } from '../atlas/organization-store.mjs'
+import { createFixtureAuth } from '../atlas/fixture-auth.mjs'
 import { flowShellData } from '@ketvietlab/flow-client/shell-model.mjs'
 
 // No browser simulation: these stubs only let the controller receive mount's
@@ -47,7 +48,7 @@ async function renderScreen(screen, scenario = 'baseline', props = {}, prepare) 
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
   })
-  const island = createFlowWorkspace({ screen, ...props }, { call })
+  const island = createFlowWorkspace({ screen, ...props }, { call, fixtureAuth: createFixtureAuth })
   island.mount({ root: root(), lifetime: lifetime.signal })
   await new Promise((r) => setTimeout(r, 0))
   const output = renderToStaticString(island.view())
@@ -3172,4 +3173,93 @@ test('organization library renders paging and hydrates an edit beyond its first 
   assert.match(list, /50/)
   const edit = await renderScreen('type-edit', 'baseline', { record: 'library-204' }, prepare)
   assert.match(edit, /value="Library 204"/)
+})
+
+test('personal settings retain a saved timezone outside the suggested list', async () => {
+  const output = await renderScreen('personal-settings', 'baseline', {}, (fixture) => {
+    fixture.sessions.get('demo').data.personalPreferences.timezone = 'Pacific/Kiritimati'
+  })
+  assert.match(output, /<option[^>]*value="Pacific\/Kiritimati"[^>]*selected[^>]*>/)
+})
+
+test('a denied navigation invalidates other cached document reads before their reuse window ends', async () => {
+  const previous = Object.fromEntries(
+    ['document', 'location', 'history'].map((key) => [key, globalThis[key]]),
+  )
+  const fixture = createOrganizationSession('baseline', 'page')
+  const initial = fixture.call('flow.workspace.bootstrap', {
+    companyId: 'demo',
+    workspaceId: 'product',
+    projectId: 'core',
+    route: 'page',
+    recordId: 'handoff',
+  }).value
+  const props = {
+    serverShell: true,
+    screen: 'page',
+    companyId: 'demo',
+    workspaceId: 'product',
+    project: 'core',
+    scope: 'project',
+    record: 'handoff',
+    chrome: flowShellData(initial),
+  }
+  let rejection = ''
+  let reads = 0
+  globalThis.document = Object.assign(new EventTarget(), { documentElement: {} })
+  globalThis.location = new URL(
+    'http://flow.local/flow/page?company=demo&workspace=product&project=core&lang=vi&id=handoff',
+  )
+  globalThis.history = {
+    state: {},
+    replaceState(state, _, url) {
+      this.state = state
+      globalThis.location.href = new URL(url, globalThis.location.href).href
+    },
+  }
+  const host = Object.assign(root(), { closest: () => null, setAttribute() {} })
+  const lifetime = new AbortController()
+  const island = createFlowWorkspace(props, {
+    sessionEnded: async () => false,
+    call: async () => {
+      reads++
+      if (rejection) throw new FlowApiError('Lecture indisponible', rejection)
+      return initial
+    },
+    navigatePage: async () => {},
+  })
+  const visit = async (next, url) => {
+    location.href = url
+    island.update(next)
+    document.dispatchEvent(
+      new CustomEvent('ket:navigation-complete', { detail: { url: location.href, mode: 'replace' } }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  try {
+    island.mount({ root: host, lifetime: lifetime.signal })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(renderToStaticString(island.view()).includes('Quy ước bàn giao'), true)
+    rejection = 'forbidden'
+    await visit(
+      { ...props, screen: 'all-issues', project: '', record: '' },
+      'http://flow.local/flow/all-issues?company=demo&workspace=product&lang=vi',
+    )
+    assert.equal(renderToStaticString(island.view()).includes('Không có quyền truy cập'), true)
+    const afterDenial = reads
+    await visit(
+      props,
+      'http://flow.local/flow/page?company=demo&workspace=product&project=core&lang=vi&id=handoff',
+    )
+    assert.ok(reads > afterDenial, 'a previously cached record must be authorized again')
+    assert.equal(renderToStaticString(island.view()).includes('Quy ước bàn giao'), false)
+    assert.equal(renderToStaticString(island.view()).includes('Không có quyền truy cập'), true)
+  } finally {
+    lifetime.abort()
+    island.dispose()
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete globalThis[key]
+      else globalThis[key] = value
+    }
+  }
 })

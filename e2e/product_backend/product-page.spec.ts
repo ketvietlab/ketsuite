@@ -18,8 +18,10 @@ const rail = (page: import('@playwright/test').Page) => page.getByRole('compleme
 test('reads one product: the figures, the rail and every section of the page', async ({ page }, info) => {
   await signIn(page, 'admin', '/admin/product/templates/serum')
   await recordReady(page, 'Serum B5 phục hồi 30ml')
-  for (const name of ['Về danh sách', 'Nhân bản', 'Lưu trữ', 'Lưu thay đổi'])
+  for (const name of ['Về danh sách', 'Lưu trữ', 'Lưu thay đổi'])
     await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+  // A duplicate opens an unsaved create page, so it is a link.
+  await expect(page.getByRole('link', { name: 'Nhân bản', exact: true })).toBeVisible()
 
   // A complete product has nothing to fix, so the rail starts at its completeness.
   await expect(rail(page).getByRole('heading', { name: 'Cần xử lý' })).toHaveCount(0)
@@ -45,7 +47,7 @@ test('reads one product: the figures, the rail and every section of the page', a
   ])
     await expect(page.getByRole('heading', { level: 2, name: section, exact: true })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Tên sản phẩm' })).toHaveValue('Serum B5 phục hồi 30ml')
-  await expect(page.getByRole('textbox', { name: 'Barcode' })).toHaveValue('8938501230012')
+  await expect(page.getByRole('textbox', { name: 'Barcode' })).toHaveValue('8938501230010')
   await expect(page.getByRole('textbox', { name: 'Giá bán' })).toHaveValue('350.000')
   await expect(page.getByRole('textbox', { name: 'Giá vốn' })).toHaveValue('150.000')
 
@@ -70,8 +72,12 @@ test('what a product still lacks is listed, and each item leads to its field', a
   await expect(rail(page).getByRole('progressbar', { name: 'Đã có 1/7 thông tin' })).toBeVisible()
   const description = rail(page).getByRole('link', { name: 'Mô tả bán hàng' })
   await expect(description).toHaveAttribute('href', '#product-record-description')
+  // The field starts below the fold, so reaching it is the link's doing (the page once swallowed it).
+  const field = page.getByRole('textbox', { name: 'Mô tả bán hàng' })
+  await expect(field).not.toBeInViewport()
   await description.click()
-  await expect(page.getByRole('textbox', { name: 'Mô tả bán hàng' })).toBeInViewport()
+  await expect(field).toBeInViewport()
+  await expect(field).toBeFocused()
 
   // With variants, codes and costs live on each variant.
   const variants = page.getByRole('table', { name: 'Biến thể' })
@@ -117,6 +123,7 @@ test('archives a product and restores it', async ({ page }) => {
   await page.getByRole('button', { name: 'Lưu trữ', exact: true }).click()
   const archive = page.getByRole('dialog', { name: 'Lưu trữ' })
   await expect(archive).toContainText('có thể khôi phục bất cứ lúc nào')
+  await archive.getByRole('textbox', { name: 'Lý do lưu trữ' }).fill('Hết mùa bán')
   await archive.getByRole('button', { name: 'Lưu trữ' }).click()
   await expect(archive).toBeHidden()
   const restoreButton = page.getByRole('button', { name: 'Khôi phục', exact: true })
@@ -125,6 +132,10 @@ test('archives a product and restores it', async ({ page }) => {
 
   await page.reload()
   await recordReady(page, 'Toner cân bằng (lưu trữ)')
+  // The history says who archived it and why.
+  const history = page.getByRole('list', { name: 'Lịch sử trạng thái' })
+  await expect(history).toContainText('Quản trị sản phẩm')
+  await expect(history).toContainText('Hết mùa bán')
   await restoreButton.click()
   const restore = page.getByRole('dialog', { name: 'Khôi phục' })
   await restore.getByRole('button', { name: 'Khôi phục' }).click()
@@ -136,15 +147,22 @@ test('archives a product and restores it', async ({ page }) => {
 test('duplicates a product into a new one without its code', async ({ page }) => {
   await signIn(page, 'admin', '/admin/product/templates/toner-copy')
   await recordReady(page, 'Toner để nhân bản')
-  await page.getByRole('button', { name: 'Nhân bản' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Nhân bản' })
-  const copyName = dialog.getByRole('textbox', { name: 'Tên sản phẩm mới' })
+  // Duplicating opens the create page filled from the source; nothing is written until it is created.
+  await page.getByRole('link', { name: 'Nhân bản', exact: true }).click()
+  await expect(page).toHaveURL(/\/templates\/new\?duplicate=toner-copy\b/)
+  await recordReady(page, 'Tạo sản phẩm')
+  const copyName = page.getByRole('textbox', { name: 'Tên sản phẩm' })
   await expect(copyName).toHaveValue('Toner để nhân bản (bản sao)')
   await copyName.fill('Toner nhân bản cho quầy 2')
-  await dialog.getByRole('button', { name: 'Nhân bản' }).click()
-  await expect(page).not.toHaveURL(/\/templates\/toner-copy\b/)
+  // The code is the copy's own: it starts empty, the price comes along.
+  const code = page.getByRole('textbox', { name: 'Mã nội bộ' })
+  await expect(code).toHaveValue('')
+  await expect(page.getByRole('textbox', { name: 'Giá bán' })).toHaveValue('220.000')
+  await code.fill('TONER-Q2')
+  await page.getByRole('button', { name: 'Tạo sản phẩm' }).click()
+  await expect(page).not.toHaveURL(/\/templates\/(?:new|toner-copy)\b/)
   await recordReady(page, 'Toner nhân bản cho quầy 2')
-  await expect(page.getByRole('textbox', { name: 'Mã nội bộ' })).toHaveValue('')
+  await expect(page.getByRole('textbox', { name: 'Mã nội bộ' })).toHaveValue('TONER-Q2')
   await expect(page.getByRole('textbox', { name: 'Giá bán' })).toHaveValue('220.000')
 })
 

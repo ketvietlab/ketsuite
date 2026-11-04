@@ -5,7 +5,7 @@ import type { FieldProps } from '../../primitives/field/index.tsx'
 import { describedBy, FieldFrame, issueFor } from '../shared.tsx'
 import { NativeFieldControl } from '../../primitives/field/native-control.tsx'
 import type { FieldIssue } from '../shared.tsx'
-import { formatRange } from './date-math.js'
+import { dayPattern, formatDay, formatRange } from './date-math.js'
 
 export const HOOKS = [
   'date-picker',
@@ -22,6 +22,7 @@ export const HOOKS = [
   'date-calendar-title',
   'date-calendar-body',
   'date-field-control',
+  'date-entry',
   'date-range-preset',
   'date-boundary',
   'date-calendar-months',
@@ -61,7 +62,8 @@ export type DatePickerLabels = {
   presetLabels: Record<DateRangePreset, string>
 }
 type CalendarOptions = {
-  /** Native inputs retain the browser's date format. Calendar labels default to Vietnamese. */
+  /** Days are written in this language's order (English month first), whatever the browser's language;
+   * the native fallback without JavaScript keeps the browser's. Calendar labels default to Vietnamese. */
   locale?: 'vi' | 'en' | 'ja'
   /** Business-timezone civil date; omit for the browser's local today at opening. */
   today?: string
@@ -302,6 +304,27 @@ export const DatePicker = (props: DatePickerProps): TemplateResult => {
                   { ...temporal(props), type: 'date', appearance: 'embedded' },
                   describedBy(props.id, props.help, temporal(props).error),
                 )}
+                {/* A native date field writes the day in the browser's language. Enhanced, this field
+                    takes its place and writes it in the language the reader chose; the native one
+                    keeps the submitted ISO value and is the fallback without JavaScript. */}
+                <span data-ui="date-entry" hidden>
+                  {NativeFieldControl(
+                    {
+                      ...temporal(props),
+                      id: `${props.id}-entry`,
+                      name: '',
+                      type: 'text',
+                      appearance: 'embedded',
+                      value: formatDay(String(props.value ?? ''), props.locale),
+                      placeholder: dayPattern(props.locale),
+                      inputMode: 'numeric',
+                      min: undefined,
+                      max: undefined,
+                      step: undefined,
+                    },
+                    describedBy(props.id, props.help, temporal(props).error),
+                  )}
+                </span>
                 <div data-ui="date-tools">
                   <IconButton
                     label={`${labels.open}: ${props.label}`}
@@ -389,7 +412,11 @@ export const DateRangePicker = (props: DateRangePickerProps): TemplateResult => 
                     appearance: 'embedded',
                     readOnly: true,
                     disabled,
-                    value: formatRange(String(props.start.value ?? ''), String(props.end.value ?? '')),
+                    value: formatRange(
+                      String(props.start.value ?? ''),
+                      String(props.end.value ?? ''),
+                      props.locale,
+                    ),
                     placeholder: labels.open,
                     error,
                   },

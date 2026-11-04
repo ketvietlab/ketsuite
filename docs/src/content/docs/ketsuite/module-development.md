@@ -214,6 +214,12 @@ quotes while preserving one transaction. Consumers must declare every effect fro
 and treat its input and output as the public contract; internal Pricing and Account helpers remain
 private.
 
+`saleFunctionSpecs.addLine` is also a public composition contract: the caller owns
+the transaction around the line and its protected cost snapshot. Its effects must
+be included by the composing domain. The ordinary Sale HTTP command wraps this
+write in its own transaction; do not substitute that wrapper inside an existing
+transaction. See [Quotation line grid](sale-line-grid.md#saved-line-costs).
+
 These explicitly published specs may be called as `spec.handler(ctx, args)` by a composing domain
 use-case using the same context or transaction. The caller owns its authorization, must preserve
 scope, and must declare all of the composed spec's effects. This does not replace `ctx.call()` at a

@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — a #1044 workbench whose ConfirmDialog submits a hand-written hidden form — needs a kit confirm form
 import { hospitalityScopedHref } from './scoped-href.ts'
 import {
   Button,

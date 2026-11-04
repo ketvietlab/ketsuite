@@ -61,24 +61,42 @@ export const productSalesFunctions: Record<string, FnSpec> = {
       )
       const own = units.get(String(template.uomId ?? '')) ?? 1
       const dates = new Map(orders.map((row) => [String(row.id), String(row.dateOrder ?? '')]))
-      let quantity = 0
-      let revenue = 0
-      for (const line of lines) {
-        quantity += (Number(line.productUomQty ?? 0) * (units.get(String(line.productUomId)) ?? own)) / own
-        revenue += Number(line.priceSubtotal ?? 0)
+      // The same sums, once for the template and once per variant (P32): the analysis the
+      // product page opens lists one row per variant that sold.
+      const tally = (rows: Row[]) => {
+        let quantity = 0
+        let revenue = 0
+        for (const line of rows) {
+          quantity += (Number(line.productUomQty ?? 0) * (units.get(String(line.productUomId)) ?? own)) / own
+          revenue += Number(line.priceSubtotal ?? 0)
+        }
+        const sold = new Set(rows.map((line) => String(line.orderId)))
+        const lastAt =
+          [...sold]
+            .map((id) => dates.get(id) ?? '')
+            .sort()
+            .at(-1) || null
+        return {
+          quantity: Math.round(quantity * 1000) / 1000,
+          revenue: Math.round(revenue),
+          orders: sold.size,
+          lastAt,
+        }
       }
-      const sold = new Set(lines.map((line) => String(line.orderId)))
-      const lastAt =
-        [...sold]
-          .map((id) => dates.get(id) ?? '')
-          .sort()
-          .at(-1) || null
+      const byVariant = new Map<string, Row[]>()
+      for (const line of lines) {
+        const held = byVariant.get(String(line.productId)) ?? []
+        held.push(line)
+        byVariant.set(String(line.productId), held)
+      }
       return {
         days,
-        quantity: Math.round(quantity * 1000) / 1000,
-        revenue: Math.round(revenue),
-        orders: sold.size,
-        lastAt,
+        ...tally(lines),
+        variants: [...byVariant]
+          .map(([productId, rows]) => ({ productId, ...tally(rows) }))
+          .sort(
+            (left, right) => right.quantity - left.quantity || left.productId.localeCompare(right.productId),
+          ),
       }
     },
   }),

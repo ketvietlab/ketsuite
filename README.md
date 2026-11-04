@@ -65,6 +65,19 @@ The build emits public package artifacts into `packages/*/dist`.
 Local tests are scoped to the affected behavior and deployment; see
 [AGENTS.md](AGENTS.md). Building the workspace is not a full-suite test pass.
 
+## Commit checks
+
+`npm ci` installs a pre-commit hook. It runs `tools/precommit.mjs` on the staged
+files: formatting, lint and terminology on every commit, and the design-system
+inventory and governance audits when a change touches what they read. The
+development source in Két Việt runs the same file, so a tree it accepts passes
+this repository's hook too. To check the whole tree the way CI does:
+
+```sh
+# Run from: /path/to/ketsuite
+npm run precommit -- --all
+```
+
 ## License
 
 MIT. Individual packages retain their third-party notices.

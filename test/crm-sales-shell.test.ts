@@ -111,7 +111,7 @@ test('crm sales shell: each screen serves its island, its help and its menu entr
   const css = readFileSync('packages/ketsuite/src/modules/backend/design/lists.css', 'utf8')
   assert.match(
     css,
-    /> \[data-ket-island\]\s*> :is\([^)]*\[data-ui="board-page"\]\[data-variant="operational"\]/,
+    /> :is\(ket-island, \[data-ket-island\]\)\s*> :is\([^)]*\[data-ui="board-page"\]\[data-variant="operational"\]/,
   )
   // The record page lights up the list it belongs to.
   const record = await (await app.client.get('/admin/crm/cases/OP-0192')).text()

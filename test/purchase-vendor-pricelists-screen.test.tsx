@@ -311,6 +311,13 @@ test('purchase vendor pricelist routes: /new keeps locale, POST redirect and leg
   assert.equal(invalid.status, 200)
   assert.match(invalid.url, /\/admin\/purchase\/vendor-pricelists\/new\?lang=vi&invalid=partnerId$/)
   assert.match(await invalid.text(), /data-ui="notice" data-tone="danger"[\s\S]*?Chưa lưu được/)
+  // With a vendor chosen, the missing product is reported on the field this form posts (P48 names it templateId).
+  const noProduct = await e2e.client.post(
+    '/admin/purchase/vendor-pricelists/new?lang=vi',
+    new URLSearchParams({ partnerId: 'vendor' }),
+    { headers: { accept: 'text/html', 'content-type': 'application/x-www-form-urlencoded' } },
+  )
+  assert.match(noProduct.url, /\/admin\/purchase\/vendor-pricelists\/new\?lang=vi&invalid=productTemplateId$/)
 
   const refused = await e2e.client.post(
     '/admin/purchase/vendor-pricelists/new?lang=vi',

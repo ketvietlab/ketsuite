@@ -9,6 +9,7 @@ import { NAVIGATION_TYPE, fragment, isNavigationRequest, page, withHeaders } fro
 import type { MenuNode, Route, ServeContext, Translator } from '@ketvietlab/ketjs'
 import {
   AppShell,
+  AppSwitcherHelp,
   AppTopbar,
   NavigationToggle,
   RecordPage as DesignSystemRecordPage,
@@ -53,6 +54,7 @@ export type Frame = {
   app?: string
   applications?: AppSwitcherProps
   globalSearchQuery?: string
+  globalSearch?: { action: string; label: string }
   /** Server request URL for native collection controls; never browser state. */
   collectionUrl?: string
   viewer?: Viewer | null
@@ -110,9 +112,10 @@ const locationBar = (_: Translator, frame: Frame): TemplateResult => (
     location={frame.viewer ? viewerContext(frame.viewer, 'topbar') : null}
     navigation={<NavigationToggle controls="backend-navigation-drawer" label={_('backend.nav.open')} />}
     search={{
-      action: '/admin/search',
-      label: _('backend.globalSearch.label'),
-      triggerLabel: _('backend.globalSearch.trigger'),
+      action: frame.globalSearch?.action ?? '/admin/search',
+      mode: frame.globalSearch ? 'link' : 'dialog',
+      label: frame.globalSearch?.label ?? _('backend.globalSearch.label'),
+      triggerLabel: frame.globalSearch?.label ?? _('backend.globalSearch.trigger'),
       closeLabel: _('backend.globalSearch.close'),
       placeholder: _('backend.globalSearch.placeholder'),
       submitLabel: _('backend.globalSearch.submit'),
@@ -168,9 +171,18 @@ const renderShell = (_: Translator, title: string, body: TemplateResult, frame: 
     navItems: extras['nav.items'],
     footItems: extras['sidebar.foot'],
   }
+  // Each screen names its own guide, and the rail stays across fragment navigation: Help travels with
+  // the content in its own slot, so the rail's ? names the guide of the screen now shown (#1817).
+  const applications = {
+    ...(frame.applications ?? suiteApplications(menu, _, app)),
+    helpSlot: 'backend.app-help',
+  }
   if (frame.navigation)
     return (
       <ket-fragments data-title={title}>
+        <template data-ket-slot="backend.app-help">
+          {applications.helpLabel ? AppSwitcherHelp({ label: applications.helpLabel }) : ''}
+        </template>
         <template data-ket-slot="backend.sidebar-main">
           {sidebarNavigationContent(_, sidebarOptions)}
         </template>
@@ -187,7 +199,7 @@ const renderShell = (_: Translator, title: string, body: TemplateResult, frame: 
   return (
     <div data-kv-design-system data-presentation="grouped" data-density="compact">
       {AppShell({
-        applications: frame.applications ?? suiteApplications(menu, _, app),
+        applications,
         mode: 'viewport',
         location: <div data-ket-slot="backend.global-topbar">{locationBar(_, frame)}</div>,
         sidebar: sidebarMain(_, sidebarOptions),
@@ -203,6 +215,17 @@ const renderShell = (_: Translator, title: string, body: TemplateResult, frame: 
     </div>
   )
 }
+
+/**
+ * A page of its own outside the application shell, such as an operation's printed copy: the theme scope the
+ * design system's styles expect, around the page's one main landmark. It has no navigation, so it prints as
+ * itself.
+ */
+export const standalonePage = (body: JSXChild): TemplateResult => (
+  <div data-kv-design-system data-presentation="grouped" data-density="compact">
+    <main>{body}</main>
+  </div>
+)
 
 /**
  * The document's island runtime: every `backend:runtime` fill, such as the record
@@ -284,6 +307,8 @@ export type OperationalScreenOptions = {
   context?: JSXChild
   /** A record or workspace's identifying facts, in the page's facts strip. Lists have none. */
   meta?: JSXChild
+  /** RecordScreen only: `wide` holds a page without a rail at the DS wide measure (68.75rem). */
+  width?: 'default' | 'wide'
 }
 
 const operationalActions = (options: OperationalScreenOptions): JSXChild | undefined =>
@@ -318,6 +343,7 @@ export const recordScreen = (options: OperationalScreenOptions): TemplateResult 
     options,
     <DesignSystemRecordPage
       variant="operational"
+      width={options.width}
       context={options.context ?? null}
       title={options.title}
       actions={operationalActions(options)}

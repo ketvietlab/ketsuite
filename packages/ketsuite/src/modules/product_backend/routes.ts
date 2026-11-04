@@ -1,3 +1,9 @@
+import { productBackHref } from './navigation.ts'
+import { searchRoutes } from './search/routes.ts'
+import { exportVariantList } from './variants/export.ts'
+import { exportProductList } from './list/export.ts'
+import { importRoutes } from './imports/routes.ts'
+import { productCollectionScreen } from './screens/product-collection.tsx'
 import { randomUUID } from 'node:crypto'
 import {
   NAVIGATION_TYPE,
@@ -9,49 +15,34 @@ import {
   text,
   withHeaders,
 } from '@ketvietlab/ketjs'
-import type {
-  FilterOperator,
-  FilterRule,
-  ListSearchSpec,
-  ListState,
-  RouteEntry,
-  Route,
-  ServeContext,
-} from '@ketvietlab/ketjs'
+import type { RouteEntry, Route, ServeContext } from '@ketvietlab/ketjs'
 import {
   attributesScreen,
-  favoriteModal,
   productDetailScreen,
-  productsScreen,
   templatePageScreen,
   VARIANT_DETAIL_TABS,
   variantScreen,
 } from './screens/index.ts'
-import { html, renderIsland, trustedMarkup } from '@ketvietlab/ketjs-view'
-import type { SearchFilterConfig } from '@ketvietlab/design-system'
 import { uomControl } from './relation-control.ts'
 import { productWorkspaceContext } from './modal/product-workspace-context.ts'
 import type { VariantDetailTab } from './screens/index.ts'
 import { unitRoutes } from './units/routes.ts'
+import { comboRoutes } from './combos/routes.ts'
+import { tagRoutes } from './tags/routes.ts'
+import { categoryRoutes } from './categories/routes.ts'
+import { variantRoutes } from './variants/routes.ts'
 import type { AttributeListRow } from './screens/attributes.tsx'
 import { attributeSearchFilterConfig } from './attributes-search.ts'
-import { listSearchFilterConfig, loadListFavorites, searchFilterBar } from '../backend/search-filter.ts'
+import { searchFilterBar } from '../backend/search-filter.ts'
 import { backendPage } from '../../ui/index.ts'
-import {
-  RECORD_NEW_ID,
-  RECORD_TAB_PARAM,
-  readRecordModalTarget,
-  recordModalCreateHref,
-} from '../../ui/record-modal.tsx'
+import { RECORD_NEW_ID, recordModalCreateHref } from '../../ui/record-modal.tsx'
 import { receiveAttachment, serveAttachment } from '../storage/routes.ts'
 import type { Attachment } from '../storage/routes.ts'
 import { productImageUrl } from '../../ui/client/product-image.ts'
 import { errorsOf, readForm, seeOther } from '../backend/forms.ts'
-import { PRODUCT_LIST_PAGE_SIZE, productListShape } from './list/read.ts'
-import { PRODUCT_LIST_KEY, productList, productListControls, productListFooter } from './list/island.tsx'
-import type { ProductListProps } from './list/island.tsx'
-import { LIST_LABEL_KEYS } from './list/messages.ts'
-import { adminPage, frameOf, inLocale, jointFor, localeQuery, timezoneOf } from '../backend/screen.ts'
+import { optionalRead } from '../backend/optional-read.ts'
+import { productListShape } from './list/read.ts'
+import { adminPage, frameOf, inLocale, jointFor, localeQuery } from '../backend/screen.ts'
 
 type MediaRow = {
   id: string
@@ -106,25 +97,6 @@ const variantTabOf = (url: URL): VariantDetailTab => {
 }
 const isProductPartial = (req: Parameters<Route>[1], scope = 'product-detail'): boolean =>
   req.headers['x-ket-partial'] === scope
-// A template's own page; `new` is its create form.
-const templatePageHref = (url: URL, id: string, tab?: string | null): string =>
-  inLocale(
-    url,
-    `/admin/product/templates/${encodeURIComponent(id)}${tab ? `?${RECORD_TAB_PARAM}=${encodeURIComponent(tab)}` : ''}`,
-  )
-/**
- * The way back from a product's page: the list the reader opened it from, with its
- * filters and the row it named (`#row=<id>`), when that is this catalogue.
- */
-const listReturnOf = (url: URL): string => {
-  const raw = url.searchParams.get('returnTo')
-  if (raw) {
-    const target = new URL(raw, 'http://ket.local')
-    if (target.origin === 'http://ket.local' && target.pathname === '/admin/product/templates')
-      return `${target.pathname}${target.search}${target.hash}`
-  }
-  return inLocale(url, '/admin/product/templates')
-}
 const seeProduct = (id: string, url: URL, tab: string = productTabOf(url)) =>
   withHeaders(text('', { status: 303 }), {
     location: inLocale(url, `/admin/product/templates/${id}?tab=${tab}`),
@@ -137,8 +109,10 @@ const seeVariant = (
 ) => seeOther(inLocale(url, `/admin/product/templates/${templateId}/variants/${productId}?tab=${tab}`))
 
 const optionsFor = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) => {
+  // Units are their own module's read: a role reading products without it still gets
+  // the page, with the saved unit names it already shows and no unit choices.
   const [units, categories, attributes, brands] = (await Promise.all([
-    ctx.call('uom.listUnits', {}, url, req),
+    optionalRead(ctx, 'uom.listUnits', {}, url, req, []),
     ctx.call('product.listCategories', {}, url, req),
     ctx.call('product.listAttributes', {}, url, req),
     ctx.call('product.listBrands', {}, url, req),
@@ -195,61 +169,6 @@ const unitRootOf = (units: Array<Record<string, unknown>>, uomId: unknown): stri
 const invalidErrors = (url: URL, _: ReturnType<ServeContext['translate']>) =>
   url.searchParams.has('invalid') ? [_('product_backend.error.invalid')] : undefined
 
-const cloneState = (state: ListState): ListState => ({
-  ...state,
-  presets: [...state.presets],
-  filters: [...state.filters],
-  groupBy: [...state.groupBy],
-  sort: [...state.sort],
-  openGroups: state.openGroups.map((path) => [...path]),
-  groupPages: { ...state.groupPages },
-})
-
-const customRuleOf = (url: URL, spec: ListSearchSpec): FilterRule | null => {
-  if (url.searchParams.get('applyFilter') !== '1') return null
-  const field = spec.filterable?.find((candidate) => candidate.key === url.searchParams.get('filterField'))
-  const operator = url.searchParams.get('filterOp') as FilterOperator | null
-  if (!field || !operator) return null
-  const raw = url.searchParams.get('filterValue') ?? ''
-  const noValue = ['isTrue', 'isFalse', 'isSet', 'isNotSet'].includes(operator)
-  const value = noValue
-    ? undefined
-    : operator === 'anyOf'
-      ? raw
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean)
-      : operator === 'between'
-        ? raw.split(',').map((item) => (field.type === 'number' ? Number(item.trim()) : item.trim()))
-        : field.type === 'number'
-          ? Number(raw)
-          : raw
-  return { kind: 'rule', field: field.key, operator, ...(noValue ? {} : { value }) }
-}
-
-const productFieldLabel = (
-  _: ReturnType<ServeContext['translate']>,
-  key: string,
-  fallback: string,
-): string => {
-  const message = (
-    {
-      type: 'product_backend.field.type',
-      categoryId: 'product_backend.field.category',
-      uomId: 'product_backend.field.uom',
-      active: 'product_backend.field.active',
-      saleOk: 'product_backend.field.saleOk',
-      purchaseOk: 'product_backend.field.purchaseOk',
-      createdAt: 'product_backend.field.createdAt',
-      updatedAt: 'product_backend.field.updatedAt',
-      name: 'product_backend.field.name',
-      description: 'product_backend.field.description',
-      listPrice: 'product_backend.field.listPrice',
-    } as Record<string, string>
-  )[key]
-  return message && _.resolves(message) ? _(message) : fallback
-}
-
 const mediaFor = (ctx: ServeContext, url: URL, req: Parameters<Route>[1], templateId: string) =>
   ctx.call('product_media.listMedia', { templateId }, url, req) as Promise<MediaRow[]>
 
@@ -285,6 +204,12 @@ const ownsVariantMedia = async (
  */
 export const routes: Record<string, RouteEntry> = {
   ...unitRoutes,
+  ...categoryRoutes,
+  ...tagRoutes,
+  ...comboRoutes,
+  ...importRoutes,
+  ...searchRoutes,
+  ...variantRoutes,
   // A product's image, for whoever may see product images (ui/client/product-image.ts).
   // Anything else, and any file no product image links, is not found: the same answer
   // for a refusal as for a miss, so the route says nothing about other files.
@@ -303,235 +228,9 @@ export const routes: Record<string, RouteEntry> = {
       if (!attachment) return text('not found', { status: 404 })
       return serveAttachment(ctx, url, req, attachment)
     },
-  '/admin/product/templates':
-    (ctx: ServeContext): Route =>
-    async (url, req) => {
-      // Templates used to open in a record modal over this list; their links now open the page.
-      const legacy = readRecordModalTarget(url)
-      if (legacy?.kind === 'product.template') return seeOther(templatePageHref(url, legacy.id, legacy.tab))
-      const lang = ctx.localeOf(url, req)
-      const _ = ctx.translate(lang)
-      const live = (await ctx.live(req)).functions
-      // `live` is the same for every viewer; what this one may do is their allow-list.
-      const may = async (name: string) => Boolean(live[name]) && (await ctx.allows(name, url, req))
-      // Stock answers the list for a viewer who may read it, and adds its column; a
-      // viewer or an installation without stock gets the catalogue's own read.
-      const read = (await may('stock_backend.searchProductTemplates'))
-        ? 'stock_backend.searchProductTemplates'
-        : 'product_backend.searchTemplates'
-      const spec = productListShape(
-        table(ctx.manifest, 'product.Template'),
-        read.startsWith('stock_backend.'),
-      )
-      const parsed = parseListState(spec, url)
-      const favorites = await loadListFavorites(ctx, url, req, spec, cloneState(parsed.state))
-      const hasExpandedState = ['q', 'preset', 'filter', 'group', 'sort', 'archived'].some((key) =>
-        url.searchParams.has(key),
-      )
-      const selectedFavorite = favorites.find((favorite) => favorite.id === parsed.state.favoriteId)
-      const defaultFavorite = favorites.find((favorite) => favorite.defaultKey)
-      const favoriteToExpand = !hasExpandedState
-        ? (selectedFavorite ?? (!url.searchParams.has('favorite') ? defaultFavorite : undefined))
-        : undefined
-      if (favoriteToExpand) {
-        const next: ListState = {
-          ...cloneState(parsed.state),
-          ...favoriteToExpand.state,
-          presets: [...(favoriteToExpand.state.presets ?? [])],
-          filters: [...(favoriteToExpand.state.filters ?? [])],
-          groupBy: [...(favoriteToExpand.state.groupBy ?? [])],
-          sort: [...(favoriteToExpand.state.sort ?? spec.defaultSort ?? [])],
-          page: 1,
-          openGroups: [],
-          groupPages: {},
-          favoriteId: favoriteToExpand.id,
-        }
-        return withHeaders(text('', { status: 303 }), { location: encodeListState(next, url) })
-      }
-      const customRule = customRuleOf(url, spec)
-      if (customRule) {
-        const next = cloneState(parsed.state)
-        next.filters.push(customRule)
-        next.page = 1
-        const clean = new URL(url)
-        for (const key of ['filterField', 'filterOp', 'filterValue', 'applyFilter'])
-          clean.searchParams.delete(key)
-        return withHeaders(text('', { status: 303 }), { location: encodeListState(next, clean) })
-      }
-      const state = parsed.state
-      const timezone = await timezoneOf(ctx, url, req)
-      // The bar's choices name categories and units, not their ids.
-      const [categoryRows, unitRows] = (await Promise.all([
-        ctx.call('product.listCategories', {}, url, req),
-        ctx.call('uom.listUnits', {}, url, req),
-      ])) as [Array<Record<string, unknown>>, Array<Record<string, unknown>>]
-      const categoryMap = new Map<string, string>()
-      const collectCategories = (items: Array<Record<string, unknown>>) => {
-        for (const item of items) {
-          categoryMap.set(String(item.id), String(item.name))
-          if (Array.isArray(item.children)) collectCategories(item.children as Array<Record<string, unknown>>)
-        }
-      }
-      collectCategories(categoryRows)
-      const unitMap = new Map(unitRows.map((row) => [String(row.id), String(row.name)]))
-      const extensionActions = await ctx.joint(url, req, 'product_backend:catalogue.actions', {
-        locale: localeQuery(url),
-      })
-      // What the island reads with: the list's own URL, less the route modal over it.
-      const listUrl = new URL(url)
-      for (const key of ['modal', 'favoriteError']) listUrl.searchParams.delete(key)
-      const listHref = `${listUrl.pathname}${listUrl.search}`
-      return adminPage(ctx, url, req, {
-        title: 'product_backend.screen.title',
-        body: async (_, frame) => {
-          const groupLabels: Record<string, string> = {
-            type: _('product_backend.list.group.type'),
-            state: _('product_backend.list.group.state'),
-            stock: _('product_backend.list.group.state'),
-          }
-          const config = listSearchFilterConfig(_, {
-            name: 'product-template-filter',
-            favoriteHref: (() => {
-              const next = new URL(url)
-              next.searchParams.set('modal', 'favorite')
-              return `${next.pathname}${next.search}`
-            })(),
-            fieldChoices: {
-              type: ['goods', 'service'].map((value) => ({
-                value,
-                label: _(`product_backend.type.${value}`),
-              })),
-              categoryId: [...categoryMap].map(([value, label]) => ({ value, label })),
-              uomId: [...unitMap].map(([value, label]) => ({ value, label })),
-            },
-            bodyId: 'product-template-list',
-            spec,
-            state,
-            favorites,
-            fieldLabel: (key, fallback) => productFieldLabel(_, key, fallback),
-            presetLabel: (key, fallback) =>
-              key === 'goods' || key === 'service'
-                ? _(`product_backend.type.${key}`)
-                : key === 'outOfStock'
-                  ? _('product_backend.list.preset.outOfStock')
-                  : productFieldLabel(_, key === 'sale' ? 'saleOk' : 'purchaseOk', fallback),
-            labels: {
-              searchLabel: _('product_backend.search.label'),
-              searchPlaceholder: _('product_backend.chrome.search'),
-            },
-            applyInput: { listKey: spec.key, returnTo: listHref },
-            functions: {
-              apply: 'product_backend.applySearchFilter',
-              saveFavorite: 'product_backend.saveSearchFavorite',
-              deleteFavorite: 'product_backend.deleteSearchFavorite',
-              setDefaultFavorite: 'product_backend.setDefaultSearchFavorite',
-            },
-          })
-          // Expanded and applied as it changes, like every list; typed text stays in the field.
-          const search: SearchFilterConfig = {
-            ...config,
-            presentation: 'expanded',
-            applyOnInput: true,
-            size: 'default',
-            query: state.q ?? '',
-            facets: config.facets.filter((facet) => facet.type !== 'field'),
-            filters: config.filters.map((option) => {
-              // Out of stock, sold and purchased read as states of the product, beside
-              // "Include archived", so the bar keeps the mock's Type and Status choices.
-              const group = ['stock', 'sale', 'purchase'].includes(String(option.group))
-                ? 'state'
-                : option.group
-              return {
-                ...option,
-                ...(group
-                  ? { group, ...(groupLabels[group] ? { groupLabel: groupLabels[group] } : {}) }
-                  : {}),
-              }
-            }),
-          }
-          const labels = {
-            ...Object.fromEntries(LIST_LABEL_KEYS.map((key) => [key, _(`product_backend.list.${key}`)])),
-            region: _('backend.table.results'),
-            selectAll: _('backend.table.selectAll'),
-            selectRow: _('backend.table.selectRow'),
-            sortedAscending: _('product_backend.table.sortAscending'),
-            sortedDescending: _('product_backend.table.sortDescending'),
-            previousPage: _('backend.chrome.previous'),
-            nextPage: _('backend.chrome.next'),
-            loading: _('backend.relation.loading'),
-            loadError: _('backend.error.failed.title'),
-            retry: _('backend.relation.retry'),
-            empty: _('product_backend.screen.empty.message'),
-            emptyHint: _('product_backend.screen.empty.hint'),
-            typeGoods: _('product_backend.type.goods'),
-            typeService: _('product_backend.type.service'),
-            create: _('product_backend.create.title'),
-          }
-          // Who may not create or archive is offered no way to start, rather than a refusal at the end.
-          const [canCreate, canArchive, canDelete, images] = await Promise.all([
-            may('product.saveTemplate'),
-            may('product.archiveTemplate'),
-            may('product.deleteTemplates'),
-            may('product_media.getMediaAttachment'),
-          ])
-          const createHref = canCreate ? templatePageHref(url, RECORD_NEW_ID) : null
-          const bulk =
-            canArchive || canDelete
-              ? {
-                  action: inLocale(url, '/admin/product/templates/bulk'),
-                  archive: canArchive,
-                  delete: canDelete,
-                }
-              : null
-          const listProps: ProductListProps = {
-            read,
-            href: listHref,
-            timezone,
-            lang: _.locale === 'en' ? 'en' : 'vi',
-            pageSize: PRODUCT_LIST_PAGE_SIZE,
-            labels: labels as ProductListProps['labels'],
-            search,
-            createHref,
-            bulk,
-            images,
-          }
-          // Three islands over one store, each in its slot of the page (list/island.tsx).
-          const part = (name: string, controller: typeof productList) =>
-            html`${trustedMarkup(renderIsland(name, controller, listProps, { tag: 'div', key: PRODUCT_LIST_KEY }))}`
-          const islands = {
-            controls: part('product.template-list-controls', productListControls),
-            body: part('product.template-list', productList),
-            footer: part('product.template-list-footer', productListFooter),
-          }
-          const returnUrl = new URL(url)
-          returnUrl.searchParams.delete('modal')
-          returnUrl.searchParams.delete('favoriteError')
-          const favoriteOverlay =
-            url.searchParams.get('modal') === 'favorite'
-              ? favoriteModal(
-                  _,
-                  `${returnUrl.pathname}${returnUrl.search}`,
-                  localeQuery(url),
-                  url.searchParams.has('favoriteError') ? [_('product_backend.favorite.invalid')] : undefined,
-                )
-              : undefined
-          // The route modal belongs inside backend.content so fragment open/close replaces it too.
-          return productsScreen(
-            _,
-            {
-              ...frame,
-              chrome: createHref
-                ? { create: { label: _('product_backend.create.title'), path: createHref } }
-                : {},
-            },
-            islands,
-            extensionActions,
-            favoriteOverlay,
-            _.locale === 'en' ? 'en' : 'vi',
-          )
-        },
-      })
-    },
+  '/admin/product/variants/export': (ctx) => (url, req) => exportVariantList(ctx, url, req),
+  '/admin/product/templates/export': (ctx) => (url, req) => exportProductList(ctx, url, req),
+  '/admin/product/templates': (ctx) => (url, req) => productCollectionScreen(ctx, url, req),
   '/admin/product/templates/bulk':
     (ctx: ServeContext): Route =>
     async (url, req) => {
@@ -546,16 +245,27 @@ export const routes: Record<string, RouteEntry> = {
       const returnTo = form.returnTo?.startsWith('/admin/product/templates') ? form.returnTo : fallback
       if (!ids.length) return seeOther(returnTo)
       if (form.action === 'archive') {
-        for (const id of ids) {
-          const current = (await ctx.call('product.getTemplate', { id }, url, req)) as { revisionId?: string }
-          await ctx.call(
+        try {
+          const expectedRevisions: Record<string, string> = {}
+          for (const id of ids) {
+            const current = (await ctx.call('product.getTemplate', { id }, url, req)) as {
+              revisionId?: string
+            }
+            expectedRevisions[id] = current.revisionId ?? 'initial'
+          }
+          const result = (await ctx.call(
             'product.archiveTemplate',
-            { id, active: false, expectedRevisionId: current.revisionId ?? 'initial', confirmed: true },
+            { ids, reason: form.reason ?? '', active: false, expectedRevisions, confirmed: true },
             url,
             req,
-          )
+          )) as { ok?: boolean }
+          if (result.ok === false) throw new Error('Archive refused')
+          return seeOther(returnTo)
+        } catch {
+          const failed = new URL(returnTo, 'http://ket.local')
+          failed.searchParams.set('bulkError', 'archive')
+          return seeOther(`${failed.pathname}${failed.search}`)
         }
-        return seeOther(returnTo)
       }
       if (form.action === 'delete') {
         try {
@@ -728,10 +438,11 @@ export const routes: Record<string, RouteEntry> = {
         const title = found ? found.name : _('product_backend.create.title')
         const island = await ctx.joint(url, req, 'product_backend:template.page', {
           id: params.id,
+          sourceId: creating ? (url.searchParams.get('duplicate') ?? '') : '',
           tab: askedTab === 'variants' && !creating ? 'variants' : 'general',
           title,
           loading: _('backend.relation.loading'),
-          back: listReturnOf(url),
+          back: productBackHref(url),
           // The page is wide new or saved (`size: 'large'`), so loading does not shift it.
           width: 'wide',
         })

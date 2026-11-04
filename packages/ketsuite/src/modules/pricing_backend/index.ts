@@ -1,7 +1,10 @@
+import { pricelistRuleCommand, pricelistRecordCommand } from './record/command.ts'
+import { pricelistPageIsland, pricelistPageRoute } from './record/routes.ts'
+import { pricelistContext } from './record/context.ts'
 import { randomUUID } from 'node:crypto'
-import { rowListSearch } from '../backend/row-list.ts'
-import { pricelistListSearch } from './search.ts'
-import { pricingSelectionLabel } from './screens/shared.ts'
+import { pricelistIslands } from './list/islands.ts'
+import { pricelistRead, searchConfig, listLabels } from './list/read.ts'
+import { queryFromUrl, LIST_PATH } from './list/shared.ts'
 import { searchFilterFunctions } from './search-functions.ts'
 import { defineModule, text } from '@ketvietlab/ketjs'
 import type { Route } from '@ketvietlab/ketjs'
@@ -48,20 +51,31 @@ export default defineModule({
   summary: 'Danh sách bảng giá theo company.',
   category: 'Hệ thống',
   functions: searchFilterFunctions,
+  assets: new URL('./client/', import.meta.url),
+  islands: { 'pricing.pricelist-page': pricelistPageIsland, ...pricelistIslands },
   menus: {
-    pricing: { label: 'menu.app', icon: 'tag', sequence: 21 },
+    // Pricelists are configuration: behind the rail's gear, with the other sales settings (D6).
     'pricing.lists': {
-      parent: 'pricing',
+      parent: 'admin.config',
       label: 'menu.lists',
       path: '/admin/pricing/pricelists',
       needs: 'pricing.listPricelists',
-      sequence: 10,
+      for: ['pricing.savePricelist'],
+      sequence: 2006,
     },
   },
   routes: {
+    '/admin/pricing/pricelists/read': pricelistRead,
+    '/admin/pricing/rule-command': pricelistRuleCommand,
+    '/admin/pricing/record-command': pricelistRecordCommand,
+    '/admin/pricing/pricelists/{id}/context': pricelistContext,
     '/admin/pricing/pricelists':
       (ctx): Route =>
       async (url, req) => {
+        if (!(await ctx.allows('pricing.listPricelists', url, req))) return text('Forbidden', { status: 403 })
+        const canCreate = await ctx.allows('pricing.savePricelist', url, req)
+        if (!canCreate && (req.method === 'POST' || url.searchParams.get('create') === '1'))
+          return text('Forbidden', { status: 403 })
         let rejected: { values: PricelistValues; errors: string[] } | undefined
         if (req.method === 'POST') {
           if (crossSite(req)) return text('Forbidden', { status: 403 })
@@ -74,49 +88,31 @@ export default defineModule({
             url,
             req,
           )
-          if ((result as { ok?: boolean }).ok) return seeOther(inLocale(url, '/admin/pricing/pricelists'))
+          if ((result as { ok?: boolean }).ok) return seeOther(queryFromUrl(url).href)
           rejected = { values: { ...form, id }, errors: errorsOf(result) }
         }
         if (req.method !== 'GET' && req.method !== 'POST') return text('GET or POST', { status: 405 })
-        const rows = (
-          (await ctx.call('pricing.listPricelists', {}, url, req)) as Array<Record<string, unknown>>
-        ).map((row) => ({
-          id: String(row.id),
-          name: String(row.name),
-          currency: String(row.currency),
-          state: row.active ? 'active' : 'archived',
-          sequence: String(row.sequence),
-          detailHref: pathWith(url, `/admin/pricing/pricelists/${encodeURIComponent(String(row.id))}`),
-        }))
         return adminPage(ctx, url, req, {
           title: 'pricing_backend.title',
           active: '/admin/pricing/pricelists',
           body: async (_, frame) => {
-            const closeHref = inLocale(url, '/admin/pricing/pricelists')
-            const createHref = pathWith(url, '/admin/pricing/pricelists', { create: '1' })
-            const search = await rowListSearch(ctx, url, req, {
-              spec: pricelistListSearch,
-              rows,
-              frame,
-              name: 'pricing-pricelist-filter',
-              bodyId: 'pricing-pricelist-list',
-              functions: {
-                apply: 'pricing_backend.applySearchFilter',
-                saveFavorite: 'pricing_backend.saveSearchFavorite',
-                deleteFavorite: 'pricing_backend.deleteSearchFavorite',
-                setDefaultFavorite: 'pricing_backend.setDefaultSearchFavorite',
+            const query = queryFromUrl(url)
+            const closeHref = query.href
+            const createUrl = new URL(closeHref, url)
+            createUrl.searchParams.set('create', '1')
+            const createHref = `${createUrl.pathname}${createUrl.search}`
+            const source = new URL(`${LIST_PATH}/read`, url)
+            for (const name of ['company', 'branch', 'lang'])
+              if (url.searchParams.has(name)) source.searchParams.set(name, url.searchParams.get(name)!)
+            const workspace = pricelistsScreen(_, frame, {
+              props: {
+                key: randomUUID(),
+                source: `${source.pathname}${source.search}`,
+                query,
+                search: await searchConfig(ctx, new URL(query.href, url), req, _),
+                labels: listLabels(_),
               },
-              labels: { searchPlaceholder: _('pricing_backend.title') },
-              groupLabel: (key, value) => {
-                const raw = value == null ? '' : String(value)
-                if (!raw) return _('backend.chrome.groupEmpty')
-                return key === 'state' ? pricingSelectionLabel(_, 'state', raw) : raw
-              },
-            })
-            const workspace = pricelistsScreen(_, search.frame, {
-              rows: search.rows,
-              createHref,
-              ...(search.groups ? { table: { groups: search.groups } } : {}),
+              createHref: canCreate ? createHref : null,
             })
             if (!rejected && url.searchParams.get('create') !== '1') return workspace
             return modalWorkspace(
@@ -134,6 +130,7 @@ export default defineModule({
     '/admin/pricing/pricelists/{id}':
       (ctx): Route =>
       async (url, req, params) => {
+        if (req.method === 'GET') return pricelistPageRoute(ctx)(url, req, params)
         const lists = (await ctx.call('pricing.listPricelists', {}, url, req)) as Array<
           Record<string, unknown>
         >
@@ -186,6 +183,7 @@ export default defineModule({
                 ...optional('categoryId'),
                 ...optional('templateId'),
                 ...optional('productId'),
+                ...optional('uomId'),
                 minQuantity: form.minQuantity || '0',
                 ...optional('dateStart'),
                 ...optional('dateEnd'),
@@ -251,6 +249,7 @@ export default defineModule({
       'action.create': 'Tạo bảng giá',
       'action.cancel': 'Hủy',
       'action.save': 'Lưu',
+      'action.back': 'Về danh sách',
       'action.add': 'Thêm quy tắc',
       'create.title': 'Tạo bảng giá',
       'create.hint': 'Đặt tên và thứ tự ưu tiên; tiền tệ được lấy từ công ty hiện tại.',
@@ -259,26 +258,36 @@ export default defineModule({
       'items.empty': 'Chưa có quy tắc giá.',
       'items.hint': 'Thêm quy tắc để xác định giá theo sản phẩm, số lượng hoặc ngày.',
       'items.add': 'Thêm quy tắc',
-      'items.formulaHint': 'Mã lựa chọn và công thức ổn định theo hợp đồng Pricing.',
+      'items.formulaHint': 'Chọn phạm vi, đơn vị đóng gói và cách tính giá.',
+      'field.uomId': 'Đóng gói',
+      'packaging.invalidDate': 'Ngày giờ không hợp lệ trong múi giờ đang chọn.',
+      'packaging.target': 'Sản phẩm / nhóm',
+      'packaging.all': 'Mọi đơn vị',
+      'packaging.editRule': 'Sửa quy tắc giá',
+      'packaging.help': 'Để trống để áp dụng cho mọi đơn vị của sản phẩm.',
+      'packaging.quantityHelp': 'Tính theo đơn vị dòng bán: 3 thùng là 3.',
+      'packaging.fixedHelp': 'Có đóng gói: giá một gói. Không chọn: giá đơn vị gốc.',
       'field.appliedOn': 'Áp dụng cho',
-      'field.categoryId': 'ID danh mục',
-      'field.templateId': 'ID mẫu sản phẩm',
-      'field.productId': 'ID biến thể',
+      'field.categoryId': 'Nhóm sản phẩm',
+      'field.templateId': 'Mẫu sản phẩm',
+      'field.productId': 'Biến thể',
       'field.minQuantity': 'Số lượng tối thiểu',
       'field.dateStart': 'Bắt đầu',
       'field.dateEnd': 'Kết thúc',
-      'field.base': 'Giá cơ sở',
-      'field.basePricelistId': 'Bảng giá cơ sở',
+      'field.base': 'Tính trên',
+      'field.basePricelistId': 'Bảng giá gốc',
       'field.computePrice': 'Cách tính',
       'field.fixedPrice': 'Giá cố định',
       'field.percentPrice': 'Giảm giá %',
       'field.priceDiscount': 'Chiết khấu công thức %',
       'field.priceRound': 'Làm tròn',
+      'round.none': 'Không làm tròn',
       'field.priceSurcharge': 'Phụ phí',
+      ruleError: 'Dòng {line}: {reason}',
       'field.priceMinMargin': 'Biên tối thiểu',
       'field.priceMaxMargin': 'Biên tối đa',
       'appliedOn.3_global': 'Tất cả sản phẩm',
-      'appliedOn.2_product_category': 'Danh mục sản phẩm',
+      'appliedOn.2_product_category': 'Nhóm sản phẩm',
       'appliedOn.1_product': 'Mẫu sản phẩm',
       'appliedOn.0_product_variant': 'Biến thể sản phẩm',
       'base.list_price': 'Giá bán',
@@ -289,6 +298,9 @@ export default defineModule({
       'compute.formula': 'Công thức',
       empty: 'Chưa có bảng giá.',
       emptyHint: 'Tạo bảng giá đầu tiên để bắt đầu.',
+      'list.offline': 'Đang ngoại tuyến. Kết nối lại rồi thử tải danh sách.',
+      'list.noMatches': 'Không có bảng giá phù hợp',
+      'list.noMatchesHint': 'Đổi từ khoá hoặc bỏ bớt bộ lọc để tìm lại.',
     },
     en: {
       'app.title': 'Pricing in admin',
@@ -307,6 +319,7 @@ export default defineModule({
       'action.create': 'Create pricelist',
       'action.cancel': 'Cancel',
       'action.save': 'Save',
+      'action.back': 'Back to list',
       'action.add': 'Add rule',
       'create.title': 'Create pricelist',
       'create.hint': 'Set its name and priority; currency comes from the active company.',
@@ -315,11 +328,19 @@ export default defineModule({
       'items.empty': 'No price rules yet.',
       'items.hint': 'Add rules by product, quantity, or date.',
       'items.add': 'Add rule',
-      'items.formulaHint': 'Selection codes and formulas follow the stable Pricing contract.',
+      'items.formulaHint': 'Choose the scope, packaging and price computation.',
+      'field.uomId': 'Packaging',
+      'packaging.invalidDate': 'Invalid date and time in the selected timezone.',
+      'packaging.target': 'Product / category',
+      'packaging.all': 'All units',
+      'packaging.editRule': 'Edit pricing rule',
+      'packaging.help': 'Leave empty to apply to every unit of this product.',
+      'packaging.quantityHelp': 'In the sales-line unit: 3 cartons means 3.',
+      'packaging.fixedHelp': 'With packaging: price per package. Otherwise: price per base unit.',
       'field.appliedOn': 'Apply on',
-      'field.categoryId': 'Category ID',
-      'field.templateId': 'Product template ID',
-      'field.productId': 'Variant ID',
+      'field.categoryId': 'Category',
+      'field.templateId': 'Product template',
+      'field.productId': 'Variant',
       'field.minQuantity': 'Minimum quantity',
       'field.dateStart': 'Start date',
       'field.dateEnd': 'End date',
@@ -330,7 +351,9 @@ export default defineModule({
       'field.percentPrice': 'Discount %',
       'field.priceDiscount': 'Formula discount %',
       'field.priceRound': 'Rounding',
+      'round.none': 'No rounding',
       'field.priceSurcharge': 'Surcharge',
+      ruleError: 'Row {line}: {reason}',
       'field.priceMinMargin': 'Minimum margin',
       'field.priceMaxMargin': 'Maximum margin',
       'appliedOn.3_global': 'All products',
@@ -345,6 +368,9 @@ export default defineModule({
       'compute.formula': 'Formula',
       empty: 'No pricelists yet.',
       emptyHint: 'Create the first pricelist to begin.',
+      'list.offline': 'You are offline. Reconnect and retry the list.',
+      'list.noMatches': 'No matching pricelists',
+      'list.noMatchesHint': 'Change your search or remove filters to try again.',
     },
   },
 })

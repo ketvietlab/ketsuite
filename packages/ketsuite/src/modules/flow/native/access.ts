@@ -33,13 +33,13 @@ export async function teamMember(ctx: Ctx, input: Row, extensions: NativeServerE
         M = tx.table('flow.Member'),
         T = tx.table('flow.TeamMember')
       const member = await tx.db.one(
-        from(M).where(
-          eq(M.companyId, tx.scope.company),
-          eq(M.userId, input.memberId),
-          eq(M.status, 'active'),
-        ),
+        from(M).where(eq(M.companyId, tx.scope.company), eq(M.userId, input.memberId)),
       )
-      if (team.archived || !member || member.role === 'guest')
+      if (
+        team.archived ||
+        !member ||
+        (!input.remove && (member.status !== 'active' || member.role === 'guest'))
+      )
         return refuse('validation', { memberId: 'invalid' })
       if (input.remove !== undefined && typeof input.remove !== 'boolean')
         return refuse('validation', { remove: 'invalid' })

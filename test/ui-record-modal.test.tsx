@@ -32,6 +32,7 @@ import {
   createRecordCommandIntents,
   delayedFlag,
   openerHref,
+  recordIssueWording,
   resolveRecordModalIssue,
   resolveRecordModalLabel,
   recordLayerOwnsKey,
@@ -39,7 +40,10 @@ import {
   RECORD_ASK_CONFIRM,
   RECORD_ISLAND_HOST,
   recordDiscardAccepted,
+  recordLinkJumps,
+  recordLinkLeaves,
   recordReadDenied,
+  recordReadMissing,
   recordSubmitterLabel,
 } from '../packages/ketsuite/src/ui/client/record-modal.tsx'
 
@@ -69,6 +73,12 @@ test('record form ownership defers nested island submissions and keeps its own f
   assert.deepEqual(asked, [RECORD_ISLAND_HOST])
   assert.equal(RECORD_ISLAND_HOST, 'ket-island, div[data-ket-island]')
   assert.match(runtime, /const selector = RECORD_ISLAND_HOST/u)
+  // Clicks follow the same rule as submissions: a dialog opener inside a nested island
+  // record panel opens that panel's dialog, never one of the record around it.
+  assert.match(
+    runtime,
+    /if \(inModal && root\?\.contains\(inModal\)\) \{\n(?:\s*\/\/.*\n)*\s*if \(element && !recordFormOwnedByHost\(element, root\)\) return/u,
+  )
 })
 
 test('record modal: a refused read is titled as refused, with nothing to retry', () => {
@@ -90,6 +100,131 @@ test('record modal: a refused read is titled as refused, with nothing to retry',
   assert.equal(runtime.match(/failureTitle\(\)/gu)?.length, 3)
   assert.doesNotMatch(runtime, /\? t\('recordModal\.loadFailed'\)/u)
   assert.ok(RECORD_MODAL_LABELS['recordModal.deniedTitle'] && RECORD_MODAL_LABELS['recordModal.denied'])
+})
+
+test('record modal: a missing record is titled as missing, offers the way back and nothing to retry', () => {
+  assert.equal(recordReadMissing(404), true)
+  for (const status of [undefined, 401, 403, 409, 500, 503]) assert.equal(recordReadMissing(status), false)
+  // A 404, or a read that answered without a record.
+  assert.match(
+    runtime,
+    /const readMissing = \(\): boolean =>\s*recordReadMissing\(failureStatus\(\)\) \|\| failure\(\) === 'recordModal\.notFound'/u,
+  )
+  const missingAt = runtime.indexOf("if (status() === 'error' && readMissing())")
+  const deniedAt = runtime.indexOf("if (status() === 'error' && recordReadDenied(failureStatus()))")
+  assert.ok(
+    missingAt > 0 && missingAt < deniedAt,
+    'the missing branch precedes the refused and retryable ones',
+  )
+  const missing = runtime.slice(missingAt, runtime.indexOf('// A refused read says why', missingAt))
+  assert.match(missing, /title: t\('recordModal\.missingTitle'\)/u)
+  assert.match(
+    missing,
+    /message: t\('recordModal\.notFound'\)/u,
+    "the runtime's words, not a second copy of the title",
+  )
+  assert.match(missing, /tone: 'warning'/u)
+  assert.doesNotMatch(missing, /retry/iu, 'nothing comes back by asking again')
+  // In a group, so the button keeps its own width under the full-width notice of a page.
+  assert.match(
+    missing,
+    /page\?\.props\.back\s*\?\s*ActionGroup\(\{\s*actions: \[\s*Button\(\{\s*label: t\('recordModal\.back'\),\s*variant: 'secondary',\s*name: 'intent',\s*value: 'leave',?\s*\}\),\s*\],\s*\}\)/u,
+  )
+  const failed = runtime.slice(runtime.indexOf("title: t('recordModal.loadFailed')"))
+  assert.match(failed, /ActionGroup\(\{\s*actions: \[\s*Button\(\{\s*label: t\('recordModal\.retry'\)/u)
+  // The way back leaves as closing a page does.
+  assert.match(
+    runtime,
+    /if \(page && element\?\.closest\('button\[name="intent"\]\[value="leave"\]'\)\) \{\s*event\.preventDefault\(\)\s*leave\(\)\s*return/u,
+  )
+  // Every title of a failed read names the missing case first.
+  const title = runtime.slice(
+    runtime.indexOf('const failureTitle = ('),
+    runtime.indexOf('const askLayer = ('),
+  )
+  assert.ok(title.indexOf("'recordModal.missingTitle'") < title.indexOf("'recordModal.deniedTitle'"))
+  assert.ok(RECORD_MODAL_LABELS['recordModal.missingTitle'] && RECORD_MODAL_LABELS['recordModal.notFound'])
+})
+
+test('record page: a link out of the record asks before what was typed is lost', () => {
+  const here = new URL('https://suite.test/account/invoices/inv-1?tab=lines')
+  const leaves = (href: string, options = { own: false, download: false }) =>
+    recordLinkLeaves(new URL(href, here), here, options)
+  assert.equal(leaves('/account/invoices?status=open#row=inv-1'), true, 'back to the collection')
+  assert.equal(leaves('/account/ledger?account=131'), true, 'another screen')
+  assert.equal(leaves('/account/invoices/inv-1?tab=lines&view=all'), true, 'this page with another query')
+  assert.equal(leaves('/account/invoices/inv-1?tab=lines#pay-qr'), false, 'a jump within the page')
+  assert.equal(leaves('https://bank.example/pay'), false, 'another site opens elsewhere')
+  assert.equal(leaves('/account/export.csv', { own: false, download: true }), false, 'a download stays')
+  assert.equal(
+    leaves('/account/invoices/inv-1?tab=payments', { own: true, download: false }),
+    false,
+    'its own tab',
+  )
+  const clickAt = runtime.indexOf('// A link out of the record would drop')
+  const click = runtime.slice(clickAt, runtime.indexOf('if (serverPage) return\n', clickAt))
+  assert.match(
+    click,
+    /const leaving = element && root\?\.contains\(element\) \? openerHref\(element\) : null/u,
+  )
+  assert.match(click, /download: Boolean\(anchor\?\.hasAttribute\('download'\)\)/u)
+  // Only something typed (or a chosen file) stops the link; a clean record leaves at once.
+  assert.match(click, /keepAllDrafts\(\)/u)
+  assert.match(
+    click,
+    /if \(\s*recordDraftHasChanges\(recordDrafts\(\)\) \|\|\s*recordDraftHasChanges\(dialogDrafts\(\)\) \|\|\s*hasFile\s*\) \{\s*event\.preventDefault\(\)/u,
+  )
+  // The shared question decides; accepting forgets the drafts and follows the link as it was.
+  assert.match(click, /await mayDiscard\(topLayer\(\)\)/u)
+  assert.match(
+    click,
+    /recordDrafts\.set\(emptyDraftState\(\)\)\s*dialogDrafts\.set\(emptyDraftState\(\)\)\s*dialogViewState\.set\(\{\}\)/u,
+  )
+  assert.match(click, /link\.setAttribute\('data-record-leave', 'approved'\)/u)
+  assert.match(
+    click,
+    /if \(anchor\?\.hasAttribute\('data-ket-reload'\)\) link\.setAttribute\('data-ket-reload', ''\)/u,
+  )
+  assert.match(click, /link\.click\(\)/u)
+  // Route-context pages ask as well: the guard runs before they hand links back to the shell.
+  assert.ok(
+    runtime.indexOf('// A link out of the record would drop') <
+      runtime.indexOf('if (serverPage) return\n            // A page answers only its own links;'),
+  )
+})
+
+test('record page: a jump within the page scrolls there; the record does not take it for its own link', () => {
+  const here = new URL('https://suite.test/account/invoices/inv-1?tab=lines')
+  const jumps = (href: string) => recordLinkJumps(new URL(href, here), here)
+  assert.equal(jumps('#pay-qr'), true, 'only the fragment differs')
+  assert.equal(jumps('/account/invoices/inv-1?tab=lines#pay-qr'), true)
+  assert.equal(
+    jumps('/account/invoices/inv-1?tab=payments#pay-qr'),
+    false,
+    "another tab is the record's own link",
+  )
+  assert.equal(jumps('/account/invoices/inv-2?tab=lines#pay-qr'), false, 'another record')
+  assert.equal(jumps('/account/invoices/inv-1?tab=lines'), false, 'no fragment')
+  assert.equal(jumps('https://bank.example/account/invoices/inv-1?tab=lines#pay-qr'), false, 'another site')
+  // The record lets the browser scroll before it reads a link as one of its own targets; a bare
+  // `#id` naming a field of the record is moved to just before.
+  const at = runtime.indexOf('// A page answers only its own links;')
+  const own = runtime.slice(at, runtime.indexOf('if (!target) return', at))
+  assert.ok(own.indexOf('closest<HTMLAnchorElement>(\'a[href^="#"]\')') < own.indexOf('recordLinkJumps('))
+  assert.match(
+    own,
+    /if \(recordLinkJumps\(url, new URL\(location\.href\)\)\) return\s*const target = targetOf\(url\)/u,
+  )
+})
+
+test('record drafts compare a localized number by its plain decimal, not by its grouping', () => {
+  const keep = runtime.slice(
+    runtime.indexOf('const keepDrafts = ('),
+    runtime.indexOf('const keepAllDrafts = ('),
+  )
+  assert.match(keep, /: numberControlValue\(control, control\.defaultValue\)/u)
+  assert.match(keep, /kept\.values\[control\.name\] = numberControlValue\(control\)/u)
+  assert.match(runtime, /\n {2}numberControlValue,\n\} from '@ketvietlab\/design-system'/u)
 })
 
 test('record keyboard ownership defers Escape and Tab to an open native dialog or an already handled event', () => {
@@ -327,6 +462,12 @@ test('record modal: the runtime owns focus, escape, inertness, drafts and collec
   // the render that disables the form.
   assert.match(runtime, /keepDrafts\(currentLayer, scope\)[\s\S]*?setRunning\(true\)/u)
   assert.match(runtime, /kept\.checks\[key\] = control\.checked/u)
+  // An enhanced DatePicker hides its named field (#1676): the day still enters the draft, starting
+  // from the day the picker rendered, before hidden fields are skipped.
+  assert.match(
+    runtime,
+    /closest<HTMLElement>\('\[data-ui="date-picker"\]'\)[\s\S]*?initialValues\[control\.name\] \?\?= day\.dataset\.dateValue[\s\S]*?if \(control\.type === 'file' \|\| control\.type === 'hidden'\) continue/u,
+  )
   assert.match(runtime, /if \(!\(await mayDiscard\(topLayer\(\)\)\) \|\| dialog\(\) !== opened\) return/u)
   assert.match(runtime, /record\.inert = currentLayers\.length > 1/u)
   assert.match(runtime, /dialogReturnFocus/u)
@@ -448,6 +589,21 @@ test('record modal: the loading state never shows a label key', () => {
     resolveRecordModalLabel('recordModal.loading', { labels: { 'recordModal.loading': 'Đang tải…' } }),
     'Đang tải…',
   )
+  // A module that words its modal but not the missing title keeps its own failed-read title,
+  // in its reader's language, instead of the English default.
+  const older = { labels: { 'recordModal.loadFailed': 'Không đọc được thẻ.' } }
+  assert.equal(resolveRecordModalLabel('recordModal.missingTitle', older), 'Không đọc được thẻ.')
+  assert.equal(
+    resolveRecordModalLabel('recordModal.missingTitle', {
+      labels: { ...older.labels, 'recordModal.missingTitle': 'Không tìm thấy thẻ' },
+    }),
+    'Không tìm thấy thẻ',
+  )
+  assert.equal(resolveRecordModalLabel('recordModal.missingTitle', {}), 'This record is not here')
+  assert.equal(
+    resolveRecordModalLabel('recordModal.notFound', older),
+    'The record is gone or you cannot see it.',
+  )
   // Opening the next record keeps the previous record's words while it loads.
   assert.equal(
     resolveRecordModalLabel('recordModal.close', {
@@ -509,7 +665,7 @@ test('record modal: a created record is in the address bar before the collection
  * opener resolver asks of the DOM.
  */
 const clickedOn = (
-  chain: ReadonlyArray<{ matches: readonly string[]; href?: string; target?: string }>,
+  chain: ReadonlyArray<{ matches: readonly string[]; href?: string; target?: string; attribute?: string }>,
 ): Element => {
   const node = (index: number): Record<string, unknown> => ({
     closest: (selector: string) => {
@@ -518,7 +674,12 @@ const clickedOn = (
           return { ...node(at), ...chain[at] }
       return null
     },
-    getAttribute: (name: string) => (name === 'data-row-href' ? (chain[index]?.href ?? null) : null),
+    getAttribute: (name: string) =>
+      name === 'data-row-href'
+        ? (chain[index]?.href ?? null)
+        : name === 'href'
+          ? (chain[index]?.attribute ?? chain[index]?.href ?? null)
+          : null,
   })
   return node(0) as unknown as Element
 }
@@ -536,6 +697,13 @@ test('record modal: a click opens from the link it landed on, or the row it land
   assert.equal(openerHref(clickedOn([link, ROW])), link.href)
   // …unless it opens elsewhere, which is not this modal's business.
   assert.equal(openerHref(clickedOn([{ ...link, target: '_blank' }, ROW])), null)
+  // An in-page anchor (a rail item leading to its field) scrolls; the page must not swallow it (M2).
+  const anchor = {
+    matches: ['a', 'a[href]'],
+    href: 'http://test/admin/product/templates/cream?tab=general#product-record-description',
+    attribute: '#product-record-description',
+  }
+  assert.equal(openerHref(clickedOn([anchor])), null)
 
   // A control inside the row does its own thing; the row is not a second target.
   for (const control of ['button', 'input', 'select', 'textarea', 'label', 'summary', 'details'])
@@ -1571,6 +1739,26 @@ test('record modal: a pending close owns only its collection return and preserve
     expected.replace('https://hotel.test', 'https://other.test'),
   ])
     assert.equal(recordModalReturnMatches(expected, current), false)
+})
+
+test('record modal: a refusal reads in the page language when its key, or a message that is a key, is known', () => {
+  const messages = { 'sale.error.quantityPositive': 'Số lượng phải lớn hơn 0.' }
+  // A domain sends both: the developer message for API clients, the key for the form.
+  assert.equal(
+    recordIssueWording(
+      { message: 'ordered quantity must be positive', messageKey: 'sale.error.quantityPositive' },
+      { messages },
+    ),
+    'Số lượng phải lớn hơn 0.',
+  )
+  // An older function puts the key itself in the message.
+  assert.equal(
+    recordIssueWording({ message: 'sale.error.quantityPositive', messageKey: undefined }, { messages }),
+    'Số lượng phải lớn hơn 0.',
+  )
+  // Nothing known: the caller falls back to the message as sent.
+  assert.equal(recordIssueWording({ message: 'ordered quantity must be positive' }, { messages }), null)
+  assert.equal(recordIssueWording({ message: 'constructor' }, { messages }), null)
 })
 
 test('record modal: domain refusal message keys retain field identity and resolve localized repair text', async (t) => {

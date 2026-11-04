@@ -11,14 +11,13 @@ Design guidance is maintained only in [Két Design System](https://github.com/ke
 Install it with `npx @ketvietlab/ket-design-system-skill@latest`. This page documents
 APIs and runtime delivery; it does not define a competing visual rulebook.
 
-The interface typeface is KÉT Sans (Light 300, Regular 400, Medium 500, Bold 700),
-Két Việt's own font: free to use and embed, but not open source and not MIT; the
-KÉT Sans Font License forbids modifying or redistributing the font files. Medium is
-registered for `500 600`, so text set at 600 uses Medium rather than falling through
-to Bold. KÉT Sans has no italic yet; the browser slants the upright faces. The package
-also includes Inter 4.1 variable fonts (normal and italic, weights 100–900) under the
-SIL Open Font License, and `--kv-font-sans` names Inter after KÉT Sans for the
-characters KÉT Sans does not draw. The font files and licenses live in
+The interface typeface is Inter 4.1, bundled as variable fonts (normal and italic,
+weights 100–900, optical sizes 14–32) under the SIL Open Font License. `--kv-font-sans`
+names KÉT Sans, Két Việt's own typeface, before Inter. The package does not ship
+KÉT Sans: its license forbids redistributing the font files, and its use is limited to
+Két Việt products. A Két Việt product that registers KÉT Sans with its own `@font-face`
+rules renders it, with Medium registered for `500 600` so text set at 600 does not fall
+through to Bold; every other consumer renders Inter. The font files and licenses live in
 `packages/design-system/src/foundations/fonts/`; their sources are pinned in that
 directory's README. `tokens.css` registers these fonts, so consumers do not depend
 on fonts installed on the user's operating system.
@@ -373,6 +372,20 @@ unbounded dataset. Use `Tree` for navigation hierarchy; use `TreeGrid` only when
 independently useful tabular columns. Every large or spatial surface owns its local overflow on narrow
 screens.
 
+Editing rows in place uses `KetGrid` (`createKetGrid` from client code, or the `ketGrid` island whose
+server view is only `KetGridPlaceholder`); reading a collection stays `KetTable`. The grid runs in the
+browser: spreadsheet keyboard and clipboard, typed values in either decimal convention, undo by
+operation, live merges with conflict choices, and drawing only the rows in view. Fills go by cell: an
+editable cell is light green, an edited cell light yellow until the host calls `markSaved()`, read-only
+cells plain; a whole row is filled only when every cell is (all editable, or the row is new or moved).
+`newRows` gives one add button per kind of row (line, section, note); island columns take `lockedBy`,
+`requires` (read-only until a row field is set, as a unit until its product), `minField`, `maxField`, `sets` and `optionsBy` so the server's row data locks a cell, bounds it, lets a
+choice fill the row or limits a row's choices (a product's units), `tiers` (with `with` for the line's
+unit) to step a price, and `compute` (`multiply` or `difference`) for live figures. The host saves, from the grid's
+hidden JSON input or `changes()`; pressing outside the grid or submitting the input's form commits an
+open editor, and the submit is stopped while any cell is invalid. A paged grid takes the previous input
+value as `carry`, so one save covers edits on every page. Contract: README "Editable grids: KetGrid".
+
 ## Maturity and compatibility
 
 The registry uses `planned`, `stable`, `compatibility`, and `deprecated` maturity states. Planned
@@ -566,7 +579,7 @@ scroll locally, preserving legible diagram text instead of shrinking it to fit.
 All ecosystem Mermaid diagrams use the DS runtime's `createMermaidTheme` with
 `readMermaidPalette`, plus the shared `configureMermaidLoader`/interaction lifetime.
 The host supplies a pinned, lazy Mermaid bundle; DS owns theme and rendering policy.
-The interface font (`--kv-font-sans`, KÉT Sans) at 13px, 1.25px connectors, 6px node corners and resolved semantic DS colors form
+The interface font (`--kv-font-sans`) at 13px, 1.25px connectors, 6px node corners and resolved semantic DS colors form
 the common style in both themes. Use `kv-accent`, `kv-positive`, `kv-warning` and
 `kv-danger` classes to convey state. Notes use the warning surface; diagram families
 share explicit text, surface, border, connector and chart colors. Theme changes

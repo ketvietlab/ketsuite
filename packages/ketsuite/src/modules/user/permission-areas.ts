@@ -48,6 +48,7 @@ export const permissionAreas: Record<string, Area> = {
   partner_mail_backend: { group: 'sales', vi: 'Thư khách hàng', en: 'Contact mail' },
   loyalty: { group: 'sales', vi: 'Khách hàng thân thiết', en: 'Loyalty' },
   loyalty_sale: { group: 'sales', vi: 'Thân thiết · Đơn bán', en: 'Loyalty · Sales' },
+  sale_template: { group: 'sales', vi: 'Mẫu bán hàng', en: 'Sales templates' },
   pos: { group: 'store', vi: 'POS', en: 'Point of sale' },
   loyalty_pos: { group: 'store', vi: 'Thân thiết · POS', en: 'Loyalty · POS' },
   pricing: { group: 'store', vi: 'Giá bán', en: 'Pricing' },

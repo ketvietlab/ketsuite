@@ -1,4 +1,4 @@
-import { defineModule, eq, from, KetError } from '@ketvietlab/ketjs'
+import { defineModule, eq, from, inArray, KetError } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { queueTemplate } from '../mail_transport/index.ts'
 
@@ -50,6 +50,12 @@ const effects = [
   'write:mail_transport.DeliveryNotification',
   'enqueue:mail_transport.deliver',
 ]
+
+/** The outbox row a submission's notice is queued as; derived, so the ledger needs no link back. */
+export const noticeId = (submissionId: unknown) => `website-form:${String(submissionId)}`
+
+/** At most one Studio page of submissions is looked up at a time. */
+const NOTICE_LOOKUP_LIMIT = 200
 
 const fail = (code: string, message: string): never => {
   throw new KetError({ code, module: 'website_form_mail', message })
@@ -104,7 +110,7 @@ const functions: Record<string, FnSpec> = {
 
         const delivery = await queueTemplate(tx, {
           // Derived from the submission, so a retry queues nothing new.
-          id: `website-form:${String(submission.id)}`,
+          id: noticeId(submission.id),
           templateId: String(args.templateId),
           to: [{ address: to }],
           context: safeContext({
@@ -118,6 +124,45 @@ const functions: Record<string, FnSpec> = {
         })
         return { deliveryId: delivery.id, to }
       }),
+  },
+  /**
+   * Where each submission's notice stands, read from the outbox it was queued in.
+   *
+   * The Studio asks this for the submissions it is about to show, after checking that the viewer
+   * may list them, so there is still one ledger: a submission with no row here was never queued.
+   * Only the delivery's own facts come back, never its body or recipients.
+   */
+  noticeStates: {
+    input: { submissionIds: 'json' },
+    output: { rows: 'json' },
+    exposure: 'internal',
+    effects: ['read:mail_transport.Delivery'],
+    handler: async (ctx: Ctx, args) => {
+      const ids = (Array.isArray(args.submissionIds) ? args.submissionIds : [])
+        .map(String)
+        .slice(0, NOTICE_LOOKUP_LIMIT)
+      if (!ids.length) return { rows: [] }
+      const D = ctx.table('mail_transport.Delivery')
+      const deliveries = await ctx.db.all(from(D).where(inArray(D.id, ids.map(noticeId))))
+      const byId = new Map(deliveries.map((d) => [String(d.id), d]))
+      return {
+        rows: ids.flatMap((submissionId) => {
+          const delivery = byId.get(noticeId(submissionId))
+          return delivery
+            ? [
+                {
+                  submissionId,
+                  state: String(delivery.state),
+                  attempts: Number(delivery.attempts ?? 0),
+                  error: delivery.lastError ?? null,
+                  queuedAt: delivery.queuedAt ?? null,
+                  sentAt: delivery.sentAt ?? null,
+                },
+              ]
+            : []
+        }),
+      }
+    },
   },
 }
 

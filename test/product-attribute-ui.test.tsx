@@ -29,7 +29,7 @@ const data: AttributeModalData = {
     sequence: 8,
     values: [
       { id: 'linen', name: 'Linen', sequence: 1, htmlColor: '#abcdef' },
-      { id: 'cotton', name: 'Cotton', sequence: 2, htmlColor: '#123456' },
+      { id: 'cotton', name: 'Cotton', sequence: 2, htmlColor: '#123456', defaultPriceExtra: '15000' },
     ],
   },
   permissions: { save: true },
@@ -134,9 +134,10 @@ test('stable value fields retain names and colors after reorder and refusal; com
   form.set('attributeValue.cotton.htmlColor', '#123456')
   form.set('attributeValue.linen.htmlColor', '#abcdef')
   const payload = definition.commands!.save!.input(form, c, {})
+  // A default extra the form did not post keeps the saved one (P11), never a reset to zero.
   assert.deepEqual(payload.values, [
-    { id: 'cotton', name: 'Cotton edited', htmlColor: '#123456', sequence: 0 },
-    { id: 'linen', name: 'Linen edited', htmlColor: '#abcdef', sequence: 1 },
+    { id: 'cotton', name: 'Cotton edited', htmlColor: '#123456', defaultPriceExtra: '15000', sequence: 0 },
+    { id: 'linen', name: 'Linen edited', htmlColor: '#abcdef', defaultPriceExtra: '0', sequence: 1 },
   ])
   assert.equal(payload.name, 'Textile')
   form.set('attributeValuesOrder', JSON.stringify(['cotton', 'linen']))

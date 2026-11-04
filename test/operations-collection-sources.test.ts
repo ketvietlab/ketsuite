@@ -38,6 +38,8 @@ for (const [path, source, expected] of [
         }
         return []
       },
+      // Opening a screen sets up the books only for someone who may.
+      allows: async () => true,
     } as unknown as ServeContext
     const route = (accountBackend.routes![path] as (ctx: ServeContext) => Route)(ctx)
     await assert.rejects(
@@ -80,6 +82,8 @@ for (const [path, filter] of [
       },
       // The screen reads its optional lookups only when the caller may.
       allows: async () => true,
+      // ... and only when the deployment composes them; none is here.
+      manifest: { functions: {} },
     } as unknown as ServeContext
     const route = (purchaseBackend.routes![path] as (ctx: ServeContext) => Route)(ctx)
     await assert.rejects(

@@ -1,3 +1,4 @@
+// biome-ignore-all lint/plugin/admin-route-uses-shell: not the backend — the kiosk is answered anonymously on a shared tablet, so it gets no viewer and no menu
 import { randomUUID } from 'node:crypto'
 import { dateTimeFormatter, page, sha256, text, withHeaders } from '@ketvietlab/ketjs'
 import type { Route, RouteEntry, ServeContext } from '@ketvietlab/ketjs'

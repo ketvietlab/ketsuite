@@ -515,8 +515,8 @@ try {
     },
     {
       name: 'sales-invoicing-policy',
-      path: '/admin/sales/invoicing-policies?lang=vi&record=sale.invoicePolicy%3Anew',
-      ready: `${recordForm('sale.invoicePolicy')}?.querySelector('[name="templateId"]') && document.querySelectorAll('[data-ui="kt-row"]').length >= 1`,
+      path: '/admin/sales/invoicing-policies?lang=vi',
+      ready: `document.querySelector('[data-ui="list-page"]') && document.querySelectorAll('[data-ui="kt-row"]').length >= 1`,
     },
     {
       name: 'lot-list',
@@ -2397,7 +2397,7 @@ try {
           `({
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
             rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
-            createHref: document.querySelector('[data-ui="list-page"] a[href*="record=sale.order%3Anew"]')?.getAttribute('href'),
+            createHref: document.querySelector('[data-ui="list-page"] a[href^="/admin/sales/quotations/new"]')?.getAttribute('href'),
             inlineForm: Boolean(document.querySelector('#quotation-create-form')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
@@ -2406,7 +2406,8 @@ try {
         {
           listPage: true,
           rowsAtLeastOne: true,
-          createHref: '/admin/sales/quotations?lang=vi&record=sale.order%3Anew',
+          createHref:
+            '/admin/sales/quotations/new?lang=vi&returnTo=%2Fadmin%2Fsales%2Fquotations%3Flang%3Dvi',
           inlineForm: false,
           chatter: false,
           horizontalOverflow: false,
@@ -2595,7 +2596,7 @@ try {
           `({
             dashboardPage: Boolean(document.querySelector('[data-ui="dashboard-page"]')),
             metrics: document.querySelectorAll('[data-ui="metric"]').length,
-            createHref: document.querySelector('a[href*="record=sale.order%3Anew"]')?.getAttribute('href'),
+            createHref: document.querySelector('a[href^="/admin/sales/quotations/new"]')?.getAttribute('href'),
             recentRowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
             listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
             formPage: Boolean(document.querySelector('[data-ui="form-page"]')),
@@ -2606,7 +2607,7 @@ try {
         {
           dashboardPage: true,
           metrics: 4,
-          createHref: '/admin/sales/quotations?lang=vi&record=sale.order%3Anew',
+          createHref: '/admin/sales/quotations/new?lang=vi&returnTo=%2Fadmin%2Fsales%3Flang%3Dvi',
           recentRowsAtLeastOne: true,
           listPage: false,
           formPage: false,
@@ -2812,7 +2813,7 @@ try {
             rowsAtLeastOne: document.querySelectorAll('[data-ui="table"] [data-ui="row"], [data-ui="kt-row"]').length >= 1,
             customer: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Trần Điều Phối'),
             invoiceStatus: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('Chờ lập hoá đơn'),
-            detailLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href*="record=sale.order%3Asales-order-collab"]')),
+            detailLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href^="/admin/sales/orders/sales-order-collab"]')),
             chatter: Boolean(document.querySelector('ket-island[data-island="mail.chatter"]')),
             horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
@@ -2841,7 +2842,7 @@ try {
           `({
             title: document.querySelector('[data-ui="list-page-title"]')?.textContent.trim() === 'Sales Orders',
             invoiceStatus: document.querySelector('[data-ui="table"], [data-ui="ket-table"]')?.textContent.includes('To Invoice'),
-            localizedLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href="/admin/sales/orders?lang=en&record=sale.order%3Asales-order-collab"]')),
+            localizedLink: Boolean(document.querySelector('[data-ui="ket-table"] a[href="/admin/sales/orders/sales-order-collab?lang=en"]')),
             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
@@ -2895,16 +2896,22 @@ try {
       })
     }
     if (screen.name === 'sales-invoicing-policy') {
+      // A goods row opens its record modal (D21); there is no create form.
       const policyModal = async (lang: 'vi' | 'en') => {
-        await navigate(
+        await navigate(cdp, `${e2e.baseUrl}/admin/sales/invoicing-policies?lang=${lang}`)
+        await waitFor(cdp, `document.querySelectorAll('[data-ui="kt-row"]').length >= 1`)
+        const href = await evaluate<string>(
           cdp,
-          `${e2e.baseUrl}/admin/sales/invoicing-policies?lang=${lang}&record=sale.invoicePolicy%3Anew`,
+          `[...document.querySelectorAll('[data-ui="kt-row"]')].find((row) => /Hàng hoá|Goods/.test(row.textContent))?.querySelector('a[href]')?.href ?? ''`,
         )
+        assert.ok(href, 'a goods row links to its policy')
+        await navigate(cdp, href)
         await waitFor(
           cdp,
-          `${recordForm('sale.invoicePolicy')}?.querySelector('[name="templateId"]')?.getBoundingClientRect().height >= 28 && document.documentElement.lang === '${lang}'`,
+          `${recordForm('sale.invoicePolicy')}?.querySelector('[name="invoicePolicy"]')?.getBoundingClientRect().height >= 28 && document.documentElement.lang === '${lang}'`,
         )
       }
+      await policyModal('vi')
       assert.deepEqual(
         {
           ...(await createModalLayout(cdp, 'sale.invoicePolicy')),
@@ -2912,10 +2919,9 @@ try {
             cdp,
             `({
               listPage: Boolean(document.querySelector('[data-ui="list-page"]')),
-              productSelect: ${recordForm('sale.invoicePolicy')}.querySelector('[name="templateId"]')?.tagName === 'SELECT',
-              radios: ${recordForm('sale.invoicePolicy')}.querySelectorAll('[name="invoicePolicy"][type="radio"]').length,
-              rowsAtLeastOne: document.querySelectorAll('[data-ui="kt-row"]').length >= 1,
-              deliveredPolicy: document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Theo số lượng giao')
+              policySelect: ${recordForm('sale.invoicePolicy')}.querySelector('[name="invoicePolicy"]')?.tagName === 'SELECT',
+              choices: ${recordForm('sale.invoicePolicy')}.querySelectorAll('[name="invoicePolicy"] option').length,
+              rowsAtLeastOne: document.querySelectorAll('[data-ui="kt-row"]').length >= 1
             })`,
           )),
         },
@@ -2925,10 +2931,9 @@ try {
           chatter: false,
           horizontalOverflow: false,
           listPage: true,
-          productSelect: true,
-          radios: 2,
+          policySelect: true,
+          choices: 3,
           rowsAtLeastOne: true,
-          deliveredPolicy: true,
         },
       )
       await evaluate(cdp, `scrollTo(0, 0)`)
@@ -2940,12 +2945,11 @@ try {
         await evaluate(
           cdp,
           `({
-            localized: document.querySelector('[data-ui="list-page-title"]')?.textContent.trim() === 'Invoicing Policies' && document.querySelector('[data-ui="ket-table"]')?.textContent.includes('Delivered quantities'),
-            productSelectVisible: ${recordForm('sale.invoicePolicy')}.querySelector('[name="templateId"]')?.getBoundingClientRect().width > 100,
+            localized: document.querySelector('[data-ui="list-page-title"]')?.textContent.trim() === 'Invoicing policies',
             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
           })`,
         ),
-        { localized: true, productSelectVisible: true, overflow: false },
+        { localized: true, overflow: false },
       )
       await evaluate(cdp, `scrollTo(0, 0)`)
       if (!noArtifacts)

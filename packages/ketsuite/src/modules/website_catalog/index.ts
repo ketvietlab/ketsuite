@@ -16,6 +16,7 @@ export default defineModule({
     'website_search',
     'website_seo',
   ],
+  optional: ['user'],
   title: 'Sản phẩm trên website',
   summary: 'Sản phẩm ERP, template và nội dung riêng theo website.',
   category: 'Website',

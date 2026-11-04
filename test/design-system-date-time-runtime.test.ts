@@ -104,7 +104,7 @@ test('date-time runtime: a mounted compound control follows later disabled and r
   time.value = '12:00'
   parts.hidden = true
   picker.nodes.set('input[type="datetime-local"]', input)
-  picker.nodes.set('input[type="date"]', day)
+  picker.nodes.set('[data-ui="date-control-row"] > input', day)
   picker.nodes.set('input[type="time"]', time)
   picker.nodes.set('[data-ui="date-time-parts"]', parts)
   parts.controls = [day, time, open]

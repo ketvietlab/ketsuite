@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": [
+    "test/live-doc-transport.test.ts",
+    "test/live-doc-authorization.test.ts",
+    "test/flow-native-presence.test.ts"
+  ]
+}

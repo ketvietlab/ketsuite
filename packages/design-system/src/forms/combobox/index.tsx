@@ -47,6 +47,8 @@ export type ComboboxProps = {
   /** Names the toggle that closes the open options. */
   closeLabel?: string
   span?: 'half' | 'full'
+  /** How long the chosen value is (Field `width`): a short choice keeps a short control. */
+  width?: 'xs' | 'sm' | 'md'
 }
 
 const ComboControl = (

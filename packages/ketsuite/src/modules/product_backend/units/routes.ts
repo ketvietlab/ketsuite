@@ -9,7 +9,7 @@ import type { Route, RouteEntry, ServeContext, Translator } from '@ketvietlab/ke
 import { html, renderIsland, trustedMarkup } from '@ketvietlab/ketjs-view'
 import { RECORD_TAB_PARAM, recordModalCreateHref } from '../../../ui/record-modal.tsx'
 import { adminPage } from '../../backend/screen.ts'
-import { UNIT_COMMAND_PATH, UNIT_LIST_PATH, UNIT_PAGE_SIZE, parseQuantity } from '../units.ts'
+import { UNIT_COMMAND_PATH, UNIT_LIST_PATH, UNIT_NAME_MAX, UNIT_PAGE_SIZE, parseQuantity } from '../units.ts'
 import type { UnitModalData } from '../units.ts'
 import { UNIT_LIST_KEY, unitList } from './island.tsx'
 import type { UnitListLabels } from './island.tsx'
@@ -170,22 +170,52 @@ const command: RouteEntry =
       return json({ ok: false, error: { message: _('product_backend.uom.error.denied') } }, { status: 403 })
     const current = context.data
     const referenceId = typeof body.referenceId === 'string' ? body.referenceId : ''
+    const name = body.name.trim()
+    const factor = referenceId ? parseQuantity(String(body.factor ?? ''), lang) : '1'
+    // Units are named and counted on every product, packaging and document that uses them:
+    // once in use, the name and the conversion stay (P34).
+    if (id && current.usage.inUse) {
+      const kept = current.record
+      const changed =
+        name !== kept.name ||
+        referenceId !== kept.referenceId ||
+        (referenceId !== '' && (factor === null || Number(factor) !== Number(kept.factor)))
+      if (changed)
+        return json(
+          {
+            ok: false,
+            error: {
+              message: _('product_backend.uom.error.inUse'),
+              issues: [{ field: 'name', code: 'inUse', message: _('product_backend.uom.error.inUse') }],
+            },
+          },
+          { status: 409 },
+        )
+    }
     const issues: Issue[] = []
+    if (name.length > UNIT_NAME_MAX)
+      issues.push({
+        field: 'name',
+        code: 'nameLength',
+        message: _('product_backend.uom.error.nameLength', { max: UNIT_NAME_MAX }),
+      })
     if (referenceId && !current.references.some((choice) => choice.value === referenceId))
       issues.push({
         field: 'referenceId',
         code: 'reference',
         message: _('product_backend.uom.error.reference'),
       })
-    const factor = referenceId ? parseQuantity(String(body.factor ?? ''), lang) : '1'
     if (factor === null)
       issues.push({ field: 'factor', code: 'factor', message: _('product_backend.uom.error.factor') })
     const active = body.active !== false
-    if (id && !active && current.record.active && current.usage.products > 0)
+    // Archived units leave every choice, so no product or packaging may still need one.
+    if (id && !active && current.record.active && current.usage.products + current.usage.packagings > 0)
       issues.push({
         field: 'active',
         code: 'archiveUsed',
-        message: _('product_backend.uom.error.archiveUsed', { count: current.usage.products }),
+        message: _('product_backend.uom.error.archiveUsed', {
+          count: current.usage.products + current.usage.packagings,
+        }),
       })
     if (issues.length) return refused(issues)
     let result: { ok?: boolean; id?: string; errors?: unknown }

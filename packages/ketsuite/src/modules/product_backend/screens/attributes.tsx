@@ -1,3 +1,4 @@
+import { AttributeHelp } from './attribute-help.tsx'
 import type { Translator } from '@ketvietlab/ketjs'
 import type { TemplateResult } from '@ketvietlab/ketjs-view'
 import { Badge, Inline, Notice, Stack } from '@ketvietlab/design-system'
@@ -17,6 +18,8 @@ import { localized, selectionLabel } from '../../backend/screen.ts'
 export type AttributeListRow = {
   id: string
   name: string
+  active?: boolean
+  usageCount?: number
   displayType: string
   createVariant: string
   values: Array<{ id: string; name: string; htmlColor?: string | null; sequence?: number }>
@@ -28,7 +31,12 @@ export const attributeListColumns = (_: Translator): Column<AttributeListRow>[] 
     label: _('product_backend.field.name'),
     priority: 'primary',
     width: 'wide',
-    cell: (row) => row.name,
+    cell: (row) =>
+      row.active === false ? (
+        <Inline items={[row.name, <Badge label={_('product_backend.attributes.archived')} />]} />
+      ) : (
+        row.name
+      ),
   },
   {
     key: 'values',
@@ -43,6 +51,20 @@ export const attributeListColumns = (_: Translator): Column<AttributeListRow>[] 
         ]}
       />
     ),
+  },
+  {
+    key: 'valueCount',
+    label: _('product_backend.attributes.valueCount'),
+    cell: (row) => String(row.values.length),
+    kind: 'number',
+    align: 'end',
+  },
+  {
+    key: 'usageCount',
+    label: _('product_backend.attributes.usageCount'),
+    cell: (row) => String(row.usageCount ?? 0),
+    kind: 'number',
+    align: 'end',
   },
   {
     key: 'displayType',
@@ -124,8 +146,24 @@ export const attributesScreen = (
   errors?: string[],
   locale = '',
 ): TemplateResult =>
-  shell(_, _('product_backend.attributes.title'), attributesListPage(_, rows, frame, errors, locale), {
-    ...frame,
-    chrome: null,
-    topbar: false,
-  })
+  shell(
+    _,
+    _('product_backend.attributes.title'),
+    <>
+      {attributesListPage(_, rows, frame, errors, locale)}
+      <AttributeHelp lang={locale === 'en' ? 'en' : 'vi'} />
+    </>,
+    {
+      ...frame,
+      chrome: null,
+      topbar: false,
+      ...(frame.applications
+        ? {
+            applications: {
+              ...frame.applications,
+              helpLabel: locale === 'en' ? 'Screen help' : 'Hướng dẫn màn hình',
+            },
+          }
+        : {}),
+    },
+  )

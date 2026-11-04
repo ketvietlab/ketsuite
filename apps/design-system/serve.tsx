@@ -1,3 +1,5 @@
+// biome-ignore-all lint/plugin/no-markup-in-html: pending kit work — the public catalogue and sales demo; its chrome is not a product screen
+// biome-ignore-all lint/plugin/no-raw-jsx-tag: pending kit work — the public catalogue and sales demo; its chrome is not a product screen
 // The smallest useful KetJS app: one route, no model, no persistent state, no domain.
 // It consumes the public package exactly as another application would and renders
 // every component specimen from the package-owned catalogue.

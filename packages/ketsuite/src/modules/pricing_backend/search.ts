@@ -1,6 +1,6 @@
 // What the search-filter bar offers on the pricelist list.
 //
-// The route reads every pricelist and narrows it in memory, so the spec covers
+// The paged read narrows authorized pricelists server-side, so the spec covers
 // exactly the columns the table renders. `state` is a computed label rather than
 // the stored `active` flag, so it stays a preset group of its own instead of
 // borrowing the framework's archived toggle.

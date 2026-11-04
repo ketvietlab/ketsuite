@@ -16,11 +16,12 @@ import {
 import { CommandButton, fragments } from '../ui.tsx'
 import { LiveDescription } from '../live-description.tsx'
 import { AttachmentImage } from '../image-upload.tsx'
-import { ArchiveActions } from '../archive-actions.tsx'
+import { ArchiveActions, archiveCapability } from '../archive-actions.tsx'
 import { postDocument, postLegacyLayout, renderEntryBody } from '../post-document.tsx'
 import { readPostFields } from './post-fields.tsx'
 import { entryStatus, newId } from './format.ts'
 import type { Entry, Screen, StudioContext, TaxonomyTerm } from '../types.ts'
+import type { EntryHistory } from './builder-types.ts'
 
 /** A post as its editor holds it: a new one has no revision until its first save. */
 type PostDraft = Omit<Entry, 'revisionId'> & { revisionId?: string; siteId?: string }
@@ -30,7 +31,8 @@ export function createPostEditor(ctx: StudioContext, isNew = false) {
   const prefix = isNew ? 'postCreate' : 'postEditor'
   let current: PostDraft | null = null,
     terms: TaxonomyTerm[] = [],
-    pendingId: string | null = null
+    pendingId: string | null = null,
+    usage: NonNullable<EntryHistory['usage']> = []
   const writable = () => ctx.can('website.content.write') && !current?.trashed
   const input = (name: string, label: string, value: string | null | undefined, area = false) => {
     const props = { id: `post-${name}`, name, label, value: value ?? '', disabled: !writable() }
@@ -101,6 +103,17 @@ export function createPostEditor(ctx: StudioContext, isNew = false) {
             )
           ).rows
         : []
+      // What links here, for the archive confirmation; only someone who may archive this post needs it.
+      usage =
+        post.revisionId && !post.trashed && ctx.can(archiveCapability(post))
+          ? ((
+              await ctx.call<EntryHistory>(
+                'website_studio.entryHistory',
+                { id: post.id, siteId: ctx.site().id },
+                { signal },
+              )
+            ).usage ?? [])
+          : []
       return post
     },
     view: (entry) => {
@@ -139,7 +152,14 @@ export function createPostEditor(ctx: StudioContext, isNew = false) {
                     id: 'post-archive',
                     title: entry.title,
                     command: `${prefix}.archive`,
-                    disabled: ctx.busy() || !ctx.can('website.content.write'),
+                    // Archiving a live post takes it off the site, so that is the publisher's; a draft is the author's.
+                    disabled: ctx.busy() || !ctx.can(archiveCapability(entry)),
+                    usage: entry.trashed
+                      ? []
+                      : usage.map((u) => ({
+                          ...u,
+                          title: tr(`website.entry.usage.${u.type}`, { title: u.title }),
+                        })),
                     restore: entry.trashed,
                     extraItems: [
                       {

@@ -104,7 +104,7 @@ test('manufacturing work center edit: dialog retains capacity, efficiency, cost 
   assert.match(html, /action="\/admin\/manufacturing\/work-centers\?edit=packing&amp;lang=vi"/)
   assert.match(html, /data-ui="modal-close" href="\/admin\/manufacturing\/work-centers\?lang=vi"/)
   assert.match(html, /name="id" value="packing"/)
-  assert.equal(html.match(/data-ui="form-field"/g)?.length, 5)
+  assert.equal(html.match(/data-ui="form-field"/g)?.length, 6)
   assert.match(html, /name="code"[^>]*value="PACK"/)
   assert.match(html, /name="capacity"[^>]*value="-2"/)
   assert.match(html, /name="timeEfficiency"[^>]*value="88"/)

@@ -76,3 +76,27 @@ actors are server-derived; reads filter revoked senders, and expiry/leave yields
 `gone`. Owner hooks must authorize every read/write and bound their directory.
 Owners without these hooks retain process-local presence.
 Non-durable owners retain their existing in-memory relay and flatten lifecycle.
+
+## Recovery and disposal
+
+The browser keeps one in-flight update and compacts waiting fragments every64
+chunks. Failed requests retain their update ahead of concurrent successors;
+acknowledging an older request never removes newer edits. This bounds fragment
+accumulation, not the byte size of arbitrary unsaved documents. Owners still
+validate document size before acknowledging persistence.
+
+An initial content failure retries with backoff from500ms up to5seconds even when
+the browser remains online. A refused content read reports `status: 'forbidden'`,
+stops the editor and clears its content. Embedders must remove or refetch the
+denied scope; they must not interpret an unacknowledged edit as saved.
+
+Disposal is idempotent: it aborts requests, closes EventSource, clears heartbeat
+and reconnect timers and sends the existing leave/presence-gone beacons for an
+active remote editor. Embedders must dispose retained controllers and ignore late
+callbacks for removed records or another Company. A server relay whose host does
+not propagate disconnect remains bounded by the existing30-second rotation.
+
+Verification uses focused transport/authorization/presence producer tests and the
+consuming deployment's ordinary-user, multi-process and browser recovery fixtures.
+Rendering the editor shell or testing only a superuser does not verify these
+authorization and persistence contracts.

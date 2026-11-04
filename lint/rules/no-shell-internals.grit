@@ -1,0 +1,20 @@
+// The admin shell is assembled in one file, modules/backend/screen.ts. Its three
+// joints belong on every screen, so a module that renders one has taken over
+// deciding whether every screen gets it. Filling a joint is fine; rendering
+// nav.items, topbar.end or sidebar.foot, or the navigation header, is not.
+language js
+
+or {
+  JsStringLiteralExpression() as $found where {
+    $found <: r"['\"]backend:(?:nav\.items|topbar\.end|sidebar\.foot)['\"]",
+    $found <: within JsCallExpression(callee=$callee) where { $callee <: r"(?s)(?:.*\.)?joint" }
+  },
+  or {
+    JsStringLiteralExpression(),
+    JsTemplateChunkElement(),
+    JsxString(),
+    JsxName()
+  } as $found where { $found <: r"(?s).*x-ket-navigation.*" }
+} where {
+  register_diagnostic(span=$found, message="[ketsuite/no-shell-internals] The admin shell is assembled only in modules/backend/screen.ts: compose it instead of rendering its joints or navigation header.")
+}

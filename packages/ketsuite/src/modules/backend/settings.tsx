@@ -14,7 +14,7 @@ import { adminPage, inLocale } from './screen.ts'
 
 const guide = {
   vi: `## Tìm đúng cấu hình
-Mỗi khối là một phân hệ: biểu tượng và tên của phân hệ, rồi các màn cấu hình của nó. **Kinh doanh** gồm cấu hình của các phân hệ bán hàng và chăm sóc; **Tổ chức & hệ thống** gồm người dùng, phân quyền, công ty và dữ liệu dùng chung.
+Mỗi khối là một phân hệ: biểu tượng và tên của phân hệ, rồi các màn cấu hình của nó. **Kinh doanh** gồm cấu hình của các phân hệ bán hàng và chăm sóc; **Tổ chức & hệ thống** gồm người dùng, phân quyền, công ty và dữ liệu dùng chung. **Bảng giá** nằm trong khối **Bán hàng** khi có phân hệ này; không có thì ở **Tổ chức & hệ thống**.
 
 Gõ vào **Tìm cấu hình** để lọc ngay, không cần dấu: gõ tên một mục để giữ mục đó, gõ tên phân hệ để giữ cả khối. **Esc** xóa ô tìm.
 
@@ -24,7 +24,7 @@ Trang chỉ hiện những màn bạn được phép mở. Thiếu một khối 
 ## Quay lại
 Biểu tượng bánh răng cuối thanh ứng dụng luôn mở trang này và sáng khi bạn đang ở một màn cấu hình.`,
   en: `## Find the right setting
-Each block is one module: its icon and name, then its configuration screens. **Business** holds the sales and care modules' configuration; **Organisation & system** holds users, access, companies and shared data.
+Each block is one module: its icon and name, then its configuration screens. **Business** holds the sales and care modules' configuration; **Organisation & system** holds users, access, companies and shared data. **Pricelists** sit in the **Sales** block when that module is here, and otherwise under **Organisation & system**.
 
 Type in **Search settings** to filter at once, accents optional: a screen's name keeps that screen, a module's name keeps its whole block. **Esc** clears the search.
 
@@ -78,11 +78,40 @@ const moduleOf = (url: URL, node: MenuNode): SettingsDirectoryModule => ({
   links: node.path ? links(url, [node]) : links(url, node.children),
 })
 
+/**
+ * Shared configuration a business block is where people look for it (#1677): pricelists are set up while
+ * selling, so they sit in Sales when the deployment has it. A shared module cannot hang its entry under a
+ * module it does not depend on, so the page moves the link; without that block it stays under System.
+ */
+const HOMES: Record<string, string> = { 'pricing.lists': 'admin.sale' }
+
+export const rehome = (modules: SettingsDirectoryModule[]): SettingsDirectoryModule[] => {
+  const present = new Set(modules.map((module) => module.id))
+  const moving = (link: SettingsDirectoryModule['links'][number]) => {
+    const home = HOMES[link.id]
+    return home && present.has(home) ? home : null
+  }
+  const moved = modules.flatMap((module) =>
+    module.links.filter((link) => moving(link) && moving(link) !== module.id),
+  )
+  return modules
+    .map((module) => ({
+      ...module,
+      links: [
+        ...module.links.filter((link) => !moving(link) || moving(link) === module.id),
+        ...moved.filter((link) => moving(link) === module.id),
+      ],
+    }))
+    .filter((module) => module.links.length)
+}
+
 const settings =
   (ctx: ServeContext): Route =>
   async (url, req) => {
     const admin = (await ctx.menu(url, req)).find((node) => node.id === 'admin')
-    const modules = (admin?.children ?? []).map((node) => moduleOf(url, node)).filter((m) => m.links.length)
+    const modules = rehome(
+      (admin?.children ?? []).map((node) => moduleOf(url, node)).filter((m) => m.links.length),
+    )
     return adminPage(ctx, url, req, {
       title: 'backend.settings.title',
       body: (_, frame) =>

@@ -8,11 +8,14 @@ import { DatePickerExamples, componentRegistry } from '@ketvietlab/design-system
 import { HOOKS } from '../packages/design-system/src/forms/date-time/index.tsx'
 import {
   addDays,
+  dayPattern,
+  formatDay,
   formatRange,
   monthEnd,
   moveMonth,
   orderedRange,
   parseDate,
+  parseDay,
   presetRange,
   withinBounds,
 } from '../packages/design-system/src/forms/date-time/date-math.js'
@@ -282,4 +285,64 @@ test('record form full-span rules do not reach into date/time parts', () => {
   assert.doesNotMatch(auth, /^ {2}\[data-ui="field"\]/m)
   const forms = readFileSync('packages/ketsuite/src/modules/backend/design/forms.css', 'utf8')
   assert.doesNotMatch(forms, /\[data-ui="date-picker"\](?!:not\(\[data-date-mode\]\))/)
+})
+
+test('#1676 days are written and typed in the order of the language the reader chose', () => {
+  assert.equal(formatDay('2026-11-25', 'en'), '11/25/2026')
+  assert.equal(formatDay('2026-11-25', 'vi'), '25/11/2026')
+  assert.equal(formatDay('2026-11-25', 'ja'), '2026/11/25')
+  assert.equal(formatDay('2026-02-30', 'en'), '')
+  assert.deepEqual(
+    [dayPattern('en'), dayPattern('vi'), dayPattern('ja')],
+    ['MM/DD/YYYY', 'dd/mm/yyyy', 'YYYY/MM/DD'],
+  )
+  assert.equal(formatRange('2026-11-25', '2026-12-03', 'en'), '11/25 – 12/03/2026')
+  assert.equal(formatRange('2026-12-25', '2027-01-03', 'en'), '12/25/2026 – 01/03/2027')
+  assert.equal(formatRange('2026-11-25', '2026-12-03'), '25/11 – 03/12/2026')
+  for (const [text, locale, value] of [
+    ['11/25/2026', 'en', '2026-11-25'],
+    ['1/5/2026', 'en', '2026-01-05'],
+    ['25/11/2026', 'vi', '2026-11-25'],
+    ['5.1.2026', 'vi', '2026-01-05'],
+    ['2026/11/25', 'ja', '2026-11-25'],
+    ['2026-11-25', 'en', '2026-11-25'],
+    ['25/11/2026', 'en', ''],
+    ['11/25/26', 'en', ''],
+    ['02/30/2026', 'en', ''],
+    ['11/25', 'en', ''],
+  ] as const)
+    assert.equal(parseDay(text, locale), value, `${locale} ${text}`)
+})
+
+test('#1676 an English DatePicker renders its typed field month first, hidden until enhanced', () => {
+  const html = render(
+    <DatePicker id="due" name="due" label="Due" value="2026-11-25" locale="en" help="When it is due" />,
+  )
+  assert.match(html, /<input[^>]*id="due"[^>]*type="date"[^>]*name="due"[^>]*value="2026-11-25"/)
+  const entry = /<span data-ui="date-entry" hidden(?:="true")?>(<input[^>]*>)<\/span>/.exec(html)?.[1] ?? ''
+  assert.match(entry, /id="due-entry"/)
+  assert.match(entry, /type="text"/)
+  assert.match(entry, /value="11\/25\/2026"/)
+  assert.match(entry, /placeholder="MM\/DD\/YYYY"/)
+  assert.match(entry, /inputmode="numeric"/)
+  assert.match(entry, /aria-describedby="due-help"/)
+  assert.doesNotMatch(entry, /name="due"/)
+  assert.match(
+    render(<DatePicker id="due" name="due" label="Hạn" value="2026-11-25" />),
+    /value="25\/11\/2026"/,
+  )
+  assert.match(
+    render(
+      <DateRangePicker
+        id="period"
+        label="Period"
+        startLabel="From"
+        endLabel="To"
+        start={{ id: 'from', name: 'from', value: '2026-11-25' }}
+        end={{ id: 'to', name: 'to', value: '2026-12-03' }}
+        locale="en"
+      />,
+    ),
+    /value="11\/25 – 12\/03\/2026"/,
+  )
 })

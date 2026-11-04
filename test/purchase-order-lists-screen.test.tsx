@@ -121,6 +121,9 @@ test('purchase RFQ list keeps command search, filters, groups, pager and localiz
   )
 
   assert.match(html, /data-ui="ket-table"/)
+  // The order day reads as a Vietnamese short date, not the stored ISO day.
+  assert.match(html, /data-col="date"[^>]*>(?:<!--[^>]*-->)*20\/8\/26</)
+  assert.doesNotMatch(html, /-->2026-08-20</)
   assert.ok(html.indexOf('data-ui="page-context"') < html.indexOf('data-ui="ket-table"'))
   assert.match(html, /data-ui="list-page"/)
   assert.match(html, /href="\/admin\/purchase\/rfqs\/new\?lang=vi&amp;returnTo=/)

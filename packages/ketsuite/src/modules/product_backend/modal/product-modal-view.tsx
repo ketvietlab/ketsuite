@@ -1,3 +1,8 @@
+import { ProductPackagingGrid, packagingGridInput, type PackagingGridData } from './packaging-grid.tsx'
+import { inventoryTrackingValue, inventoryTrackingInput } from './inventory-tracking.ts'
+import { recordModalHref } from '../../../ui/record-modal.tsx'
+import { ProductSupplierGrid, postedSupplierGrid, type ProductSuppliers } from './supplier-grid.tsx'
+import { shelfLifeFields } from '../../stock/lot-policy.ts'
 // The product page, client side (KetSuite record runtime, page presentation).
 //
 // A template opens on its own page, `/admin/product/templates/{id}`; the catalogue's
@@ -13,17 +18,17 @@
 // vendors and activity — and a rail of what needs attention, completeness and a
 // summary. Operations that are not plain edits are dialogs of the record.
 //
-// `product.saveTemplate` does not touch stock tracking or cost: those are other
-// functions (`stock.configureProduct`, `product.setCost`),
-// and a handler cannot call another function. So "Save changes" runs them in
-// sequence (`RecordModalCommand.also`), each only when its module is installed, the
-// viewer may call it and the form leaves it something to do.
+// "Save changes" is one command, `product.saveRecord` (P17): the general fields, the
+// stock setup and the cost are written in one transaction. Each field group is sent
+// only when the viewer may edit it, locked groups show why, and the server still
+// refuses a changed value in a group the viewer does not hold.
 //
 // Bundled by tools/build-backend-client.mjs into product_backend/client/.
 
 import { TEMPLATE_RECORD_LABELS } from '../../product/template-record-labels.ts'
 import {
   ActionGroup,
+  ActivityTimeline,
   Badge,
   Button,
   DataTable,
@@ -53,9 +58,11 @@ import type {
   RelationSelectLabels,
 } from '@ketvietlab/design-system'
 import type { JSXChild } from '@ketvietlab/ketjs-view'
+import type { RecordPageIslandProps } from '../../../ui/record-modal.tsx'
 import { createRecordPage, recordIsland } from '../../../ui/client/record-modal.tsx'
 import { productImageUrl } from '../../../ui/client/product-image.ts'
 import type {
+  RecordModalCommandStep,
   RecordModalContext,
   RecordModalDefinition,
   RecordModalDialog,
@@ -75,6 +82,8 @@ export type TemplateRecord = {
   id: string
   name: string
   type: string
+  tagIds?: string[]
+  comboIds?: string[]
   categoryId: string | null
   brandId: string | null
   uomId: string | null
@@ -83,8 +92,11 @@ export type TemplateRecord = {
   listPrice: string
   compareAtPrice?: string | null
   hsCode?: string | null
+  saleVariantMode?: string | null
   saleOk: boolean
   purchaseOk: boolean
+  saleWarning?: string | null
+  saleDelay?: number | null
   defaultCode: string | null
   barcode: string | null
   weight?: string | null
@@ -93,8 +105,13 @@ export type TemplateRecord = {
   defaultVariantId?: string | null
   updatedAt?: string | null
   active: boolean
+  stockLocked?: boolean
   isStorable: boolean
   tracking: string
+  shelfLifeMonths?: number | null
+  bestBeforeDays?: number | null
+  removalDays?: number | null
+  alertDays?: number | null
 }
 
 export type TemplateImage = { mediaId: string; attachmentId: string; alt: string | null; primary: boolean }
@@ -108,6 +125,11 @@ export type WorkspaceVariant = {
   volume: string | null
   active: boolean
   price: string
+  /** Template price plus the variant's extras, what an empty own price sells at. */
+  basePrice?: string
+  /** The variant's own sale price; null follows `basePrice`. */
+  listPriceOverride?: string | null
+  hsCode?: string | null
   costPrice: string | null
   image: string | null
   available?: number | null
@@ -161,12 +183,43 @@ export type WorkspaceIssue = {
 }
 
 export type TemplateModalData = {
+  saleWarningsOn?: boolean
+  inventoryTracking?: 'combined'
+  duplicateSourceId?: string
   record: TemplateRecord
+  /** When duplicating: the source's attribute lines, configured on the copy once it is created. */
+  duplicateLines?: Array<{ attributeId: string; values: Array<{ valueId: string; priceExtra: string }> }>
+  /** How many variants those lines make. */
+  duplicateCount?: number
   /** Primary first; the gallery's first image is the cover. */
+  imports?: Array<{ id: string; name: string }>
+  bulkEdits?: Array<{
+    id: string
+    name: string
+    actor: string
+    field: string
+    fieldKey?: string
+    value: string
+    valueLabel?: string
+    productCount: number
+    changedCount: number
+  }>
+  importHistoryHref?: string
+  lifecycle?: Array<{
+    id: string
+    active: boolean
+    reason: string | null
+    actor: string | null
+    /** The actor's name; null for a system change or a person no longer readable. */
+    actorName?: string | null
+    occurredAt: string
+  }>
   images: TemplateImage[]
   hasVariants: boolean
   variantSetup: VariantEditorSetup | null
   types: string[]
+  tags?: FieldOption[]
+  combos?: FieldOption[]
   categories: FieldOption[]
   uoms: FieldOption[]
   uomName?: string | null
@@ -188,11 +241,23 @@ export type TemplateModalData = {
   }>
   /** Units of the product's tree it may still take as a packaging. */
   packagingChoices?: FieldOption[]
+  packagingGrid?: PackagingGridData | null
   variants?: WorkspaceVariant[]
   /** Null when stock is not installed or the viewer may not read it. */
   stock?: StockFacts | null
+  accounts?: {
+    incomeAccountId: string | null
+    expenseAccountId: string | null
+    income: { id: string | null; label: string | null; from: string | null }
+    purchase: { id: string | null; label: string | null; from: string | null }
+    incomeOptions: FieldOption[]
+    purchaseOptions: FieldOption[]
+  } | null
+  /** Saved policy only; null when Sale or its read grant is unavailable. */
+  invoicePolicy?: string | null
   sales?: SalesFacts | null
   vendors?: VendorRow[] | null
+  suppliers?: ProductSuppliers | null
   margin?: { profit: number; percent: number } | null
   uomLocked?: boolean
   issues?: WorkspaceIssue[]
@@ -241,7 +306,6 @@ const minted = () => {
   }
 }
 const createdTemplate = minted()
-const duplicatedTemplate = minted()
 
 const pageLang = (): 'vi' | 'en' =>
   typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en' : 'vi'
@@ -290,9 +354,35 @@ const checked = (form: FormData, name: string): boolean =>
   ['1', 'on', 'true'].includes(String(form.get(name) ?? ''))
 const numberOf = (form: FormData, name: string, c: Context): string | null =>
   parseNumber(text(form, name), c.data.lang)
+/** The stock setup the page sends, when stock is installed and the viewer may set it. */
+const inventoryInput = (form: FormData, c: Context): Record<string, unknown> => {
+  if (isCombo(c) || !c.data.stockEnabled || !can(c, 'configureStock')) return {}
+  const combined = c.data.inventoryTracking === 'combined'
+  if (combined && c.draft('type', c.data.record.type) !== 'goods') return {}
+  const setup = combined
+    ? form.has('inventoryTracking') && (c.creating || c.data.record.tracking !== 'serial')
+      ? inventoryTrackingInput(text(form, 'inventoryTracking'))
+      : {}
+    : { isStorable: checked(form, 'isStorable'), tracking: text(form, 'tracking') || 'none' }
+  return {
+    ...(!c.data.record.stockLocked ? setup : {}),
+    ...Object.fromEntries(
+      shelfLifeFields
+        .filter((field) => form.has(field))
+        .map((field) => [
+          field,
+          text(form, field)
+            ? Number.isFinite(Number(numberOf(form, field, c)))
+              ? Number(numberOf(form, field, c))
+              : text(form, field)
+            : null,
+        ]),
+    ),
+  }
+}
 const changedCost = (form: FormData, c: Context, saved: string | null | undefined): boolean => {
   // A form without the field (not rendered, or disabled) leaves the cost as it is.
-  if (!form.has('costPrice')) return false
+  if (isCombo(c) || c.data.record.stockLocked || !form.has('costPrice')) return false
   const next = numberOf(form, 'costPrice', c)
   return next === null
     ? present(saved)
@@ -302,8 +392,41 @@ const changedCost = (form: FormData, c: Context, saved: string | null | undefine
 // ── Permissions ──────────────────────────────────────────────────────────────
 
 const can = (c: Context, name: string): boolean => c.data.permissions[name] === true
-const editable = (c: Context): boolean => can(c, 'save')
+/** Whether the page saves anything for this viewer: any of the three field groups. */
+const editable = (c: Context): boolean => can(c, 'save') || can(c, 'saveRecord')
+/** The general fields, which `product.saveTemplate` opens; the other groups lock on their own. */
+const GENERAL_FIELDS = new Set([
+  'name',
+  'defaultCode',
+  'saleOk',
+  'saleVariantMode',
+  'purchaseOk',
+  'description',
+  'listPrice',
+  'compareAtPrice',
+  'categoryId',
+  'tagIds',
+  'comboIds',
+  'brandId',
+  'uomId',
+  'weight',
+  'volume',
+  'origin',
+  // The days to deliver are saved with the general fields (P51): locked, the page says why once.
+  'saleDelay',
+])
 const seesMoney = (c: Context): boolean => can(c, 'money')
+/**
+ * P28, as P17 on the page: a variant's code, price and state are the catalogue's; its barcode
+ * and HS code are the stock setup's; its cost is the accountant's. Whoever holds one of them
+ * opens the variant and saves that group.
+ */
+const editsVariantGeneral = (c: Context): boolean => can(c, 'saveVariantSetup')
+const editsVariant = (c: Context): boolean =>
+  Boolean(c.data.variantSetup) &&
+  (editsVariantGeneral(c) || can(c, 'saveVariantStock') || (seesMoney(c) && can(c, 'setCost')))
+const variantCommand = (c: Context): 'editVariant' | 'editVariantStock' | 'editVariantCost' =>
+  editsVariantGeneral(c) ? 'editVariant' : can(c, 'saveVariantStock') ? 'editVariantStock' : 'editVariantCost'
 const status = (c: Context): 'active' | 'inactive' | 'archived' =>
   !c.data.record.active ? 'archived' : c.data.record.saleOk === false ? 'inactive' : 'active'
 
@@ -348,14 +471,18 @@ type Spec = Omit<FieldProps, 'id' | 'name' | 'label' | 'value'> & {
 /** A field of the record form: typed input survives a refusal, the refusal shows on it. */
 const field = (c: Context, name: string, spec: Spec): FieldProps => {
   const { value, locked, fact: _fact, ...props } = spec
+  // Locked general fields share one reason, said once above the form.
+  const general = GENERAL_FIELDS.has(name) && !can(c, 'save')
   const base: FieldProps = {
     ...props,
     id: fieldId(name),
     name,
     label: t(c, `field.${name}`),
-    error: c.fieldError(name),
-    disabled: c.busy || Boolean(locked) || props.disabled === true,
-    help: locked ?? props.help ?? null,
+    error:
+      c.fieldError(name) ??
+      (name === 'inventoryTracking' ? (c.fieldError('tracking') ?? c.fieldError('isStorable')) : null),
+    disabled: c.busy || general || Boolean(locked) || props.disabled === true,
+    help: (general ? null : locked) ?? props.help ?? null,
   }
   if (props.type === 'checkbox')
     return { ...base, submitValue: '1', checked: c.draftChecked(name, '1', value === true) }
@@ -369,6 +496,7 @@ const relationField = (
   options: FieldOption[],
   manager: RelationManager,
   dialogTitle: string,
+  none = t(c, 'none'),
 ): FieldProps => {
   const base = field(c, name, { type: 'select', value: c.data.record[name] ?? '' })
   const config: RelationSelectConfig = {
@@ -376,17 +504,26 @@ const relationField = (
     ariaLabel: base.label,
     value: (base.value as string) || null,
     disabled: base.disabled === true,
-    options: [{ value: '', label: t(c, 'none') }, ...options],
+    options: [{ value: '', label: none }, ...options],
     labels: relationLabels(c, dialogTitle),
     manager,
   }
   return { ...base, control: recordIsland('backend.relation-select', { id: base.id, config }) }
 }
 
+const isCombo = (c: Context) => c.draft('type', c.data.record.type) === 'combo'
 const typeOptions = (c: Context): FieldOption[] =>
-  c.data.types.map((type) => ({ value: type, label: t(c, type === 'service' ? 'service' : 'goods') }))
+  c.data.types.map((type) => ({ value: type, label: t(c, type) }))
 const trackingOptions = (c: Context): FieldOption[] =>
   TRACKING.map((value) => ({ value, label: t(c, `tracking${value[0]!.toUpperCase()}${value.slice(1)}`) }))
+const combinedTrackingValue = (c: Context): string =>
+  c.creating && (!c.data.duplicateSourceId || c.data.record.tracking === 'serial')
+    ? 'quantity'
+    : inventoryTrackingValue(c.data.record)
+const combinedTrackingOptions = (c: Context): FieldOption[] =>
+  ['none', 'quantity', 'lot', ...(!c.creating && c.data.record.tracking === 'serial' ? ['serial'] : [])].map(
+    (value) => ({ value, label: t(c, `inventoryTracking${value[0]!.toUpperCase()}${value.slice(1)}`) }),
+  )
 const optionLabel = (options: FieldOption[], value: unknown): string =>
   options.find((option) => option.value === String(value ?? ''))?.label ?? '—'
 
@@ -412,10 +549,35 @@ const measure = (c: Context, value: unknown, suffix: string): Spec => ({
 /** Every field of the record form, by name, from what was saved. */
 const specs = (c: Context): Record<string, Spec> => {
   const record = c.data.record
+  const account = (income: boolean): Spec => {
+    const data = c.data.accounts
+    const resolved = income ? data?.income : data?.purchase
+    const options = (income ? data?.incomeOptions : data?.purchaseOptions) ?? []
+    return {
+      value: income ? data?.incomeAccountId : data?.expenseAccountId,
+      type: 'select',
+      span: 'full',
+      options: [{ value: '', label: t(c, 'accountInherit') }, ...options],
+      locked: can(c, 'setAccounts') ? null : t(c, 'denied'),
+      help:
+        !c.creating && resolved?.label
+          ? t(c, 'accountResolved', { label: resolved.label })
+          : t(c, 'accountInheritHelp'),
+      fact: (saved) => (saved ? optionLabel(options, saved) : (resolved?.label ?? t(c, 'accountInherit'))),
+    }
+  }
   return {
+    incomeAccountId: account(true),
+    expenseAccountId: account(false),
     name: { value: record.name, required: true, maxLength: 200, span: 'full' },
-    defaultCode: { value: record.defaultCode, maxLength: 40 },
-    barcode: { value: record.barcode, inputMode: 'numeric', maxLength: 14 },
+    defaultCode: { value: record.defaultCode, maxLength: 20, required: c.creating },
+    barcode: {
+      value: record.barcode,
+      inputMode: 'numeric',
+      maxLength: 14,
+      help: t(c, 'barcodeHelp'),
+      locked: can(c, 'setBarcode') ? null : t(c, 'barcodeSetup'),
+    },
     type: {
       value: record.type,
       type: 'select',
@@ -426,6 +588,17 @@ const specs = (c: Context): Record<string, Spec> => {
       fact: (saved) => optionLabel(typeOptions(c), saved),
     },
     saleOk: { value: record.saleOk, type: 'checkbox', fact: (saved) => (saved ? '✓' : '—') },
+    saleVariantMode: {
+      value: isCombo(c) ? 'inline' : (record.saleVariantMode ?? 'inline'),
+      type: 'select',
+      options: [
+        { value: 'inline', label: t(c, 'variantInline') },
+        { value: 'matrix', label: t(c, 'variantMatrix') },
+      ],
+      disabled: isCombo(c),
+      help: t(c, 'variantModeHelp'),
+      fact: (saved) => t(c, saved === 'matrix' ? 'variantMatrix' : 'variantInline'),
+    },
     purchaseOk: { value: record.purchaseOk, type: 'checkbox', fact: (saved) => (saved ? '✓' : '—') },
     description: { value: record.description, type: 'textarea', rows: 3, maxLength: 2000, span: 'full' },
     listPrice: { ...amount(c, record.listPrice), required: true },
@@ -433,38 +606,147 @@ const specs = (c: Context): Record<string, Spec> => {
     costPrice: {
       ...amount(c, record.costPrice),
       help: t(c, 'costHelp'),
-      locked: can(c, 'setCost') ? null : t(c, 'denied'),
+      locked: !can(c, 'setCost') ? t(c, 'denied') : record.stockLocked ? t(c, 'stockLocked') : null,
+    },
+    saleWarning: {
+      value: record.saleWarning ?? '',
+      type: 'textarea',
+      rows: 3,
+      maxLength: 300,
+      span: 'full',
+      help: t(c, 'saleWarningHelp'),
+      locked: can(c, 'save') ? null : t(c, 'generalSetup'),
+    },
+    saleDelay: {
+      value: record.saleDelay == null ? '' : String(record.saleDelay),
+      type: 'number',
+      min: 0,
+      max: 365,
+      inputMode: 'numeric',
+      help: t(c, 'saleDelayHelp'),
+    },
+    inventoryTracking: {
+      value: combinedTrackingValue(c),
+      type: 'select',
+      options: combinedTrackingOptions(c),
+      help: t(c, 'inventoryTrackingHelp'),
+      locked: !can(c, 'configureStock')
+        ? t(c, 'stockSetup')
+        : record.stockLocked
+          ? t(c, 'stockLocked')
+          : !c.creating && record.tracking === 'serial'
+            ? t(c, 'serialTrackingLegacy')
+            : null,
+      fact: () => optionLabel(combinedTrackingOptions(c), combinedTrackingValue(c)),
     },
     isStorable: {
       value: record.isStorable,
       type: 'checkbox',
-      locked: can(c, 'configureStock') ? null : t(c, 'stockSetup'),
+      locked: !can(c, 'configureStock')
+        ? t(c, 'stockSetup')
+        : record.stockLocked
+          ? t(c, 'stockLocked')
+          : null,
       fact: (saved) => (saved ? '✓' : '—'),
     },
     tracking: {
       value: record.tracking,
       type: 'select',
       options: trackingOptions(c),
-      locked: can(c, 'configureStock') ? null : t(c, 'stockSetup'),
+      locked: !can(c, 'configureStock')
+        ? t(c, 'stockSetup')
+        : record.stockLocked
+          ? t(c, 'stockLocked')
+          : null,
       fact: (saved) => optionLabel(trackingOptions(c), saved),
     },
+    ...Object.fromEntries(
+      shelfLifeFields.map((field) => [
+        field,
+        {
+          value: record[field] == null ? '' : String(record[field]),
+          inputMode: 'numeric',
+          help: field === 'shelfLifeMonths' ? t(c, 'shelfLifeHelp') : null,
+          locked: can(c, 'configureStock') ? null : t(c, 'stockSetup'),
+        },
+      ]),
+    ),
     uomId: {
       value: record.uomId ?? '',
       type: 'select',
       options: c.data.uoms,
       required: true,
-      help: t(c, 'uomHelp'),
+      help: t(c, isCombo(c) ? 'comboUnitHelp' : 'uomHelp'),
       locked: c.data.uomLocked ? t(c, 'uomLocked') : null,
       fact: (saved) => optionLabel(c.data.uoms, saved),
     },
     weight: measure(c, record.weight, 'kg'),
     volume: measure(c, record.volume, 'm³'),
-    hsCode: { value: record.hsCode, inputMode: 'numeric', maxLength: 12, help: t(c, 'hsHelp') },
+    hsCode: {
+      value: record.hsCode,
+      inputMode: 'numeric',
+      maxLength: 12,
+      help: t(c, 'hsHelp'),
+      // With the barcode in the stock setup, as on a variant.
+      locked: can(c, 'setBarcode') ? null : t(c, 'hsSetup'),
+    },
     origin: { value: record.origin, maxLength: 80 },
   }
 }
 
 const formField = (c: Context, name: string): FieldProps => {
+  if (name === 'type' && c.creating) {
+    const base = field(c, name, specs(c)[name]!)
+    return {
+      ...base,
+      control: recordStateSelectControl({
+        id: base.id,
+        name,
+        state: 'type',
+        value: String(base.value ?? ''),
+        options: typeOptions(c),
+        required: true,
+        disabled: base.disabled === true,
+      }),
+    }
+  }
+  if (name === 'tagIds' || name === 'comboIds') {
+    const base = field(c, name, {
+      value: (name === 'tagIds' ? (c.data.record.tagIds ?? []) : (c.data.record.comboIds ?? [])).join(','),
+      layout: 'inline',
+      help: t(c, name === 'tagIds' ? 'tagsHelp' : 'combosHelp'),
+      required: name === 'comboIds',
+    })
+    const config: RelationSelectConfig = {
+      name,
+      ariaLabel: base.label,
+      multiple: true,
+      required: name === 'comboIds',
+      values: String(base.value ?? '')
+        .split(',')
+        .filter(Boolean),
+      disabled: base.disabled === true,
+      options: (name === 'tagIds' ? c.data.tags : c.data.combos) ?? [],
+      labels: {
+        ...relationLabels(c, t(c, `field.${name}`)),
+        choose: t(c, name === 'tagIds' ? 'chooseTags' : 'chooseCombos'),
+      },
+    }
+    return { ...base, control: recordIsland('backend.relation-select', { id: base.id, config }) }
+  }
+  if (name === 'incomeAccountId' || name === 'expenseAccountId') {
+    const spec = specs(c)[name]!
+    const base = field(c, name, spec)
+    const config: RelationSelectConfig = {
+      name,
+      ariaLabel: base.label,
+      value: (base.value as string) || null,
+      disabled: base.disabled === true,
+      options: [...(spec.options ?? [])],
+      labels: relationLabels(c, String(base.label)),
+    }
+    return { ...base, control: recordIsland('backend.relation-select', { id: base.id, config }) }
+  }
   if (name === 'categoryId')
     return relationField(
       c,
@@ -477,6 +759,8 @@ const formField = (c: Context, name: string): FieldProps => {
         fields: [{ name: 'name', label: t(c, 'field.categoryId'), required: true }],
       },
       c.t('product_backend.relation.categories'),
+      // The mock's words for a product in no category (P45).
+      t(c, 'noCategory'),
     )
   if (name === 'brandId')
     return relationField(
@@ -494,7 +778,14 @@ const formField = (c: Context, name: string): FieldProps => {
 }
 
 const factOf = (c: Context, name: string): string => {
-  if (name === 'categoryId') return optionLabel(c.data.categories, c.data.record.categoryId)
+  if (name === 'comboIds')
+    return (c.data.record.comboIds ?? []).map((id) => optionLabel(c.data.combos ?? [], id)).join(', ') || '—'
+  if (name === 'tagIds')
+    return (c.data.record.tagIds ?? []).map((id) => optionLabel(c.data.tags ?? [], id)).join(', ') || '—'
+  if (name === 'categoryId')
+    return c.data.record.categoryId
+      ? optionLabel(c.data.categories, c.data.record.categoryId)
+      : t(c, 'noCategory')
   if (name === 'brandId') return optionLabel(c.data.brands, c.data.record.brandId)
   const spec = specs(c)[name]!
   const saved = c.data.record[name as keyof TemplateRecord]
@@ -566,7 +857,12 @@ const metrics = (c: Context): JSXChild => {
       }),
     )
   // A priced product without a cost keeps the slot: the gap is why the margin is unknown.
-  else if (seesMoney(c) && c.data.record.saleOk !== false && Number(c.data.record.listPrice) > 0)
+  else if (
+    !isCombo(c) &&
+    seesMoney(c) &&
+    c.data.record.saleOk !== false &&
+    Number(c.data.record.listPrice) > 0
+  )
     items.push(
       Metric({
         label: t(c, 'metricMargin'),
@@ -593,7 +889,14 @@ const generalCard = (c: Context): JSXChild =>
             : ['name', 'defaultCode', 'barcode', 'type', 'categoryId', 'brandId'],
           { description: c.data.hasVariants ? t(c, 'identityVariants') : null },
         ),
-        group(c, t(c, 'business'), ['saleOk', 'purchaseOk']),
+        group(c, t(c, 'field.tagIds'), ['tagIds'], { columns: 2 }),
+        ...(isCombo(c) ? [group(c, t(c, 'field.comboIds'), ['comboIds', 'uomId'], { columns: 2 })] : []),
+        group(c, t(c, 'business'), [
+          'saleOk',
+          'purchaseOk',
+          'saleVariantMode',
+          ...(c.data.saleWarningsOn ? ['saleWarning'] : []),
+        ]),
         group(c, t(c, 'descriptionSection'), ['description']),
       ],
     }),
@@ -648,18 +951,18 @@ const pricingCard = (c: Context): JSXChild => {
   const prices = [
     'listPrice',
     'compareAtPrice',
-    ...(seesMoney(c) && !c.data.hasVariants ? ['costPrice'] : []),
+    ...(seesMoney(c) && !c.data.hasVariants && !isCombo(c) ? ['costPrice'] : []),
   ]
   const margin = c.data.margin
   return Surface({
-    title: t(c, 'pricing'),
+    title: t(c, isCombo(c) ? 'prices' : 'pricing'),
     body: Stack({
       divided: true,
       items: [
         group(c, t(c, 'prices'), prices, {
           description: seesMoney(c) && c.data.hasVariants ? t(c, 'costVariants') : null,
         }),
-        c.creating
+        c.creating || isCombo(c)
           ? ''
           : seesMoney(c)
             ? Section({
@@ -765,6 +1068,8 @@ const packagingOf = (c: Context): Packaging | undefined =>
 // The units a product is sold, bought and scanned in besides its own. A product with
 // variants keeps a barcode per variant per packaging, set in the variant's dialog.
 const packagingSection = (c: Context): JSXChild => {
+  if (c.data.packagingGrid === null) return ''
+  if (c.data.packagingGrid) return <ProductPackagingGrid context={c} formId={FORM_ID} />
   const rows = c.data.packagings ?? []
   const unit = c.data.uomName ?? ''
   const barcodes = !c.data.hasVariants
@@ -877,12 +1182,21 @@ const inventoryCard = (c: Context): JSXChild =>
     body: Stack({
       divided: true,
       items: [
-        group(c, t(c, 'storage'), [...(c.data.stockEnabled ? ['isStorable', 'tracking'] : []), 'uomId']),
+        group(c, t(c, 'storage'), [
+          ...(c.data.stockEnabled
+            ? c.data.inventoryTracking === 'combined'
+              ? c.draft('type', c.data.record.type) === 'goods'
+                ? ['inventoryTracking', ...shelfLifeFields]
+                : []
+              : ['isStorable', 'tracking', ...shelfLifeFields]
+            : []),
+          'uomId',
+        ]),
         c.creating ? '' : packagingSection(c),
         group(
           c,
           t(c, 'shipping'),
-          [...(c.data.hasVariants ? [] : ['weight', 'volume']), 'hsCode', 'origin'],
+          [...(c.data.hasVariants ? [] : ['weight', 'volume']), 'saleDelay', 'hsCode', 'origin'],
           {
             description: c.data.hasVariants ? t(c, 'measureVariants') : null,
           },
@@ -954,7 +1268,7 @@ const variantsCard = (c: Context): JSXChild => {
           rows: variants,
           id: (row) => row.id,
           // The whole row opens the variant's editor; there is no separate edit button.
-          ...(can(c, 'saveVariantSetup') && c.data.variantSetup && !c.busy
+          ...(editsVariant(c) && !c.busy
             ? { rowHref: (row: WorkspaceVariant) => recordDialogHref(c, 'editVariant', row.id) }
             : {}),
           responsive: 'stack',
@@ -1057,6 +1371,8 @@ const extensionCards = (c: Context): JSXChild[] =>
   )
 
 const vendorsCard = (c: Context): JSXChild => {
+  if (isCombo(c)) return null
+  if (c.data.suppliers) return <ProductSupplierGrid context={c} />
   const vendors = c.data.vendors
   if (!vendors) return ''
   const date = new Intl.DateTimeFormat(localeTag(c), { dateStyle: 'medium' })
@@ -1141,8 +1457,49 @@ const activityCard = (c: Context): JSXChild =>
     : ''
 
 const body = (c: Context): JSXChild => {
+  const accounting =
+    c.data.accounts || c.data.invoicePolicy
+      ? Surface({
+          title: t(c, 'accounting'),
+          body: Stack({
+            items: [
+              c.data.accounts
+                ? group(c, t(c, 'accountMapping'), ['incomeAccountId', 'expenseAccountId'], {
+                    description: t(c, 'accountInheritHelp'),
+                  })
+                : '',
+              c.data.invoicePolicy
+                ? DescriptionList({
+                    items: [
+                      {
+                        id: 'invoicePolicy',
+                        label: t(c, 'invoicePolicy'),
+                        value:
+                          c.data.invoicePolicy === 'order' || c.data.invoicePolicy === 'delivery'
+                            ? t(c, `invoicePolicy.${c.data.invoicePolicy}`)
+                            : t(c, 'invoicePolicy.unknown'),
+                      },
+                    ],
+                  })
+                : '',
+            ],
+          }),
+        })
+      : ''
   if (c.creating) {
-    const cards = Stack({ items: [generalCard(c), pricingCard(c), inventoryCard(c)] })
+    const copied = c.data.duplicateCount ?? 0
+    const cards = Stack({
+      items: [
+        // The duplicate's variants are made when it is created; say so before the reader saves.
+        copied > 0
+          ? Notice({ title: t(c, 'duplicateVariants', { count: copied }), message: '', tone: 'info' })
+          : null,
+        generalCard(c),
+        pricingCard(c),
+        isCombo(c) ? null : inventoryCard(c),
+        accounting,
+      ],
+    })
     return RecordModalForm({ id: FORM_ID, kind: c.kind, command: 'create', fields: [], body: cards })
   }
   // The form spans the cards it edits and the ones between them; cards other modules
@@ -1150,12 +1507,16 @@ const body = (c: Context): JSXChild => {
   const cards = Stack({
     items: [
       metrics(c),
+      // Fixed for a viewer, so the cards below keep their places while typing.
+      ...(editable(c) && !can(c, 'save')
+        ? [Notice({ title: t(c, 'generalLockedTitle'), message: t(c, 'generalSetup'), tone: 'info' })]
+        : []),
       generalCard(c),
       mediaCard(c),
       pricingCard(c),
-      inventoryCard(c),
-      variantsCard(c),
-      vendorsCard(c),
+      isCombo(c) ? null : inventoryCard(c),
+      accounting,
+      isCombo(c) ? null : variantsCard(c),
     ],
   })
   return Stack({
@@ -1163,6 +1524,7 @@ const body = (c: Context): JSXChild => {
       editable(c)
         ? RecordModalForm({ id: FORM_ID, kind: c.kind, command: 'save', fields: [], body: cards })
         : cards,
+      vendorsCard(c),
       ...extensionCards(c),
       activityCard(c),
     ],
@@ -1188,7 +1550,9 @@ const missingLink = (c: Context, key: string): JSXChild => {
   const fillable =
     editable(c) &&
     (!perVariant || (can(c, 'saveVariantSetup') && Boolean(c.data.variantSetup))) &&
-    !(key === 'costPrice' && !can(c, 'setCost'))
+    !(key === 'costPrice' && !can(c, 'setCost')) &&
+    !(key === 'barcode' && !can(c, 'setBarcode')) &&
+    !(GENERAL_FIELDS.has(key) && !can(c, 'save'))
   return fillable
     ? LinkButton({
         label,
@@ -1274,7 +1638,7 @@ const aside = (c: Context): JSXChild | undefined => {
           {
             id: 'type',
             label: t(c, 'field.type'),
-            value: t(c, record.type === 'service' ? 'service' : 'goods'),
+            value: t(c, record.type),
           },
           {
             id: 'category',
@@ -1295,6 +1659,61 @@ const aside = (c: Context): JSXChild | undefined => {
       }),
     }),
   )
+  if (c.data.bulkEdits?.length)
+    items.push(
+      Surface({
+        title: t(c, 'bulkHistory'),
+        body: Stack({
+          items: c.data.bulkEdits.map((row) =>
+            Text({
+              children: `${row.name} · ${row.actor} · ${row.field}: ${row.fieldKey === 'listPrice' ? money(c, row.value) : (row.valueLabel ?? row.value)} · ${row.changedCount}/${row.productCount}`,
+            }),
+          ),
+        }),
+      }),
+    )
+  if (c.data.imports?.length && c.data.importHistoryHref)
+    items.push(
+      Surface({
+        title: t(c, 'importHistory'),
+        body: Stack({
+          items: [
+            ...c.data.imports.map((row) =>
+              LinkButton({
+                label: row.name,
+                href: recordModalHref(new URL(c.data.importHistoryHref!, 'http://ket.local'), {
+                  kind: 'product.import',
+                  id: row.id,
+                }),
+                variant: 'tertiary',
+              }),
+            ),
+            LinkButton({ label: t(c, 'allImports'), href: c.data.importHistoryHref, variant: 'tertiary' }),
+          ],
+        }),
+      }),
+    )
+  if (c.data.lifecycle?.length)
+    items.push(
+      Surface({
+        title: t(c, 'lifecycle'),
+        // Who did it, what, when and why, as the mock's history reads.
+        body: ActivityTimeline({
+          label: t(c, 'lifecycle'),
+          items: c.data.lifecycle.map((event) => ({
+            id: event.id,
+            actor: event.actorName ?? t(c, 'lifecycleSystem'),
+            action: t(c, event.active ? 'restore' : 'archive'),
+            datetime: event.occurredAt,
+            timeLabel: new Intl.DateTimeFormat(localeTag(c), {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            }).format(new Date(event.occurredAt)),
+            ...(event.reason ? { detail: event.reason } : {}),
+          })),
+        }),
+      }),
+    )
   return Stack({ items })
 }
 
@@ -1323,10 +1742,11 @@ const pageActions = (c: Context): JSXChild => {
   return ActionGroup({
     actions: [
       back,
-      can(c, 'duplicate') && editable(c)
-        ? RecordDialogTrigger({
-            dialog: 'duplicate',
-            children: Button({ label: t(c, 'duplicate'), variant: 'secondary', disabled: c.busy }),
+      can(c, 'duplicate') && can(c, 'save')
+        ? LinkButton({
+            label: t(c, 'duplicate'),
+            variant: 'secondary',
+            href: `${PATH('new')}?duplicate=${encodeURIComponent(c.id)}&lang=${c.data.lang}`,
           })
         : '',
       can(c, 'archive')
@@ -1438,65 +1858,98 @@ const editVariantDialog = (c: Context): JSXChild => {
       disabled: c.busy,
       ...extra,
     })
+  // The catalogue's fields are shown, not edited, to who holds only the stock setup or the cost.
+  const general = editsVariantGeneral(c)
+  const locked: Partial<FieldProps> = general ? {} : { disabled: true }
+  const grid = FormGrid({
+    columns: 2,
+    items: [
+      input('defaultCode', variant.defaultCode, { maxLength: 20, ...locked }),
+      input('barcode', variant.barcode, {
+        inputMode: 'numeric',
+        maxLength: 14,
+        ...(can(c, 'setBarcode') ? {} : { disabled: true, help: t(c, 'barcodeSetup') }),
+      }),
+      input('listPrice', variant.listPriceOverride == null ? '' : typed(c, variant.listPriceOverride), {
+        ...locked,
+        label: t(c, 'variantPrice'),
+        inputMode: 'numeric',
+        align: 'end',
+        suffix: '₫',
+        maxLength: 16,
+        help: t(c, 'variantPriceHelp', { price: money(c, variant.basePrice ?? variant.price) }),
+      }),
+      input('hsCode', variant.hsCode ?? '', {
+        inputMode: 'numeric',
+        maxLength: 13,
+        ...(can(c, 'setBarcode')
+          ? { help: t(c, 'variantHsHelp') }
+          : { disabled: true, help: t(c, 'hsSetup') }),
+      }),
+      input('weight', typed(c, variant.weight, 3), {
+        ...locked,
+        inputMode: 'decimal',
+        align: 'end',
+        suffix: 'kg',
+        maxLength: 12,
+      }),
+      input('volume', typed(c, variant.volume, 3), {
+        ...locked,
+        inputMode: 'decimal',
+        align: 'end',
+        suffix: 'm³',
+        maxLength: 12,
+      }),
+      ...(seesMoney(c) && can(c, 'setCost')
+        ? [
+            input('costPrice', typed(c, variant.costPrice), {
+              inputMode: 'numeric',
+              align: 'end',
+              suffix: '₫',
+              maxLength: 16,
+              help: t(c, 'costHelp'),
+            }),
+          ]
+        : []),
+      ...(can(c, 'packagingBarcodes')
+        ? (c.data.packagings ?? []).map((row) =>
+            Field({
+              id: `product-variant-packaging-${row.id.replace(/[^\w-]/gu, '-')}`,
+              name: `packaging.${row.id}`,
+              label: `${t(c, 'packagingBarcode')} · ${row.name}`,
+              inputMode: 'numeric',
+              maxLength: 14,
+              value: c.draft(`packaging.${row.id}`, variant.packagingBarcodes?.[row.id] ?? ''),
+              error: c.fieldError(`packaging.${row.id}`),
+              disabled: c.busy,
+            }),
+          )
+        : []),
+      Field({
+        id: 'product-variant-active',
+        name: 'active',
+        label: t(c, 'variantActive'),
+        type: 'checkbox',
+        submitValue: '1',
+        checked: c.draftChecked('active', '1', variant.active),
+        disabled: c.busy || !general,
+        span: 'full',
+      }),
+    ],
+  })
   return RecordModalForm({
     id: 'product-edit-variant',
     kind: c.kind,
-    command: 'editVariant',
+    command: variantCommand(c),
     fields: [],
-    body: FormGrid({
-      columns: 2,
-      items: [
-        input('defaultCode', variant.defaultCode, { maxLength: 40 }),
-        input('barcode', variant.barcode, { inputMode: 'numeric', maxLength: 14 }),
-        input('weight', typed(c, variant.weight, 3), {
-          inputMode: 'decimal',
-          align: 'end',
-          suffix: 'kg',
-          maxLength: 12,
+    body: general
+      ? grid
+      : Stack({
+          items: [
+            Notice({ title: t(c, 'generalLockedTitle'), message: t(c, 'generalSetup'), tone: 'info' }),
+            grid,
+          ],
         }),
-        input('volume', typed(c, variant.volume, 3), {
-          inputMode: 'decimal',
-          align: 'end',
-          suffix: 'm³',
-          maxLength: 12,
-        }),
-        ...(seesMoney(c) && can(c, 'setCost')
-          ? [
-              input('costPrice', typed(c, variant.costPrice), {
-                inputMode: 'numeric',
-                align: 'end',
-                suffix: '₫',
-                maxLength: 16,
-                help: t(c, 'costHelp'),
-              }),
-            ]
-          : []),
-        ...(can(c, 'packagingBarcodes')
-          ? (c.data.packagings ?? []).map((row) =>
-              Field({
-                id: `product-variant-packaging-${row.id.replace(/[^\w-]/gu, '-')}`,
-                name: `packaging.${row.id}`,
-                label: `${t(c, 'packagingBarcode')} · ${row.name}`,
-                inputMode: 'numeric',
-                maxLength: 14,
-                value: c.draft(`packaging.${row.id}`, variant.packagingBarcodes?.[row.id] ?? ''),
-                error: c.fieldError(`packaging.${row.id}`),
-                disabled: c.busy,
-              }),
-            )
-          : []),
-        Field({
-          id: 'product-variant-active',
-          name: 'active',
-          label: t(c, 'variantActive'),
-          type: 'checkbox',
-          submitValue: '1',
-          checked: c.draftChecked('active', '1', variant.active),
-          disabled: c.busy,
-          span: 'full',
-        }),
-      ],
-    }),
   })
 }
 
@@ -1627,7 +2080,12 @@ const attributeRow = (c: Context, key: string, keys: string[]): JSXChild => {
                   c,
                   `extra.${value.valueId}`,
                   t(c, 'extraFor', { value: value.name }),
-                  typed(c, current?.values.find((item) => item.valueId === value.valueId)?.priceExtra ?? 0),
+                  typed(
+                    c,
+                    current?.values.find((item) => item.valueId === value.valueId)?.priceExtra ??
+                      value.defaultPriceExtra ??
+                      0,
+                  ),
                 ),
               ),
             })
@@ -1764,6 +2222,8 @@ const setupWith = (
     barcode: string | null
     weight: string
     volume: string
+    listPrice: string | null
+    hsCode: string | null
     active: boolean
   }>,
 ) => {
@@ -1793,6 +2253,36 @@ const packagingEntries = (form: FormData, c: Context): Array<{ uomId: string; ba
     uomId: row.id,
     barcode: text(form, `packaging.${row.id}`) || null,
   }))
+
+// The variant dialog's further steps and its field names, shared by the three ways it saves (P28).
+const variantCostStep: RecordModalCommandStep<TemplateModalData> = {
+  fn: 'product.setCost',
+  when: (c, form) => seesMoney(c) && can(c, 'setCost') && changedCost(form, c, variantOf(c)?.costPrice),
+  input: (form, c) => ({
+    productId: c.dialog?.params.id ?? '',
+    standardPrice: numberOf(form, 'costPrice', c),
+  }),
+}
+const variantPackagingStep: RecordModalCommandStep<TemplateModalData> = {
+  fn: 'product.setPackagingBarcodes',
+  when: (c, form) =>
+    can(c, 'packagingBarcodes') &&
+    (c.data.packagings ?? []).length > 0 &&
+    packagingBarcodesChanged(form, c, variantOf(c)?.packagingBarcodes),
+  input: (form, c) => ({ productId: c.dialog?.params.id ?? '', barcodes: packagingEntries(form, c) }),
+}
+/** The setup names every variant by position; only the edited one is on this form. */
+const variantIssueField = (field: string, form: FormData, c: Context): string => {
+  if (field === 'standardPrice') return 'costPrice'
+  const packaging = /^barcodes\.(\d+)\./u.exec(field)
+  if (packaging) {
+    const entry = packagingEntries(form, c)[Number(packaging[1])]
+    return entry ? `packaging.${entry.uomId}` : field
+  }
+  const index = (c.data.variantSetup?.variants ?? []).findIndex((row) => row.id === c.dialog?.params.id)
+  const match = /^variants\.(\d+)\.(\w+)/u.exec(field)
+  return match && Number(match[1]) === index ? match[2]! : field
+}
 
 const packagingBarcodesChanged = (form: FormData, c: Context, saved: Record<string, string> | undefined) =>
   packagingEntries(form, c).some((entry) => (entry.barcode ?? '') !== (saved?.[entry.uomId] ?? ''))
@@ -1866,7 +2356,28 @@ const confirmDialog = (
   options: { permission: string; variant: 'primary' | 'destructive'; message: string },
 ): RecordModalDialog<TemplateModalData> => ({
   title: (c) => t(c, name),
-  view: (c) => RecordModalForm({ id: `product-${name}`, kind: c.kind, command: name, fields: [] }),
+  view: (c) =>
+    RecordModalForm({
+      id: `product-${name}`,
+      kind: c.kind,
+      command: name,
+      fields:
+        name === 'archive'
+          ? [
+              {
+                id: 'product-archive-reason',
+                name: 'reason',
+                label: t(c, 'archiveReason'),
+                type: 'textarea',
+                required: true,
+                maxLength: 500,
+                value: c.draft('reason', ''),
+                error: c.fieldError('reason'),
+                disabled: c.busy,
+              },
+            ]
+          : [],
+    }),
   confirmation: {
     message: (c) => (can(c, options.permission) ? t(c, options.message) : t(c, 'denied')),
     label: (c) => t(c, name),
@@ -1901,10 +2412,9 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
     route: (id, creating) => {
       // A page opening afresh starts a fresh create; a retry keeps the id it minted.
       if (creating) createdTemplate.reset()
-      duplicatedTemplate.reset()
       return `${PATH(creating ? 'new' : id)}/context?lang=${pageLang()}`
     },
-    query: ['company', 'branch'],
+    query: ['company', 'branch', 'duplicate'],
   },
   title: (c) => (c.creating ? t(c, 'create') : c.data.record.name),
   status: (c) =>
@@ -1917,36 +2427,6 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
   pageActions,
   actions: pageActions,
   dialogs: {
-    duplicate: guarded((c) => can(c, 'duplicate') && editable(c), {
-      title: (c) => t(c, 'duplicate'),
-      size: 'small',
-      view: (c) =>
-        RecordModalForm({
-          id: 'product-duplicate',
-          kind: c.kind,
-          command: 'duplicate',
-          fields: [],
-          body: Stack({
-            items: [
-              Text({ children: t(c, 'duplicateBody'), variant: 'bodyMd' }),
-              Field({
-                id: 'product-duplicate-name',
-                name: 'name',
-                label: t(c, 'duplicateName'),
-                required: true,
-                maxLength: 200,
-                value: c.draft('name', t(c, 'copyName', { name: c.data.record.name })),
-                error: c.fieldError('name'),
-                disabled: c.busy,
-              }),
-            ],
-          }),
-        }),
-      actions: (c) =>
-        ActionGroup({
-          actions: [closeButton(c), submitButton(c, 'product-duplicate', 'duplicate', t(c, 'duplicate'))],
-        }),
-    }),
     archive: confirmDialog('archive', {
       permission: 'archive',
       variant: 'destructive',
@@ -1990,14 +2470,14 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
       variant: 'destructive',
       message: 'removeImageBody',
     }),
-    editVariant: guarded((c) => can(c, 'saveVariantSetup') && Boolean(c.data.variantSetup), {
+    editVariant: guarded(editsVariant, {
       title: (c) => `${t(c, 'editVariant')} · ${variantOf(c)?.label ?? ''}`,
       view: editVariantDialog,
       actions: (c) =>
         ActionGroup({
           actions: [
             closeButton(c),
-            submitButton(c, 'product-edit-variant', 'editVariant', t(c, 'save'), !variantOf(c)),
+            submitButton(c, 'product-edit-variant', variantCommand(c), t(c, 'save'), !variantOf(c)),
           ],
         }),
     }),
@@ -2057,132 +2537,146 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
     }),
   },
   commands: {
+    saveSuppliers: {
+      fn: 'purchase.applyProductSupplierGrid',
+      issueField: () => 'supplierChanges',
+      input: (form, c) => ({
+        templateId: c.id,
+        expectedRevision: c.data.suppliers?.revision,
+        changes: postedSupplierGrid(form),
+      }),
+      after: 'reload',
+    },
     create: {
-      fn: 'product.saveTemplate',
+      fn: 'product.saveRecord',
       input: (form, c) => ({
         id: createdTemplate.get(),
+        ...(c.data.duplicateSourceId ? { duplicateSourceId: c.data.duplicateSourceId } : {}),
         name: text(form, 'name'),
         type: text(form, 'type') || 'goods',
         uomId: text(form, 'uomId') || null,
         categoryId: text(form, 'categoryId') || null,
+        tagIds: text(form, 'tagIds').split(',').filter(Boolean),
+        ...(isCombo(c) ? { comboIds: text(form, 'comboIds').split(',').filter(Boolean) } : {}),
         brandId: text(form, 'brandId') || null,
         description: text(form, 'description') || null,
         defaultCode: text(form, 'defaultCode') || null,
-        barcode: text(form, 'barcode') || null,
+        // A locked barcode is not submitted: the server refuses a change it may not make.
+        ...(can(c, 'setBarcode') ? { barcode: text(form, 'barcode') || null } : {}),
         saleOk: checked(form, 'saleOk'),
         purchaseOk: checked(form, 'purchaseOk'),
+        saleVariantMode: isCombo(c) ? 'inline' : text(form, 'saleVariantMode') || 'inline',
+        saleDelay: text(form, 'saleDelay') === '' ? null : Number(text(form, 'saleDelay')),
+        ...(c.data.saleWarningsOn && can(c, 'save')
+          ? { saleWarning: text(form, 'saleWarning') || null }
+          : {}),
         listPrice: numberOf(form, 'listPrice', c) ?? '0',
         compareAtPrice: numberOf(form, 'compareAtPrice', c),
         weight: numberOf(form, 'weight', c),
         volume: numberOf(form, 'volume', c),
-        hsCode: text(form, 'hsCode') || null,
+        ...(can(c, 'setBarcode') && form.has('hsCode') ? { hsCode: text(form, 'hsCode') || null } : {}),
         origin: text(form, 'origin') || null,
+        ...(!isCombo(c) && seesMoney(c) && can(c, 'setCost') && numberOf(form, 'costPrice', c) !== null
+          ? { costPrice: numberOf(form, 'costPrice', c) }
+          : {}),
+        ...inventoryInput(form, c),
+        ...(c.data.accounts && can(c, 'setAccounts')
+          ? {
+              incomeAccountId: text(form, 'incomeAccountId') || null,
+              expenseAccountId: text(form, 'expenseAccountId') || null,
+            }
+          : {}),
       }),
       also: [
         {
-          fn: 'product.setCost',
-          when: (c, form) => seesMoney(c) && can(c, 'setCost') && numberOf(form, 'costPrice', c) !== null,
-          input: (form, c) => ({
-            productId: `${createdTemplate.get()}:default`,
-            standardPrice: numberOf(form, 'costPrice', c),
-          }),
-        },
-        {
-          fn: 'stock.configureProduct',
-          when: (c) => c.data.stockEnabled && can(c, 'configureStock'),
-          input: (form) => ({
+          // A duplicate makes the source's variants on the new product: new codes from its
+          // own reference, the source variants' HS codes, no barcode, no cost. A retry
+          // replays the idempotent create first.
+          fn: 'product.configureAttributes',
+          when: (c) => (c.data.duplicateLines ?? []).length > 0,
+          input: (_form, c) => ({
             templateId: createdTemplate.get(),
-            isStorable: checked(form, 'isStorable'),
-            tracking: text(form, 'tracking') || 'none',
+            lines: c.data.duplicateLines,
+            ...(c.data.duplicateSourceId ? { duplicateSourceId: c.data.duplicateSourceId } : {}),
           }),
         },
       ],
-      issueField: (field) => (field === 'standardPrice' ? 'costPrice' : field),
       after: 'open',
       created: () => createdTemplate.take(),
     },
     save: {
-      fn: 'product.saveTemplate',
+      // One command for the three field groups: each is sent only when this viewer may
+      // edit it, and the server writes them together or not at all.
+      fn: 'product.saveRecord',
       input: (form, c) => ({
         id: c.id,
         expectedRevisionId: c.data.record.revisionId,
-        name: text(form, 'name'),
         type: text(form, 'type') || c.data.record.type,
-        // A locked unit is not submitted: leaving it out keeps the one saved.
-        ...(c.data.uomLocked ? {} : { uomId: text(form, 'uomId') || null }),
-        categoryId: text(form, 'categoryId') || null,
-        brandId: text(form, 'brandId') || null,
-        description: text(form, 'description') || null,
-        saleOk: checked(form, 'saleOk'),
-        purchaseOk: checked(form, 'purchaseOk'),
-        listPrice: numberOf(form, 'listPrice', c) ?? '0',
-        compareAtPrice: numberOf(form, 'compareAtPrice', c),
-        hsCode: text(form, 'hsCode') || null,
-        origin: text(form, 'origin') || null,
+        ...(can(c, 'save')
+          ? {
+              name: text(form, 'name'),
+              // A locked unit is not submitted: leaving it out keeps the one saved.
+              ...(c.data.uomLocked ? {} : { uomId: text(form, 'uomId') || null }),
+              categoryId: text(form, 'categoryId') || null,
+              tagIds: text(form, 'tagIds').split(',').filter(Boolean),
+              ...(isCombo(c) ? { comboIds: text(form, 'comboIds').split(',').filter(Boolean) } : {}),
+              brandId: text(form, 'brandId') || null,
+              description: text(form, 'description') || null,
+              saleOk: checked(form, 'saleOk'),
+              purchaseOk: checked(form, 'purchaseOk'),
+              saleVariantMode: isCombo(c) ? 'inline' : text(form, 'saleVariantMode') || 'inline',
+              saleDelay: text(form, 'saleDelay') === '' ? null : Number(text(form, 'saleDelay')),
+              ...(c.data.saleWarningsOn && can(c, 'save')
+                ? { saleWarning: text(form, 'saleWarning') || null }
+                : {}),
+              listPrice: numberOf(form, 'listPrice', c) ?? '0',
+              compareAtPrice: numberOf(form, 'compareAtPrice', c),
+              origin: text(form, 'origin') || null,
+            }
+          : // Locked general fields post nothing; the saved name stands in for them.
+            { name: c.data.record.name }),
+        // The HS code is stock setup: sent by who may set it up, left as saved otherwise.
+        ...(can(c, 'setBarcode') && form.has('hsCode') ? { hsCode: text(form, 'hsCode') || null } : {}),
         // With variants, each carries its own reference, barcode and measures.
         ...(c.data.hasVariants
           ? {}
           : {
-              defaultCode: text(form, 'defaultCode') || null,
-              barcode: text(form, 'barcode') || null,
-              weight: numberOf(form, 'weight', c),
-              volume: numberOf(form, 'volume', c),
+              ...(can(c, 'save')
+                ? {
+                    defaultCode: text(form, 'defaultCode') || null,
+                    weight: numberOf(form, 'weight', c),
+                    volume: numberOf(form, 'volume', c),
+                  }
+                : {}),
+              ...(can(c, 'setBarcode') ? { barcode: text(form, 'barcode') || null } : {}),
             }),
+        ...(seesMoney(c) &&
+        can(c, 'setCost') &&
+        !c.data.hasVariants &&
+        c.data.record.defaultVariantId &&
+        changedCost(form, c, c.data.record.costPrice)
+          ? { costPrice: numberOf(form, 'costPrice', c) }
+          : {}),
+        ...inventoryInput(form, c),
+        ...packagingGridInput(form, c),
+        ...(c.data.accounts && can(c, 'setAccounts')
+          ? {
+              incomeAccountId: text(form, 'incomeAccountId') || null,
+              expenseAccountId: text(form, 'expenseAccountId') || null,
+            }
+          : {}),
       }),
-      also: [
-        {
-          fn: 'product.setCost',
-          when: (c, form) =>
-            seesMoney(c) &&
-            can(c, 'setCost') &&
-            !c.data.hasVariants &&
-            Boolean(c.data.record.defaultVariantId) &&
-            changedCost(form, c, c.data.record.costPrice),
-          input: (form, c) => ({
-            productId: c.data.record.defaultVariantId,
-            standardPrice: numberOf(form, 'costPrice', c),
-          }),
-        },
-        {
-          fn: 'stock.configureProduct',
-          when: (c) => c.data.stockEnabled && can(c, 'configureStock'),
-          input: (form, c) => ({
-            templateId: c.id,
-            isStorable: checked(form, 'isStorable'),
-            tracking: text(form, 'tracking') || 'none',
-          }),
-        },
-      ],
-      issueField: (field) => (field === 'standardPrice' ? 'costPrice' : field),
       // A refusal may mean someone saved first: read the revision again, keep the typing.
       refreshOnRefusal: true,
       after: 'refresh',
     },
-    duplicate: {
-      fn: 'product.duplicateTemplate',
-      input: (form, c) => ({
-        id: duplicatedTemplate.get(),
-        sourceId: c.id,
-        name: text(form, 'name') || null,
-      }),
-      also: [
-        {
-          fn: 'stock.configureProduct',
-          when: (c) => c.data.stockEnabled && can(c, 'configureStock'),
-          input: (_form, c) => ({
-            templateId: duplicatedTemplate.get(),
-            isStorable: c.data.record.isStorable,
-            tracking: c.data.record.tracking || 'none',
-          }),
-        },
-      ],
-      navigate: () => PATH(duplicatedTemplate.take() ?? ''),
-    },
     archive: {
       fn: 'product.archiveTemplate',
-      input: (_form, c) => ({
+      input: (form, c) => ({
+        locale: c.data.lang,
         id: c.id,
         active: false,
+        reason: text(form, 'reason'),
         expectedRevisionId: c.data.record.revisionId,
         confirmed: true,
       }),
@@ -2191,6 +2685,7 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
     restore: {
       fn: 'product.archiveTemplate',
       input: (_form, c) => ({
+        locale: c.data.lang,
         id: c.id,
         active: true,
         expectedRevisionId: c.data.record.revisionId,
@@ -2228,48 +2723,48 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
       input: (form, c) =>
         setupWith(c, c.dialog?.params.id ?? '', {
           defaultCode: text(form, 'defaultCode') || null,
-          barcode: text(form, 'barcode') || null,
+          // Without stock setup the barcode is shown, not edited, and kept as saved.
+          barcode: can(c, 'setBarcode') ? text(form, 'barcode') || null : (variantOf(c)?.barcode ?? null),
           weight: numberOf(form, 'weight', c) ?? '0',
           volume: numberOf(form, 'volume', c) ?? '0',
+          listPrice: numberOf(form, 'listPrice', c),
+          // Like the barcode, the HS code is kept as saved without stock setup.
+          hsCode: can(c, 'setBarcode') ? text(form, 'hsCode') || null : (variantOf(c)?.hsCode ?? null),
           active: checked(form, 'active'),
         }),
-      also: [
-        {
-          fn: 'product.setCost',
-          when: (c, form) =>
-            seesMoney(c) && can(c, 'setCost') && changedCost(form, c, variantOf(c)?.costPrice),
-          input: (form, c) => ({
-            productId: c.dialog?.params.id ?? '',
-            standardPrice: numberOf(form, 'costPrice', c),
-          }),
-        },
-        {
-          fn: 'product.setPackagingBarcodes',
-          when: (c, form) =>
-            can(c, 'packagingBarcodes') &&
-            (c.data.packagings ?? []).length > 0 &&
-            packagingBarcodesChanged(form, c, variantOf(c)?.packagingBarcodes),
-          input: (form, c) => ({ productId: c.dialog?.params.id ?? '', barcodes: packagingEntries(form, c) }),
-        },
-      ],
-      // The setup names every variant by position; only the edited one is on this form.
-      issueField: (field, form, c) => {
-        if (field === 'standardPrice') return 'costPrice'
-        const packaging = /^barcodes\.(\d+)\./u.exec(field)
-        if (packaging) {
-          const entry = packagingEntries(form, c)[Number(packaging[1])]
-          return entry ? `packaging.${entry.uomId}` : field
-        }
-        const index = (c.data.variantSetup?.variants ?? []).findIndex((row) => row.id === c.dialog?.params.id)
-        const match = /^variants\.(\d+)\.(\w+)/u.exec(field)
-        return match && Number(match[1]) === index ? match[2]! : field
-      },
+      also: [variantCostStep, variantPackagingStep],
+      issueField: variantIssueField,
+      after: 'reload',
+    },
+    // P28: who holds the stock setup but not the catalogue saves the barcode and HS code together.
+    editVariantStock: {
+      fn: 'product.saveVariantStock',
+      input: (form, c) => ({
+        productId: c.dialog?.params.id ?? '',
+        barcode: text(form, 'barcode') || null,
+        hsCode: text(form, 'hsCode') || null,
+      }),
+      also: [variantCostStep, variantPackagingStep],
+      issueField: variantIssueField,
+      after: 'reload',
+    },
+    // P28: the accountant saves the cost of the variant, nothing else of it.
+    editVariantCost: {
+      fn: 'product.setCost',
+      input: (form, c) => ({
+        productId: c.dialog?.params.id ?? '',
+        standardPrice: numberOf(form, 'costPrice', c),
+      }),
+      issueField: variantIssueField,
       after: 'reload',
     },
     configureAttributes: {
       fn: 'product.configureAttributes',
       input: (form, c) => ({ templateId: c.id, lines: configureInput(form, c).lines }),
-      issueField: (field, form, c) => configureInput(form, c).paths.get(field) ?? field,
+      // A refusal of the whole setup (too many combinations) names `lines`, the hidden input
+      // that carries the rows: it shows in the dialog's notice, not on an input nobody sees.
+      issueField: (field, form, c) =>
+        configureInput(form, c).paths.get(field) ?? (field === 'lines' ? '' : field),
       after: 'reload',
     },
     addPackaging: {
@@ -2327,6 +2822,19 @@ export const templateModalDefinition: RecordModalDefinition<TemplateModalData> =
   },
 }
 
-export const templatePage = createRecordPage(templateModalDefinition, {
-  path: (id) => PATH(id),
+// Fragment navigation mounts the new island before changing location.href. Keep the
+// requested source on the island so its first read cannot inherit the previous URL.
+export const templatePageDefinition = (sourceId?: string): RecordModalDefinition<TemplateModalData> => ({
+  ...templateModalDefinition,
+  context: {
+    route: (id, creating) => {
+      if (creating) createdTemplate.reset()
+      const source = creating && sourceId ? `&duplicate=${encodeURIComponent(sourceId)}` : ''
+      return `${PATH(creating ? 'new' : id)}/context?lang=${pageLang()}${source}`
+    },
+    query: ['company', 'branch'],
+  },
 })
+
+export const templatePage = (props: RecordPageIslandProps & { sourceId?: string }) =>
+  createRecordPage(templatePageDefinition(props.sourceId), { path: (id) => PATH(id) })(props)

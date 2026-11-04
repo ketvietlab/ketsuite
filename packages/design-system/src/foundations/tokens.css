@@ -7,44 +7,13 @@
  * to know which numbered surface or brand swatch produced them.
  */
 /*
- * KÉT Sans is the interface typeface and Inter 4.1 its fallback for characters
- * KÉT Sans does not draw (Greek, Cyrillic, arrows…). Both are bundled with the
- * package; never depend on an installed font. KÉT Sans has no 600: its Medium
- * covers 500 and 600, so 600 never falls through to Bold. It has no italic yet,
- * so the browser slants the upright faces.
+ * Inter 4.1 is the interface typeface, bundled with the package; never depend on
+ * an installed font. --kv-font-sans names "KÉT Sans" first: the package does not
+ * ship it (its licence does not allow redistribution), so a Két Việt product that
+ * registers KÉT Sans in its own stylesheet, or a system with it installed, uses it
+ * and every other consumer gets Inter. Such a registration keeps Medium on
+ * 500 600, so 600 never falls through to Bold.
  */
-@font-face {
-  font-family: "KÉT Sans";
-  font-style: normal;
-  font-weight: 300;
-  font-display: swap;
-  src: url("./fonts/KETSansOptical-Light.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "KÉT Sans";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/KETSansOptical-Regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "KÉT Sans";
-  font-style: normal;
-  font-weight: 500 600;
-  font-display: swap;
-  src: url("./fonts/KETSansOptical-Medium.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "KÉT Sans";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("./fonts/KETSansOptical-Bold.woff2") format("woff2");
-}
-
 @font-face {
   font-family: "Inter";
   font-style: normal;

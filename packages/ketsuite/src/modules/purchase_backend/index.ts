@@ -13,8 +13,8 @@ import type { FormField } from '../../ui/index.ts'
 import { readForm, seeOther } from '../backend/forms.ts'
 import { partnerRelationControl } from '../partner_backend/relation-control.ts'
 import { accountOptions, accountRelationControl } from '../account_backend/relation-control.ts'
-import { templateRelationControl, variantRelationControl } from '../product_backend/relation-control.ts'
-import { PURCHASE_METHODS } from '../purchase/functions.ts'
+import { templateRelationControl } from '../product_backend/relation-control.ts'
+import { PURCHASE_METHODS } from '../purchase/types.ts'
 import {
   labelOf,
   purchaseOrderDetailScreen,
@@ -25,7 +25,15 @@ import {
   vendorPricelistCreateScreen,
   vendorPricelistsListScreen,
 } from './screens/index.ts'
-import { adminPage, choices, inLocale, localeQuery, optional, printGroup } from '../backend/screen.ts'
+import {
+  adminPage,
+  choices,
+  inLocale,
+  localeQuery,
+  optional,
+  printGroup,
+  timezoneOf,
+} from '../backend/screen.ts'
 import type { AnyRow } from '../backend/screen.ts'
 
 const crossSite = (req: Parameters<Route>[1]): boolean => {
@@ -149,9 +157,7 @@ const common = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) =>
   const [partners, companies, templates, units, pickingTypes, taxes, journals, accounts] = await Promise.all([
     optionalRead<AnyRow[]>(ctx, 'partner.listPartners', {}, url, req, []) as Promise<AnyRow[]>,
     optionalRead<AnyRow[]>(ctx, 'company.listCompanies', {}, url, req, []) as Promise<AnyRow[]>,
-    optionalRead<AnyRow[]>(ctx, 'product.listTemplates', { withVariants: true }, url, req, []) as Promise<
-      AnyRow[]
-    >,
+    optionalRead<AnyRow[]>(ctx, 'product.listTemplates', {}, url, req, []) as Promise<AnyRow[]>,
     optionalRead<AnyRow[]>(ctx, 'uom.listUnits', {}, url, req, []) as Promise<AnyRow[]>,
     optionalRead<AnyRow[]>(ctx, 'stock.listPickingTypes', {}, url, req, []) as Promise<AnyRow[]>,
     optionalRead<AnyRow[]>(ctx, 'account.listTaxes', { typeTaxUse: 'purchase' }, url, req, []) as Promise<
@@ -162,13 +168,18 @@ const common = async (ctx: ServeContext, url: URL, req: Parameters<Route>[1]) =>
     >,
     optionalRead<AnyRow[]>(ctx, 'account.listAccounts', {}, url, req, []) as Promise<AnyRow[]>,
   ])
+  // Named and narrowed like the line picker's server search, so a row reads the same
+  // whether it was preloaded or found by typing.
+  const variants = (await optionalRead<AnyRow[]>(
+    ctx,
+    'product.listVariants',
+    { purchaseOk: true, limit: 200 },
+    url,
+    req,
+    [],
+  )) as AnyRow[]
   const own = new Set(companies.map((row) => row.partnerId))
   const purchasable = templates.filter((row) => row.purchaseOk)
-  const variants: AnyRow[] = purchasable.flatMap((template) =>
-    ((template.variants as AnyRow[] | undefined) ?? []).map(
-      (variant): AnyRow => ({ ...variant, templateName: template.name, templateId: template.id }),
-    ),
-  )
   return {
     companies,
     partners: partners.filter((row) => !own.has(row.id)),
@@ -230,40 +241,7 @@ const detailHandler =
       if (crossSite(req)) return text('Forbidden', { status: 403 })
       const form = await readForm(req)
       let result: unknown
-      if (form.action === 'add-line')
-        result = await ctx.call(
-          'purchase.addLine',
-          {
-            id: randomUUID(),
-            orderId: params.id,
-            productId: form.productId ?? '',
-            productQty: form.productQty || '1',
-            productUomId: form.productUomId ?? '',
-            ...optional(form, 'priceUnit'),
-            ...optional(form, 'discount'),
-            ...optional(form, 'taxId'),
-            ...optional(form, 'datePlanned'),
-          },
-          url,
-          req,
-        )
-      else if (form.action === 'update-line')
-        result = await ctx.call(
-          'purchase.updateLine',
-          {
-            id: form.lineId ?? '',
-            productQty: form.productQty || '0',
-            ...optional(form, 'priceUnit'),
-            ...optional(form, 'discount'),
-            ...optional(form, 'taxId'),
-          },
-          url,
-          req,
-        )
-      else if (form.action === 'remove-line')
-        result = await ctx.call('purchase.removeLine', { id: form.lineId ?? '' }, url, req)
-      else if (form.action === 'send')
-        result = await ctx.call('purchase.sendRfq', { id: params.id }, url, req)
+      if (form.action === 'send') result = await ctx.call('purchase.sendRfq', { id: params.id }, url, req)
       else if (form.action === 'confirm')
         result = await ctx.call('purchase.confirmOrder', { id: params.id }, url, req)
       else if (form.action === 'request-approval')
@@ -311,54 +289,6 @@ const detailHandler =
     ])
     if (!order) return text('not found', { status: 404 })
     const vendor = data.partners.find((row) => row.id === order.partnerId)
-    const variants = data.variants.map((row) => ({
-      value: String(row.id),
-      label: `${String(row.templateName)}${row.defaultCode ? ` · ${String(row.defaultCode)}` : ''}`,
-    }))
-    const lineFields: FormField[] = [
-      {
-        name: 'productId',
-        label: _('purchase_backend.field.product'),
-        type: 'select',
-        options: variants,
-        required: true,
-        control: await variantRelationControl(ctx, url, req, _, {
-          id: 'purchase-line-product',
-          name: 'productId',
-          label: _('purchase_backend.field.product'),
-          variants,
-          required: true,
-        }),
-      },
-      {
-        name: 'productQty',
-        label: _('purchase_backend.field.productQty'),
-        type: 'decimal',
-        value: 1,
-        required: true,
-      },
-      {
-        name: 'productUomId',
-        label: _('purchase_backend.field.uom'),
-        type: 'select',
-        options: choices(data.units),
-        required: true,
-      },
-      {
-        name: 'priceUnit',
-        label: _('purchase_backend.field.priceUnit'),
-        type: 'decimal',
-        help: _('purchase_backend.help.vendorPrice'),
-      },
-      { name: 'discount', label: _('purchase_backend.field.discount'), type: 'decimal' },
-      {
-        name: 'taxId',
-        label: _('purchase_backend.field.tax'),
-        type: 'select',
-        options: choices(data.taxes, true),
-      },
-      { name: 'datePlanned', label: _('purchase_backend.field.datePlanned'), type: 'date' },
-    ]
     const expenses = data.accounts.filter((row) => String(row.accountType).startsWith('expense'))
     const payable = data.accounts.filter((row) => row.accountType === 'liability_payable')
     const billFields: FormField[] = [
@@ -422,6 +352,7 @@ const detailHandler =
     const printable = (await ctx.reportsOf(url, req, 'purchase.Order')).filter(
       (report) => report.id === reportId,
     )
+    const timezone = await timezoneOf(ctx, url, req)
     return adminPage(ctx, url, req, {
       title: 'purchase_backend.detail.title',
       body: (_, shell) =>
@@ -429,10 +360,16 @@ const detailHandler =
           frame: shell,
           order: { ...order, partnerName: vendor?.name },
           actionPath: path,
-          lineFields,
+          // An open RFQ's lines are edited in the order's record modal, over the RFQ list.
+          linesHref: recordModalHref(inLocale(url, '/admin/purchase/rfqs'), {
+            kind: 'purchase.order',
+            id: String(order.id),
+          }),
           billFields,
           printActions: printGroup(_, printable, String(order.id), url.search),
           invalid: url.searchParams.get('invalid'),
+          lang: ctx.localeOf(url, req) === 'en' ? 'en' : 'vi',
+          timezone,
         }),
     })
   }
@@ -442,12 +379,11 @@ const vi = {
   'dashboard.queueEmpty': 'Không có đơn mua chờ phê duyệt.',
   'modal.info': 'Thông tin chung',
   'modal.lines': 'Sản phẩm',
+  'modal.help': 'Hướng dẫn',
   'modal.receipts': 'Nhập hàng',
   'modal.bills': 'Hoá đơn',
   'modal.more': 'Thao tác khác',
-  'modal.edit': 'Sửa',
   'modal.receive': 'Xác nhận đã nhận',
-  'modal.confirmRemove': 'Xoá dòng sản phẩm này?',
   'modal.confirmReceive': 'Xác nhận đã nhận đủ hàng trong phiếu này?',
   'modal.confirmCancel': 'Huỷ đơn mua này?',
   'app.title': 'Mua hàng trong quản trị',
@@ -472,7 +408,6 @@ const vi = {
   'pricelists.title': 'Bảng giá nhà cung cấp',
   'method.title': 'Chính sách lập hoá đơn sản phẩm',
   'lines.title': 'Dòng sản phẩm',
-  'lines.add': 'Thêm sản phẩm',
   'bill.title': 'Tạo hoá đơn nhà cung cấp',
   'receipts.title': 'Phiếu nhập',
   'bills.title': 'Hoá đơn nhà cung cấp',
@@ -480,6 +415,8 @@ const vi = {
   emptyHint: 'Tạo bản ghi đầu tiên để bắt đầu.',
   'action.createRfq': 'Tạo yêu cầu báo giá',
   'action.addLine': 'Thêm dòng',
+  'action.saveLines': 'Lưu các dòng',
+  'lines.vendorPrice': 'Giá NCC',
   'action.send': 'Đánh dấu đã gửi',
   'action.confirm': 'Xác nhận đơn',
   'action.requestApproval': 'Gửi duyệt',
@@ -505,11 +442,9 @@ const vi = {
   'setup.pickingTypes': 'loại phiếu nhập kho',
   'setup.openInventory': 'Mở cấu hình kho',
   'setup.openPartners': 'Mở danh bạ đối tác',
-  'action.updateLine': 'Lưu dòng',
-  'action.removeLine': 'Xoá dòng',
-  'lines.edit': 'Sửa',
   'lines.empty': 'Yêu cầu chưa có dòng nào.',
-  'lines.emptyHint': 'Thêm ít nhất một sản phẩm bên dưới trước khi xác nhận.',
+  'lines.emptyHint': 'Thêm ít nhất một sản phẩm trước khi xác nhận.',
+  'lines.editInGrid': 'Sửa các dòng',
   'orders.empty': 'Chưa có đơn mua nào.',
   'orders.emptyHint': 'Đơn mua sinh ra khi một yêu cầu báo giá được xác nhận.',
   'orders.openRequests': 'Mở yêu cầu báo giá',
@@ -557,7 +492,6 @@ const vi = {
   'field.sequence': 'Thứ tự ưu tiên',
   'field.dateStart': 'Ngày bắt đầu',
   'field.dateEnd': 'Ngày kết thúc',
-  'help.vendorPrice': 'Để trống để dùng bảng giá nhà cung cấp.',
   'state.draft': 'RFQ',
   'state.sent': 'RFQ đã gửi',
   'state.to approve': 'Chờ duyệt',
@@ -574,12 +508,11 @@ const en = {
   'dashboard.queueEmpty': 'No purchase orders are awaiting approval.',
   'modal.info': 'Overview',
   'modal.lines': 'Products',
+  'modal.help': 'Help',
   'modal.receipts': 'Receipts',
   'modal.bills': 'Bills',
   'modal.more': 'More actions',
-  'modal.edit': 'Edit',
   'modal.receive': 'Confirm receipt',
-  'modal.confirmRemove': 'Remove this product line?',
   'modal.confirmReceive': 'Confirm all goods in this receipt have arrived?',
   'modal.confirmCancel': 'Cancel this purchase order?',
   'app.title': 'Purchase administration',
@@ -604,7 +537,6 @@ const en = {
   'pricelists.title': 'Vendor Pricelists',
   'method.title': 'Product billing policy',
   'lines.title': 'Products',
-  'lines.add': 'Add a product',
   'bill.title': 'Create Vendor Bill',
   'receipts.title': 'Receipts',
   'bills.title': 'Vendor Bills',
@@ -612,6 +544,8 @@ const en = {
   emptyHint: 'Create the first record to get started.',
   'action.createRfq': 'Create RFQ',
   'action.addLine': 'Add line',
+  'action.saveLines': 'Save lines',
+  'lines.vendorPrice': 'Vendor price',
   'action.send': 'Mark as Sent',
   'action.confirm': 'Confirm Order',
   'action.requestApproval': 'Request Approval',
@@ -637,11 +571,9 @@ const en = {
   'setup.pickingTypes': 'receipt operation types',
   'setup.openInventory': 'Open inventory setup',
   'setup.openPartners': 'Open partner directory',
-  'action.updateLine': 'Save line',
-  'action.removeLine': 'Remove line',
-  'lines.edit': 'Edit',
   'lines.empty': 'This request has no lines yet.',
-  'lines.emptyHint': 'Add at least one product below before confirming it.',
+  'lines.emptyHint': 'Add at least one product before confirming it.',
+  'lines.editInGrid': 'Edit lines',
   'orders.empty': 'No purchase orders yet.',
   'orders.emptyHint': 'A purchase order appears once a request for quotation is confirmed.',
   'orders.openRequests': 'Open requests for quotation',
@@ -689,7 +621,6 @@ const en = {
   'field.sequence': 'Priority',
   'field.dateStart': 'Start Date',
   'field.dateEnd': 'End Date',
-  'help.vendorPrice': 'Leave blank to use the vendor pricelist.',
   'state.draft': 'RFQ',
   'state.sent': 'RFQ Sent',
   'state.to approve': 'To Approve',
@@ -1060,7 +991,7 @@ export default defineModule({
               { value: '', label: '—' },
               ...data.variants.map((row) => ({
                 value: String(row.id),
-                label: `${String(row.templateName)}${row.defaultCode ? ` · ${String(row.defaultCode)}` : ''}`,
+                label: `${String(row.displayName ?? row.templateName)}${row.defaultCode ? ` · ${String(row.defaultCode)}` : ''}`,
               })),
             ],
           },

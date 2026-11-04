@@ -1,7 +1,7 @@
 // The product catalogue through the job roles a tenant actually assigns, not
 // through functions granted one by one: every role that reads products can open
-// the list, its images and its activity, and only the roles that price, buy or
-// audit read what a product cost.
+// the list, its images and its activity, and every one of them but the warehouse
+// operator reads what a product cost (P16: the operator needs quantities only).
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -13,15 +13,16 @@ import type { ProductListAnswer } from '../packages/ketsuite/src/modules/product
 const roles = {
   'commerce.company-administrator': { cost: true, activity: true },
   'commerce.tenant-auditor': { cost: true, activity: false },
-  'commerce.sales-representative': { cost: false, activity: true },
+  'commerce.accountant': { cost: true, activity: true },
+  'commerce.sales-representative': { cost: true, activity: true },
   'commerce.sales-manager': { cost: true, activity: true },
   'commerce.purchasing-operator': { cost: true, activity: true },
   'commerce.purchasing-manager': { cost: true, activity: true },
   'commerce.warehouse-operator': { cost: false, activity: true },
-  'commerce.warehouse-manager': { cost: false, activity: true },
+  'commerce.warehouse-manager': { cost: true, activity: true },
 } as const
 
-test('commerce job roles open the product catalogue, and only some of them read its cost', async (t) => {
+test('commerce job roles open the product catalogue, and all but the warehouse operator read its cost', async (t) => {
   const booted = await bootDeployment(commerce, {
     env: { KET_LOG: 'null', KET_SQLITE: ':memory:', KET_SECRET: 'product-role-access' },
     port: 0,
@@ -94,6 +95,21 @@ test('commerce job roles open the product catalogue, and only some of them read 
       assert.ok(keys.has(fn), `${role} calls ${fn}`)
     assert.equal(keys.has('product_mail_backend.timeline'), expected.activity, `${role}: activity`)
     assert.equal(keys.has('product_mail_backend.post'), false, `${role} does not post`)
+    assert.equal(
+      keys.has('sale.getLineCosts'),
+      ['commerce.tenant-auditor', 'commerce.sales-representative', 'commerce.sales-manager'].includes(role),
+      `${role}: selling-unit cost`,
+    )
+    assert.equal(
+      keys.has('sale.getProductInvoicePolicy'),
+      keys.has('sale.listInvoicePolicies'),
+      `${role}: policy read grant`,
+    )
+    if (keys.has('sale.getProductInvoicePolicy')) {
+      assert.deepEqual(await call('sale.getProductInvoicePolicy', { templateId: 'serum' }, userId), {
+        invoicePolicy: 'order',
+      })
+    }
     assert.equal(keys.has('product.listVariantCosts'), expected.cost, `${role}: cost`)
 
     const list = await call<ProductListAnswer>(
@@ -109,5 +125,28 @@ test('commerce job roles open the product catalogue, and only some of them read 
     const variant = await call<Record<string, unknown>>('product.getVariant', { id: 'serum:default' }, userId)
     assert.equal('cost' in variant, expected.cost, `${role}: variant cost`)
     if (expected.cost) assert.equal(Number((variant.cost as { standardPrice: string }).standardPrice), 60)
+
+    // Every other way a product's cost reaches the screen follows the same right (P16).
+    assert.equal(list.rows[0]!.margin === null, !expected.cost, `${role}: list margin`)
+    const variants = await call<{ money: boolean; rows: Array<{ cost: string | null }> }>(
+      'stock_backend.searchProductVariants',
+      {},
+      userId,
+    )
+    assert.deepEqual(
+      [variants.money, variants.rows.map((row) => (row.cost === null ? null : Number(row.cost)))],
+      [expected.cost, [expected.cost ? 60 : null]],
+      `${role}: variants list`,
+    )
+    const page = await call<{ data: unknown }>(
+      'product.templateModalContext',
+      { id: 'serum', locale: 'vi' },
+      userId,
+    )
+    assert.equal(
+      /"costPrice":"60(\.0+)?"/.test(JSON.stringify(page.data)),
+      expected.cost,
+      `${role}: product page`,
+    )
   }
 })

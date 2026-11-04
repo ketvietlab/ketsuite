@@ -6,19 +6,16 @@ import { linkButton } from '../packages/ketsuite/src/ui/index.ts'
 import { purchaseOrderDetailScreen } from '../packages/ketsuite/src/modules/purchase_backend/screens/order-detail.tsx'
 
 const messages: Record<string, string> = {
-  'purchase_backend.action.addLine': 'Thêm dòng',
   'purchase_backend.action.approve': 'Phê duyệt',
   'purchase_backend.action.cancel': 'Huỷ',
   'purchase_backend.action.confirm': 'Xác nhận đơn',
   'purchase_backend.action.createBill': 'Tạo hoá đơn',
   'purchase_backend.action.lock': 'Khoá đơn',
-  'purchase_backend.action.removeLine': 'Xoá dòng',
   'purchase_backend.action.requestApproval': 'Gửi duyệt',
   'purchase_backend.action.resetToDraft': 'Trả về nháp',
   'purchase_backend.action.send': 'Đánh dấu đã gửi',
   'purchase_backend.action.syncReceipts': 'Đồng bộ nhập hàng',
   'purchase_backend.action.unlock': 'Mở khoá',
-  'purchase_backend.action.updateLine': 'Lưu dòng',
   'purchase_backend.bill.title': 'Tạo hoá đơn nhà cung cấp',
   'purchase_backend.bills.title': 'Hoá đơn nhà cung cấp',
   'purchase_backend.billState.posted': 'Đã ghi sổ',
@@ -42,8 +39,7 @@ const messages: Record<string, string> = {
   'purchase_backend.field.subtotal': 'Thành tiền',
   'purchase_backend.invoiceStatus.no': 'Chưa cần lập hoá đơn',
   'purchase_backend.invoiceStatus.to invoice': 'Chờ lập hoá đơn',
-  'purchase_backend.lines.add': 'Thêm sản phẩm',
-  'purchase_backend.lines.edit': 'Sửa',
+  'purchase_backend.lines.editInGrid': 'Sửa các dòng',
   'purchase_backend.lines.empty': 'Yêu cầu chưa có dòng nào.',
   'purchase_backend.lines.emptyHint': 'Thêm ít nhất một sản phẩm.',
   'purchase_backend.lines.title': 'Dòng sản phẩm',
@@ -63,11 +59,12 @@ translate.locale = 'vi'
 translate.has = (key) => key in messages
 translate.resolves = translate.has
 
-test('purchase RFQ detail FormPage keeps header actions, editable lines, add form and rejection', () => {
+test('purchase RFQ detail FormPage keeps header actions and rejection, its lines read-only beside the grid link', () => {
   const html = renderToString(
     purchaseOrderDetailScreen(translate, {
       frame: {},
       actionPath: '/admin/purchase/rfqs/rfq-1?lang=vi',
+      timezone: 'Asia/Ho_Chi_Minh',
       invalid: 'productId',
       printActions: linkButton({ label: 'In RFQ', href: '/reports/purchase.rfq/rfq-1?lang=vi' }),
       order: {
@@ -91,10 +88,7 @@ test('purchase RFQ detail FormPage keeps header actions, editable lines, add for
           },
         ],
       },
-      lineFields: [
-        { name: 'productId', label: 'Sản phẩm', type: 'select', required: true },
-        { name: 'productQty', label: 'Số lượng đặt', type: 'decimal', required: true },
-      ],
+      linesHref: '/admin/purchase/rfqs?lang=vi&record=purchase.order%3Arfq-1',
       billFields: [],
     }),
   )
@@ -103,7 +97,8 @@ test('purchase RFQ detail FormPage keeps header actions, editable lines, add for
   assert.match(html, /data-ket-slot="purchase\.order-header"/)
   assert.match(html, /data-ket-slot="purchase\.order-body"/)
   assert.match(html, /data-ui="form-page-title"[^>]*>[\s\S]*?RFQ00001/)
-  assert.match(html, /NCC An Phú · Ngày dự kiến nhận: 2026-09-01/)
+  // The planned date reads as the record modal writes it, in the company's timezone.
+  assert.match(html, /NCC An Phú · Ngày dự kiến nhận: 1 thg 9, 2026/)
   assert.match(html, /data-ui="form-page-status"[\s\S]*?data-tone="neutral"[\s\S]*?RFQ/)
   assert.match(html, /data-ui="form-page-meta"[\s\S]*?Chưa cần lập hoá đơn[\s\S]*?1\.500\.000/)
   assert.match(html, /data-ui="form-page-actions"[\s\S]*?name="action" value="send"/)
@@ -113,10 +108,14 @@ test('purchase RFQ detail FormPage keeps header actions, editable lines, add for
   assert.match(html, /href="\/reports\/purchase\.rfq\/rfq-1\?lang=vi"/)
   assert.match(html, /data-ui="notice" data-tone="danger"[\s\S]*?productId/)
   assert.match(html, /data-col="name"[\s\S]*?Bàn làm việc/)
-  assert.match(html, /name="action" value="update-line"/)
-  assert.match(html, /name="action" value="remove-line"/)
-  assert.match(html, /name="action" value="add-line"/)
-  assert.match(html, /name="productId"[\s\S]*?name="productQty"/)
+  // The lines are edited in the order's grid: the page's table holds no form control.
+  assert.match(
+    html,
+    /data-ui="section-actions"[\s\S]*?href="\/admin\/purchase\/rfqs\?lang=vi&amp;record=purchase\.order%3Arfq-1"[\s\S]*?Sửa các dòng/,
+  )
+  const table = html.slice(html.indexOf('Dòng sản phẩm'), html.indexOf('Bàn làm việc') + 2000)
+  assert.doesNotMatch(table, /<input|<select|<textarea|value="(update|remove|add)-line"/)
+  assert.doesNotMatch(html, /name="productId"|name="productQty"/)
   assert.doesNotMatch(html, /name="action" value="bill"/)
   assert.doesNotMatch(html, /mail\.chatter|data-ui="form-page-aside"/)
 })
@@ -151,7 +150,7 @@ test('purchase order detail FormPage keeps receipt, bill and vendor-bill workflo
         ],
         bills: [{ id: 'bill-1', name: 'BILL/2026/001', state: 'posted', amountTotal: '1500000' }],
       },
-      lineFields: [],
+      linesHref: '/admin/purchase/rfqs?record=purchase.order%3Apo-1',
       billFields: [
         { name: 'journalId', label: 'Sổ nhật ký', type: 'select', required: true },
         { name: 'expenseAccountId', label: 'Tài khoản chi phí', type: 'select', required: true },
@@ -164,7 +163,8 @@ test('purchase order detail FormPage keeps receipt, bill and vendor-bill workflo
   assert.match(html, /name="action" value="sync"/)
   assert.match(html, /name="action" value="lock"/)
   assert.match(html, /name="action" value="cancel"/)
-  assert.doesNotMatch(html, /name="action" value="update-line"|name="action" value="add-line"/)
+  // A purchase order's lines are no longer edited: no link to the grid.
+  assert.doesNotMatch(html, /href="[^"]*record=purchase\.order/)
   assert.match(html, /name="action" value="bill"/)
   assert.match(html, /name="journalId"[\s\S]*?name="expenseAccountId"[\s\S]*?name="payableAccountId"/)
   assert.match(html, /href="\/admin\/stock\/transfers\/receipt-1"[\s\S]*?WH\/IN\/00001/)

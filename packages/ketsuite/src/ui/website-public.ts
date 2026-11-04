@@ -28,6 +28,8 @@ export type WebsitePublicListing =
       /** Rendered from the description document; when present it replaces the plain description. */
       descriptionHtml?: string | null
       description?: unknown
+      /** The term's cover; its source is already a safe same-site path. */
+      cover?: { src: string; alt: string } | null
       entries: WebsitePublicEntry[]
       pager: WebsitePublicPager
     }
@@ -469,7 +471,7 @@ const listing = (
   if (value.kind === 'embed')
     return html`<section class="wt-public-embed" data-embed-mount><h1 class="wt-public-embed__title">${value.title}</h1><div data-embed-root></div><noscript><p>${vi ? 'Cần bật JavaScript trên trình duyệt để dùng trang này.' : 'JavaScript must be enabled in your browser to use this page.'}</p></noscript></section>`
   if (value.kind === 'archive')
-    return html`<section class="wt-public-archive"><h1>${value.title}</h1>${value.descriptionHtml != null ? html`<div data-ui="flow-editor-content">${trustedMarkup(value.descriptionHtml)}</div>` : value.description ? html`<p>${value.description}</p>` : null}${
+    return html`<section class="wt-public-archive"><h1>${value.title}</h1>${value.cover ? html`<img class="wt-public-archive__cover" src=${value.cover.src} alt=${value.cover.alt}>` : null}${value.descriptionHtml != null ? html`<div data-ui="flow-editor-content">${trustedMarkup(value.descriptionHtml)}</div>` : value.description ? html`<p>${value.description}</p>` : null}${
       value.entries.length
         ? entryList(value.entries)
         : html`<p>${vi ? 'Chưa có bài viết.' : 'No posts yet.'}</p>`

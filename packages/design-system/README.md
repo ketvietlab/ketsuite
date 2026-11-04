@@ -2,10 +2,10 @@
 
 Public server-rendered components for dense operational applications.
 
-Interface typography uses KÉT Sans Optical 1.0 with automatic optical sizing:
-reading sizes keep Text spacing, while larger text uses tighter spacing. Medium
-still serves weights 500 and 600; Inter remains the missing-character fallback.
-See [font provenance and validation limits](src/foundations/fonts/README.md).
+Interface typography uses the bundled Inter 4.1 variable font with automatic
+optical sizing (its `opsz` axis spans 14–32px). `--kv-font-sans` names KÉT Sans
+first; the package does not ship it, so only a Két Việt product that registers it
+renders KÉT Sans. See [font provenance](src/foundations/fonts/README.md).
 
 The package depends only on `@ketvietlab/ketjs-view`. It does not know about
 KetSuite routes, translators, models, functions, sessions, or deployments.
@@ -89,6 +89,11 @@ do not clip the content or truncate the reader’s query. See `empty-long-conten
 
 ### Stack and local scrolling
 
+Only the page header belongs directly on canvas. Other record content, including
+notices, facts and forms, belongs inside a working Surface. Keep each block's title
+inside its own Surface; do not frame the entire page. Section groups are internal
+and do not create a working surface.
+
 Peer sections on one surface use `Stack({ divided: true })`. The stack owns one
 1px `--kv-panel-border` hairline and its gap on both sides. Flattening a child
 Disclosure or Surface removes that child's frame, preserving the parent's divider,
@@ -165,7 +170,7 @@ The component APIs and compatibility notes below describe the implementation.
 | Field shell | FieldFrame: label, help, error and associations | Render |
 | Text inputs | TextField / Field: native value, validation, access and affixes | Render + browser |
 | Search | SearchField: native search and optional clear control | Render + browser clear/focus/events |
-| Numeric inputs | NumberField / MoneyField: numeric constraints, currency and precision | Render + browser dimensions |
+| Numeric inputs | NumberField / MoneyField: numeric constraints, currency and precision; `locale` for numbers typed in the reader's own marks | Render + runtime + browser dimensions |
 | Multiline input | TextArea: rows, resize and native validation/access | Render + catalogue |
 | Selection | Select: native choices, disabled state and label association | Render + browser |
 | Choices | Checkbox / RadioGroup / CheckboxGroup / Switch: checked state separate from submitted value | Render + browser mixed/reset/submission |
@@ -184,13 +189,13 @@ payables. Copy new glyphs from Lucide with their 24px geometry rather than drawi
 
 ### Date pickers
 
-Enhanced asset controls can compose `Field` with `control` and `layout="inline"`.
+Enhanced asset controls can compose `Field` with `control` and `layout="inline"`. Native selects also accept `layout="inline"`: label, control and decorative chevron retain their shared row at mobile and narrow-container widths; help/errors remain below the control. The Field specimen includes this state.
 The public frame keeps the label beside the control at narrow widths, owns the
 label/control gap and uses the control's real native ID. Keep thumbnail geometry
 in the asset recipe; the Upload catalogue demonstrates the composition.
 
 Open `/dates` for the focused Vietnamese playground (`states=1` expands validation/access examples), or the `date-time` specimen
-under `/components/form-controls`. `DatePicker` keeps its native date input. `DateRangePicker` combines one read-only range display with a calendar icon inside the same frame as DatePicker. Two hidden boundaries retain the existing names and ISO values. The runtime enforces required, min/max and step; read-only, disabled, help and field errors remain supported. Submission stays `YYYY-MM-DD`.
+under `/components/form-controls`. `DatePicker` keeps its native date input as the submitted value and the fallback without JavaScript. A native date field writes the day in the browser's language whatever the page's `lang`, so the enhanced picker hides it (`type="hidden"`, same name and ISO value) and shows the `date-entry` text field instead: the day is written and typed in the order of `locale` (`en` `MM/DD/YYYY`, `vi` `dd/mm/yyyy`, `ja` `YYYY/MM/DD`; ISO is also accepted). A typed day that is not a real day, or falls outside min/max/step, blocks the form with a message on that field; labels pointing at the native field move to it, and disposing the runtime restores them. `DateRangePicker` combines one read-only range display with a calendar icon inside the same frame as DatePicker. Two hidden boundaries retain the existing names and ISO values. The runtime enforces required, min/max and step; read-only, disabled, help and field errors remain supported. Submission stays `YYYY-MM-DD`.
 `DateTimePicker` and `TimePicker` retain their native local-time controls. `Field.locale` sets the calendar language (`vi`/`en`) when Field dispatches to a date or datetime picker. Compound datetime parts follow later disabled/read-only updates and dispose their observer with the field.
 
 Load `/runtime/auto.js` alongside the stylesheet, or call
@@ -235,12 +240,13 @@ selection; scrolling preserves the draft and month navigation recenters that win
 with fixed commands, a scrolling month list, safe-area insets, contained focus,
 and an inert, scroll-locked background. Desktop calendars remain anchored non-modal
 popups. The native top-layer popup avoids ancestor clipping.
-`locale="vi"` is the default (`en` and `ja` are also supported); `weekStartsOn` accepts 0 or 1
-(Monday by default). `calendarLabels` overrides commands, status and preset labels;
-it does not change the browser's native date-input formatting.
+`locale="vi"` is the default (`en` and `ja` are also supported); it sets the calendar language and the
+order days are written in, in the single date's field, the range display and the calendar status
+(English month first, `en-US`). `weekStartsOn` accepts 0 or 1 (Monday by default). `calendarLabels`
+overrides commands, status and preset labels.
 
 The `date-picker` / `date-range` hooks own composition; `date-inputs`,
-`date-control-row`, `date-tools`, `date-field-control`, `date-range-preset`, `date-boundary` and `date-range-error` own the control area. The shared Field supports `labelHidden`, `selectionHidden` (select chevron only, options remain readable) and `appearance="embedded"` for accessible compound controls.
+`date-control-row`, `date-entry`, `date-tools`, `date-field-control`, `date-range-preset`, `date-boundary` and `date-range-error` own the control area. The shared Field supports `labelHidden`, `selectionHidden` (select chevron only, options remain readable) and `appearance="embedded"` for accessible compound controls.
 `date-calendar`, `date-calendar-head`, `date-calendar-title`, `date-calendar-body`,
 `date-calendar-months`, `date-month`, `date-month-title`, `date-grid`,
 `date-weekday`, `date-cell`, `date-day`, `date-calendar-footer` and
@@ -410,6 +416,155 @@ this way; an existing server-rendered list moves to it when it is next changed.
 
 The shared collection runtime is not public yet; until it is, a list implements this
 contract in its own store, and the runtime extracted later must keep it.
+
+### Editable grids: KetGrid
+
+Serialized columns accept `writeSets` for constant dependent values after a successful
+write, including a computed inverse. For example, a product/unit selection can set
+`automatic: true`, while a price or margin edit sets it to `false`. Failed inverse
+writes do not change intent. Declare boolean `draftFlags: ['automatic']` to preserve
+that user-owned intent after draft restoration replays column writers. Non-boolean,
+undeclared and row/tier/column lock flags are excluded. Server validation remains
+mandatory. The order-lines specimen demonstrates this contract.
+
+
+Reading a collection is `KetTable`'s job. Editing many rows in place (order lines, stock
+counts, price lists, any table whose numbers change live) uses `KetGrid`, which runs entirely
+in the browser. Do not put form controls in `DataTable` or `KetTable` cells, and do
+not edit such figures through one dialog per row; a dialog stays for one record's own action
+(a reason, a confirmation, adding a found item). A dialog setting a quantity per variant holds
+such a grid too, one row per variant.
+
+- **Two entries.** `createKetGrid(container, options)` builds the grid from client code and
+  returns its API (`changes()`, `posted()`, `validate()`, `setRows()`, `applyTransaction()`,
+  `setErrors()`, `markSaved()`, `undo()`, `destroy()` and the rest of `KetGridApi`). `ketGrid` is
+  the same grid as a ketjs-view island: the server renders only `KetGridPlaceholder`, the island
+  takes JSON config (columns, rows, `newRow`, `kindField`/`fullWidthKey` for section and note
+  rows, `lockedField`, `compute`, `search.listFunction`) and dispatches `ket:grid-ready` with
+  `detail.grid` so page code can feed it and save.
+- **In a server-rendered form.** A KetSuite route puts the grid in a form field as its `control`
+  through `editGridControl(ctx, url, req, id, config)` (`ketsuite/backend`, joint `backend:edit.grid`),
+  with `config.name` set to the field name: the grid keeps a hidden field of that name holding its
+  posted changes and blocks the submit while a changed cell is wrong. The route reads the rows of a
+  grid that started empty with `postedGridRows(form[name])` (added rows in order, without the ones
+  removed again; null for anything else) and passes `carry: form[name]` back when it refuses the
+  form, so the reader's rows survive. Do not ask for pasted JSON in a textarea instead.
+  `ketGridLocale(lang)` (`ketsuite/ui`) supplies the grid's Vietnamese or English labels. A grid
+  in a two-column form takes the full row (`span: 'full'`).
+  Size the columns to fit the field column at desktop width; on a phone the grid scrolls sideways
+  inside its own frame, and its empty message stays centred on the visible part.
+- **Row totals.** A numeric island column may declare `sumEquals: { fields, total, message }`.
+  It validates that the sum of the named row fields equals the total field (quantity tolerance 0.000001),
+  displaying the localized message at the edited cell. Attach it to each participating editable
+  column; the domain must validate the same rule on save.
+- **Computed values and inverse input.** A product `compute` can subtract another
+  product through `less`, show `(product - less) / product * 100` through
+  `as: 'percent'`, and solve into exactly one multiplicand using
+  `solve: {field, digits}`. `percentOff` applies before subtraction. Inverse input
+  uses decimal rational arithmetic and rounds once, half away from zero. Invalid
+  or non-unique targets, zero divisors, missing costs and unsafe minor-unit results
+  keep the row unchanged. Text target columns retain decimal strings; derived
+  values are never persisted as their own fields. Existing simple products and
+  differences keep their behavior.
+- **Remote option facts.** `search.setsFrom` maps result fields to row fields on
+  selection. Facts are cached per `listInputFields` context and option ID, bounded
+  to 1000 entries, and do not cross product/quantity contexts. Declare `resets` for
+  dependent facts; a refused draft cannot recreate a trusted remote response.
+  Server permissions own what the endpoint returns. Consumers must omit display
+  facts from business writes and revalidate every persisted field server-side.
+- **Kinds of new row.** `newRows: [{label, row}]` (client: `{label, create}`) gives one add
+  button per kind, such as a line, a section and a note; it replaces `newRow`. A section or note
+  row shows, edits and checks only its `fullWidthKey` cell, so a section is never "missing" a
+  product or quantity. `fullWidthTag: {field, label}` shows `label` after the text of a section or
+  note whose `field` is set (an optional section reads "Kit · Optional"); the tag is generated
+  content of the cell's value (`data-tag` on `kg-cell-value`), so editing the text leaves it in place, and the cell's
+  `aria-description` so assistive technology reads it too.
+- **Rules from row data.** Island columns take JSON-safe rules, so the server's own data
+  drives them: `lockedBy: 'field'` makes the column read-only on rows where that field is set
+  (a product already delivered), `requires: 'field'` keeps it read-only until that field is set (a
+  line's unit waits for its product, and closes again when the product is cleared), `minField: 'field'` refuses a value under that field
+  (`belowMin`, "At least {min}"), `maxField: 'field'` one over it (`aboveMax`, "At most {max}",
+  such as a quantity above what is still due), and `sets: {optionValue: {field: value}}` lets a
+  choice fill other cells of its row (a product's description, unit, price and tax). A select
+  column's `optionsBy: {field, values: {fieldValue: [optionValue]}}` offers each row only the
+  options its `field` allows (a product's own unit and packagings); a row whose value `values`
+  does not name gets every option, typed or pasted values outside the row's options are refused
+  (`invalidOption`), and every value still shows its label. Client columns take
+  `optionsFor(row)`. They guide the reader; the server still checks the same rules.
+- **Compact remote labels.** `search.labelField` may name a short code while
+  `descriptionField` retains the full name in the picker. `labelFallbackField` supplies
+  the cell label when that code is missing; it does not change the option ID.
+- **Dependent fields and remote options.** `resets: [fields]` clears dependent cells only when the parent changes, before `sets` fills defaults; a dependent cell protected by its `lockedBy` field is retained. A row with an explicit `optionsBy` entry searches only those local options, even when the column also declares remote search. `search.listInputFields: {input: rowField}` reads required RPC inputs from the current row at search time; missing parents return no options and send no request. The request uses the grid’s abort signal. Server eligibility and permission checks remain authoritative.
+- **Steps from row data.** The island config's `tiers: {key, by, lockedBy?, steps}` writes fields
+  in steps of another field, as a pricelist prices a product by quantity: `steps[row[key]]` is a
+  list of `{from, row}`, and the step with the largest `from` at most `row[by]` writes its `row`.
+  It applies after `sets` whenever the `key` or the `by` cell is edited, so a price typed by hand
+  stays until the product or the quantity changes; a row whose `lockedBy` field is set (already
+  delivered or invoiced) keeps its fields. With `with: 'field'` (the unit a line is sold in) the
+  steps of `steps["<key>|<with>"]` come first, then those of the key alone, and editing that cell
+  steps the row too, so choosing a packaging writes its own price. The server works the steps out
+  from its own rules. `stepsField` names a row-owned array of `{from, row}` supplied by
+  a remote picker; when present, even an empty array replaces static steps. Steps must
+  have finite numeric thresholds and object values. `lockedBy` also accepts an array
+  of fields: any held lock prevents repricing, separating manual intent from fulfilment
+  history. Lock fields cannot be restored through `draftFlags`. Server writers recalculate
+  authoritative prices and never trust posted step arrays. The Order lines specimen's
+  glass-cup row demonstrates the row-owned threshold at quantity48.
+- **Computed columns.** An island column's `compute` is `{multiply: [fields], percentOff?}`
+  (a line amount) or `{difference: [a, b]}`, `a − b`, empty while either is missing (a count
+  against the quantity on hand). With `less: [fields]` the product of those fields comes off the
+  amount (a line's margin: quantity × price less discount, less quantity × cost), and with
+  `as: 'percent'` the result is that margin's share of the amount, empty when the amount is 0.
+  Computed cells follow edits live and are read-only, unless `solve: {field, digits?}` names one
+  of `multiply`: the column is then editable where its `editable`/`lockedBy` allow, and a value
+  typed sets that field, rounded to `digits` places (default 6), to what makes the row compute
+  to it (a margin typed sets the unit price that earns it). A value no row computes to (100 % on
+  a cost, a row selling none, a price below zero, a cleared cell) leaves the row as it was. The
+  edit is the solved field's: it is what the grid marks unsaved and posts. A client column gets
+  the same with `value` and `set` together.
+- **Keyboard and clipboard.** Arrows move, Shift extends, Ctrl/⌘+arrow jumps to the edge,
+  Home/End and PageUp/PageDown work as in spreadsheets. Enter, F2 or typing edits (an IME composes
+  in the editor); Tab moves to the next editable cell. Ctrl/⌘+C, X and V exchange ranges with
+  spreadsheets as tab-separated text, Ctrl/⌘+D fills down, Delete clears, Space toggles a
+  checkbox, Alt+↑/↓ or the handle reorders, and Ctrl/⌘+Z and Shift+Ctrl/⌘+Z undo and redo by
+  operation.
+- **Values.** Text, number, money, percent, date, select, combobox and checkbox columns read what
+  people type in either decimal convention (`1.250,5`, `1,250.5`; money also `25k`, `1,2tr`),
+  show values in the grid's locale, and keep a rejected entry open with its message.
+- **Cell fills.** Fills go by cell. A cell the reader may edit is light green
+  (`--kv-success-bg`); a cell whose value is not saved yet is light yellow (`--kv-warning-bg`);
+  read-only, computed and locked cells keep the plain fill. A row is filled as a whole, its drag
+  handle too, only when every cell is: green when all its cells are editable (a section or note
+  row), yellow when the row is new or was moved. The yellow clears when the host saves
+  (`markSaved()`, or `setRows()` with the saved rows) and when an edit or undo brings the value
+  back. State tints (selection, invalid, conflict) and the active outline draw over the fill.
+  Consumers do not restyle cells or rows.
+- **Saving.** The host saves. A grid with `name` (and `form` when outside it) keeps a hidden
+  text input holding `posted()` as JSON (`{added, updated, removed, order}`, only changed fields
+  of updated rows; `order` lists every row id, new rows by their grid id, when rows moved or a row
+  was added before the end) for the record form, or page code posts `changes()` itself. The
+  input's default value is the clean JSON, exported as `KET_GRID_NO_CHANGES`, so record drafts and
+  "unsaved changes" checks see grid edits like any field: a record draft seeding `carry` falls back to
+  `KET_GRID_NO_CHANGES`, never `''`. A read-only grid with no form to post to omits `name`/`form`/`carry`;
+  a named field in it would read as an open control. Pressing anywhere outside the grid commits an open editor, and so does
+  submitting that form; if any cell is invalid the grid stops the submit, focuses the first such
+  cell and announces `fixBeforeSaving`. Both listen on `window` in the capture phase, so they run
+  before a host's own submit handlers read the form. `noValidate` on the form or
+  `formNoValidate` on the submitter skips the check. After a successful save call `markSaved()`
+  (or reload the rows); field errors from the server go to `setErrors()`.
+- **Paged rows.** A grid shows one page of a larger set when the host pages it. Pass the
+  previous value of its input as `carry` (island: the JSON string; client: `KetGridPosted`):
+  `updated` entries for rows on this page come back as unsaved edits, the others ride along in
+  `posted()` and the status reads `otherPages` ("{count} changed on other pages"), so one save
+  covers every page. `posted()` includes optional `optionLabels` for learned remote labels while dirty; carry this display-only metadata through a refused form and discard it before the business write. Labels never authorize a value. Added/removed rows and row order are also restored when the corresponding capabilities allow them; added row IDs stay stable. Only editable cells are restored. Draft restoration replays column writers in declaration order: put parent columns before dependent cells. This recomputes `sets`/`resets` and hidden lock metadata before restoring the dependent value; posted hidden metadata cannot unlock a cell. The same rule applies to new rows. `setReadOnly(true)` freezes edits and undo while the host saves, without dropping the draft. `setRows()`, `markSaved()` and reverting
+  drop the carried edits.
+- **Live data.** `applyTransaction({add, update, remove})` merges rows changed elsewhere.
+  Untouched cells take the new value and flash; a cell the reader changed keeps their value and
+  offers "Keep mine" or "Use new value".
+- **Scale.** Rows have one height and only those in view are drawn, so a grid holds thousands of
+  rows; columns may be pinned to either edge and footers sum a column.
+
+Specimen: catalogue `data-operations#ket-grid`. Tests: `test/design-system-ket-grid.test.ts`.
 
 ### Opening a record from a collection
 
@@ -681,6 +836,37 @@ still submits the form, so the host must accept the entry on that submission too
 
 Use it for text entries only; a select or a choice group has no command beside it.
 
+### A control as wide as its value
+
+A control fills its column by default, which suits a name, an address or a note. A
+value of a few characters in a wide form reads lost in an empty box, so the field
+states how long its value is with `width`; the control keeps to the start of its
+column at that width and never grows past the column. Label, help and error keep
+their own tracks, so a short control still lines up with the fields above it.
+`Field`, `TextField`, `NumberField`, `MoneyField`, `DatePicker` and `Combobox`
+accept it.
+
+| `width` | Control | For |
+| --- | --- | --- |
+| `xs` | 7rem | a rate, a percentage, a count of days or months |
+| `sm` | 11rem | an amount, a quantity, a date, a reference, a barcode, a phone number |
+| `md` | 18rem | a short choice: a unit, a group, a warehouse, a tax |
+| none | the column | a name, a long choice (an account), an address, a description |
+
+```tsx
+<MoneyField id="price" name="price" label="Sales price" currency="VND" width="sm" />
+<Field id="shelf-life" name="shelfLife" label="Shelf life" type="number" width="xs" />
+```
+
+Choose it from the value's length, not from the space left on the row. Specimen:
+`field-width`.
+
+In an `Inline` row (a toolbar's search, a quantity between a minus and a plus button) there is
+no column to fill, so a sized field starts at its width and shrinks only when the row runs out of
+room, never below 4rem. Without `width` a field in a row takes what its control measures. A row
+whose fields all hide their label (`labelHidden`) is not a container for the label rule, so a row
+sized by its content, such as a quantity stepper at the end of a card, keeps its width.
+
 ### Fields in the sections of a longer form
 
 A form split into named sections (a check-in declaring each guest, a profile with
@@ -752,6 +938,17 @@ what blocks the record (unpaid balance, missing guarantee, unassigned room) in t
   still draws it in the rail column. The default `after` keeps the rail below the
   record; use `before` only for a rail of things to act on, not for reference
   facts.
+- A record whose body holds a `KetGrid` (a document's lines, such as a sales order's)
+  keeps the wide measure instead of narrowing to 40rem beside the rail: the rail
+  stacks once the page is narrower than 91.5rem (the 68.75rem measure, the record's
+  insets and the rail), so on a 1440px screen with the navigation open every line
+  column shows without scrolling. The stacked page keeps the measure and the rail
+  follows (or, with `before`, leads) the record in that column. Nothing to set: the
+  page reads it from the grid's `ket-grid-island` host. Size the grid's columns to
+  fit that measure (68.75rem less the surface's inset) with its handle.
+- `RecordPage.asideBreakpoint="wide"` asks for the same measure without a grid, or
+  before the grid has rendered; native record definitions forward it as
+  `pageAsideBreakpoint` (a sales order sets it, with `pageAsideWhenStacked="after"`).
 - A rail entry that points at the card where it is fixed (a missing fact held per
   variant) links to that card's `Surface.id` as `#id`; every entry of one list is
   then the same compact tertiary `LinkButton`, so the list keeps one edge.
@@ -792,9 +989,14 @@ record form re-mounts its islands from props written before that record existed;
 picker still shows the choice's label, its native select still holds the value it
 posts, and every picker of that list offers the new record, without a reload.
 
+After a single selection, focus returns to the visible trigger. If native form
+reconciliation replaces its island during the change event, resolve the replacement
+trigger only within the same connected field. Never take focus from another field
+or from a newly navigated page.
+
 A picker seeded with `options` and no `manager` is a local autocomplete: its
-dropdown lists every match of the typed text (label and description), not the
-first seven, and it shows no **More** footer, because without a manager there is
+dropdown lists every match of the typed text (label and description, ignoring case
+and accents, so `bong` finds "Bông"), not the first seven, and it shows no **More** footer, because without a manager there is
 nothing to browse. Opening the trigger moves focus to the search field, so typing
 filters straight away. A record form mounts every relation field (customer,
 salesperson, warehouse, SKU) as this picker island rather than a plain `<select>`,
@@ -1032,10 +1234,11 @@ result content while the pattern keeps header, controls, status, body and footer
 one stable order. `DataTable` covers the common collection contract: responsive
 stacking, row selection, sorting, grouping, visible columns and row links. Do not
 place record action buttons inside table rows; link the row to the record instead.
-The exception is a document's own line table (the lines of an order inside its
-record), where each row may carry its edit/remove actions. Those actions stay on one
-line at 48rem and wider, so every row keeps one height and a tight table scrolls
-instead of stacking a row's buttons; stacked phone rows still wrap them. Give short
+A document's own lines (the lines of an order inside its record) are no exception:
+they are edited in a `KetGrid` (see **Editable grids: KetGrid**), never through form
+controls in table cells, an add form in the table's last row or a dialog per line.
+Where those lines are only read, such as on a page beside the record, the table stays
+read-only and links to the record that holds the grid. Give short
 values a `kind` (`number`, `currency`, `identifier`, ...) so a tight table never
 breaks an amount or a unit between its characters.
 A table needs exactly one name: `title` frames it in a titled Surface, `caption`
@@ -1049,7 +1252,8 @@ Use `RecordPage` for durable subjects, and the compatibility `FormPage` only for
 existing create/edit screens that have not migrated. Form fields support native
 controls, custom controls, checkbox/radio groups and nested field groups. Route-owned
 `ModalSheet` instances carry close/backdrop metadata and become fullscreen at the
-mobile breakpoint. When one opens, the runtime focuses its first `aria-invalid="true"`
+mobile breakpoint. `ConfirmDialog` keeps a centred card with a 16px phone gutter and
+a scrollable body when needed. When one opens, the runtime focuses its first `aria-invalid="true"`
 control (a step returned from a rejected submit), else its first control, else the dialog.
 `RecordPage` moves its commands below the record's identity when the page itself is narrower
 than 48rem, measured on the page container so a sidebar beside it counts: title, status, meta
@@ -1095,8 +1299,15 @@ row's start edge (its first cell; the whole stacked row on a phone), so it reads
 selection and hover and keeps the row's fill.
 A stacked row (`responsive: 'stack'`, below 48rem) leaves `priority: 'tertiary'` columns to
 its record, so a phone row stays a short summary; the cell carrying the row link is always
-kept. Header and cell alignment use `start`/`end`, so `align: 'end'` numbers and the
+kept. A stacked cell holding a field or a `Progress` bar gives it the whole row under the
+column label: neither has a width of its own, so beside the label it shrank to its padding
+or to the percent next to it. Header and cell alignment use `start`/`end`, so `align: 'end'` numbers and the
 current-row bar follow `dir="rtl"`; component stylesheets never set `text-align: left|right`.
+A stacked row has no header row, and its title cell shows no column name. A `Field` in
+that cell whose label is hidden because the column header names it (`labelHidden`, as in
+a document's entry row) shows its own label above the control there, in the muted small
+type of the other cells' names. A column of the row's own commands takes `kind: 'actions'`:
+stacked, it shows them at the row's end without the column name.
 Linked cells are display-only. Associate `selection.form` and `bulk.form` with the
 same native form to submit selected IDs and the bulk command. Selection syncing
 and select-all remain application runtime responsibilities.
@@ -1112,6 +1323,22 @@ contract). `FormGrid` `columns={3}` keeps its own breakpoints. A lone checkbox k
 `min` and `max`; choices can be disabled individually, and invalid nested groups
 open automatically. Give repeated search/sort controls unique IDs. Loading links
 are disabled, and empty query rows do not occupy space.
+
+A number a person types in their own language takes `locale` on `NumberField` or
+`MoneyField`. The browser's number input reads "." as a decimal point whatever the language
+and shows no grouping, so "28.600" typed by a Vietnamese reader became 28.6. With
+`locale="vi"` the field is a text input with `inputmode="decimal"` and
+`data-number-locale="vi"`; it shows `value` grouped as the language writes it
+("1.800.000", "1.234,5"), regroups when the reader leaves it, and
+`attachDesignSystemInteractions` puts the plain decimal ("28600") in the form data
+when the form is read, including `new FormData(form)` in a client runtime.
+`parseLocaleNumber(text, locale)` returns that plain decimal, `""` for empty text or `null`
+for text that is not a number: grouping marks count only in groups of three, and a single
+mark that cannot be grouping ("12.5" in Vietnamese) is read as the other habit's decimal
+point. `formatLocaleNumber` writes a plain decimal for a language and shows anything else
+as typed; `numberControlValue(control)` reads a control as its plain decimal. A server that
+also accepts a submit without JavaScript parses the field with `parseLocaleNumber`.
+Without `locale` both fields keep the native number input.
 
 Route-modal and mobile-navigation focus trapping, background inertness, Escape,
 focus restoration, scroll locking, and anchored positioning are provided by the
@@ -1148,6 +1375,9 @@ ownership; renderers preserve submitted text and expose native fallbacks.
 `Combobox` names its toggle with `openLabel`/`closeLabel` and its list's loading and empty
 states with `loadingLabel`/`noResultsLabel`; the defaults are English, so a page in another
 language passes all four.
+A server-rendered host that must react to a pick in place (for example a LiveView bridge)
+may render the options as `<button data-ui="combobox-option">` instead of links; the stylesheet
+gives those buttons the link option layout, so the host adds no CSS of its own.
 
 Data-operation exports compose URL-owned search/filter/sort/view state, one-link
 resource rows, bounded grids, hierarchy, and inline native forms. The package renders
@@ -1188,6 +1418,10 @@ An expanded filter section's panel is as wide as its longest value, at least its
 `SearchFilterConfig.applyOnInput?: boolean` makes the typed text apply after a 250 ms pause, and at once on Enter, through the same `apply` payload (`query`). The text stays in the field, no generic query chip or suggestion list is created, and a pending pause apply is cancelled by Enter or disposal. Presets and grouping already apply as they are chosen, so a collection using this option has no separate apply step. Omitting it keeps the suggestion-then-chip behaviour.
 
 `RecordFormProps.applyOnInput?: boolean` gives a GET filter form the same behaviour outside SearchFilter. The form carries `data-apply="input"`; the runtime (`attachDesignSystemInteractions`) submits it with `requestSubmit()` when a select, checkbox or radio changes, and 400 ms after the last keystroke in a text, search or number field. The blur `change` of a typed field is not a second submit, and an Enter submit cancels the pending pause. The visible submit button is replaced by a hidden default button, so Enter applies without JavaScript too; `form-actions` renders only when `cancelHref` is set. The typed field keeps focus across the submit, caret at the end: after a reload the runtime restores it from a `sessionStorage` entry (kept for 10 s, read once); when an island redraws the form in place, focus moves to the redrawn field with the same id, unless the reader has already left the field.
+
+A POST `RecordForm` may opt in too when it holds one on/off choice that saves by itself, such as a setting card's switch: give the field `type: 'switch'` (the control `Switch` draws, `role="switch"`, posting `value`, default `1`, only while on) and put what identifies the setting in `hidden`. Changing the switch submits the form at once; the route answers with a redirect back to the page. Keep anything else the reader must fill in out of that form, in a dialog with its own save.
+
+`FilterBar({ action })` is the same kind of form for a few choices that read as one phrase in a page's `controls`, such as a report's period, measure and grouping (`Select` with `labelHidden`, so the options name themselves: "Year 2026", "By month"). With `action` the bar renders `<form data-ui="filter-bar" method="get" data-apply="input">`, carries `hidden` query values such as the company scope, and ends with a hidden default button named by `submitLabel`; the runtime applies a changed choice at once. Use it instead of stacked `Tabs` rows when a report has more than one choice. Without `action` the bar is a `<section>` that only groups controls.
 
 The `search-filter-expanded` catalogue specimen exercises the opt-in layout. Consumers should select the presentation through this public configuration rather than restyling private descendants. Density (`size`) remains independent of presentation.
 
@@ -1251,8 +1485,9 @@ bars, ticks and gridlines are decorative. Points carry optional `segments` with 
 `BarChart`. `reference` draws one dashed level (a daily budget, a target) with a printed label and raises
 the default top to include it. `labelEvery` prints every n-th period label, counted back from the latest
 one; `tick` supplies short axis text. The scale starts at zero; negative values draw as zero. The plot is
-11rem high with a 3.5rem axis gutter, and columns tighten their gap below a 32rem chart width. Specimen:
-`column-chart`.
+11rem high with a 3.5rem axis gutter, and columns tighten their gap below a 32rem chart width. A column is
+at most 4rem wide, so a few periods (one month, a quarter) spread evenly across the plot instead of one bar
+filling it. Specimen: `column-chart`.
 
 `QrCode` draws a QR code a phone can scan: a bank-transfer request on an invoice, a link, a pairing
 code. The package encodes it itself (QR Model 2, byte mode over UTF-8, versions 1 to 40, levels
@@ -1264,7 +1499,17 @@ Whatever a person needs to read without scanning (the account, the amount, the r
 never exceeds its container. Text too long for version 40 throws a `RangeError`, so callers bound what
 they encode. The consumer builds the payload (for example an EMVCo merchant-presented string); the
 component does not interpret it. Specimen: `qr-code`; test: `test/design-system-qr-code.test.tsx` reads
-symbols back from the standard's tables.
+symbols back from the standard's tables. `qrSvg(value, { label })` returns the same symbol as a standalone SVG file, its
+white plate and black modules drawn in and `label` as its `<title>`, for an `<img>`, a download or a
+document without the stylesheet; show it inside the same `qr-code` figure so the caption rule holds.
+
+`SignatureBlock` is where one person signs a printed document (a delivery or receipt voucher, a
+handover): `label` (who signs), an optional `hint` (how to sign, such as "(Signature, full name)"), then
+4rem of room to sign by hand, then `name` when the books know who it is, or a dotted line 10rem wide to
+write it on. The room to sign is the component's geometry, the same on screen and on paper, and a block
+is not split across printed pages; do not pad it with empty elements or line breaks. Set several side by
+side in a `Grid` (`columns={4}`, `mobileColumns={2}`), which owns the gap between them. Specimen:
+`signature-block`; test: `test/design-system-signature-block.test.tsx`.
 
 ### Sidebar island slot height
 
@@ -1345,6 +1590,9 @@ the host's `data-kv-design-system` style scope.
 In the Suite shell a List or Workspace page puts no Help trigger in its header: the rail's
 `AppSwitcher.helpLabel` is that screen's trigger, passed only when the screen has a guide, and the
 header keeps the screen's own commands (none when it has none, rather than an empty `ActionGroup`).
+Each screen names its own guide, while fragment navigation keeps the rail: a host that swaps the
+content passes `AppSwitcher.helpSlot` (a `data-ket-slot` name) and sends the rail's Help again, as
+`AppSwitcherHelp`, in that slot with every navigation, so `?` names the screen now shown, Back included.
 RecordPage, ModalSheet and Peek may carry their own trigger, whose guide resolves inside them.
 One without a guide of its own opens the screen guide that the content slot renders beside it, so
 a page-level `?` still works on a phone, where the rail's `?` is out of reach.
@@ -1397,7 +1645,7 @@ Mermaid presentation belongs to the public DS runtime, including uses outside
 help drawers. `createMermaidTheme` and `readMermaidPalette` are exported from
 `@ketvietlab/design-system/runtime`; every app must use this configuration rather
 than creating a local theme. It resolves the current DS tokens to hex colors,
-including alpha and light/dark aliases, uses the interface font (`--kv-font-sans`, KÉT Sans) at 13px, 1.25px flow/sequence strokes,
+including alpha and light/dark aliases, uses the interface font (`--kv-font-sans`) at 13px, 1.25px flow/sequence strokes,
 12px rectangular node corners and rounded connectors. Process nodes use the accent
 surface; connectors stay muted. Explicit accent/positive/warning/danger classes
 (`kv-accent`, `kv-positive`, `kv-warning`, `kv-danger`) work on rectangles,

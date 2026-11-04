@@ -3,7 +3,14 @@ import { defineFn } from '@ketvietlab/ketjs'
 import type { Ctx, FnSpec, Row } from '@ketvietlab/ketjs'
 import { linesOfMoves, ledgerOf, postedMoves } from './functions.ts'
 import { moneyMinor } from './money.ts'
-import { periodFunctions } from './period.ts'
+import {
+  PERIOD_LOCK_KINDS,
+  periodControlsOf,
+  periodFunctions,
+  policyOf,
+  type PeriodControl,
+  type PeriodLockKind,
+} from './period.ts'
 import { ACCOUNT_CORE_STANDARD } from './setup.ts'
 
 export const CLOSE_CHECKLIST_VERSION = 'account-close-v1'
@@ -32,6 +39,12 @@ const within = (row: Row, from: string, to: string): boolean => {
   return date >= from && date <= to
 }
 
+/** The list a draft is finished from: sales and purchase documents each have their own. */
+const draftList = (move: Row): 'customerInvoices' | 'vendorBills' | 'entries' => {
+  const type = String(move.moveType ?? '')
+  return type.startsWith('out_') ? 'customerInvoices' : type.startsWith('in_') ? 'vendorBills' : 'entries'
+}
+
 async function evidenceOf(ctx: Ctx, close: Row): Promise<Map<string, Row>> {
   const from = String(close.dateFrom)
   const to = String(close.dateTo)
@@ -57,7 +70,16 @@ async function evidenceOf(ctx: Ctx, close: Row): Promise<Map<string, Row>> {
       {
         complete: drafts.length === 0,
         blocker: drafts.length ? `${drafts.length} draft journal entries remain in the period` : null,
-        evidence: { count: drafts.length, moveIds: drafts.map((row) => row.id).sort() },
+        evidence: {
+          count: drafts.length,
+          moveIds: drafts.map((row) => row.id).sort(),
+          // How many each list holds, so the checklist can send the accountant to each one.
+          lists: {
+            customerInvoices: drafts.filter((row) => draftList(row) === 'customerInvoices').length,
+            vendorBills: drafts.filter((row) => draftList(row) === 'vendorBills').length,
+            entries: drafts.filter((row) => draftList(row) === 'entries').length,
+          },
+        },
       },
     ],
     [
@@ -175,13 +197,22 @@ export const closeFunctions: Record<string, FnSpec> = {
   }),
   getClosePeriod: defineFn({
     input: { id: 'id' },
-    output: { period: 'json?', steps: 'json' },
-    effects: ['read:account.ClosePeriod', 'read:account.CloseStep'],
+    output: { period: 'json?', steps: 'json', evidence: 'json' },
+    effects: ['read:account.ClosePeriod', 'read:account.CloseStep', 'read:account.CloseEvidence'],
     agent: true,
     handler: async (ctx, args) => {
       const period = (await ctx.db.select('account.ClosePeriod', { id: args.id }))[0] ?? null
       const steps = period ? await ctx.db.select('account.CloseStep', { closeId: args.id }) : []
-      return { period, steps: steps.sort((a, b) => String(a.code).localeCompare(String(b.code))) }
+      // What the installed accounting standard supplied, each item on its own.
+      const evidence = period ? await ctx.db.select('account.CloseEvidence', { closeId: args.id }) : []
+      return {
+        period,
+        steps: steps.sort((a, b) => String(a.code).localeCompare(String(b.code))),
+        evidence: evidence.sort(
+          (a, b) =>
+            String(a.provider).localeCompare(String(b.provider)) || String(a.id).localeCompare(String(b.id)),
+        ),
+      }
     },
   }),
   createClosePeriod: defineFn({
@@ -304,6 +335,107 @@ export const closeFunctions: Record<string, FnSpec> = {
         },
       )
       return { ok: true, id: close.id }
+    },
+  }),
+  /**
+   * The chief accountant's controls on one period: kinds of document locked ahead of the rest
+   * while it is open, and who may still post once it is soft closed. A hard close ends both.
+   */
+  setClosePeriodControls: defineFn({
+    input: { id: 'id', lockedKinds: 'json', softPosters: 'json', expectedRevision: 'int' },
+    output: { ok: 'bool', id: 'id?', errors: 'json?' },
+    effects: [
+      'read:account.ClosePeriod',
+      'read:account.PeriodPolicy',
+      'write:account.ClosePeriod',
+      'write:account.PeriodPolicy',
+      'write:account.AuditEvent',
+    ],
+    idempotent: true,
+    agent: true,
+    handler: async (ctx, args) => {
+      const close = (await ctx.db.select('account.ClosePeriod', { id: args.id }))[0]
+      if (!close) return failure(issue('id', 'closePeriodMissing', 'close period does not exist'))
+      if (close.state === 'hard_closed')
+        return failure(issue('state', 'closePermanent', 'a hard-closed period cannot change'))
+      const kinds = Array.isArray(args.lockedKinds) ? args.lockedKinds.map(String) : null
+      if (!kinds || kinds.some((kind) => !PERIOD_LOCK_KINDS.includes(kind as PeriodLockKind)))
+        return failure(issue('lockedKinds', 'periodControlKind', 'unsupported kind of document'))
+      const posters = Array.isArray(args.softPosters) ? args.softPosters.map((id) => String(id).trim()) : null
+      if (!posters || posters.length > 50 || posters.some((id) => !id || id.length > 128))
+        return failure(issue('softPosters', 'periodControlPoster', 'invalid list of people who may post'))
+      const lockedKinds = PERIOD_LOCK_KINDS.filter((kind) => kinds.includes(kind))
+      const softPosters = [...new Set(posters)].sort()
+      const before = {
+        lockedKinds: (close.lockedKinds as PeriodLockKind[] | null) ?? [],
+        softPosters: (close.softPosters as string[] | null) ?? [],
+      }
+      if (JSON.stringify(before) === JSON.stringify({ lockedKinds, softPosters }))
+        return { ok: true, id: close.id }
+      if (Number(close.revision) !== Number(args.expectedRevision))
+        return failure(issue('expectedRevision', 'closeConcurrent', 'close period changed; review and retry'))
+      try {
+        return await ctx.tx(async (tx) => {
+          const policy = await policyOf(tx)
+          const control: PeriodControl = {
+            closeId: String(close.id),
+            dateFrom: String(close.dateFrom),
+            dateTo: String(close.dateTo),
+            lockedKinds,
+            softPosters,
+          }
+          const controls = periodControlsOf(policy).filter((held) => held.closeId !== control.closeId)
+          if (lockedKinds.length || softPosters.length) controls.push(control)
+          // The policy row serializes this against every post that claims it.
+          const changed = await tx.db.compareAndSet(
+            'account.PeriodPolicy',
+            { id: policy.id },
+            { revision: policy.revision },
+            {
+              periodControls: controls,
+              revision: Number(policy.revision ?? 0) + 1,
+              updatedAt: now(),
+              updatedBy: tx.actor ?? null,
+            },
+          )
+          if (!('dryRun' in changed) && !changed.matched)
+            return failure(
+              issue('expectedRevision', 'closeConcurrent', 'close period changed; review and retry'),
+            )
+          const revision = Number(close.revision) + 1
+          const updated = await tx.db.compareAndSet(
+            'account.ClosePeriod',
+            { id: close.id },
+            { revision: close.revision },
+            { lockedKinds, softPosters, revision },
+          )
+          if (!('dryRun' in updated) && !updated.matched)
+            return failure(
+              issue('expectedRevision', 'closeConcurrent', 'close period changed; review and retry'),
+            )
+          await tx.db.insert('account.AuditEvent', {
+            id: `close:${String(close.id)}:controls:${revision}`,
+            subjectType: 'closePeriod',
+            subjectId: String(close.id),
+            action: 'controlsChanged',
+            actorId: tx.actor ?? null,
+            accountingDate: String(close.dateTo),
+            reason: null,
+            relatedId: null,
+            details: { before, after: { lockedKinds, softPosters } },
+            createdAt: now(),
+          })
+          return { ok: true, id: close.id }
+        })
+      } catch (error) {
+        return failure(
+          issue(
+            'expectedRevision',
+            'closeConcurrent',
+            error instanceof Error ? error.message : String(error),
+          ),
+        )
+      }
     },
   }),
   reopenClosePeriod: defineFn({

@@ -1,180 +1,15 @@
-import { randomUUID } from 'node:crypto'
+import { listSavedViews, savedViewById } from './saved-views.ts'
 import { and, asc, desc, eq, from, inArray, isNull, lt, or } from '@ketvietlab/ketjs'
 import type { Ctx, Row } from '@ketvietlab/ketjs'
-import { advanceRevision, cas, hash, mutate, now, revision } from './command.ts'
+import { cas, hash, mutate, revision } from './command.ts'
 import type { NativeServerExtension } from './command.ts'
-import { authority, FlowRefusal, owned, refuse, requireCapability, string } from './policy.ts'
-import { requiredTitle, timestamped } from './organization.ts'
-import { writeTask } from './tasks.ts'
+import { authority, owned, refuse, requireCapability, string } from './policy.ts'
 import { notificationAction } from './notifications.ts'
 import { limitOf, visibleScope } from './queries.ts'
 
-export async function saveForm(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
-  const old = input.id ? await owned(ctx, 'flow.InternalForm', input.id) : null,
-    projectId = old?.projectId ?? input.projectId
-  return mutate(
-    ctx,
-    { name: 'flow.form.save', capability: 'project.manage', input: { ...input, projectId } },
-    extensions,
-    async (tx) => {
-      const fields = input.fields
-      if (!Array.isArray(fields) || fields.length > 12) return refuse('validation', { fields: 'invalid' })
-      const schemaFields = fields.map((f: Row, i: number) => {
-        if (
-          !f ||
-          !string(f.label) ||
-          string(f.label).length > 240 ||
-          !['text', 'textarea', 'number'].includes(string(f.type)) ||
-          (f.required !== undefined && typeof f.required !== 'boolean')
-        )
-          return refuse('validation', { fields: 'invalid' })
-        return { id: 'field-' + i, label: string(f.label), type: f.type, required: Boolean(f.required) }
-      })
-      const _a = await authority(tx),
-        M = tx.table('flow.Member'),
-        U = tx.table('user.User')
-      const member = await tx.db.one(
-        from(M).where(
-          eq(M.companyId, tx.scope.company),
-          eq(M.userId, input.assigneeId),
-          eq(M.status, 'active'),
-        ),
-      )
-      if (!member || member.role === 'guest') return refuse('validation', { assignee: 'invalid' })
-      // A recipient who cannot open the project is an invalid choice, not the actor's refusal.
-      await requireCapability({ ...tx, actor: string(member.userId) }, 'project.read', { projectId }).catch(
-        (error) =>
-          error instanceof FlowRefusal && error.code === 'forbidden'
-            ? refuse('validation', { assignee: 'invalid' })
-            : Promise.reject(error),
-      )
-      const user = await tx.db.one(from(U).where(eq(U.id, member.userId), eq(U.active, true)))
-      if (
-        !user ||
-        !['internal', 'project'].includes(string(input.access)) ||
-        !['normal', 'high', 'urgent'].includes(string(input.priority ?? 'normal'))
-      )
-        return refuse('validation')
-      const id = old ? string(old.id) : randomUUID()
-      const patch = {
-        title: requiredTitle(input),
-        description: string(input.description),
-        state: input.publish === undefined ? (old?.state ?? 'draft') : input.publish ? 'published' : 'draft',
-        schema: {
-          fields: schemaFields,
-          access: input.access,
-          priority: input.priority ?? 'normal',
-          assigneeId: member.userId,
-        },
-      }
-      if (old) await cas(tx, 'flow.InternalForm', id, input.expectedVersion, patch)
-      else await tx.db.insert('flow.InternalForm', { id, projectId, ...timestamped(), ...patch })
-      return { ok: true, id, revision: await advanceRevision(tx, input, 'operations') }
-    },
-  )
-}
+export { saveForm, submitForm } from './forms.ts'
 
-export async function submitForm(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
-  const old = await owned(ctx, 'flow.InternalForm', input.id)
-  return mutate(
-    ctx,
-    { name: 'flow.form.submit', capability: 'project.write', input: { ...input, projectId: old.projectId } },
-    extensions,
-    async (tx) => {
-      const form = await owned(tx, 'flow.InternalForm', old.id)
-      if (form.archived || form.state !== 'published') return refuse('form_unpublished')
-      if (form.version !== input.expectedVersion) return refuse('conflict')
-      const schema = form.schema as Row,
-        fields = schema.fields as Row[]
-      if (!input.answers || typeof input.answers !== 'object' || Array.isArray(input.answers))
-        return refuse('validation', { answers: 'invalid' })
-      const answers = input.answers as Row,
-        normalized: Row = {}
-      for (const key of Object.keys(answers))
-        if (!fields.some((f) => f.id === key)) return refuse('validation', { answers: 'unknown' })
-      for (const field of fields) {
-        const value = answers[string(field.id)],
-          text = string(value)
-        if (
-          (value !== undefined && typeof value !== 'string' && typeof value !== 'number') ||
-          text.length > 10000 ||
-          (field.required && !text) ||
-          (field.type === 'number' && text && !Number.isFinite(Number(text)))
-        )
-          return refuse('validation', { ['answer-' + field.id]: 'invalid' })
-        normalized[string(field.id)] = field.type === 'number' && text ? Number(text) : text
-      }
-      const taskInput = {
-        projectId: form.projectId,
-        title: requiredTitle(input, 'title', 1000),
-        description: fields.map((f) => string(f.label) + ': ' + normalized[string(f.id)]).join('\n'),
-        assigneeIds: [schema.assigneeId],
-        priority: schema.priority,
-      }
-      for (const extension of extensions)
-        await extension.beforeMutation?.(tx, {
-          name: 'flow.issue.save',
-          capability: 'project.write',
-          input: taskInput,
-        })
-      const task = await writeTask(tx, taskInput, null)
-      const T = tx.table('flow.Task'),
-        row = await tx.db.one(from(T).where(eq(T.companyId, tx.scope.company), eq(T.key, task.id)))
-      if (!row) throw new Error('Created task missing')
-      await tx.db.insert('flow.FormResponse', {
-        id: randomUUID(),
-        formId: form.id,
-        taskId: row.id,
-        respondentId: tx.actor,
-        schemaRevision: form.version,
-        answers: normalized,
-        createdAt: now(),
-      })
-      return { ok: true, id: task.id, revision: await advanceRevision(tx, input, 'operations') }
-    },
-  )
-}
-
-export async function saveView(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
-  const old = input.id ? await owned(ctx, 'flow.SavedView', input.id) : null,
-    projectId = old?.projectId ?? input.projectId
-  return mutate(
-    ctx,
-    {
-      name: 'flow.view.save',
-      capability: projectId ? 'project.read' : 'member.read',
-      input: { ...input, projectId },
-    },
-    extensions,
-    async (tx) => {
-      if (old && old.ownerId !== tx.actor) return refuse('forbidden')
-      const visibility = string(input.visibility ?? (old?.query as Row | null)?.visibility ?? 'private')
-      if (!['private', 'project'].includes(visibility) || (visibility === 'project' && !projectId))
-        return refuse('validation', { visibility: 'invalid' })
-      const id = old ? string(old.id) : randomUUID(),
-        patch = {
-          title: requiredTitle(input),
-          archived: Boolean(input.archive),
-          status: string(input.status ?? old?.status ?? 'all'),
-          query: {
-            text: string(input.query ?? (old?.query as Row | null)?.text),
-            description: string(input.description ?? (old?.query as Row | null)?.description),
-            visibility,
-          },
-        }
-      if (old) await cas(tx, 'flow.SavedView', id, input.expectedVersion, patch)
-      else
-        await tx.db.insert('flow.SavedView', {
-          id,
-          projectId: projectId || null,
-          ownerId: tx.actor,
-          ...timestamped(),
-          ...patch,
-        })
-      return { ok: true, id, revision: await advanceRevision(tx, input, 'operations') }
-    },
-  )
-}
+export { saveView, archiveView } from './saved-views.ts'
 
 export async function savePreferences(ctx: Ctx, input: Row, extensions: NativeServerExtension[]) {
   return mutate(
@@ -189,7 +24,7 @@ export async function savePreferences(ctx: Ctx, input: Row, extensions: NativeSe
         } catch {
           return refuse('validation', { timezone: 'invalid' })
         }
-        values.timezone = input.timezone
+        values.timezone = string(input.timezone)
       }
       if (input.notifications !== undefined) {
         if (!['all', 'mentions', 'none'].includes(string(input.notifications)))
@@ -325,21 +160,20 @@ export async function listInbox(ctx: Ctx, input: Row, allowedProjectIds?: unknow
 export async function operationsProjection(ctx: Ctx, projectIds: unknown[], route: string, input: Row = {}) {
   const a = await authority(ctx),
     P = ctx.table('flow.UserPreference'),
-    V = ctx.table('flow.SavedView'),
     I = ctx.table('flow.Inbox')
   const personal = await ctx.db.one(
     from(P).where(eq(P.companyId, txCompany(ctx)), eq(P.userId, ctx.actor), eq(P.key, 'personal')),
   )
-  const views = await ctx.db.all(
-    from(V)
-      .where(
-        eq(V.companyId, ctx.scope.company),
-        eq(V.archived, false),
-        or(eq(V.ownerId, ctx.actor), ...(projectIds.length ? [inArray(V.projectId, projectIds)] : [])),
-      )
-      .orderBy(asc(V.title), asc(V.id))
-      .limit(100),
+  const viewPage = await listSavedViews(
+    ctx,
+    { limit: 25, ...(route === 'saved-views' ? { projectId: input.projectId, includePersonal: true } : {}) },
+    projectIds,
   )
+  const selectedView = input.viewId ? await savedViewById(ctx, input.viewId, projectIds) : null
+  const views =
+    selectedView && !viewPage.items.some((v) => v.id === selectedView.id)
+      ? [...viewPage.items, selectedView]
+      : viewPage.items
   const inboxPage = ['inbox', 'notifications'].includes(route)
     ? await listInbox(ctx, { filter: input.inboxFilter ?? 'unread' }, projectIds)
     : null
@@ -361,9 +195,8 @@ export async function operationsProjection(ctx: Ctx, projectIds: unknown[], rout
     operationsRevision: await revision(ctx, 'operations'),
     preferences: personal?.value ?? {},
     personalPreferences: personal?.value ?? {},
-    views: views
-      .filter((v) => v.ownerId === ctx.actor || (v.query as Row).visibility === 'project')
-      .map((v) => ({ ...v, ...(v.query as Row), query: (v.query as Row).text })),
+    views,
+    viewPage: { total: viewPage.total, cursor: viewPage.cursor, loadedIds: viewPage.items.map((v) => v.id) },
     inbox: inboxPage?.items ?? [],
     ...(inboxPage ? { inboxPage: { ...inboxPage, items: undefined } } : {}),
     inboxUnreadCount,
@@ -435,28 +268,3 @@ export async function operationsProjection(ctx: Ctx, projectIds: unknown[], rout
   return result
 }
 const txCompany = (ctx: Ctx) => ctx.scope.company
-
-export async function archiveView(
-  ctx: Ctx,
-  input: Row,
-  extensions: NativeServerExtension[],
-  archived: boolean,
-) {
-  return mutate(
-    ctx,
-    { name: 'flow.view.' + (archived ? 'archive' : 'restore'), capability: 'member.read', input },
-    extensions,
-    async (tx) => {
-      const old = await owned(tx, 'flow.SavedView', input.id)
-      if (old.ownerId !== tx.actor) return refuse('forbidden')
-      if (old.projectId) await requireCapability(tx, 'project.read', { projectId: old.projectId })
-      const record = await cas(tx, 'flow.SavedView', string(old.id), input.expectedVersion, { archived })
-      return {
-        ok: true,
-        id: record.id,
-        version: record.version,
-        revision: await advanceRevision(tx, input, 'operations'),
-      }
-    },
-  )
-}

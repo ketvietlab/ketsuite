@@ -1,5 +1,10 @@
 import type { Adapter } from '@ketvietlab/ketjs'
 
+/** Reuse an operator's outer transaction so a multi-backfill upgrade is atomic. */
+export function flowMigrationTransaction<T>(adapter: Adapter, work: (tx: Adapter) => Promise<T>) {
+  return adapter.transaction ? work(adapter) : adapter.tx(work)
+}
+
 /** Explicit post-schema migration for existing native Core data. No legacy
  * Issue/Project grants are imported and no new membership is ever created.
  * Run with tenant writers stopped, after the non-destructive schema migration.
@@ -8,7 +13,7 @@ export async function backfillNativeFlowAssignmentOrder(adapter: Adapter, compan
   if (!companyId) throw new Error('E_FLOW_MIGRATION_COMPANY_REQUIRED')
   const pg = adapter.name === 'postgres',
     binding = pg ? '$1' : '?'
-  return adapter.tx(async (tx) => {
+  return flowMigrationTransaction(adapter, async (tx) => {
     const bad = await tx.all(
       `SELECT a.id FROM flow_task_assignee a LEFT JOIN flow_task t
       ON t.id=a."taskId" AND t."companyId"=a."companyId"
@@ -35,7 +40,7 @@ export async function backfillNativeFlowLabelScope(adapter: Adapter, companyId: 
   if (!companyId) throw new Error('E_FLOW_MIGRATION_COMPANY_REQUIRED')
   const pg = adapter.name === 'postgres',
     binding = pg ? '$1' : '?'
-  return adapter.tx(async (tx) => {
+  return flowMigrationTransaction(adapter, async (tx) => {
     const bad = await tx.all(
       `SELECT a.id FROM flow_task_label a LEFT JOIN flow_task t
       ON t.id=a."taskId" AND t."companyId"=a."companyId"
@@ -64,7 +69,7 @@ export async function backfillNativeFlowDependencyScope(adapter: Adapter, compan
   if (!companyId) throw new Error('E_FLOW_MIGRATION_COMPANY_REQUIRED')
   const pg = adapter.name === 'postgres',
     binding = pg ? '$1' : '?'
-  return adapter.tx(async (tx) => {
+  return flowMigrationTransaction(adapter, async (tx) => {
     const bad = await tx.all(
       `SELECT r.id FROM flow_task_relation r
       LEFT JOIN flow_task s ON s.id=r."taskId" AND s."companyId"=r."companyId"

@@ -1,12 +1,15 @@
 // @ts-check
 import {
   addDays,
+  dayPattern,
+  formatDay,
   formatRange,
   monthEnd,
   monthStart,
   moveMonth,
   orderedRange,
   parseDate,
+  parseDay,
   presetRange,
   withinBounds,
 } from './date-math.js'
@@ -73,7 +76,8 @@ const lockBackground = (popup) => {
  * @param {HTMLElement} picker */
 const enhanceDateTime = (picker) => {
   const input = picker.querySelector('input[type="datetime-local"]')
-  const day = picker.querySelector('input[type="date"]')
+  // The date part's own picker may already have turned its native field into a hidden one.
+  const day = picker.querySelector('[data-ui="date-control-row"] > input')
   const time = picker.querySelector('input[type="time"]')
   const parts = picker.querySelector('[data-ui="date-time-parts"]')
   if (
@@ -91,7 +95,8 @@ const enhanceDateTime = (picker) => {
   const form = input.form
   input.type = 'hidden'
   parts.hidden = false
-  label?.setAttribute('for', day.id)
+  const entry = parts.querySelector('[data-ui="date-entry"] input')
+  label?.setAttribute('for', entry && !entry.closest('[hidden]') ? entry.id : day.id)
   innerLabel?.removeAttribute('for')
   const syncControls = () => {
     validator.disabled = input.disabled
@@ -106,7 +111,7 @@ const enhanceDateTime = (picker) => {
   // An island can lock a saved record without replacing this compound field.
   const controlsObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(syncControls)
   controlsObserver?.observe(input, { attributes: true, attributeFilter: ['disabled', 'readonly'] })
-  for (const part of [day, time]) {
+  for (const part of [day, time, ...(entry ? [entry] : [])]) {
     const description = input.getAttribute('aria-describedby')
     if (description) part.setAttribute('aria-describedby', description)
   }
@@ -178,7 +183,7 @@ const enhance = (picker) => {
   const opener = trigger
   const range = picker.dataset.dateMode === 'range'
   const locale =
-    picker.dataset.dateLocale === 'ja' ? 'ja-JP' : picker.dataset.dateLocale === 'en' ? 'en-GB' : 'vi-VN'
+    picker.dataset.dateLocale === 'ja' ? 'ja-JP' : picker.dataset.dateLocale === 'en' ? 'en-US' : 'vi-VN'
   const weekStart = Number(picker.dataset.dateWeekStart ?? 1)
   const labels = /** @type {import('./index.tsx').DatePickerLabels} */ (
     JSON.parse(picker.dataset.dateLabels ?? '{}')
@@ -189,12 +194,56 @@ const enhance = (picker) => {
   const message = picker.querySelector('[data-ui="date-range-error"]')
   const end = inputs[1]
   const defaults = inputs.map((input) => input.value)
-  const display = picker.querySelector('input[type="text"]')
+  const display = range ? picker.querySelector('input[type="text"]') : null
   const preset = picker.querySelector('select')
   const field = display instanceof HTMLInputElement ? display : end
   const originalInvalid = field?.getAttribute('aria-invalid')
   const originalDescription = field?.getAttribute('aria-describedby')
   let returnFocus = /** @type {HTMLElement} */ (opener)
+  // A native date field writes the day in the browser's language. A single date is typed and shown in
+  // the reader's instead; the native field, made hidden, still carries the submitted ISO value.
+  const native = inputs[0]
+  const entryBox = range ? null : picker.querySelector('[data-ui="date-entry"]')
+  const entryInput = entryBox?.querySelector('input')
+  const entry = entryBox instanceof HTMLElement && entryInput instanceof HTMLInputElement ? entryInput : null
+  const dayLocale = picker.dataset.dateLocale
+  const validator = entry ? /** @type {HTMLInputElement} */ (native.cloneNode()) : null
+  const invalidDay =
+    dayLocale === 'en'
+      ? `Enter a date as ${dayPattern('en')}.`
+      : dayLocale === 'ja'
+        ? `${dayPattern('ja')} の形式で入力してください。`
+        : `Nhập ngày theo dạng ${dayPattern('vi')}.`
+  const checkEntry = () => {
+    if (!entry || !validator) return
+    validator.required = native.required
+    validator.value = native.value
+    entry.setCustomValidity(entry.value.trim() && !native.value ? invalidDay : validator.validationMessage)
+  }
+  const showEntry = () => {
+    if (!entry) return
+    entry.value = formatDay(native.value, dayLocale)
+    checkEntry()
+  }
+  const syncEntryControls = () => {
+    if (!entry) return
+    entry.disabled = native.disabled
+    entry.readOnly = native.readOnly
+  }
+  /** @param {Event} event */
+  const typing = (event) => {
+    if (!entry || event.target !== entry) return
+    const value = parseDay(entry.value, dayLocale)
+    if (event.type === 'change' && value) entry.value = formatDay(value, dayLocale)
+    if (native.value !== value) {
+      native.value = value
+      native.dispatchEvent(new Event('input', { bubbles: true }))
+      native.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    checkEntry()
+  }
+  /** @type {[HTMLLabelElement, string][]} */
+  const labelled = []
   const readToday = () => {
     const local = new Date()
     const fallback = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`
@@ -285,7 +334,8 @@ const enhance = (picker) => {
       (empty
         ? inputs.some((input) => input.required)
         : !allowed(inputs[0], startValue) || !allowed(end, endValue) || startValue > endValue)
-    if (display instanceof HTMLInputElement) display.value = formatRange(startValue, endValue)
+    if (display instanceof HTMLInputElement)
+      display.value = formatRange(startValue, endValue, picker.dataset.dateLocale)
     if (message instanceof HTMLElement) {
       message.hidden = !invalid
       field.setAttribute(
@@ -314,6 +364,7 @@ const enhance = (picker) => {
     inputs.forEach((input, index) => {
       input.value = values[index]
     })
+    showEntry()
     validate()
     for (const input of [
       ...changed,
@@ -546,6 +597,12 @@ const enhance = (picker) => {
       open(display)
       return
     }
+    // A typed date opens its calendar from the keyboard as the native field did.
+    if (!isOpen() && entry && event.target === entry && event.key === 'ArrowDown') {
+      event.preventDefault()
+      open(entry)
+      return
+    }
     if (!isOpen()) return
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -675,10 +732,12 @@ const enhance = (picker) => {
     draft = []
     close()
     setTimeout(() => {
-      if (range)
+      // A hidden field keeps what was last set, so the typed date returns to the saved one by hand too.
+      if (range || entry)
         inputs.forEach((input, index) => {
           input.value = defaults[index]
         })
+      showEntry()
       preferredPreset = ''
       validate()
     })
@@ -699,9 +758,27 @@ const enhance = (picker) => {
           if (value === renderedValue) return
           renderedValue = value
           if (inputs[0].value !== value) inputs[0].value = value
+          showEntry()
         })
       : null
   singleValue?.observe(picker, { attributes: true, attributeFilter: ['data-date-value'] })
+  // An island can lock a saved record without replacing the field.
+  const entryControls =
+    entry && typeof MutationObserver !== 'undefined' ? new MutationObserver(syncEntryControls) : null
+  if (entry && entryBox instanceof HTMLElement) {
+    native.type = 'hidden'
+    entryBox.hidden = false
+    for (const label of document.querySelectorAll('label')) {
+      if (label.htmlFor !== native.id || !native.id) continue
+      labelled.push([label, native.id])
+      label.htmlFor = entry.id
+    }
+    syncEntryControls()
+    showEntry()
+    entryControls?.observe(native, { attributes: true, attributeFilter: ['disabled', 'readonly'] })
+    picker.addEventListener('input', typing)
+    picker.addEventListener('change', typing)
+  }
   validate()
   picker.addEventListener('click', click)
   picker.addEventListener('keydown', keydown)
@@ -718,6 +795,14 @@ const enhance = (picker) => {
     disposing = true
     rangeValues?.disconnect()
     singleValue?.disconnect()
+    entryControls?.disconnect()
+    if (entry && entryBox instanceof HTMLElement) {
+      picker.removeEventListener('input', typing)
+      picker.removeEventListener('change', typing)
+      native.type = 'date'
+      entryBox.hidden = true
+      for (const [label, id] of labelled) label.htmlFor = id
+    }
     close()
     delete picker.dataset.dateEnhanced
     picker.removeEventListener('click', click)

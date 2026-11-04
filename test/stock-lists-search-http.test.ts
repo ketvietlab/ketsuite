@@ -150,7 +150,6 @@ test('stock lists HTTP: every stock list carries the bar and no legacy search bo
     '/admin/stock/picking-types',
     '/admin/stock/lots',
     '/admin/stock/routes',
-    '/admin/stock/replenishment',
   ]
   for (const path of paths) {
     const response = await app.client.get(`${path}?lang=vi`)
@@ -159,4 +158,10 @@ test('stock lists HTTP: every stock list carries the bar and no legacy search bo
     assert.match(html, /data-island="backend\.search-filter"/, path)
     assert.doesNotMatch(html, /name="q"[^>]*data-ui="chrome-search-input"/, path)
   }
+  // Replenishment is a client-rendered list: the same bar sits inside its controls island and
+  // applies through the shared stock function.
+  const replenishment = await (await app.client.get('/admin/stock/replenishment?lang=vi')).text()
+  assert.match(replenishment, /data-island="stock\.replenishment-controls"/)
+  assert.match(replenishment, /data-ui="search-filter"/)
+  assert.doesNotMatch(replenishment, /name="q"[^>]*data-ui="chrome-search-input"/)
 })

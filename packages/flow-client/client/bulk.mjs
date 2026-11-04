@@ -1,4 +1,10 @@
 // Batch ok means processing completed. Individual refusals remain selected.
+export function bulkCatalogOptions(tasks, selected, optionsForProject) {
+  const selectedIds = new Set(selected)
+  const projects = new Set(tasks.filter((t) => selectedIds.has(t.id)).map((t) => t.projectId))
+  return [...new Map([...projects].flatMap(optionsForProject).map((c) => [c.id, c])).values()]
+}
+
 export function normalizeBulkOutcome(value, attempted) {
   const ids = [...new Set(attempted)]
   if (

@@ -68,19 +68,19 @@ export const purchaseOverviewScreen = (
               id: 'draft',
               title: _('purchase_backend.dashboard.toSend'),
               value: count(['draft']),
-              href: localized('/admin/purchase/rfqs?state=draft', locale),
+              href: localized('/admin/purchase/rfqs?preset=draft', locale),
             },
             {
               id: 'waiting',
               title: _('purchase_backend.dashboard.waiting'),
               value: count(['sent']),
-              href: localized('/admin/purchase/rfqs?state=sent', locale),
+              href: localized('/admin/purchase/rfqs?preset=sent', locale),
             },
             {
               id: 'approval',
               title: _('purchase_backend.dashboard.toApprove'),
               value: count(['to approve']),
-              href: localized('/admin/purchase/rfqs?state=to%20approve', locale),
+              href: localized('/admin/purchase/rfqs?preset=to-approve', locale),
             },
             {
               id: 'orders',
@@ -92,7 +92,7 @@ export const purchaseOverviewScreen = (
               id: 'bill',
               title: _('purchase_backend.dashboard.toBill'),
               value: orders.filter((row) => row.invoiceStatus === 'to invoice').length,
-              href: localized('/admin/purchase/orders', locale),
+              href: localized('/admin/purchase/orders?preset=to-invoice', locale),
             },
           ]}
           id={(item) => item.id}

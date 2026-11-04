@@ -129,6 +129,15 @@ test('partner statement HTTP keeps exact totals while paging, searching, and fil
     overviewHtml,
     /href="\/admin\/accounting\/partner-statement\?partnerId=customer&amp;dateFrom=2026-06-30&amp;dateTo=2026-06-30&amp;lang=en"/,
   )
+  // Each headline card opens the trial balance over the same window.
+  assert.equal(
+    (
+      overviewHtml.match(
+        /data-ui="metric"[^>]*href="\/admin\/accounting\/trial-balance\?dateFrom=2026-06-30&amp;dateTo=2026-06-30&amp;lang=en"/g,
+      ) ?? []
+    ).length,
+    5,
+  )
 })
 
 test('partner statement HTTP explains rejected filters, stays GET-only, and avoids unrelated permissions', async (t) => {

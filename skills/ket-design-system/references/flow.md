@@ -16,7 +16,7 @@ Keep its JavaScript/JSDoc and public dependency constraints in the package AGENT
 
 - Components own their markup and styling. Consumers compose exports and pass state/callbacks; they do not recreate component DOM or override private descendants.
 
-- Hard-to-undo questions use `FlowConfirmDialog`: a small centred native alertdialog at every width, with associated title/explanation and safe Cancel/Escape behavior. The runtime restores focus when native or route-owned dialogs close; direct links fall back to the background page heading. Product controllers own unsaved-form baselines and mutations, never the UI package.
+- Hard-to-undo questions use `FlowConfirmDialog`: a small centred native alertdialog on desktop, filling the available viewport below768px, with associated title/explanation and safe Cancel/Escape behavior. The runtime restores focus when native or route-owned dialogs close; direct links fall back to the background page heading. Product controllers own unsaved-form baselines and mutations, never the UI package.
 
 - Density is a Flow contract: 28px small control, 32px normal control, 36px compact row; touch contexts use at least 44px controls. Do not shrink Suite components using external CSS.
 
@@ -38,7 +38,7 @@ Keep its JavaScript/JSDoc and public dependency constraints in the package AGENT
   `FlowCheckboxField` owns a clickable form row; do not nest two labels. Task-table
   select columns reserve the hit area plus cell padding, and label gestures are
   excluded from drag initiation.
-- All native dialogs keep header/footer visible and scroll only their body. Long
+- Below768px all native dialogs, including confirm/media, fill the available viewport with square edges, no outer gutters or shadow. All native dialogs keep header/footer visible and scroll only their body. Long
   headings wrap without pushing the close action out of the viewport. Form decision
   actions use the same normal size; desktop toolbar commands may stay compact.
 - Task-table geometry is opt-in through `FlowTable.layout: 'tasks'`. Named Flow

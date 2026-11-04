@@ -176,11 +176,16 @@ export const release = async (ctx: Ctx, reservation: Row): Promise<Row> => {
   return { ...reservation, state: 'released', updatedAt: now() }
 }
 
-export const finalizeReservation = async (ctx: Ctx, reservation: Row, spendAmount: number): Promise<Row> => {
+export const finalizeReservation = async (
+  ctx: Ctx,
+  reservation: Row,
+  spendAmount: number,
+  postingKey?: string,
+): Promise<Row> => {
   if (reservation.state === 'finalized')
     return (await ctx.db.select('loyalty.Wallet', { id: reservation.walletId }))[0]!
   if (reservation.state !== 'reserved') throw new LoyaltyConflict('reservation is not active')
-  const sourceKey = `${String(reservation.orderType)}:${String(reservation.orderId)}:${String(reservation.rewardId)}:redeem`
+  const sourceKey = `${String(reservation.orderType)}:${postingKey ?? String(reservation.orderId)}:${String(reservation.rewardId)}:redeem`
   const previous = (await ctx.db.select('loyalty.LedgerEntry', { sourceKey }))[0]
   if (previous) {
     await ctx.db.update(
@@ -194,7 +199,7 @@ export const finalizeReservation = async (ctx: Ctx, reservation: Row, spendAmoun
   if (!wallet || n(wallet.balance) + 0.000001 < spendAmount)
     throw new InsufficientBalance('insufficient balance')
   await ctx.db.insert('loyalty.LedgerEntry', {
-    id: `${String(reservation.id)}:ledger`,
+    id: postingKey ? `${String(reservation.id)}:ledger:${postingKey}` : `${String(reservation.id)}:ledger`,
     walletId: reservation.walletId,
     operation: 'redeem',
     amount: decimal(spendAmount),

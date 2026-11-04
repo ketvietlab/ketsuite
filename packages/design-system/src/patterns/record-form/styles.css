@@ -20,6 +20,19 @@
     container-type: normal;
   }
 
+  /* A form that saves as its one control changes, with every label hidden (a card's switch), is sized
+     by that control like an action-only form: as a container it would measure nothing in a row of
+     actions and collapse to zero, and the grid's second column would leave a gap beside the control. */
+  :where([data-kv-design-system])
+  [data-ui="record-form"][data-apply="input"]:not(:has([data-ui="field"]:not([data-label-hidden="true"]))),
+  :where([data-kv-design-system])
+    [data-ui="record-form"][data-apply="input"]:not(:has([data-ui="field"]:not([data-label-hidden="true"])))
+    > [data-ui="form-grid"] {
+    container-type: normal;
+    flex: 0 0 auto;
+    grid-template-columns: max-content;
+  }
+
   :where([data-kv-design-system]) [data-ui="form-errors"] {
     display: grid;
     gap: var(--kv-space-1);
